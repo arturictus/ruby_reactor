@@ -35,6 +35,7 @@ Gem::Specification.new do |spec|
   # Core dependencies
   spec.add_dependency "concurrent-ruby", "~> 1.2"
   spec.add_dependency "zeitwerk", "~> 2.6"
+  spec.add_dependency "dry-validation", "~> 1.10"
 
   # For more information and examples about making a new gem, check out our
   # guide at: https://bundler.io/guides/creating_gem.html

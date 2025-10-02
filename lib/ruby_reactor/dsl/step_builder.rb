@@ -4,9 +4,10 @@ module RubyReactor
   module Dsl
     class StepBuilder
       include RubyReactor::Dsl::TemplateHelpers
+      include RubyReactor::Dsl::ValidationHelpers
 
       attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block
-      attr_accessor :conditions, :guards, :dependencies
+      attr_accessor :conditions, :guards, :dependencies, :args_validator, :output_validator
 
       def initialize(name, impl = nil)
         @name = name
@@ -18,6 +19,8 @@ module RubyReactor
         @conditions = []
         @guards = []
         @dependencies = []
+        @args_validator = nil
+        @output_validator = nil
       end
 
       def argument(name, source, transform: nil)
@@ -51,6 +54,22 @@ module RubyReactor
         @dependencies.concat(step_names)
       end
 
+      def validate_args(schema_or_validator = nil, &block)
+        if block_given?
+          @args_validator = build_input_validator(block)
+        elsif schema_or_validator
+          @args_validator = build_input_validator(schema_or_validator)
+        end
+      end
+
+      def validate_output(schema_or_validator = nil, &block)
+        if block_given?
+          @output_validator = build_input_validator(block)
+        elsif schema_or_validator
+          @output_validator = build_input_validator(schema_or_validator)
+        end
+      end
+
       def build
         step_config = {
           name: @name,
@@ -61,16 +80,43 @@ module RubyReactor
           undo_block: @undo_block,
           conditions: @conditions,
           guards: @guards,
-          dependencies: @dependencies
+          dependencies: @dependencies,
+          args_validator: @args_validator,
+          output_validator: @output_validator
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)
+      end
+
+      private
+
+      def build_input_validator(schema_or_block)
+        check_dry_validation_available!
+        
+        schema = case schema_or_block
+                when Proc
+                  build_validation_schema(&schema_or_block)
+                else
+                  schema_or_block
+                end
+
+        RubyReactor::Validation::InputValidator.new(schema)
+      end
+
+      def build_validation_schema(&block)
+        RubyReactor::Validation::SchemaBuilder.build_from_block(&block)
+      end
+
+      def check_dry_validation_available!
+        unless defined?(Dry::Schema)
+          raise LoadError, "dry-validation gem is required for validation features. Add 'gem \"dry-validation\"' to your Gemfile."
+        end
       end
     end
 
     class StepConfig
       attr_reader :name, :impl, :arguments, :run_block, :compensate_block, :undo_block
-      attr_reader :conditions, :guards, :dependencies
+      attr_reader :conditions, :guards, :dependencies, :args_validator, :output_validator
 
       def initialize(config)
         @name = config[:name]
@@ -82,6 +128,8 @@ module RubyReactor
         @conditions = config[:conditions] || []
         @guards = config[:guards] || []
         @dependencies = config[:dependencies] || []
+        @args_validator = config[:args_validator]
+        @output_validator = config[:output_validator]
       end
 
       def has_impl?

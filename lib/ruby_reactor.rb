@@ -3,6 +3,13 @@
 require "concurrent"
 require "zeitwerk"
 
+# Load dry-validation if available (for validation features)
+begin
+  require "dry-validation"
+rescue LoadError
+  # dry-validation is optional, validation features won't be available
+end
+
 loader = Zeitwerk::Loader.for_gem
 loader.setup
 

@@ -25,13 +25,21 @@ module RubyReactor
     private
 
     def validate_inputs!
-      # Validate that all required inputs are provided
+      # First check for required inputs
       reactor_class.inputs.each do |input_name, input_config|
-        unless context.inputs.key?(input_name) || context.inputs.key?(input_name.to_s)
+        unless input_config[:optional] || context.inputs.key?(input_name) || context.inputs.key?(input_name.to_s)
           raise Error::ValidationError.new(
             "Required input '#{input_name}' is missing",
             context: context
           )
+        end
+      end
+
+      # Then run validation schemas if they exist
+      if reactor_class.respond_to?(:input_validations) && reactor_class.input_validations.any?
+        validation_result = reactor_class.validate_inputs(context.inputs)
+        if validation_result.failure?
+          raise validation_result.error
         end
       end
     end
@@ -200,6 +208,9 @@ module RubyReactor
       when Error::StepFailureError
         # Step failure has already been handled (compensation and rollback)
         RubyReactor.Failure(error.message)
+      when Error::InputValidationError
+        # Preserve validation errors as-is for proper error handling
+        RubyReactor.Failure(error)
       when Error::Base
         # Other errors need rollback
         rollback_completed_steps

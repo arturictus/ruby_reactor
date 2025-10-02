@@ -9,18 +9,32 @@ module RubyReactor
         base.instance_variable_set(:@steps, {})
         base.instance_variable_set(:@return_step, nil)
         base.instance_variable_set(:@middlewares, [])
+        base.instance_variable_set(:@input_validations, {})
+        
+
       end
 
       module ClassMethods
         include RubyReactor::Dsl::TemplateHelpers
 
-        attr_reader :inputs, :steps, :return_step, :middlewares
+        attr_reader :inputs, :steps, :return_step, :middlewares, :input_validations
 
-        def input(name, transform: nil, description: nil)
+        def input(name, transform: nil, description: nil, validate: nil, optional: false, &validation_block)
           inputs[name] = {
             transform: transform,
-            description: description
+            description: description,
+            optional: optional
           }
+
+          # Handle validation
+          if validate || validation_block
+            validator = if validation_block
+                        create_input_validator(validation_block)
+                      else
+                        create_input_validator(validate)
+                      end
+            input_validations[name] = validator
+          end
         end
 
         def step(name, impl = nil, &block)
@@ -58,6 +72,53 @@ module RubyReactor
           @middlewares ||= []
         end
 
+        def input_validations
+          @input_validations ||= {}
+        end
+
+        def validate_inputs(inputs_hash)
+          errors = {}
+          
+          input_validations.each do |input_name, validator|
+            # Skip validation if input is optional and not provided
+            next if inputs[input_name][:optional] && !inputs_hash.key?(input_name)
+            
+            input_data = inputs_hash[input_name]
+            # Validate by wrapping the individual input in a hash with its name
+            result = validator.call({ input_name => input_data })
+            
+            if result.failure?
+              errors.merge!(result.error.field_errors) if result.error.respond_to?(:field_errors)
+            end
+          end
+          
+          if errors.empty?
+            RubyReactor.Success(inputs_hash)
+          else
+            error = RubyReactor::Error::InputValidationError.new(errors)
+            RubyReactor.Failure(error)
+          end
+        end
+
+        # Validation helper methods
+        def build_validation_schema(&block)
+          check_dry_validation_available!
+          RubyReactor::Validation::SchemaBuilder.build_from_block(&block)
+        end
+
+        def create_input_validator(schema_or_block)
+          check_dry_validation_available!
+          
+          schema = case schema_or_block
+                  when Proc
+                    build_validation_schema(&schema_or_block)
+                  else
+                    schema_or_block
+                  end
+
+          RubyReactor::Validation::InputValidator.new(schema)
+        end
+
         # Entry point for running the reactor
         def run(inputs = {})
           reactor = new
@@ -66,6 +127,14 @@ module RubyReactor
 
         def call(inputs = {})
           run(inputs)
+        end
+
+        private
+
+        def check_dry_validation_available!
+          unless defined?(Dry::Schema)
+            raise LoadError, "dry-validation gem is required for validation features. Add 'gem \"dry-validation\"' to your Gemfile."
+          end
         end
       end
     end
