@@ -16,45 +16,58 @@ module RubyReactor
       validate_inputs!
       build_dependency_graph
       validate_graph!
-      
-      return execute_steps
-    rescue => error
-      handle_execution_error(error)
+
+      execute_steps
+    rescue StandardError => e
+      handle_execution_error(e)
     end
 
     private
 
     def validate_inputs!
-      # Validate that all required inputs are provided
+      check_required_inputs
+      validate_input_schemas
+    end
+
+    def check_required_inputs
       reactor_class.inputs.each do |input_name, input_config|
-        unless context.inputs.key?(input_name) || context.inputs.key?(input_name.to_s)
-          raise Error::ValidationError.new(
-            "Required input '#{input_name}' is missing",
-            context: context
-          )
-        end
-      end
-    end
+        next if input_config[:optional] || context.inputs.key?(input_name) || context.inputs.key?(input_name.to_s)
 
-    def build_dependency_graph
-      reactor_class.steps.each do |step_name, step_config|
-        dependency_graph.add_step(step_config)
-      end
-    end
-
-    def validate_graph!
-      if dependency_graph.has_cycles?
-        raise Error::DependencyError.new(
-          "Dependency graph contains cycles",
+        raise Error::ValidationError.new(
+          "Required input '#{input_name}' is missing",
           context: context
         )
       end
     end
 
+    def validate_input_schemas
+      return unless reactor_class.respond_to?(:input_validations) && reactor_class.input_validations.any?
+
+      validation_result = reactor_class.validate_inputs(context.inputs)
+      return unless validation_result.failure?
+
+      raise validation_result.error
+    end
+
+    def build_dependency_graph
+      reactor_class.steps.each_value do |step_config|
+        dependency_graph.add_step(step_config)
+      end
+    end
+
+    def validate_graph!
+      return unless dependency_graph.has_cycles?
+
+      raise Error::DependencyError.new(
+        "Dependency graph contains cycles",
+        context: context
+      )
+    end
+
     def execute_steps
-      while !dependency_graph.all_completed?
+      until dependency_graph.all_completed?
         ready_steps = dependency_graph.ready_steps
-        
+
         if ready_steps.empty?
           raise Error::DependencyError.new(
             "No ready steps available but execution not complete",
@@ -87,10 +100,10 @@ module RubyReactor
 
         # Resolve arguments
         resolved_arguments = resolve_arguments(step_config)
-        
+
         # Execute the step
         result = run_step_implementation(step_config, resolved_arguments)
-        
+
         case result
         when RubyReactor::Success
           @step_results[step_config.name] = result
@@ -113,17 +126,17 @@ module RubyReactor
 
     def resolve_arguments(step_config)
       resolved = {}
-      
+
       step_config.arguments.each do |arg_name, arg_config|
         source = arg_config[:source]
         transform = arg_config[:transform]
-        
+
         value = source.resolve(context)
         value = transform.call(value) if transform
-        
+
         resolved[arg_name] = value
       end
-      
+
       resolved
     end
 
@@ -146,12 +159,12 @@ module RubyReactor
     def handle_step_failure(step_config, error, arguments)
       # Try compensation
       compensation_result = compensate_step(step_config, error, arguments)
-      
+
       case compensation_result
       when RubyReactor::Success
         # Compensation succeeded, continue with rollback
         rollback_completed_steps
-        return RubyReactor.Failure("Step '#{step_config.name}' failed: #{error}")
+        RubyReactor.Failure("Step '#{step_config.name}' failed: #{error}")
       when RubyReactor::Failure
         # Compensation failed, this is more serious
         rollback_completed_steps
@@ -182,17 +195,15 @@ module RubyReactor
     end
 
     def undo_step(step_config, result, arguments)
-      begin
-        if step_config.undo_block
-          step_config.undo_block.call(result.value, arguments, context)
-        elsif step_config.has_impl?
-          step_config.impl.undo(result.value, arguments, context)
-        end
-      rescue => error
-        # Log undo failure but don't halt the rollback process
-        # In a real implementation, this would use a logger
-        puts "Warning: Undo failed for step '#{step_config.name}': #{error.message}"
+      if step_config.undo_block
+        step_config.undo_block.call(result.value, arguments, context)
+      elsif step_config.has_impl?
+        step_config.impl.undo(result.value, arguments, context)
       end
+    rescue StandardError => e
+      # Log undo failure but don't halt the rollback process
+      # In a real implementation, this would use a logger
+      puts "Warning: Undo failed for step '#{step_config.name}': #{e.message}"
     end
 
     def handle_execution_error(error)
@@ -200,6 +211,9 @@ module RubyReactor
       when Error::StepFailureError
         # Step failure has already been handled (compensation and rollback)
         RubyReactor.Failure(error.message)
+      when Error::InputValidationError
+        # Preserve validation errors as-is for proper error handling
+        RubyReactor.Failure(error)
       when Error::Base
         # Other errors need rollback
         rollback_completed_steps

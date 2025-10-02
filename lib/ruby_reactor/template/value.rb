@@ -6,10 +6,11 @@ module RubyReactor
       attr_reader :value
 
       def initialize(value)
+        super()
         @value = value
       end
 
-      def resolve(context)
+      def resolve(_context)
         @value
       end
 

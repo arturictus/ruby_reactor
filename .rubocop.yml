@@ -1,8 +1,95 @@
+plugins:
+  - rubocop-rake
+
+require: rubocop-rspec
+
 AllCops:
   TargetRubyVersion: 3.0
+  NewCops: enable
+  Exclude:
+    - vendor/**/*
+    - tmp/**/*
+    - log/**/*
+    - .bundle/**/*
+    - bin/*
+    - db/**/*
+    - config/**/*
 
 Style/StringLiterals:
   EnforcedStyle: double_quotes
 
 Style/StringLiteralsInInterpolation:
   EnforcedStyle: double_quotes
+
+Metrics/BlockLength:
+  Exclude:
+    - spec/**/*
+
+Metrics/MethodLength:
+  Exclude:
+    - spec/**/*
+  Max: 25
+  CountComments: false
+
+Metrics/ClassLength:
+  Exclude:
+    - spec/**/*
+  Max: 200
+
+Style/Documentation:
+  Exclude:
+    - spec/**/*
+    - test/**/*
+  Enabled: false
+
+# Optionally disable some noisy new cops
+Gemspec/AddRuntimeDependency:
+  Enabled: false
+
+Gemspec/AttributeAssignment:
+  Enabled: false
+
+Gemspec/DeprecatedAttributeAssignment:
+  Enabled: false
+
+Gemspec/DevelopmentDependencies:
+  Enabled: false
+
+Naming/PredicatePrefix:
+  Enabled: false
+
+Metrics/AbcSize:
+  Max: 40
+
+
+  Enabled: false
+
+RSpec/MultipleExpectations:
+  Enabled: false
+
+RSpec/ExampleLength:
+  Enabled: false
+
+RSpec/NestedGroups:
+  Enabled: false
+
+Metrics/CyclomaticComplexity:
+  Max: 15
+
+Metrics/PerceivedComplexity:
+  Max: 15
+
+Capybara:
+  Enabled: false
+
+Capybara/RSpec/PredicateMatcher:
+  Enabled: false
+
+RSpec/Capybara:
+  Enabled: false
+
+RSpec/FactoryBot:
+  Enabled: false
+
+RSpecRails:
+  Enabled: false

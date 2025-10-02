@@ -20,11 +20,15 @@ module RubyReactor
       end
 
       # Make Success and Failure available in DSL contexts
+      # rubocop:disable Naming/MethodName
       def Success(value = nil)
+        # rubocop:enable Naming/MethodName
         RubyReactor.Success(value)
       end
 
+      # rubocop:disable Naming/MethodName
       def Failure(error)
+        # rubocop:enable Naming/MethodName
         RubyReactor.Failure(error)
       end
     end
