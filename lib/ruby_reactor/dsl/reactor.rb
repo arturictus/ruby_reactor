@@ -15,7 +15,25 @@ module RubyReactor
       module ClassMethods
         include RubyReactor::Dsl::TemplateHelpers
 
-        attr_reader :inputs, :steps, :return_step, :middlewares, :input_validations
+        def inputs
+          @inputs ||= {}
+        end
+
+        def steps
+          @steps ||= {}
+        end
+
+        def return_step
+          @return_step
+        end
+
+        def middlewares
+          @middlewares ||= []
+        end
+
+        def input_validations
+          @input_validations ||= {}
+        end
 
         def input(name, transform: nil, description: nil, validate: nil, optional: false, &validation_block)
           inputs[name] = {

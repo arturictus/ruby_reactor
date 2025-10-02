@@ -56,7 +56,7 @@ module RubyReactor
       @completed << step_name
     end
 
-    def cycles?
+    def has_cycles?
       visited = Set.new
       rec_stack = Set.new
 
@@ -69,7 +69,7 @@ module RubyReactor
     end
 
     def topological_sort
-      return [] if cycles?
+      return [] if has_cycles?
 
       visited = Set.new
       stack = []
