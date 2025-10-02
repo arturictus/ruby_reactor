@@ -56,20 +56,20 @@ module RubyReactor
       @completed << step_name
     end
 
-    def has_cycles?
+    def cycles?
       visited = Set.new
       rec_stack = Set.new
 
       @nodes.each_key do |node|
         next if visited.include?(node)
-        return true if has_cycle_util(node, visited, rec_stack)
+        return true if cycle_detected?(node, visited, rec_stack)
       end
 
       false
     end
 
     def topological_sort
-      return [] if has_cycles?
+      return [] if cycles?
 
       visited = Set.new
       stack = []
@@ -106,14 +106,14 @@ module RubyReactor
 
     private
 
-    def has_cycle_util(node, visited, rec_stack)
+    def cycle_detected?(node, visited, rec_stack)
       visited << node
       rec_stack << node
 
       dependents = @edges[node] || Set.new
       dependents.each do |dependent|
         if !visited.include?(dependent)
-          return true if has_cycle_util(dependent, visited, rec_stack)
+          return true if cycle_detected?(dependent, visited, rec_stack)
         elsif rec_stack.include?(dependent)
           return true
         end

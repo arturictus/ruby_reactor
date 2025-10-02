@@ -2,7 +2,7 @@
 
 RSpec.describe RubyReactor do
   it "has a version number" do
-    expect(RubyReactor::VERSION).not_to be nil
+    expect(RubyReactor::VERSION).not_to be_nil
   end
 
   describe "UserRegistration reactor" do

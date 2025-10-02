@@ -133,11 +133,11 @@ module RubyReactor
         @output_validator = config[:output_validator]
       end
 
-      def has_impl?
+      def impl?
         !@impl.nil?
       end
 
-      def has_run_block?
+      def run_block?
         !@run_block.nil?
       end
 

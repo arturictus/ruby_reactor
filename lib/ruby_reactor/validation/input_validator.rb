@@ -8,6 +8,7 @@ module RubyReactor
       attr_reader :schema
 
       def initialize(schema)
+        super()
         @schema = schema
       end
 
@@ -33,7 +34,7 @@ module RubyReactor
           when Hash
             # Handle nested errors by flattening them
             messages.each do |nested_key, nested_messages|
-              flat_key = "#{key}[#{nested_key}]".to_sym
+              flat_key = :"#{key}[#{nested_key}]"
               formatted[flat_key] = Array(nested_messages).join(", ")
             end
           else

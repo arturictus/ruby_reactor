@@ -25,7 +25,11 @@ module RubyReactor
     private
 
     def validate_inputs!
-      # First check for required inputs
+      check_required_inputs
+      validate_input_schemas
+    end
+
+    def check_required_inputs
       reactor_class.inputs.each do |input_name, input_config|
         next if input_config[:optional] || context.inputs.key?(input_name) || context.inputs.key?(input_name.to_s)
 
@@ -34,8 +38,9 @@ module RubyReactor
           context: context
         )
       end
+    end
 
-      # Then run validation schemas if they exist
+    def validate_input_schemas
       return unless reactor_class.respond_to?(:input_validations) && reactor_class.input_validations.any?
 
       validation_result = reactor_class.validate_inputs(context.inputs)

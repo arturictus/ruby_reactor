@@ -52,22 +52,6 @@ module RubyReactor
           middlewares << middleware_class
         end
 
-        def inputs
-          @inputs ||= {}
-        end
-
-        def steps
-          @steps ||= {}
-        end
-
-        def middlewares
-          @middlewares ||= []
-        end
-
-        def input_validations
-          @input_validations ||= {}
-        end
-
         def validate_inputs(inputs_hash)
           errors = {}
 

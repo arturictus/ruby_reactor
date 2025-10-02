@@ -6,6 +6,7 @@ module RubyReactor
       attr_reader :step_name, :path
 
       def initialize(step_name, path = nil)
+        super()
         @step_name = step_name
         @path = path
       end
@@ -32,15 +33,14 @@ module RubyReactor
       private
 
       def extract_path(value, path)
-        case path
-        when Symbol
-          value[path] if value.respond_to?(:[])
-        when String
+        if path.is_a?(Symbol) && value.respond_to?(:[])
+          value[path]
+        elsif path.is_a?(String)
           path.split(".").reduce(value) { |v, key| v&.send(:[], key) }
-        when Array
+        elsif path.is_a?(Array)
           path.reduce(value) { |v, key| v&.send(:[], key) }
-        else
-          value.send(path) if value.respond_to?(path)
+        elsif value.respond_to?(path)
+          value.send(path)
         end
       end
     end

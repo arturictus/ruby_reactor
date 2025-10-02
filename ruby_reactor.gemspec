@@ -9,11 +9,13 @@ Gem::Specification.new do |spec|
   spec.email = ["1930175+arturictus@users.noreply.github.com"]
 
   spec.summary = "A dynamic, concurrent, dependency-resolving saga orchestrator for Ruby."
-  spec.description = "Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning."
+  spec.description = "Ruby Reactor implements the Saga pattern with compensation-based " \
+                     "error handling and DAG-based execution planning."
   spec.homepage = "https://github.com/arturictus/ruby_reactor"
   spec.required_ruby_version = ">= 3.0.0"
 
   spec.metadata["allowed_push_host"] = "https://rubygems.org"
+  spec.metadata["rubygems_mfa_required"] = "true"
 
   spec.metadata["homepage_uri"] = spec.homepage
   spec.metadata["source_code_uri"] = "https://github.com/arturictus/ruby_reactor"
