@@ -1,8 +1,51 @@
 # frozen_string_literal: true
 
-require_relative "ruby_reactor/version"
+require "concurrent"
+require "zeitwerk"
+
+loader = Zeitwerk::Loader.for_gem
+loader.setup
 
 module RubyReactor
-  class Error < StandardError; end
-  # Your code goes here...
+  # Success/Failure pattern for results
+  class Success
+    attr_reader :value
+
+    def initialize(value = nil)
+      @value = value
+    end
+
+    def success?
+      true
+    end
+
+    def failure?
+      false
+    end
+  end
+
+  class Failure
+    attr_reader :error
+
+    def initialize(error)
+      @error = error
+    end
+
+    def success?
+      false
+    end
+
+    def failure?
+      true
+    end
+  end
+
+  # Global helper methods
+  def self.Success(value = nil)
+    Success.new(value)
+  end
+
+  def self.Failure(error)
+    Failure.new(error)
+  end
 end
