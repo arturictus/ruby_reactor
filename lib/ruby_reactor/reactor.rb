@@ -23,28 +23,26 @@ module RubyReactor
     private
 
     def validate_steps!
-      if self.class.steps.empty?
-        raise Error::ValidationError.new("Reactor must have at least one step")
-      end
+      return unless self.class.steps.empty?
+
+      raise Error::ValidationError, "Reactor must have at least one step"
     end
 
     def validate_return_step!
       return unless self.class.return_step
-      
-      unless self.class.steps.key?(self.class.return_step)
-        raise Error::ValidationError.new(
-          "Return step '#{self.class.return_step}' is not defined"
-        )
-      end
+
+      return if self.class.steps.key?(self.class.return_step)
+
+      raise Error::ValidationError, "Return step '#{self.class.return_step}' is not defined"
     end
 
     def validate_dependencies!
       graph = DependencyGraph.new
-      self.class.steps.each { |name, config| graph.add_step(config) }
-      
-      if graph.has_cycles?
-        raise Error::DependencyError.new("Dependency graph contains cycles")
-      end
+      self.class.steps.each_value { |config| graph.add_step(config) }
+
+      return unless graph.has_cycles?
+
+      raise Error::DependencyError, "Dependency graph contains cycles"
     end
   end
 end

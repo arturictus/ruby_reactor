@@ -2,71 +2,69 @@
 
 module RubyReactor
   class DependencyGraph
-  def initialize
-    @nodes = {}
-    @edges = {}
-    @dependencies = {}  # Store dependencies for each step
-    @completed = Set.new
-  end
+    def initialize
+      @nodes = {}
+      @edges = {}
+      @dependencies = {} # Store dependencies for each step
+      @completed = Set.new
+    end
 
-  def add_step(step_config)
-    step_name = step_config.name
-    @nodes[step_name] = step_config
-    @edges[step_name] = Set.new
-    
-    # Calculate and store dependencies
-    dependencies = []
-    
-    # Add dependencies from argument sources
-    step_config.arguments.each do |arg_name, arg_config|
-      source = arg_config[:source]
-      if source.is_a?(RubyReactor::Template::Result)
-        dependencies << source.step_name
-        add_dependency(step_name, source.step_name)
+    def add_step(step_config)
+      step_name = step_config.name
+      @nodes[step_name] = step_config
+      @edges[step_name] = Set.new
+
+      # Calculate and store dependencies
+      dependencies = []
+
+      # Add dependencies from argument sources
+      step_config.arguments.each_value do |arg_config|
+        source = arg_config[:source]
+        if source.is_a?(RubyReactor::Template::Result)
+          dependencies << source.step_name
+          add_dependency(step_name, source.step_name)
+        end
       end
-    end
 
-    # Add explicit dependencies
-    step_config.dependencies.each do |dep_step|
-      dependencies << dep_step
-      add_dependency(step_name, dep_step)
-    end
-    
-    @dependencies[step_name] = dependencies.uniq
-  end
-
-  def add_dependency(step_name, dependency_name)
-    @edges[dependency_name] ||= Set.new
-    @edges[dependency_name] << step_name
-  end
-
-  def ready_steps
-    ready = []
-    @nodes.each do |step_name, step_config|
-      next if @completed.include?(step_name)
-      
-      # Check if all dependencies are completed
-      dependencies = @dependencies[step_name] || []
-      if dependencies.all? { |dep| @completed.include?(dep) }
-        ready << step_config
+      # Add explicit dependencies
+      step_config.dependencies.each do |dep_step|
+        dependencies << dep_step
+        add_dependency(step_name, dep_step)
       end
-    end
-    ready
-  end
 
-  def complete_step(step_name)
-    @completed << step_name
-  end
+      @dependencies[step_name] = dependencies.uniq
+    end
+
+    def add_dependency(step_name, dependency_name)
+      @edges[dependency_name] ||= Set.new
+      @edges[dependency_name] << step_name
+    end
+
+    def ready_steps
+      ready = []
+      @nodes.each do |step_name, step_config|
+        next if @completed.include?(step_name)
+
+        # Check if all dependencies are completed
+        dependencies = @dependencies[step_name] || []
+        ready << step_config if dependencies.all? { |dep| @completed.include?(dep) }
+      end
+      ready
+    end
+
+    def complete_step(step_name)
+      @completed << step_name
+    end
 
     def has_cycles?
       visited = Set.new
       rec_stack = Set.new
-      
-      @nodes.keys.each do |node|
+
+      @nodes.each_key do |node|
         next if visited.include?(node)
         return true if has_cycle_util(node, visited, rec_stack)
       end
-      
+
       false
     end
 
@@ -76,8 +74,9 @@ module RubyReactor
       visited = Set.new
       stack = []
 
-      @nodes.keys.each do |node|
+      @nodes.each_key do |node|
         next if visited.include?(node)
+
         topological_sort_util(node, visited, stack)
       end
 
@@ -92,7 +91,22 @@ module RubyReactor
       @nodes.keys - @completed.to_a
     end
 
-  private    def has_cycle_util(node, visited, rec_stack)
+    def topological_sort_util(node, visited, stack)
+      visited << node
+
+      dependents = @edges[node] || Set.new
+      dependents.each do |dependent|
+        next if visited.include?(dependent)
+
+        topological_sort_util(dependent, visited, stack)
+      end
+
+      stack << node
+    end
+
+    private
+
+    def has_cycle_util(node, visited, rec_stack)
       visited << node
       rec_stack << node
 
@@ -107,18 +121,6 @@ module RubyReactor
 
       rec_stack.delete(node)
       false
-    end
-
-    def topological_sort_util(node, visited, stack)
-      visited << node
-
-      dependents = @edges[node] || Set.new
-      dependents.each do |dependent|
-        next if visited.include?(dependent)
-        topological_sort_util(dependent, visited, stack)
-      end
-
-      stack << node
     end
   end
 end

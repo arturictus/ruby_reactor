@@ -13,9 +13,9 @@ RSpec.describe RubyReactor do
 
         step :validate_email do
           argument :email, input(:email)
-          
-          run do |args, context|
-            if args[:email] && args[:email].include?('@')
+
+          run do |args, _context|
+            if args[:email]&.include?("@")
               Success(args[:email])
             else
               Failure("Email must contain @")
@@ -25,9 +25,9 @@ RSpec.describe RubyReactor do
 
         step :hash_password do
           argument :password, input(:password)
-          
-          run do |args, context|
-            require 'digest'
+
+          run do |args, _context|
+            require "digest"
             hashed = Digest::SHA256.hexdigest(args[:password])
             Success(hashed)
           end
@@ -36,18 +36,18 @@ RSpec.describe RubyReactor do
         step :create_user do
           argument :email, result(:validate_email)
           argument :password_hash, result(:hash_password)
-          
-          run do |args, context|
+
+          run do |args, _context|
             user = {
-              id: rand(10000),
+              id: rand(10_000),
               email: args[:email],
               password_hash: args[:password_hash],
               created_at: Time.now
             }
             Success(user)
           end
-          
-          undo do |user, args, context|
+
+          undo do |user, _args, _context|
             puts "Would delete user with ID: #{user[:id]}"
             Success()
           end
@@ -60,30 +60,30 @@ RSpec.describe RubyReactor do
     describe "successful user registration" do
       it "creates a user with valid email and password" do
         result = user_registration_class.run(
-          email: 'alice@example.com',
-          password: 'secret123'
+          email: "alice@example.com",
+          password: "secret123"
         )
 
         expect(result).to be_a(RubyReactor::Success)
         user = result.value
         expect(user).to be_a(Hash)
-        expect(user[:email]).to eq('alice@example.com')
+        expect(user[:email]).to eq("alice@example.com")
         expect(user[:password_hash]).to be_a(String)
-        expect(user[:password_hash]).not_to eq('secret123') # Should be hashed
+        expect(user[:password_hash]).not_to eq("secret123") # Should be hashed
         expect(user[:id]).to be_a(Integer)
         expect(user[:created_at]).to be_a(Time)
       end
 
       it "hashes the password correctly" do
         result = user_registration_class.run(
-          email: 'test@example.com',
-          password: 'testpassword'
+          email: "test@example.com",
+          password: "testpassword"
         )
 
         expect(result).to be_a(RubyReactor::Success)
-        
+
         user = result.value
-        expected_hash = Digest::SHA256.hexdigest('testpassword')
+        expected_hash = Digest::SHA256.hexdigest("testpassword")
         expect(user[:password_hash]).to eq(expected_hash)
       end
     end
@@ -91,8 +91,8 @@ RSpec.describe RubyReactor do
     describe "validation failures" do
       it "fails with invalid email (no @ symbol)" do
         result = user_registration_class.run(
-          email: 'invalid-email',
-          password: 'secret123'
+          email: "invalid-email",
+          password: "secret123"
         )
 
         expect(result).to be_a(RubyReactor::Failure)
@@ -102,7 +102,7 @@ RSpec.describe RubyReactor do
       it "fails with nil email" do
         result = user_registration_class.run(
           email: nil,
-          password: 'secret123'
+          password: "secret123"
         )
 
         expect(result).to be_a(RubyReactor::Failure)
@@ -111,8 +111,8 @@ RSpec.describe RubyReactor do
 
       it "fails with empty email" do
         result = user_registration_class.run(
-          email: '',
-          password: 'secret123'
+          email: "",
+          password: "secret123"
         )
 
         expect(result).to be_a(RubyReactor::Failure)
@@ -123,35 +123,35 @@ RSpec.describe RubyReactor do
     describe "step validation" do
       it "validates email step correctly" do
         valid_emails = [
-          'user@example.com',
-          'test.email@domain.org',
-          'name+tag@site.co.uk'
+          "user@example.com",
+          "test.email@domain.org",
+          "name+tag@site.co.uk"
         ]
 
         valid_emails.each do |email|
           result = user_registration_class.run(
             email: email,
-            password: 'password'
+            password: "password"
           )
-          expect(result).to be_a(RubyReactor::Success), 
-                 "Expected #{email} to be valid"
+          expect(result).to be_a(RubyReactor::Success),
+                            "Expected #{email} to be valid"
         end
       end
 
       it "rejects invalid emails" do
         invalid_emails = [
-          'plainaddress',
-          'missing-at-sign.com',
-          'no-at-symbol.com'
+          "plainaddress",
+          "missing-at-sign.com",
+          "no-at-symbol.com"
         ]
 
         invalid_emails.each do |email|
           result = user_registration_class.run(
             email: email,
-            password: 'password'
+            password: "password"
           )
-          expect(result).to be_a(RubyReactor::Failure), 
-                 "Expected #{email} to be invalid"
+          expect(result).to be_a(RubyReactor::Failure),
+                            "Expected #{email} to be invalid"
         end
       end
     end
@@ -175,10 +175,10 @@ RSpec.describe RubyReactor do
 
           step :create_profile do
             argument :name, input(:name)
-            argument :email, input(:email) 
+            argument :email, input(:email)
             argument :age, input(:age)
-            
-            run do |args, context|
+
+            run do |args, _context|
               profile = {
                 name: args[:name],
                 email: args[:email],
@@ -197,7 +197,7 @@ RSpec.describe RubyReactor do
         it "successfully processes valid data" do
           result = validated_user_class.run(
             name: "Alice Johnson",
-            email: "alice@example.com", 
+            email: "alice@example.com",
             age: 25
           )
 
@@ -241,7 +241,7 @@ RSpec.describe RubyReactor do
           result = validated_user_class.run(
             name: "Bob",
             email: "bob@example.com",
-            age: 15  # Too young
+            age: 15 # Too young
           )
 
           expect(result).to be_a(RubyReactor::Failure)
@@ -260,11 +260,11 @@ RSpec.describe RubyReactor do
           expect(result).to be_a(RubyReactor::Failure)
           expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
           expect(result.error.field_errors.keys).to include(:name, :email, :age)
-          
+
           # Check that the error message contains information about all failed fields
           error_message = result.error.message
           expect(error_message).to include("name")
-          expect(error_message).to include("email") 
+          expect(error_message).to include("email")
           expect(error_message).to include("age")
         end
       end
@@ -284,8 +284,8 @@ RSpec.describe RubyReactor do
           step :create_profile do
             argument :username, input(:username)
             argument :bio, input(:bio)
-            
-            run do |args, context|
+
+            run do |args, _context|
               profile = {
                 username: args[:username],
                 bio: args[:bio] || "No bio provided"
@@ -300,7 +300,7 @@ RSpec.describe RubyReactor do
 
       it "works with optional field provided" do
         result = profile_class.run(
-          username: "alice123", 
+          username: "alice123",
           bio: "I love coding!"
         )
 
@@ -313,14 +313,14 @@ RSpec.describe RubyReactor do
         result = profile_class.run(username: "bob456")
 
         expect(result).to be_a(RubyReactor::Success)
-        expect(result.value[:username]).to eq("bob456") 
+        expect(result.value[:username]).to eq("bob456")
         expect(result.value[:bio]).to eq("No bio provided")
       end
 
       it "validates optional field when provided" do
         result = profile_class.run(
           username: "alice123",
-          bio: "x" * 150  # Too long
+          bio: "x" * 150 # Too long
         )
 
         expect(result).to be_a(RubyReactor::Failure)
@@ -329,7 +329,7 @@ RSpec.describe RubyReactor do
       end
 
       it "fails on required field validation" do
-        result = profile_class.run(username: "ab")  # Too short
+        result = profile_class.run(username: "ab") # Too short
 
         expect(result).to be_a(RubyReactor::Failure)
         expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
@@ -356,8 +356,8 @@ RSpec.describe RubyReactor do
 
           step :create_user do
             argument :user, input(:user)
-            
-            run do |args, context|
+
+            run do |args, _context|
               Success(args[:user])
             end
           end
@@ -402,8 +402,8 @@ RSpec.describe RubyReactor do
 
           step :process do
             argument :data, input(:data)
-            
-            run do |args, context|
+
+            run do |args, _context|
               Success(args[:data])
             end
           end
@@ -427,7 +427,7 @@ RSpec.describe RubyReactor do
 
           step :process do
             argument :test_field, input(:test_field)
-            run { |args, context| Success(args) }
+            run { |args, _context| Success(args) }
           end
 
           returns :process
@@ -438,7 +438,7 @@ RSpec.describe RubyReactor do
         result = error_test_class.run(test_field: "abc")
 
         expect(result).to be_a(RubyReactor::Failure)
-        
+
         error = result.error
         expect(error).to be_a(RubyReactor::Error::InputValidationError)
         expect(error.field_errors).to be_a(Hash)

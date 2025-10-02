@@ -13,12 +13,12 @@ module RubyReactor
 
       def build_message
         return "Input validation failed" if field_errors.empty?
-        
+
         error_messages = field_errors.map do |field, errors|
           "#{field} #{errors}"
         end
-        
-        "Input validation failed: #{error_messages.join(', ')}"
+
+        "Input validation failed: #{error_messages.join(", ")}"
       end
 
       def to_s

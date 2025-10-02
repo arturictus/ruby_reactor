@@ -15,13 +15,13 @@ module RubyReactor
 
         def create_input_validator(schema_or_block)
           check_dry_validation_available!
-          
+
           schema = case schema_or_block
-                  when Proc
-                    build_validation_schema(&schema_or_block)
-                  else
-                    schema_or_block
-                  end
+                   when Proc
+                     build_validation_schema(&schema_or_block)
+                   else
+                     schema_or_block
+                   end
 
           RubyReactor::Validation::InputValidator.new(schema)
         end
@@ -29,9 +29,10 @@ module RubyReactor
         private
 
         def check_dry_validation_available!
-          unless defined?(Dry::Schema)
-            raise LoadError, "dry-validation gem is required for validation features. Add 'gem \"dry-validation\"' to your Gemfile."
-          end
+          return if defined?(Dry::Schema)
+
+          raise LoadError,
+                "dry-validation gem is required for validation features. Add 'gem \"dry-validation\"' to your Gemfile."
         end
       end
 

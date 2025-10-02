@@ -2,8 +2,7 @@
 
 module RubyReactor
   class Context
-    attr_accessor :inputs, :intermediate_results, :private_data
-    attr_accessor :current_step, :retry_count, :concurrency_key
+    attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key
 
     def initialize(inputs = {})
       @inputs = inputs
@@ -64,7 +63,7 @@ module RubyReactor
       when Symbol
         value[path] if value.respond_to?(:[])
       when String
-        path.split('.').reduce(value) { |v, key| v&.send(:[], key) }
+        path.split(".").reduce(value) { |v, key| v&.send(:[], key) }
       when Array
         path.reduce(value) { |v, key| v&.send(:[], key) }
       else

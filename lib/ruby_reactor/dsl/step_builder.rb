@@ -6,8 +6,8 @@ module RubyReactor
       include RubyReactor::Dsl::TemplateHelpers
       include RubyReactor::Dsl::ValidationHelpers
 
-      attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block
-      attr_accessor :conditions, :guards, :dependencies, :args_validator, :output_validator
+      attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
+                    :dependencies, :args_validator, :output_validator
 
       def initialize(name, impl = nil)
         @name = name
@@ -92,13 +92,13 @@ module RubyReactor
 
       def build_input_validator(schema_or_block)
         check_dry_validation_available!
-        
+
         schema = case schema_or_block
-                when Proc
-                  build_validation_schema(&schema_or_block)
-                else
-                  schema_or_block
-                end
+                 when Proc
+                   build_validation_schema(&schema_or_block)
+                 else
+                   schema_or_block
+                 end
 
         RubyReactor::Validation::InputValidator.new(schema)
       end
@@ -108,15 +108,16 @@ module RubyReactor
       end
 
       def check_dry_validation_available!
-        unless defined?(Dry::Schema)
-          raise LoadError, "dry-validation gem is required for validation features. Add 'gem \"dry-validation\"' to your Gemfile."
-        end
+        return if defined?(Dry::Schema)
+
+        raise LoadError,
+              "dry-validation gem is required for validation features. Add 'gem \"dry-validation\"' to your Gemfile."
       end
     end
 
     class StepConfig
-      attr_reader :name, :impl, :arguments, :run_block, :compensate_block, :undo_block
-      attr_reader :conditions, :guards, :dependencies, :args_validator, :output_validator
+      attr_reader :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
+                  :dependencies, :args_validator, :output_validator
 
       def initialize(config)
         @name = config[:name]

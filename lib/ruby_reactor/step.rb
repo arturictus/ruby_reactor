@@ -11,11 +11,11 @@ module RubyReactor
         raise NotImplementedError, "#{self} must implement .run method"
       end
 
-      def compensate(reason, arguments, context)
+      def compensate(_reason, _arguments, _context)
         RubyReactor.Success() # Default: accept failure and continue rollback
       end
 
-      def undo(result, arguments, context)
+      def undo(_result, _arguments, _context)
         RubyReactor.Success() # Default: no-op undo
       end
     end

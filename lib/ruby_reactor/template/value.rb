@@ -9,7 +9,7 @@ module RubyReactor
         @value = value
       end
 
-      def resolve(context)
+      def resolve(_context)
         @value
       end
 

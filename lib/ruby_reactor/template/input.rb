@@ -34,9 +34,9 @@ module RubyReactor
       def extract_path(value, path)
         case path
         when Symbol
-          value[path] if value.respond_to?(:[]) 
+          value[path] if value.respond_to?(:[])
         when String
-          path.split('.').reduce(value) { |v, key| v&.send(:[], key) }
+          path.split(".").reduce(value) { |v, key| v&.send(:[], key) }
         when Array
           path.reduce(value) { |v, key| v&.send(:[], key) }
         else
