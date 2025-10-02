@@ -5,7 +5,7 @@ require: rubocop-rspec
 
 AllCops:
   TargetRubyVersion: 3.0
-  # NewCops: enable
+  NewCops: enable
   Exclude:
     - vendor/**/*
     - tmp/**/*
@@ -78,3 +78,18 @@ Metrics/CyclomaticComplexity:
 
 Metrics/PerceivedComplexity:
   Max: 15
+
+Capybara:
+  Enabled: false
+
+Capybara/RSpec/PredicateMatcher:
+  Enabled: false
+
+RSpec/Capybara:
+  Enabled: false
+
+RSpec/FactoryBot:
+  Enabled: false
+
+RSpecRails:
+  Enabled: false
