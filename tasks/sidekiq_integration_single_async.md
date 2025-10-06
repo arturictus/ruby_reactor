@@ -21,6 +21,243 @@ This document provides a detailed implementation plan for Sidekiq integration in
    - First async step triggers handoff to single worker for all remaining execution
    - Compensations and undo run in the same worker if failure occurs
 
+**Retry Strategy:**
+- **Step-Level Retry**: Configurable retry behavior per step (max_attempts, backoff, idempotency)
+- **Reactor-Level Retry**: Default retry settings for entire reactor execution
+- **Custom Retry Logic**: Our own retry implementation instead of Sidekiq's job-level retries
+- **Idempotency Focus**: Make individual steps idempotent rather than entire reactor
+
+## Retry Configuration Design
+
+### Step-Level Retry DSL
+
+```ruby
+class StepBuilder
+  def retry(max_attempts: 3, backoff: :exponential, base_delay: 1.second, idempotent: false)
+    @retry_config = {
+      max_attempts: max_attempts,
+      backoff: backoff, # :exponential, :linear, :fixed
+      base_delay: base_delay,
+      idempotent: idempotent
+    }
+  end
+
+  def idempotent(idempotent = true)
+    @retry_config ||= {}
+    @retry_config[:idempotent] = idempotent
+  end
+end
+
+class StepConfig
+  attr_reader :retry_config
+
+  def initialize(config)
+    @retry_config = config[:retry_config] || { max_attempts: 1, idempotent: false }
+  end
+
+  def retryable?
+    retry_config[:max_attempts] > 1
+  end
+
+  def idempotent?
+    retry_config[:idempotent]
+  end
+end
+```
+
+### Reactor-Level Retry DSL
+
+```ruby
+module RubyReactor
+  module Dsl
+    module Reactor
+      module ClassMethods
+        def retry_defaults(max_attempts: 3, backoff: :exponential, base_delay: 1.second)
+          @retry_defaults = {
+            max_attempts: max_attempts,
+            backoff: backoff,
+            base_delay: base_delay
+          }
+        end
+
+        def retry_defaults
+          @retry_defaults ||= { max_attempts: 1, backoff: :exponential, base_delay: 1.second }
+        end
+      end
+    end
+  end
+end
+```
+
+### Usage Examples
+
+```ruby
+class OrderProcessingReactor < RubyReactor::Reactor
+  # Reactor-level defaults
+  retry_defaults max_attempts: 5, backoff: :exponential, base_delay: 2.seconds
+
+  step :validate_order do
+    # Inherits reactor defaults: 5 attempts, exponential backoff
+    run { validate_order_logic }
+  end
+
+  step :check_inventory, async: true do
+    retry max_attempts: 10, backoff: :linear, base_delay: 5.seconds, idempotent: true
+    # Custom retry: 10 attempts, linear backoff, marked as idempotent
+    run { inventory_check }
+  end
+
+  step :process_payment do
+    idempotent true  # Mark as idempotent but use reactor defaults
+    run { payment_processing }
+  end
+
+  step :send_notification do
+    # No retry - critical step that should fail fast
+    run { send_email }
+  end
+end
+```
+
+### Custom Retry Implementation
+
+Instead of Sidekiq's job-level retries, implement our own retry logic:
+
+```ruby
+class Executor
+  def execute_step_with_retry(step_config, context)
+    attempt = 1
+    max_attempts = step_config.retry_config[:max_attempts]
+
+    loop do
+      begin
+        result = execute_step_implementation(step_config, context)
+
+        if result.success?
+          mark_step_completed(step_config.name, result)
+          return result
+        else
+          raise StepExecutionError.new(result.error)
+        end
+
+      rescue StepExecutionError => e
+        if attempt < max_attempts && step_config.retryable?
+          delay = calculate_backoff_delay(step_config.retry_config, attempt)
+          sleep(delay) if delay > 0
+          attempt += 1
+
+          # Log retry attempt
+          log_retry_attempt(step_config.name, attempt, max_attempts, e)
+
+          # Reset any step-specific state if needed
+          reset_step_state_for_retry(step_config, context) if step_config.idempotent?
+
+          next
+        else
+          # Max attempts reached or not retryable
+          raise e
+        end
+      end
+    end
+  end
+
+  def calculate_backoff_delay(retry_config, attempt)
+    base_delay = retry_config[:base_delay]
+    backoff = retry_config[:backoff]
+
+    case backoff
+    when :exponential
+      base_delay * (2 ** (attempt - 1))
+    when :linear
+      base_delay * attempt
+    when :fixed
+      base_delay
+    else
+      base_delay
+    end
+  end
+end
+```
+
+### Sidekiq Worker Changes
+
+Disable Sidekiq's built-in retry mechanism and rely on our custom logic:
+
+```ruby
+class RubyReactorWorker
+  include Sidekiq::Worker
+
+  # Disable Sidekiq retries - we handle our own
+  sidekiq_options retry: 0, dead: false
+
+  def perform(data, reactor_class_name = nil)
+    # Our custom retry logic will handle failures within the job
+    # If the entire reactor execution fails, we don't retry the job
+    begin
+      execute_reactor(data, reactor_class_name)
+    rescue StandardError => e
+      # Log the failure but don't retry the job
+      # The reactor's retry logic should have already been exhausted
+      log_reactor_failure(e, data, reactor_class_name)
+      raise # Re-raise to mark job as failed
+    end
+  end
+end
+```
+
+### Benefits of Step-Level Retry
+
+1. **Fine-Grained Control**: Different retry strategies per step
+2. **Idempotency Focus**: Make individual steps idempotent rather than entire reactor
+3. **Better Error Handling**: Some steps can fail fast, others can retry aggressively
+4. **Resource Efficiency**: Don't retry non-idempotent operations
+5. **Observability**: Track retry attempts per step, not just per job
+
+### Challenges & Considerations
+
+1. **State Management**: How to handle partial state during retries?
+   - **Solution**: Context tracks completed steps, retry resets step-specific state
+
+2. **Compensation Interaction**: What happens to compensation when retries occur?
+   - **Solution**: Compensation only triggers after all retries exhausted
+
+3. **Timeout Management**: How do step-level retries interact with worker timeouts?
+   - **Solution**: Configure worker timeouts > max retry time, track retry duration
+
+4. **Monitoring**: How to track retry metrics per step?
+   - **Solution**: Add retry counters to context, log retry attempts
+
+5. **Backoff Strategy**: Which backoff algorithms to support?
+   - **Solution**: Support exponential, linear, and fixed backoff
+
+6. **Idempotency Enforcement**: How to ensure steps marked as idempotent actually are?
+   - **Solution**: Documentation, testing, and runtime checks
+
+### Implementation Questions
+
+1. **Should non-idempotent steps be allowed to configure retries?**
+   - Probably not - we should warn or prevent this
+
+2. **How to handle step timeouts during retries?**
+   - Individual step timeouts vs overall reactor timeout
+
+3. **Should retry configuration be inherited from reactor defaults?**
+   - Yes, with step-level overrides
+
+4. **How to handle circuit breaker patterns for external service calls?**
+   - Could be an extension of the retry logic
+
+What do you think about these challenges? Which one should we tackle first in the implementation?
+
+### Challenges & Considerations
+
+1. **State Management**: How to handle partial state during retries?
+2. **Compensation**: What happens to compensation when retries occur?
+3. **Timeout**: How do step-level retries interact with worker timeouts?
+4. **Monitoring**: How to track retry metrics per step?
+
+What do you think about this approach? Should we implement the retry configuration at the step level first, or would you prefer to start with reactor-level defaults?
+
 ## Architecture Overview
 
 ### Execution Models
@@ -218,7 +455,7 @@ class Executor
 
       # Execute sync steps sequentially (NO PARALLELISM)
       ready_steps.each do |step_config|
-        execute_step(step_config)
+        execute_step_with_retry(step_config, context)
       end
     end
 
@@ -425,22 +662,35 @@ graph TD
 class RubyReactorWorker
   include Sidekiq::Worker
 
-  sidekiq_options retry: 3, dead: true
+  # Disable Sidekiq retries - we handle our own at step/reactor level
+  sidekiq_options retry: 0, dead: false
 
   sidekiq_retries_exhausted do |msg, ex|
-    # Handle exhausted retries
-    context_data = msg['args'].first
-    context = Context.deserialize(context_data)
-
-    # Mark reactor as failed
-    mark_reactor_failed(context, ex)
+    # This should rarely happen since we handle retries internally
+    # Log critical failure that bypassed our retry logic
+    log_critical_failure(msg, ex)
   end
 
-  def perform(serialized_context)
-    # Implementation with error handling
-  rescue StandardError => e
-    handle_worker_error(e, serialized_context)
-    raise
+  def perform(data, reactor_class_name = nil)
+    begin
+      if reactor_class_name
+        # Full async reactor: data is inputs, reactor_class_name provided
+        reactor_class = Object.const_get(reactor_class_name)
+        context = Context.new(JSON.parse(data))
+        executor = Executor.new(reactor_class, context.inputs)
+        executor.execute_full_async
+      else
+        # Step-level async: data is serialized context
+        context = Context.deserialize(data)
+        executor = Executor.new(context.reactor_class, context.inputs)
+        executor.continue_execution(context)
+      end
+    rescue StandardError => e
+      # Our custom retry logic should have handled all recoverable failures
+      # This represents a critical failure that couldn't be recovered
+      log_critical_reactor_failure(e, data, reactor_class_name)
+      raise
+    end
   end
 end
 ```
@@ -876,18 +1126,20 @@ end
 
 ## Updated Implementation Timeline
 
-**Week 1-2**: Core Infrastructure (DSL + Context Serialization)
+**Week 1-2**: Core Infrastructure (DSL + Context Serialization + Step-Level Retry)
 **Week 3**: Two Async Models Implementation
 **Week 4**: Rollback Implementation & Testing
 **Week 5**: Complex Scenarios & Performance Testing
+**Week 6**: Retry Logic Integration & Idempotency Testing
 
 ## Decision Points
 
 1. **Redis Storage**: Implement monitoring hooks but start without Redis persistence
 2. **Compensation Strategy**: Implement synchronous compensation in workers
 3. **Error Handling**: Fail fast on compensation failures with detailed logging
-4. **Retry Logic**: Use Sidekiq's built-in retry with attempt counter in context
+4. **Retry Logic**: Custom step-level retry instead of Sidekiq job-level retries
 5. **Timeout Configuration**: Set reasonable worker timeouts based on expected execution times
+6. **Idempotency**: Focus on making individual steps idempotent rather than entire reactors
 
-Would you like me to proceed with implementing the two async models infrastructure?</content>
+Would you like me to proceed with implementing the step-level retry infrastructure first?</content>
 <parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/tasks/sidekiq_integration_single_async.md
