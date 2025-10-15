@@ -2,15 +2,17 @@
 
 module RubyReactor
   class Context
-    attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key
+    attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key, :retry_context, :reactor_class
 
-    def initialize(inputs = {})
+    def initialize(inputs = {}, reactor_class = nil)
       @inputs = inputs
       @intermediate_results = {}
       @private_data = {}
       @current_step = nil
       @retry_count = 0
       @concurrency_key = nil
+      @retry_context = RetryContext.new
+      @reactor_class = reactor_class
     end
 
     def get_input(name, path = nil)
@@ -52,7 +54,9 @@ module RubyReactor
         inputs: @inputs,
         intermediate_results: @intermediate_results,
         current_step: @current_step,
-        retry_count: @retry_count
+        retry_count: @retry_count,
+        retry_context: @retry_context,
+        reactor_class: @reactor_class
       }
     end
 

@@ -10,6 +10,13 @@ rescue LoadError
   # dry-validation is optional, validation features won't be available
 end
 
+# Load sidekiq if available (for async features)
+begin
+  require "sidekiq"
+rescue LoadError
+  # sidekiq is optional, async features won't be available
+end
+
 loader = Zeitwerk::Loader.for_gem
 loader.setup
 

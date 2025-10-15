@@ -19,29 +19,29 @@ For detailed implementation specifications, code examples, and architecture deci
 ## Phase 1: Core Infrastructure Setup
 
 ### Dependencies & Configuration
-- [ ] Update `ruby_reactor.gemspec` to add Sidekiq and Redis dependencies
-- [ ] Create initial Sidekiq worker class structure
-- [ ] Set up basic Sidekiq configuration for the gem
+- [x] Update `ruby_reactor.gemspec` to add Sidekiq and Redis dependencies
+- [x] Create initial Sidekiq worker class structure
+- [x] Set up basic Sidekiq configuration for the gem
 
 ### DSL Extensions for Async Support
-- [ ] Extend Reactor DSL with `async` class method
-- [ ] Extend Step DSL with `async:` option in step builder
-- [ ] Add `async?` methods to Reactor and StepConfig classes
-- [ ] **Test:** Unit tests for DSL extensions
+- [x] Extend Reactor DSL with `async` class method
+- [x] Extend Step DSL with `async:` option in step builder
+- [x] Add `async?` methods to Reactor and StepConfig classes
+- [x] **Test:** Unit tests for DSL extensions
 
 ### Retry Configuration DSL
-- [ ] Implement `retry` method in StepBuilder with max_attempts, backoff, base_delay options
-- [ ] Add `idempotent` method to StepBuilder
-- [ ] Implement reactor-level `retry_defaults` class method
-- [ ] Create StepConfig retry_config attribute handling
-- [ ] **Test:** Unit tests for retry configuration parsing
+- [x] Implement `retry` method in StepBuilder with max_attempts, backoff, base_delay options
+- [x] Add `idempotent` method to StepBuilder
+- [x] Implement reactor-level `retry_defaults` class method
+- [x] Create StepConfig retry_config attribute handling
+- [x] **Test:** Unit tests for retry configuration parsing
 
 ### Core Classes Setup
-- [ ] Create `RetryContext` class with step_attempts tracking
-- [ ] Add retry_context to Context class initialization
-- [ ] Implement basic serialization structure in Context
-- [ ] Create `RubyReactor::RetryQueuedResult` class
-- [ ] **Test:** Unit tests for new classes and basic serialization
+- [x] Create `RetryContext` class with step_attempts tracking
+- [x] Add retry_context to Context class initialization
+- [x] Implement basic serialization structure in Context
+- [x] Create `RubyReactor::RetryQueuedResult` class
+- [x] **Test:** Unit tests for new classes and basic serialization
 
 ---
 
