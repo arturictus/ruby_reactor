@@ -9,8 +9,24 @@ module RubyReactor
     end
 
     def run(inputs = {})
-      executor = Executor.new(self.class, inputs)
-      executor.execute
+      if self.class.async?
+        # For async reactors, enqueue the job and return immediately
+        context = Context.new(inputs, self.class)
+        serialized_context = ContextSerializer.serialize(context)
+        RubyReactor::Worker.perform_async(serialized_context)
+        
+        # Return a result indicating the job was queued
+        RubyReactor::AsyncResult.new(job_id: nil) # TODO: Get job ID from Sidekiq
+      else
+        # For sync reactors (potentially with async steps), execute normally
+        executor = Executor.new(self.class, inputs)
+        result = executor.execute
+        
+        # If execution returned an AsyncResult (from step-level async), return it
+        return result if result.is_a?(RubyReactor::AsyncResult)
+        
+        result
+      end
     end
 
     def validate!

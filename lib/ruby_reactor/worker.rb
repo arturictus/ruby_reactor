@@ -17,11 +17,12 @@ module RubyReactor
     end
 
     def perform(serialized_context)
-      context = Context.deserialize_from_retry(serialized_context)
+      context = ContextSerializer.deserialize(serialized_context)
 
       # Resume execution from the failed step
-      executor = Executor.new(context.reactor_class, context.inputs)
-      executor.resume_execution(context)
+      executor = Executor.new(context.reactor_class)
+      executor.context = context
+      executor.resume_execution
     rescue StandardError => e
       # Log unexpected errors but don't retry - our custom logic handles retries
       log_unexpected_error(e, context)

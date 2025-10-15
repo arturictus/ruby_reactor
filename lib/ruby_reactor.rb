@@ -54,6 +54,27 @@ module RubyReactor
     end
   end
 
+  # Async result for background job execution
+  class AsyncResult
+    attr_reader :job_id
+
+    def initialize(job_id:)
+      @job_id = job_id
+    end
+
+    def async?
+      true
+    end
+
+    def success?
+      false
+    end
+
+    def failure?
+      false
+    end
+  end
+
   # Global helper methods
   def self.Success(value = nil)
     Success.new(value)

@@ -75,9 +75,15 @@ module RubyReactor
           )
         end
 
-        # For now, execute steps sequentially (Phase 1)
+        # Execute steps sequentially
         ready_steps.each do |step_config|
-          execute_step(step_config)
+          result = execute_step(step_config)
+          
+          # If step execution was handed off to async, return the async result
+          return result if result.is_a?(RubyReactor::AsyncResult)
+          
+          # If a step returns RetryQueuedResult, we need to stop and return it
+          return result if result.is_a?(RetryQueuedResult)
         end
       end
 
@@ -91,6 +97,64 @@ module RubyReactor
     end
 
     def execute_step(step_config)
+      if step_config.async?
+        # Step-level async: hand off execution to worker
+        context.current_step = step_config.name
+        serialized_context = ContextSerializer.serialize(context)
+        RubyReactor::Worker.perform_async(serialized_context)
+        RubyReactor::AsyncResult.new(job_id: nil) # TODO: Get job ID
+      elsif async_execution?
+        execute_step_with_retry(step_config)
+      else
+        execute_step_sync(step_config)
+      end
+    end
+
+    def execute_step_with_retry(step_config)
+      context.retry_context.current_step = step_config.name
+      context.retry_context.increment_attempt_for_step(step_config.name)
+
+      begin
+        result = execute_step_sync(step_config)
+
+        if result.is_a?(RubyReactor::Success)
+          # Step succeeded, clear retry state
+          context.retry_context.current_step = nil
+          context.retry_context.failure_reason = nil
+          context.retry_context.next_retry_at = nil
+          result
+        else
+          # Step failed, check if we can retry
+          if can_retry_step?(step_config)
+            requeue_job_for_step_retry(step_config, result.error)
+            RetryQueuedResult.new(
+              step_config.name,
+              context.retry_context.attempts_for_step(step_config.name),
+              context.retry_context.next_retry_at
+            )
+          else
+            # Cannot retry, fail
+            context.retry_context.current_step = nil
+            result
+          end
+        end
+      rescue StandardError => e
+        # Handle unexpected errors the same way
+        if can_retry_step?(step_config)
+          requeue_job_for_step_retry(step_config, e)
+          RetryQueuedResult.new(
+            step_config.name,
+            context.retry_context.attempts_for_step(step_config.name),
+            context.retry_context.next_retry_at
+          )
+        else
+          context.retry_context.current_step = nil
+          RubyReactor::Failure(e)
+        end
+      end
+    end
+
+    def execute_step_sync(step_config)
       context.with_step(step_config.name) do
         # Check conditions and guards
         unless step_config.should_run?(context)
@@ -223,6 +287,103 @@ module RubyReactor
         rollback_completed_steps
         RubyReactor.Failure("Execution failed: #{error.message}")
       end
+    end
+
+    private
+
+    def async_execution?
+      reactor_class.async?
+    end
+
+    def can_retry_step?(step_config)
+      step_config.retryable? && context.retry_context.can_retry_step?(step_config.name, step_config.retry_config[:max_attempts])
+    end
+
+    def resume_execution
+      # Resume execution from the current state
+      # This is called when a job is requeued after a step retry
+      
+      # If there's a current_step, it means we need to retry that step
+      if context.current_step
+        step_config = reactor_class.steps[context.current_step]
+        if step_config
+          result = execute_step_with_retry(step_config)
+          case result
+          when RetryQueuedResult
+            # Step was requeued again, return the result
+            return result
+          when RubyReactor::Success, RubyReactor::Failure
+            # Step completed (success or final failure), continue with remaining steps
+            execute_remaining_steps
+          end
+        else
+          # Step not found, this is an error
+          return RubyReactor::Failure("Step '#{context.current_step}' not found in reactor")
+        end
+      else
+        # No current step, execute remaining steps
+        execute_remaining_steps
+      end
+    end
+
+    def execute_remaining_steps
+      until dependency_graph.all_completed?
+        ready_steps = dependency_graph.ready_steps
+
+        if ready_steps.empty?
+          raise Error::DependencyError.new(
+            "No ready steps available but execution not complete",
+            context: context
+          )
+        end
+
+        # Execute steps sequentially
+        ready_steps.each do |step_config|
+          result = execute_step(step_config)
+          
+          # If step execution was handed off to async, return the async result
+          return result if result.is_a?(RubyReactor::AsyncResult)
+          
+          # If a step returns RetryQueuedResult, we need to stop and return it
+          if result.is_a?(RetryQueuedResult)
+            return result
+          end
+        end
+      end
+
+      # Return the final result
+      if reactor_class.return_step
+        result_value = context.get_result(reactor_class.return_step)
+        RubyReactor.Success(result_value)
+      else
+        RubyReactor.Success(context.intermediate_results)
+      end
+    end
+
+    private
+
+    def async_execution?
+      reactor_class.async?
+    end
+
+    def can_retry_step?(step_config)
+      step_config.retryable? && context.retry_context.can_retry_step?(step_config.name, step_config.retry_config[:max_attempts])
+    end
+
+    def requeue_job_for_step_retry(step_config, error)
+      context.retry_context.failure_reason = error
+      attempt_number = context.retry_context.attempts_for_step(step_config.name)
+      backoff_strategy = step_config.retry_config[:backoff] || reactor_class.get_retry_defaults[:backoff]
+      base_delay = step_config.retry_config[:base_delay] || reactor_class.get_retry_defaults[:base_delay]
+      
+      delay = RetryContext.calculate_backoff_delay(attempt_number, backoff_strategy, base_delay)
+      context.retry_context.next_retry_at = Time.now + delay
+
+      # Serialize context and requeue the job
+      serialized_context = ContextSerializer.serialize(context)
+      RubyReactor::Worker.perform_in(delay, serialized_context)
+      
+      Sidekiq.logger.info("Requeued job for step '#{step_config.name}' with delay #{delay} seconds (attempt #{attempt_number})")
     end
   end
 end
