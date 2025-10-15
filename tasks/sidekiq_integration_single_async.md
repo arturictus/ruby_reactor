@@ -121,7 +121,7 @@ end
 
 ### Custom Retry Implementation
 
-Instead of Sidekiq's job-level retries, implement our own retry logic:
+Instead of Sidekiq's job-level retries, implement our own retry logic with logging to reflect retry attempts in the Sidekiq web interface:
 
 ```ruby
 class Executor
@@ -131,9 +131,11 @@ class Executor
 
     loop do
       begin
+        Sidekiq.logger.info("Executing step '#{step_config.name}' - attempt #{attempt}/#{max_attempts}")
         result = execute_step_implementation(step_config, context)
 
         if result.success?
+          Sidekiq.logger.info("Step '#{step_config.name}' completed successfully on attempt #{attempt}")
           mark_step_completed(step_config.name, result)
           return result
         else
@@ -141,19 +143,20 @@ class Executor
         end
 
       rescue StepExecutionError => e
+        Sidekiq.logger.warn("Step '#{step_config.name}' failed on attempt #{attempt}: #{e.message}")
+        
         if attempt < max_attempts && step_config.retryable?
           delay = calculate_backoff_delay(step_config.retry_config, attempt)
+          Sidekiq.logger.info("Retrying step '#{step_config.name}' in #{delay} seconds (attempt #{attempt + 1}/#{max_attempts})")
           sleep(delay) if delay > 0
           attempt += 1
-
-          # Log retry attempt
-          log_retry_attempt(step_config.name, attempt, max_attempts, e)
 
           # Reset any step-specific state if needed
           reset_step_state_for_retry(step_config, context) if step_config.idempotent?
 
           next
         else
+          Sidekiq.logger.error("Step '#{step_config.name}' exhausted all #{max_attempts} retry attempts")
           # Max attempts reached or not retryable
           raise e
         end
@@ -178,6 +181,11 @@ class Executor
   end
 end
 ```
+
+**Sidekiq Interface Visibility:**
+- Each retry attempt is logged with `Sidekiq.logger`, making it visible in the Sidekiq web UI job details
+- Logs include step name, attempt number, success/failure status, and retry delays
+- This provides full visibility into step-level retry behavior without relying on Sidekiq's job-level retry mechanism
 
 ### Sidekiq Worker Changes
 
