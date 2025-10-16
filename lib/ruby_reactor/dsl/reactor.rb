@@ -11,7 +11,7 @@ module RubyReactor
         base.instance_variable_set(:@middlewares, [])
         base.instance_variable_set(:@input_validations, {})
         base.instance_variable_set(:@async, false)
-        base.instance_variable_set(:@retry_defaults, { max_attempts: 1, backoff: :exponential, base_delay: 1 })
+        base.instance_variable_set(:@retry_defaults, { max_attempts: 3, backoff: :exponential, base_delay: 1 })
       end
 
       module ClassMethods
@@ -72,7 +72,7 @@ module RubyReactor
         end
 
         def step(name, impl = nil, &block)
-          builder = RubyReactor::Dsl::StepBuilder.new(name, impl)
+          builder = RubyReactor::Dsl::StepBuilder.new(name, impl, self)
 
           builder.instance_eval(&block) if block_given?
 

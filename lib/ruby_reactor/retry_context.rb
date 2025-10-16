@@ -22,7 +22,10 @@ module RubyReactor
     end
 
     def can_retry_step?(step_name, max_attempts)
-      attempts_for_step(step_name) < max_attempts
+      attempts = attempts_for_step(step_name)
+      result = attempts < max_attempts
+      puts "RubyReactor: can_retry_step? in retry_context: step='#{step_name}', attempts=#{attempts}, max_attempts=#{max_attempts}, result=#{result}"
+      result
     end
 
     def reset

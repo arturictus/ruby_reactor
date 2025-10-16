@@ -4,9 +4,9 @@ module RubyReactor
   class Executor
     attr_reader :reactor_class, :context, :dependency_graph, :undo_stack
 
-    def initialize(reactor_class, inputs = {})
+    def initialize(reactor_class, inputs = {}, context = nil)
       @reactor_class = reactor_class
-      @context = Context.new(inputs)
+      @context = context || Context.new(inputs, reactor_class)
       @dependency_graph = DependencyGraph.new
       @undo_stack = []
       @step_results = {}
@@ -20,6 +20,40 @@ module RubyReactor
       execute_steps
     rescue StandardError => e
       handle_execution_error(e)
+    end
+
+    def resume_execution
+      # Resume execution from the current state
+      # This is called when a job is requeued after a step retry
+
+      # Build dependency graph and mark completed steps
+      build_dependency_graph
+      mark_completed_steps_from_context
+
+      # If there's a current_step, it means we need to retry that step
+      if context.current_step
+        step_config = reactor_class.steps[context.current_step]
+        if step_config
+          result = execute_step_with_retry(step_config)
+          case result
+          when RetryQueuedResult
+            # Step was requeued again, return the result
+            return result
+          when RubyReactor::Success
+            # Step succeeded, continue with remaining steps
+            execute_remaining_steps
+          when RubyReactor::Failure
+            # Step failed finally, return the failure
+            return result
+          end
+        else
+          # Step not found, this is an error
+          return RubyReactor::Failure("Step '#{context.current_step}' not found in reactor")
+        end
+      else
+        # No current step, execute remaining steps
+        execute_remaining_steps
+      end
     end
 
     private
@@ -101,7 +135,7 @@ module RubyReactor
         # Step-level async: hand off execution to worker
         context.current_step = step_config.name
         serialized_context = ContextSerializer.serialize(context)
-        RubyReactor::Worker.perform_async(serialized_context)
+        RubyReactor::Worker.perform_async(serialized_context, reactor_class.name)
         RubyReactor::AsyncResult.new(job_id: nil) # TODO: Get job ID
       elsif async_execution?
         execute_step_with_retry(step_config)
@@ -111,46 +145,54 @@ module RubyReactor
     end
 
     def execute_step_with_retry(step_config)
+      Sidekiq.logger.info "RubyReactor: Starting execution of step '#{step_config.name}'"
       context.retry_context.current_step = step_config.name
       context.retry_context.increment_attempt_for_step(step_config.name)
+      attempt_count = context.retry_context.attempts_for_step(step_config.name)
+      Sidekiq.logger.info "RubyReactor: Attempt #{attempt_count} for step '#{step_config.name}'"
 
-      begin
-        result = execute_step_sync(step_config)
+      result = safe_execute_step_sync(step_config)
 
-        if result.is_a?(RubyReactor::Success)
-          # Step succeeded, clear retry state
-          context.retry_context.current_step = nil
-          context.retry_context.failure_reason = nil
-          context.retry_context.next_retry_at = nil
-          result
-        else
-          # Step failed, check if we can retry
-          if can_retry_step?(step_config)
-            requeue_job_for_step_retry(step_config, result.error)
-            RetryQueuedResult.new(
-              step_config.name,
-              context.retry_context.attempts_for_step(step_config.name),
-              context.retry_context.next_retry_at
-            )
-          else
-            # Cannot retry, fail
-            context.retry_context.current_step = nil
-            result
-          end
-        end
-      rescue StandardError => e
-        # Handle unexpected errors the same way
+      if result.is_a?(RubyReactor::Success)
+        # Step succeeded, clear retry state
+        Sidekiq.logger.info "RubyReactor: Step '#{step_config.name}' succeeded"
+        context.retry_context.current_step = nil
+        context.retry_context.failure_reason = nil
+        context.retry_context.next_retry_at = nil
+        dependency_graph.complete_step(step_config.name)
+        result
+      elsif result.is_a?(RubyReactor::Failure)
+        # Step failed, check if we can retry
+        Sidekiq.logger.info "RubyReactor: Step '#{step_config.name}' failed: #{result.error.message}, result class: #{result.class}"
         if can_retry_step?(step_config)
-          requeue_job_for_step_retry(step_config, e)
+          Sidekiq.logger.info "RubyReactor: Re-queuing step '#{step_config.name}' for retry"
+          requeue_job_for_step_retry(step_config, result.error)
           RetryQueuedResult.new(
             step_config.name,
             context.retry_context.attempts_for_step(step_config.name),
             context.retry_context.next_retry_at
           )
         else
+          # Cannot retry, fail
+          Sidekiq.logger.info "RubyReactor: Step '#{step_config.name}' failed permanently, cannot retry"
           context.retry_context.current_step = nil
-          RubyReactor::Failure(e)
+          dependency_graph.complete_step(step_config.name)
+          result
         end
+      else
+        # Unexpected result type
+        Sidekiq.logger.info "RubyReactor: Step '#{step_config.name}' returned unexpected result: #{result.inspect}, result class: #{result.class}"
+        context.retry_context.current_step = nil
+        dependency_graph.complete_step(step_config.name)
+        RubyReactor::Failure("Step '#{step_config.name}' returned unexpected result: #{result.inspect}")
+      end
+    end
+
+    def safe_execute_step_sync(step_config)
+      begin
+        execute_step_sync(step_config)
+      rescue StandardError => e
+        RubyReactor::Failure(e)
       end
     end
 
@@ -289,43 +331,6 @@ module RubyReactor
       end
     end
 
-    private
-
-    def async_execution?
-      reactor_class.async?
-    end
-
-    def can_retry_step?(step_config)
-      step_config.retryable? && context.retry_context.can_retry_step?(step_config.name, step_config.retry_config[:max_attempts])
-    end
-
-    def resume_execution
-      # Resume execution from the current state
-      # This is called when a job is requeued after a step retry
-      
-      # If there's a current_step, it means we need to retry that step
-      if context.current_step
-        step_config = reactor_class.steps[context.current_step]
-        if step_config
-          result = execute_step_with_retry(step_config)
-          case result
-          when RetryQueuedResult
-            # Step was requeued again, return the result
-            return result
-          when RubyReactor::Success, RubyReactor::Failure
-            # Step completed (success or final failure), continue with remaining steps
-            execute_remaining_steps
-          end
-        else
-          # Step not found, this is an error
-          return RubyReactor::Failure("Step '#{context.current_step}' not found in reactor")
-        end
-      else
-        # No current step, execute remaining steps
-        execute_remaining_steps
-      end
-    end
-
     def execute_remaining_steps
       until dependency_graph.all_completed?
         ready_steps = dependency_graph.ready_steps
@@ -381,9 +386,15 @@ module RubyReactor
 
       # Serialize context and requeue the job
       serialized_context = ContextSerializer.serialize(context)
-      RubyReactor::Worker.perform_in(delay, serialized_context)
+      RubyReactor::Worker.perform_in(delay, serialized_context, reactor_class.name)
       
       Sidekiq.logger.info("Requeued job for step '#{step_config.name}' with delay #{delay} seconds (attempt #{attempt_number})")
+    end
+
+    def mark_completed_steps_from_context
+      context.intermediate_results.each_key do |step_name|
+        dependency_graph.complete_step(step_name)
+      end
     end
   end
 end
