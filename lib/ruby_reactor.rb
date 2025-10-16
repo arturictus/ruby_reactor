@@ -83,4 +83,12 @@ module RubyReactor
   def self.Failure(error)
     Failure.new(error)
   end
+
+  def self.configure
+    yield(Configuration.instance) if block_given?
+  end
+
+  def self.configuration
+    Configuration.instance
+  end
 end

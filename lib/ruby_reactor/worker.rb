@@ -9,7 +9,8 @@ module RubyReactor
     include Sidekiq::Worker
 
     # Enable Sidekiq retries for infrastructure failures only
-    sidekiq_options retry: RubyReactor::Configuration.sidekiq_retry_count, dead: false, queue: RubyReactor::Configuration.sidekiq_queue
+    sidekiq_options retry: RubyReactor.configuration.sidekiq_retry_count, dead: false,
+                    queue: RubyReactor.configuration.sidekiq_queue
 
     sidekiq_retries_exhausted do |_, exception|
       # Handle infrastructure failures (network, Redis, etc.)

@@ -19,9 +19,9 @@ class TestAsyncReactor < RubyReactor::Reactor
 
     run do |args, _context|
       if args[:user_id].to_i > 0 && args[:email].include?("@")
-        RubyReactor.Success("valid")
+        Success("valid")
       else
-        RubyReactor.Failure("Invalid input")
+        Failure("Invalid input")
       end
     end
   end
@@ -32,7 +32,7 @@ class TestAsyncReactor < RubyReactor::Reactor
     run do |args, _context|
       # Simulate user creation
       user = { id: args[:user_id], email: args[:email] }
-      RubyReactor.Success(user)
+      Success(user)
     end
   end
 
@@ -41,7 +41,7 @@ class TestAsyncReactor < RubyReactor::Reactor
 
     run do |args, _context|
       # Simulate email sending
-      RubyReactor.Success("Email sent to #{args[:user][:email]}")
+      Success("Email sent to #{args[:user][:email]}")
     end
   end
 end
@@ -56,9 +56,9 @@ class TestStepAsyncReactor < RubyReactor::Reactor
 
     run do |args, _context|
       if args[:user_id].to_i > 0 && args[:email].include?("@")
-        RubyReactor.Success("valid")
+        Success("valid")
       else
-        RubyReactor.Failure("Invalid input")
+        Failure("Invalid input")
       end
     end
   end
@@ -70,7 +70,7 @@ class TestStepAsyncReactor < RubyReactor::Reactor
     run do |args, _context|
       # Simulate user creation
       user = { id: args[:user_id], email: args[:email] }
-      RubyReactor.Success(user)
+      Success(user)
     end
   end
 
@@ -79,7 +79,7 @@ class TestStepAsyncReactor < RubyReactor::Reactor
 
     run do |args, _context|
       # Simulate email sending
-      RubyReactor.Success("Email sent to #{args[:user][:email]}")
+      Success("Email sent to #{args[:user][:email]}")
     end
   end
 end
@@ -98,9 +98,9 @@ class RetryExponentialReactor < RubyReactor::Reactor
 
       # Fail first 2 attempts, succeed on 3rd
       if attempt < 3
-        RubyReactor.Failure("Attempt #{attempt} failed")
+        Failure("Attempt #{attempt} failed")
       else
-        RubyReactor.Success("Success on attempt #{attempt}")
+        Success("Success on attempt #{attempt}")
       end
     end
   end
@@ -113,7 +113,7 @@ class RetryLinearReactor < RubyReactor::Reactor
     retries max_attempts: 3, backoff: :linear, base_delay: 2
 
     run do |_args, _context|
-      RubyReactor.Failure("Always fails for testing")
+      Failure("Always fails for testing")
     end
   end
 end
@@ -125,7 +125,7 @@ class RetryFixedReactor < RubyReactor::Reactor
     retries max_attempts: 3, backoff: :fixed, base_delay: 5
 
     run do |_args, _context|
-      RubyReactor.Failure("Always fails for testing")
+      Failure("Always fails for testing")
     end
   end
 end
@@ -140,13 +140,13 @@ class CompensatingReactor < RubyReactor::Reactor
 
     run do |_args, _context|
       # Simulate user creation that might fail
-      RubyReactor.Failure("User creation failed")
+      Failure("User creation failed")
     end
 
     compensate do |_error, _args, _context|
       # Simulate cleanup
       Sidekiq.logger.info "Cleaning up user creation"
-      RubyReactor.Success()
+      Success()
     end
   end
 
@@ -155,12 +155,12 @@ class CompensatingReactor < RubyReactor::Reactor
 
     run do |_args, _context|
       # This should not run if create_user fails
-      RubyReactor.Success("Notification sent")
+      Success("Notification sent")
     end
 
     compensate do |_error, _args, _context|
       Sidekiq.logger.info "Cleaning up notification"
-      RubyReactor.Success()
+      Success()
     end
   end
 end
@@ -176,7 +176,7 @@ class IdempotentReactor < RubyReactor::Reactor
 
     run do |args, _context|
       # Simulate payment processing
-      RubyReactor.Success("Payment processed for #{args[:order_id]}")
+      Success("Payment processed for #{args[:order_id]}")
     end
   end
 
@@ -185,7 +185,7 @@ class IdempotentReactor < RubyReactor::Reactor
 
     run do |args, _context|
       # Simulate inventory update
-      RubyReactor.Success("Inventory updated for #{args[:order_id]}")
+      Success("Inventory updated for #{args[:order_id]}")
     end
   end
 end

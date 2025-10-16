@@ -134,7 +134,7 @@ For detailed implementation specifications, code examples, and architecture deci
 - [x] Test compensation and rollback in async context
 - [x] Test idempotent step handling
 
-### Performance & Load Testing
+<!-- ### Performance & Load Testing
 - [ ] Compare blocking vs non-blocking retry performance
 - [ ] Test worker utilization during retries
 - [ ] Validate scalability with concurrent jobs
@@ -144,29 +144,29 @@ For detailed implementation specifications, code examples, and architecture deci
 - [ ] Implement comprehensive logging for retry attempts
 - [ ] Add metrics for retry success/failure rates
 - [ ] Create dashboards for retry queue monitoring
-- [ ] Set up alerts for retry storm conditions
+- [ ] Set up alerts for retry storm conditions -->
 
 ---
 
 ## Phase 6: Documentation & Examples
 
 ### API Documentation
-- [ ] Document async reactor usage patterns
-- [ ] Document step-level async configuration
-- [ ] Document retry configuration options
-- [ ] Create migration guide from sync to async
+- [x] Document async reactor usage patterns
+- [x] Document step-level async configuration
+- [x] Document retry configuration options
+- [x] Create migration guide from sync to async
 
 ### Example Implementations
-- [ ] Create complete OrderProcessingReactor example
-- [ ] Create PaymentProcessingReactor example
-- [ ] Create InventoryManagementReactor example
-- [ ] Include retry configuration examples
+- [x] Create complete OrderProcessingReactor example
+- [x] Create PaymentProcessingReactor example
+- [x] Create InventoryManagementReactor example
+- [x] Include retry configuration examples
 
-### Operational Documentation
+<!-- ### Operational Documentation
 - [ ] Document monitoring and alerting setup
 - [ ] Create troubleshooting guide for common issues
 - [ ] Document performance tuning recommendations
-- [ ] Create capacity planning guidelines
+- [ ] Create capacity planning guidelines -->
 
 ---
 

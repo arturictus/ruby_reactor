@@ -1,22 +1,24 @@
 # frozen_string_literal: true
 
+require "singleton"
+
 module RubyReactor
-  # Configuration module for RubyReactor settings
-  module Configuration
-    class << self
-      attr_writer :sidekiq_queue, :sidekiq_retry_count
+  # Configuration class for RubyReactor settings
+  class Configuration
+    include Singleton
 
-      def configure
-        yield self if block_given?
-      end
+    attr_writer :sidekiq_queue, :sidekiq_retry_count, :logger
 
-      def sidekiq_queue
-        @sidekiq_queue ||= :default
-      end
+    def sidekiq_queue
+      @sidekiq_queue ||= :default
+    end
 
-      def sidekiq_retry_count
-        @sidekiq_retry_count ||= 3
-      end
+    def sidekiq_retry_count
+      @sidekiq_retry_count ||= 3
+    end
+
+    def logger
+      @logger ||= Logger.new($stderr)
     end
   end
 end
