@@ -25,9 +25,7 @@ module RubyReactor
 
     def can_retry_step?(step_name, max_attempts)
       attempts = attempts_for_step(step_name)
-      result = attempts < max_attempts
-      puts "RubyReactor: can_retry_step? in retry_context: step='#{step_name}', attempts=#{attempts}, max_attempts=#{max_attempts}, result=#{result}"
-      result
+      attempts < max_attempts
     end
 
     def reset
@@ -55,6 +53,19 @@ module RubyReactor
       context
     end
 
+    def self.calculate_backoff_delay(attempt_number, backoff_strategy, base_delay)
+      case backoff_strategy
+      when :exponential
+        base_delay * (2**(attempt_number - 1))
+      when :linear
+        base_delay * attempt_number
+      when :fixed
+        base_delay
+      else
+        raise ArgumentError, "Unknown backoff strategy: #{backoff_strategy}"
+      end
+    end
+
     private
 
     def serialize_error(error)
@@ -74,19 +85,6 @@ module RubyReactor
       error = error_class.new(data["message"])
       error.set_backtrace(data["backtrace"]) if data["backtrace"]
       error
-    end
-
-    def self.calculate_backoff_delay(attempt_number, backoff_strategy, base_delay)
-      case backoff_strategy
-      when :exponential
-        base_delay * (2**(attempt_number - 1))
-      when :linear
-        base_delay * attempt_number
-      when :fixed
-        base_delay
-      else
-        raise ArgumentError, "Unknown backoff strategy: #{backoff_strategy}"
-      end
     end
 
     private_class_method :deserialize_error

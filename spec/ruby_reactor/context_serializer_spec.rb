@@ -50,7 +50,10 @@ RSpec.describe RubyReactor::ContextSerializer do
 
     it "raises error for context too large" do
       # Mock a very large context
-      allow(context).to receive(:serialize_for_retry).and_return({ "large_data" => "x" * (described_class::MAX_CONTEXT_SIZE + 1) })
+      allow(context).to receive(:serialize_for_retry)
+        .and_return({
+                      "large_data" => "x" * (described_class::MAX_CONTEXT_SIZE + 1)
+                    })
 
       expect do
         described_class.serialize(context)
@@ -132,8 +135,4 @@ RSpec.describe RubyReactor::ContextSerializer do
       expect(deserialized.retry_context.next_retry_at).to be_within(1).of(original.retry_context.next_retry_at)
     end
   end
-end
-
-# Mock reactor class for testing
-class TestReactor
 end

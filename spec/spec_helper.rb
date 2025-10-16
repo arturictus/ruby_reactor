@@ -4,6 +4,9 @@ require "ruby_reactor"
 require "sidekiq/testing"
 require "debug"
 
+# Load support files
+Dir[File.expand_path("support/**/*.rb", __dir__)].each { |f| require f }
+
 # Configure Sidekiq logging to a file for debugging
 Sidekiq.configure_server do |config|
   config.logger = Logger.new("log/sidekiq.log", 10, 1_024_000) # 10 files, 1MB each
