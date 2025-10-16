@@ -7,7 +7,7 @@ module RubyReactor
       include RubyReactor::Dsl::ValidationHelpers
 
       attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
-                    :dependencies, :args_validator, :output_validator, :async, :retry_config
+                    :dependencies, :args_validator, :output_validator, :retry_config
 
       def initialize(name, impl = nil, reactor = nil)
         @name = name
@@ -105,7 +105,7 @@ module RubyReactor
           args_validator: @args_validator,
           output_validator: @output_validator,
           async: @async,
-          retry_config: @retry_config.empty? ? (@reactor&.get_retry_defaults || {}) : @retry_config
+          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)
@@ -155,7 +155,7 @@ module RubyReactor
         @args_validator = config[:args_validator]
         @output_validator = config[:output_validator]
         @async = config[:async] || false
-        @retry_config = (config[:retry_config] || {}).merge({ max_attempts: 1, idempotent: false })
+        @retry_config = { max_attempts: 1, idempotent: false }.merge(config[:retry_config] || {})
       end
 
       def has_impl?

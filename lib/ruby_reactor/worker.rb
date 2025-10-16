@@ -11,14 +11,14 @@ module RubyReactor
     # Enable Sidekiq retries for infrastructure failures only
     sidekiq_options retry: RubyReactor::Configuration.sidekiq_retry_count, dead: false, queue: RubyReactor::Configuration.sidekiq_queue
 
-    sidekiq_retries_exhausted do |msg, ex|
+    sidekiq_retries_exhausted do |_, exception|
       # Handle infrastructure failures (network, Redis, etc.)
-      puts "RubyReactor infrastructure failure: #{ex.message}"
+      puts "RubyReactor infrastructure failure: #{exception.message}"
     end
 
     def perform(serialized_context, reactor_class_name = nil)
       context = ContextSerializer.deserialize(serialized_context)
-      
+
       # If reactor_class_name is provided, use it to get the reactor class
       # This handles cases where the class can't be found via const_get
       if reactor_class_name && context.reactor_class.nil?
@@ -62,8 +62,8 @@ module RubyReactor
 
     private
 
-    def log_infrastructure_failure(msg, ex)
-      Sidekiq.logger.error("RubyReactor infrastructure failure: #{ex.message}")
+    def log_infrastructure_failure(msg, exception)
+      Sidekiq.logger.error("RubyReactor infrastructure failure: #{exception.message}")
       Sidekiq.logger.error("Job details: #{msg.inspect}")
     end
 

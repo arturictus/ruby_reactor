@@ -4,7 +4,7 @@ module RubyReactor
   # Configuration module for RubyReactor settings
   module Configuration
     class << self
-      attr_accessor :sidekiq_queue, :sidekiq_retry_count
+      attr_writer :sidekiq_queue, :sidekiq_retry_count
 
       def configure
         yield self if block_given?

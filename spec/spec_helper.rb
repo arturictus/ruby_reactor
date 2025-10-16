@@ -6,12 +6,12 @@ require "debug"
 
 # Configure Sidekiq logging to a file for debugging
 Sidekiq.configure_server do |config|
-  config.logger = Logger.new('log/sidekiq.log', 10, 1024000) # 10 files, 1MB each
+  config.logger = Logger.new("log/sidekiq.log", 10, 1_024_000) # 10 files, 1MB each
   config.logger.level = Logger::DEBUG
 end
 
 Sidekiq.configure_client do |config|
-  config.logger = Logger.new('log/sidekiq.log', 10, 1024000)
+  config.logger = Logger.new("log/sidekiq.log", 10, 1_024_000)
   config.logger.level = Logger::DEBUG
 end
 
@@ -27,12 +27,12 @@ RSpec.configure do |config|
   end
 
   # Configure Sidekiq for testing
-  config.before(:each) do
+  config.before do
     Sidekiq::Testing.fake!
     Sidekiq::Worker.clear_all
   end
 
-  config.after(:each) do
+  config.after do
     Sidekiq::Testing.fake!
   end
 end

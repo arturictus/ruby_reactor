@@ -13,11 +13,13 @@ module RubyReactor
     end
 
     def increment_attempt_for_step(step_name)
+      step_name = step_name.to_s
       @step_attempts[step_name] ||= 0
       @step_attempts[step_name] += 1
     end
 
     def attempts_for_step(step_name)
+      step_name = step_name.to_s
       @step_attempts[step_name] || 0
     end
 
@@ -46,10 +48,10 @@ module RubyReactor
 
     def self.deserialize_from_retry(data)
       context = new
-      context.step_attempts = data['step_attempts'] || {}
-      context.current_step = data['current_step']
-      context.failure_reason = deserialize_error(data['failure_reason'])
-      context.next_retry_at = data['next_retry_at'] ? Time.iso8601(data['next_retry_at']) : nil
+      context.step_attempts = data["step_attempts"] || {}
+      context.current_step = data["current_step"]
+      context.failure_reason = deserialize_error(data["failure_reason"])
+      context.next_retry_at = data["next_retry_at"] ? Time.iso8601(data["next_retry_at"]) : nil
       context
     end
 
@@ -68,16 +70,16 @@ module RubyReactor
     def self.deserialize_error(data)
       return nil unless data
 
-      error_class = data['class'] ? Object.const_get(data['class']) : StandardError
-      error = error_class.new(data['message'])
-      error.set_backtrace(data['backtrace']) if data['backtrace']
+      error_class = data["class"] ? Object.const_get(data["class"]) : StandardError
+      error = error_class.new(data["message"])
+      error.set_backtrace(data["backtrace"]) if data["backtrace"]
       error
     end
 
     def self.calculate_backoff_delay(attempt_number, backoff_strategy, base_delay)
       case backoff_strategy
       when :exponential
-        base_delay * (2 ** (attempt_number - 1))
+        base_delay * (2**(attempt_number - 1))
       when :linear
         base_delay * attempt_number
       when :fixed
@@ -86,5 +88,7 @@ module RubyReactor
         raise ArgumentError, "Unknown backoff strategy: #{backoff_strategy}"
       end
     end
+
+    private_class_method :deserialize_error
   end
 end

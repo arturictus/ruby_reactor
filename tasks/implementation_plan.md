@@ -128,11 +128,11 @@ For detailed implementation specifications, code examples, and architecture deci
 - [x] Test executor retry logic
 
 ### Integration Test Suite
-- [ ] Test full reactor async execution flow
-- [ ] Test step-level async handoff
-- [ ] Test retry scenarios with different backoff strategies
-- [ ] Test compensation and rollback in async context
-- [ ] Test idempotent step handling
+- [x] Test full reactor async execution flow
+- [x] Test step-level async handoff
+- [x] Test retry scenarios with different backoff strategies
+- [x] Test compensation and rollback in async context
+- [x] Test idempotent step handling
 
 ### Performance & Load Testing
 - [ ] Compare blocking vs non-blocking retry performance

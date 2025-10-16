@@ -17,11 +17,11 @@ RSpec.describe "RubyReactor Async and Retry DSL" do
         retry_defaults max_attempts: 5, backoff: :linear, base_delay: 2
       end
 
-      expect(reactor_class.get_retry_defaults).to eq({
-        max_attempts: 5,
-        backoff: :linear,
-        base_delay: 2
-      })
+      expect(reactor_class.retry_defaults).to eq({
+                                                       max_attempts: 5,
+                                                       backoff: :linear,
+                                                       base_delay: 2
+                                                     })
     end
   end
 
@@ -31,7 +31,7 @@ RSpec.describe "RubyReactor Async and Retry DSL" do
         step :test_step do
           async true
 
-          run { |args, context| RubyReactor.Success("done") }
+          run { |_args, _context| RubyReactor.Success("done") }
         end
       end
 
@@ -44,7 +44,7 @@ RSpec.describe "RubyReactor Async and Retry DSL" do
         step :test_step do
           retries max_attempts: 3, backoff: :exponential, base_delay: 1, idempotent: true
 
-          run { |args, context| RubyReactor.Success("done") }
+          run { |_args, _context| RubyReactor.Success("done") }
         end
       end
 
@@ -61,7 +61,7 @@ RSpec.describe "RubyReactor Async and Retry DSL" do
         step :test_step do
           idempotent true
 
-          run { |args, context| RubyReactor.Success("done") }
+          run { |_args, _context| RubyReactor.Success("done") }
         end
       end
 

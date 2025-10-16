@@ -45,16 +45,16 @@ module RubyReactor
           @async ||= false
         end
 
-        def retry_defaults(max_attempts: 3, backoff: :exponential, base_delay: 1)
-          @retry_defaults = {
-            max_attempts: max_attempts,
-            backoff: backoff,
-            base_delay: base_delay
-          }
-        end
-
-        def get_retry_defaults
-          @retry_defaults ||= { max_attempts: 1, backoff: :exponential, base_delay: 1 }
+        def retry_defaults(**kwargs)
+          if kwargs.empty?
+            @retry_defaults ||= { max_attempts: 3, backoff: :exponential, base_delay: 1 }
+          else
+            @retry_defaults = {
+              max_attempts: kwargs[:max_attempts] || 3,
+              backoff: kwargs[:backoff] || :exponential,
+              base_delay: kwargs[:base_delay] || 1
+            }
+          end
         end
 
         def input(name, transform: nil, description: nil, validate: nil, optional: false, &validation_block)

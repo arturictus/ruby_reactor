@@ -4,12 +4,12 @@ require "spec_helper"
 require "sidekiq/testing"
 
 RSpec.describe "RubyReactor Async and Retry Integration" do
-  before(:each) do
+  before do
     Sidekiq::Testing.fake!
     Sidekiq::Worker.clear_all
   end
 
-  after(:each) do
+  after do
     Sidekiq::Testing.fake!
   end
 
@@ -100,8 +100,8 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       retries max_attempts: 3, backoff: :exponential, base_delay: 1
       argument :attempt_count, input(:attempt_count)
 
-      run do |args, context|
-        attempt = context.retry_context.attempts_for_step(:flaky_operation)
+      run do |_args, context|
+        attempt = context.retry_context.attempts_for_step('flaky_operation')
 
         # Fail first 2 attempts, succeed on 3rd
         if attempt < 3
@@ -145,7 +145,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
     step :create_user do
       argument :user_id, input(:user_id)
 
-      run do |args, _context|
+      run do |_args, _context|
         # Simulate user creation that might fail
         RubyReactor.Failure("User creation failed")
       end
@@ -160,7 +160,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
     step :send_notification do
       argument :user_id, input(:user_id)
 
-      run do |args, _context|
+      run do |_args, _context|
         # This should not run if create_user fails
         RubyReactor.Success("Notification sent")
       end

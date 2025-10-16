@@ -2,7 +2,8 @@
 
 module RubyReactor
   class Context
-    attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key, :retry_context, :reactor_class
+    attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
+                  :retry_context, :reactor_class
 
     def initialize(inputs = {}, reactor_class = nil)
       @inputs = inputs
@@ -77,14 +78,14 @@ module RubyReactor
 
     def self.deserialize_from_retry(data)
       context = new
-      context.reactor_class = data['reactor_class'] ? Object.const_get(data['reactor_class']) : nil
-      context.inputs = deserialize_value(data['inputs']) || {}
-      context.intermediate_results = deserialize_value(data['intermediate_results']) || {}
-      context.private_data = deserialize_value(data['private_data']) || {}
-      context.current_step = data['current_step']
-      context.retry_count = data['retry_count'] || 0
-      context.concurrency_key = data['concurrency_key']
-      context.retry_context = RetryContext.deserialize_from_retry(data['retry_context'] || {})
+      context.reactor_class = data["reactor_class"] ? Object.const_get(data["reactor_class"]) : nil
+      context.inputs = deserialize_value(data["inputs"]) || {}
+      context.intermediate_results = deserialize_value(data["intermediate_results"]) || {}
+      context.private_data = deserialize_value(data["private_data"]) || {}
+      context.current_step = data["current_step"]
+      context.retry_count = data["retry_count"] || 0
+      context.concurrency_key = data["concurrency_key"]
+      context.retry_context = RetryContext.deserialize_from_retry(data["retry_context"] || {})
       context
     end
 
@@ -93,9 +94,9 @@ module RubyReactor
     def serialize_value(value)
       case value
       when Time
-        { '_type' => 'Time', 'value' => value.iso8601 }
+        { "_type" => "Time", "value" => value.iso8601 }
       when BigDecimal
-        { '_type' => 'BigDecimal', 'value' => value.to_s('F') }
+        { "_type" => "BigDecimal", "value" => value.to_s("F") }
       when Hash
         value.transform_values { |v| serialize_value(v) }
       when Array
@@ -108,12 +109,12 @@ module RubyReactor
     def self.deserialize_value(value)
       case value
       when Hash
-        if value.key?('_type')
-          case value['_type']
-          when 'Time'
-            Time.iso8601(value['value'])
-          when 'BigDecimal'
-            BigDecimal(value['value'])
+        if value.key?("_type")
+          case value["_type"]
+          when "Time"
+            Time.iso8601(value["value"])
+          when "BigDecimal"
+            BigDecimal(value["value"])
           else
             value
           end
@@ -126,6 +127,8 @@ module RubyReactor
         value
       end
     end
+
+    private_class_method :deserialize_value
 
     def extract_path(value, path)
       if path.is_a?(Symbol) && value.respond_to?(:[])
