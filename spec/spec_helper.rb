@@ -3,9 +3,13 @@
 require "ruby_reactor"
 require "sidekiq/testing"
 require "debug"
+require "fileutils"
 
 # Load support files
 Dir[File.expand_path("support/**/*.rb", __dir__)].each { |f| require f }
+
+# Ensure log directory exists
+FileUtils.mkdir_p("log")
 
 # Configure Sidekiq logging to a file for debugging
 Sidekiq.configure_server do |config|
