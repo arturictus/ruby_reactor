@@ -4,8 +4,11 @@ module RubyReactor
   class Reactor
     include RubyReactor::Dsl::Reactor
 
+    attr_reader :context, :result
+
     def initialize(context = {})
       @context = context
+      @result = :unexecuted
     end
 
     def run(inputs = {})
@@ -20,12 +23,13 @@ module RubyReactor
       else
         # For sync reactors (potentially with async steps), execute normally
         executor = Executor.new(self.class, inputs)
-        result = executor.execute
+        @result = executor.execute
+        @context = executor.context
 
         # If execution returned an AsyncResult (from step-level async), return it
-        return result if result.is_a?(RubyReactor::AsyncResult)
+        return @result if @result.is_a?(RubyReactor::AsyncResult)
 
-        result
+        @result
       end
     end
 
