@@ -10,6 +10,8 @@ module RubyReactor
         base.instance_variable_set(:@return_step, nil)
         base.instance_variable_set(:@middlewares, [])
         base.instance_variable_set(:@input_validations, {})
+        base.instance_variable_set(:@async, false)
+        base.instance_variable_set(:@retry_defaults, { max_attempts: 3, backoff: :exponential, base_delay: 1 })
       end
 
       module ClassMethods
@@ -35,6 +37,26 @@ module RubyReactor
           @input_validations ||= {}
         end
 
+        def async(async = true)
+          @async = async
+        end
+
+        def async?
+          @async ||= false
+        end
+
+        def retry_defaults(**kwargs)
+          if kwargs.empty?
+            @retry_defaults ||= { max_attempts: 3, backoff: :exponential, base_delay: 1 }
+          else
+            @retry_defaults = {
+              max_attempts: kwargs[:max_attempts] || 3,
+              backoff: kwargs[:backoff] || :exponential,
+              base_delay: kwargs[:base_delay] || 1
+            }
+          end
+        end
+
         def input(name, transform: nil, description: nil, validate: nil, optional: false, &validation_block)
           inputs[name] = {
             transform: transform,
@@ -50,7 +72,7 @@ module RubyReactor
         end
 
         def step(name, impl = nil, &block)
-          builder = RubyReactor::Dsl::StepBuilder.new(name, impl)
+          builder = RubyReactor::Dsl::StepBuilder.new(name, impl, self)
 
           builder.instance_eval(&block) if block_given?
 

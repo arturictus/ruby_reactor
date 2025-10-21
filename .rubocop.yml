@@ -79,17 +79,9 @@ Metrics/CyclomaticComplexity:
 Metrics/PerceivedComplexity:
   Max: 15
 
-Capybara:
+RSpec/PredicateMatcher:
   Enabled: false
 
-Capybara/RSpec/PredicateMatcher:
+Style/OptionalBooleanParameter:
   Enabled: false
 
-RSpec/Capybara:
-  Enabled: false
-
-RSpec/FactoryBot:
-  Enabled: false
-
-RSpecRails:
-  Enabled: false

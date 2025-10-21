@@ -26,23 +26,36 @@ module RubyReactor
 
       def format_errors(errors)
         formatted = {}
+        flatten_errors(errors.to_h, formatted, [])
+        formatted
+      end
 
-        errors.to_h.each do |key, messages|
+      def flatten_errors(errors_hash, formatted, path)
+        errors_hash.each do |key, messages|
+          current_path = path + [key]
+
           case messages
           when Array
-            formatted[key] = messages.join(", ")
+            # This is a leaf node with error messages
+            flat_key = if current_path.size == 1
+                         current_path.first.to_s
+                       else
+                         "#{current_path.first}#{current_path[1..].map { |k| "[#{k}]" }.join}"
+                       end
+            formatted[flat_key.to_sym] = messages.join(", ")
           when Hash
-            # Handle nested errors by flattening them
-            messages.each do |nested_key, nested_messages|
-              flat_key = :"#{key}[#{nested_key}]"
-              formatted[flat_key] = Array(nested_messages).join(", ")
-            end
+            # This is a nested structure, recurse
+            flatten_errors(messages, formatted, current_path)
           else
-            formatted[key] = messages.to_s
+            # Single message
+            flat_key = if current_path.size == 1
+                         current_path.first.to_s
+                       else
+                         "#{current_path.first}#{current_path[1..].map { |k| "[#{k}]" }.join}"
+                       end
+            formatted[flat_key.to_sym] = messages.to_s
           end
         end
-
-        formatted
       end
     end
   end

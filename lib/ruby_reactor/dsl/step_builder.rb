@@ -7,11 +7,12 @@ module RubyReactor
       include RubyReactor::Dsl::ValidationHelpers
 
       attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
-                    :dependencies, :args_validator, :output_validator
+                    :dependencies, :args_validator, :output_validator, :retry_config
 
-      def initialize(name, impl = nil)
+      def initialize(name, impl = nil, reactor = nil)
         @name = name
         @impl = impl
+        @reactor = reactor
         @arguments = {}
         @run_block = nil
         @compensate_block = nil
@@ -21,6 +22,8 @@ module RubyReactor
         @dependencies = []
         @args_validator = nil
         @output_validator = nil
+        @async = false
+        @retry_config = {}
       end
 
       def argument(name, source, transform: nil)
@@ -70,6 +73,24 @@ module RubyReactor
         end
       end
 
+      def async(async = true)
+        @async = async
+      end
+
+      def retries(max_attempts: 3, backoff: :exponential, base_delay: 1, idempotent: false)
+        @retry_config = {
+          max_attempts: max_attempts,
+          backoff: backoff,
+          base_delay: base_delay,
+          idempotent: idempotent
+        }
+      end
+
+      def idempotent(idempotent = true)
+        @retry_config ||= {}
+        @retry_config[:idempotent] = idempotent
+      end
+
       def build
         step_config = {
           name: @name,
@@ -82,7 +103,9 @@ module RubyReactor
           guards: @guards,
           dependencies: @dependencies,
           args_validator: @args_validator,
-          output_validator: @output_validator
+          output_validator: @output_validator,
+          async: @async,
+          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)
@@ -117,7 +140,7 @@ module RubyReactor
 
     class StepConfig
       attr_reader :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
-                  :dependencies, :args_validator, :output_validator
+                  :dependencies, :args_validator, :output_validator, :async, :retry_config
 
       def initialize(config)
         @name = config[:name]
@@ -131,6 +154,8 @@ module RubyReactor
         @dependencies = config[:dependencies] || []
         @args_validator = config[:args_validator]
         @output_validator = config[:output_validator]
+        @async = config[:async] || false
+        @retry_config = { max_attempts: 1, idempotent: false }.merge(config[:retry_config] || {})
       end
 
       def has_impl?
@@ -139,6 +164,18 @@ module RubyReactor
 
       def has_run_block?
         !@run_block.nil?
+      end
+
+      def async?
+        @async
+      end
+
+      def retryable?
+        retry_config[:max_attempts] > 1
+      end
+
+      def idempotent?
+        retry_config[:idempotent]
       end
 
       def should_run?(context)
