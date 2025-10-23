@@ -69,8 +69,37 @@ module Support
       end
     end
 
-    # step :capture_payment do
-    # end
-    # returns :get_order
+    step :capture_payment do
+      argument :payment, result(:authorize_payment)
+      argument :fail_at, input(:fail_at)
+      run do |args, _context|
+        raise "Simulated failure in capture_payment" if args[:fail_at] == :capture_payment
+
+        # Simulate payment capture
+        Success({ id: args[:payment][:id], status: "captured", amount: args[:payment][:amount] })
+      end
+
+      compensate do |error, args, _context|
+        puts "Compensation for capture_payment due to error: #{error}, args: #{args.inspect}"
+        Success("Compensation succeeded for capture_payment for error: #{error}")
+      end
+    end
+
+    step :fulfill_order do
+      argument :payment, result(:authorize_payment)
+      argument :fail_at, input(:fail_at)
+      run do |args, _context|
+        if args[:fail_at] == :fulfill_order
+          Failure("Failed to fulfill_order")
+        else
+          Success({ id: "fulfill_order", status: "done" })
+        end
+      end
+
+      compensate do |error, args, _context|
+        puts "Compensation for fulfill_order due to error: #{error}, args: #{args.inspect}"
+        Success("Compensation succeeded for fulfill_order for error: #{error}")
+      end
+    end
   end
 end

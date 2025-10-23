@@ -28,7 +28,6 @@ RSpec.describe Support::PaymentWorkflow do
       result = reactor.run(order_id: "order_123")
 
       expect(result).to be_a(RubyReactor::Success)
-      debugger
       expect(result.value[:reserve_inventory]).to eq({ id: "order_123", status: "pending", inventory_count: 5,
                                                        reserved: true })
     end
@@ -44,7 +43,6 @@ RSpec.describe Support::PaymentWorkflow do
     it "succeeds" do
       reactor = described_class.new
       result = reactor.run(order_id: "order_123")
-
       expect(result).to be_a(RubyReactor::Success)
       expect(result.value[:authorize_payment]).to eq({ id: "order_123", status: "authorized", amount: 100.0 })
     end
@@ -53,6 +51,37 @@ RSpec.describe Support::PaymentWorkflow do
       reactor = described_class.new
       result = reactor.run(order_id: "order_123", fail_at: :authorize_payment)
       expect(result).to be_a(RubyReactor::Failure)
+    end
+  end
+
+  describe "step capture_payment" do
+    it "succeeds" do
+      reactor = described_class.new
+      result = reactor.run(order_id: "order_123")
+      expect(result).to be_a(RubyReactor::Success)
+      expect(result.value[:capture_payment]).to eq({ id: "order_123", status: "captured", amount: 100.0 })
+    end
+
+    it "fails when capture_payment step raises an error" do
+      reactor = described_class.new
+      result = reactor.run(order_id: "order_123", fail_at: :capture_payment)
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(reactor.undo_trace[0][:step]).to eq(:authorize_payment)
+    end
+  end
+  describe "step fullfill_order" do
+    it "succeeds" do
+      reactor = described_class.new
+      result = reactor.run(order_id: "order_123")
+      expect(result).to be_a(RubyReactor::Success)
+      expect(result.value[:fulfill_order]).to eq({ id: "fulfill_order", status: "done" })
+    end
+
+    it "run compensation for fulfill_order when fulfill_order step fails" do
+      reactor = described_class.new
+      result = reactor.run(order_id: "order_123", fail_at: :fulfill_order)
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(reactor.undo_trace[0][:step]).to eq(:fulfill_order)
     end
   end
 end

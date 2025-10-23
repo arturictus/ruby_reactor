@@ -3,7 +3,7 @@
 module RubyReactor
   # rubocop:disable Metrics/ClassLength
   class Executor
-    attr_reader :reactor_class, :context, :dependency_graph, :undo_stack
+    attr_reader :reactor_class, :context, :dependency_graph, :undo_stack, :undo_trace
 
     def initialize(reactor_class, inputs = {}, context = nil)
       @reactor_class = reactor_class
@@ -11,6 +11,7 @@ module RubyReactor
       @dependency_graph = DependencyGraph.new
       @undo_stack = []
       @step_results = {}
+      @undo_trace = []
     end
 
     def execute
@@ -293,7 +294,6 @@ module RubyReactor
     def handle_step_failure(step_config, error, arguments)
       # Try compensation
       compensation_result = compensate_step(step_config, error, arguments)
-
       case compensation_result
       when RubyReactor::Success
         # Compensation succeeded, continue with rollback
@@ -313,8 +313,10 @@ module RubyReactor
 
     def compensate_step(step_config, error, arguments)
       if step_config.compensate_block
+        @undo_trace << { type: :compensation, step: step_config.name, error: error, arguments: arguments }
         step_config.compensate_block.call(error, arguments, context)
       elsif step_config.has_impl?
+        @undo_trace << { type: :compensation, step: step_config.name, error: error, arguments: arguments }
         step_config.impl.compensate(error, arguments, context)
       else
         RubyReactor.Success() # Default compensation
@@ -323,7 +325,9 @@ module RubyReactor
 
     def rollback_completed_steps
       @undo_stack.reverse_each do |step_info|
-        undo_step(step_info[:step], step_info[:result], step_info[:arguments])
+        result = undo_step(step_info[:step], step_info[:result], step_info[:arguments])
+        @undo_trace << { type: :undo, step: step_info[:step].name, result: result,
+                         arguments: step_info[:arguments] }
       end
       @undo_stack.clear
     end
