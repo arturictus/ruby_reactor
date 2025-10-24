@@ -46,13 +46,6 @@ module Support
     input :fail_at, optional: true do
       optional(:fail_at).maybe(:symbol)
     end
-    input :order_id do |field|
-      field.filled(:string)
-    end
-
-    input :fail_at, optional: true do
-      optional(:fail_at).maybe(:symbol)
-    end
 
     step :get_order do
       argument :order_id, input(:order_id)

@@ -38,9 +38,9 @@ class UserRegistrationReactor < RubyReactor::Reactor
 
     run do |args, context|
       if args[:email] && args[:email].include?('@')
-        RubyReactor.Success(args[:email])
+        Success(args[:email])
       else
-        RubyReactor.Failure("Email must contain @")
+        Failure("Email must contain @")
       end
     end
   end
@@ -51,7 +51,7 @@ class UserRegistrationReactor < RubyReactor::Reactor
     run do |args, context|
       require 'digest'
       hashed = Digest::SHA256.hexdigest(args[:password])
-      RubyReactor.Success(hashed)
+      Success(hashed)
     end
   end
 
@@ -67,14 +67,14 @@ class UserRegistrationReactor < RubyReactor::Reactor
         password_hash: args[:password_hash],
         created_at: Time.now
       }
-      RubyReactor.Success(user)
+      Success(user)
     end
 
     # Define compensation for rollback on failure
     compensate do |error, args, context|
       puts "Rolling back user creation for: #{args[:email]}"
       # Here you would delete the user from database
-      RubyReactor.Success()
+      Success()
     end
   end
 
@@ -132,7 +132,7 @@ class ValidatedUserReactor < RubyReactor::Reactor
         bio: args[:bio] || "No bio provided",
         created_at: Time.now
       }
-      RubyReactor.Success(profile)
+      Success(profile)
     end
   end
 
@@ -170,7 +170,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
     run do |args, context|
       # Check if user exists and has permission to purchase
       user = find_user(args[:user_id])
-      user ? RubyReactor.Success(user) : RubyReactor.Failure("User not found")
+      user ? Success(user) : Failure("User not found")
     end
   end
 
@@ -180,9 +180,9 @@ class OrderProcessingReactor < RubyReactor::Reactor
     run do |args, context|
       products = args[:product_ids].map { |id| find_product(id) }
       if products.all?
-        RubyReactor.Success(products)
+        Success(products)
       else
-        RubyReactor.Failure("Some products not found")
+        Failure("Some products not found")
       end
     end
   end
@@ -192,7 +192,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
     run do |args, context|
       total = args[:products].sum { |p| p[:price] }
-      RubyReactor.Success(total)
+      Success(total)
     end
   end
 
@@ -201,7 +201,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
     run do |args, context|
       available = args[:products].all? { |p| p[:stock] > 0 }
-      available ? RubyReactor.Success(true) : RubyReactor.Failure("Out of stock")
+      available ? Success(true) : Failure("Out of stock")
     end
   end
 
@@ -212,13 +212,13 @@ class OrderProcessingReactor < RubyReactor::Reactor
     run do |args, context|
       # Process payment logic here
       payment_id = process_payment(args[:user][:id], args[:total])
-      RubyReactor.Success(payment_id)
+      Success(payment_id)
     end
 
     compensate do |error, args, context|
       # Refund payment on failure
       refund_payment(args[:payment_id])
-      RubyReactor.Success()
+      Success()
     end
   end
 
@@ -229,13 +229,13 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
     run do |args, context|
       order = create_order_record(args[:user], args[:products], args[:payment_id])
-      RubyReactor.Success(order)
+      Success(order)
     end
 
     compensate do |error, args, context|
       # Cancel order and update inventory
       cancel_order(args[:order][:id])
-      RubyReactor.Success()
+      Success()
     end
   end
 
@@ -244,13 +244,13 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
     run do |args, context|
       args[:products].each { |p| decrement_stock(p[:id]) }
-      RubyReactor.Success(true)
+      Success(true)
     end
 
     compensate do |error, args, context|
       # Restock products
       args[:products].each { |p| increment_stock(p[:id]) }
-      RubyReactor.Success()
+      Success()
     end
   end
 
@@ -260,7 +260,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
     run do |args, context|
       send_email(args[:user][:email], "Order confirmed", order_details(args[:order]))
-      RubyReactor.Success(true)
+      Success(true)
     end
   end
 
@@ -270,7 +270,7 @@ end
 
 ### Error Handling and Compensation
 
-When a step fails, RubyReactor automatically compensates completed steps in reverse order:
+When a step fails, RubyReactor automatically undoes completed steps in reverse order, compensate only runs in the failing step and backwalks the executed steps undo blocks:
 
 ```ruby
 class TransactionReactor < RubyReactor::Reactor
@@ -287,9 +287,9 @@ class TransactionReactor < RubyReactor::Reactor
       to = find_account(args[:to_account])
 
       if from && to && from != to
-        RubyReactor.Success({from: from, to: to})
+        Success({from: from, to: to})
       else
-        RubyReactor.Failure("Invalid accounts")
+        Failure("Invalid accounts")
       end
     end
   end
@@ -300,9 +300,9 @@ class TransactionReactor < RubyReactor::Reactor
 
     run do |args, context|
       if args[:accounts][:from][:balance] >= args[:amount]
-        RubyReactor.Success(args[:accounts])
+        Success(args[:accounts])
       else
-        RubyReactor.Failure("Insufficient funds")
+        Failure("Insufficient funds")
       end
     end
   end
@@ -313,13 +313,13 @@ class TransactionReactor < RubyReactor::Reactor
 
     run do |args, context|
       debit(args[:accounts][:from][:id], args[:amount])
-      RubyReactor.Success(args[:accounts])
+      Success(args[:accounts])
     end
 
-    compensate do |error, args, context|
+    undo do |error, args, context|
       # Credit the amount back
       credit(args[:accounts][:from][:id], args[:amount])
-      RubyReactor.Success()
+      Success()
     end
   end
 
@@ -329,13 +329,13 @@ class TransactionReactor < RubyReactor::Reactor
 
     run do |args, context|
       credit(args[:accounts][:to][:id], args[:amount])
-      RubyReactor.Success({transaction_id: generate_transaction_id()})
+      Success({transaction_id: generate_transaction_id()})
     end
 
     compensate do |error, args, context|
       # Debit the amount back from recipient
       debit(args[:accounts][:to][:id], args[:amount])
-      RubyReactor.Success()
+      Success()
     end
   end
 
@@ -344,7 +344,7 @@ end
 
 # If credit_account fails, RubyReactor will:
 # 1. Compensate credit_account (debit the recipient)
-# 2. Compensate debit_account (credit the sender)
+# 2. Undo debit_account (credit the sender)
 # Result: Complete rollback of the transaction
 ```
 
@@ -370,7 +370,7 @@ class SchemaValidatedReactor < RubyReactor::Reactor
     argument :user, input(:user)
 
     run do |args, context|
-      RubyReactor.Success(args[:user])
+      Success(args[:user])
     end
   end
 
