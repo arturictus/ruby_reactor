@@ -77,18 +77,12 @@ module RubyReactor
         @async = async
       end
 
-      def retries(max_attempts: 3, backoff: :exponential, base_delay: 1, idempotent: false)
+      def retries(max_attempts: 3, backoff: :exponential, base_delay: 1)
         @retry_config = {
           max_attempts: max_attempts,
           backoff: backoff,
-          base_delay: base_delay,
-          idempotent: idempotent
+          base_delay: base_delay
         }
-      end
-
-      def idempotent(idempotent = true)
-        @retry_config ||= {}
-        @retry_config[:idempotent] = idempotent
       end
 
       def build
@@ -155,7 +149,7 @@ module RubyReactor
         @args_validator = config[:args_validator]
         @output_validator = config[:output_validator]
         @async = config[:async] || false
-        @retry_config = { max_attempts: 1, idempotent: false }.merge(config[:retry_config] || {})
+        @retry_config = { max_attempts: 1 }.merge(config[:retry_config] || {})
       end
 
       def has_impl?
@@ -172,10 +166,6 @@ module RubyReactor
 
       def retryable?
         retry_config[:max_attempts] > 1
-      end
-
-      def idempotent?
-        retry_config[:idempotent]
       end
 
       def should_run?(context)

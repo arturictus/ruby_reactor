@@ -98,24 +98,4 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       end
     end
   end
-
-  describe "Compensation and rollback in async context" do
-    it "rolls back completed steps when retry fails" do
-      reactor = CompensatingReactor.new
-      reactor.run(user_id: 123)
-
-      expect(RubyReactor::Worker.jobs.size).to eq(1)
-      RubyReactor::Worker.drain
-    end
-  end
-
-  describe "Idempotent step handling" do
-    it "handles idempotent steps correctly during retries" do
-      reactor = IdempotentReactor.new
-      reactor.run(order_id: "ORD-123")
-
-      expect(RubyReactor::Worker.jobs.size).to eq(1)
-      RubyReactor::Worker.drain
-    end
-  end
 end

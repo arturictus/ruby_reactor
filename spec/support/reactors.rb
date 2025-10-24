@@ -164,28 +164,3 @@ class CompensatingReactor < RubyReactor::Reactor
     end
   end
 end
-
-class IdempotentReactor < RubyReactor::Reactor
-  async true
-
-  input :order_id
-
-  step :process_payment do
-    idempotent true
-    argument :order_id, input(:order_id)
-
-    run do |args, _context|
-      # Simulate payment processing
-      Success("Payment processed for #{args[:order_id]}")
-    end
-  end
-
-  step :update_inventory do
-    argument :order_id, input(:order_id)
-
-    run do |args, _context|
-      # Simulate inventory update
-      Success("Inventory updated for #{args[:order_id]}")
-    end
-  end
-end
