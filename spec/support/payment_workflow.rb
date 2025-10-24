@@ -28,19 +28,26 @@ module Support
     # Optional: Implement compensate for rollback on failure
     def self.compensate(_reason, _arguments, _context)
       # Add compensation logic here (e.g., release reserved inventory)
-      RubyReactor::Success("Inventory reservation released")
+      Success("Inventory reservation released")
     end
 
     # Optional: Implement undo for backwalk scenarios
     def self.undo(_result, _arguments, _context)
       # Add undo logic here if needed
-      RubyReactor::Success("Inventory reservation undone")
+      Success("Inventory reservation undone")
     end
   end
 
   class PaymentWorkflow < RubyReactor::Reactor
     input :order_id do
       required(:order_id).filled(:string)
+    end
+
+    input :fail_at, optional: true do
+      optional(:fail_at).maybe(:symbol)
+    end
+    input :order_id do |field|
+      field.filled(:string)
     end
 
     input :fail_at, optional: true do
