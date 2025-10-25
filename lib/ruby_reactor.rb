@@ -39,10 +39,15 @@ module RubyReactor
   end
 
   class Failure
-    attr_reader :error
+    attr_reader :error, :retryable
 
-    def initialize(error)
+    def initialize(error, retryable: nil)
       @error = error
+      @retryable = if retryable.nil?
+                     error.respond_to?(:retryable?) ? error.retryable? : true
+                   else
+                     retryable
+                   end
     end
 
     def success?
@@ -51,6 +56,10 @@ module RubyReactor
 
     def failure?
       true
+    end
+
+    def retryable?
+      @retryable
     end
   end
 

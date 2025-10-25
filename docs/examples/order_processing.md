@@ -62,7 +62,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :check_inventory do
-    depends_on :validate_order
+    argument :order, result(:validate_order)
 
     run do |order:, **|
       unavailable_items = []
@@ -85,7 +85,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :reserve_inventory do
-    depends_on :check_inventory
+    argument :order, result(:validate_order)
 
     run do |order:, **|
       reservation_id = InventoryService.reserve_items(order.items)
@@ -101,10 +101,10 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :process_payment do
-    depends_on :reserve_inventory
+    argument :order, result(:validate_order)
 
     # Payment processing needs careful retry handling
-    retry max_attempts: 2, backoff: :fixed, base_delay: 30.seconds, idempotent: true
+    retry max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
 
     run do |order:, **|
       payment_result = PaymentService.charge(
@@ -126,7 +126,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :update_inventory do
-    depends_on :process_payment
+    argument :order, result(:validate_order)
+    argument :reservation_id, result(:reserve_inventory)
 
     run do |order:, reservation_id:, **|
       # Convert reservation to permanent inventory reduction
@@ -144,7 +145,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :update_order_status do
-    depends_on :update_inventory
+    argument :order, result(:validate_order)
+    argument :payment_id, result(:process_payment)
 
     run do |order:, payment_id:, **|
       order.update!(
@@ -158,10 +160,9 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :send_confirmation do
-    depends_on :update_order_status
+    argument :order, result(:validate_order)
+    argument :payment_id, result(:process_payment)
 
-    # Email sending is idempotent and can be retried
-    idempotent true
     retry max_attempts: 3, backoff: :linear, base_delay: 10.seconds
 
     run do |order:, payment_id:, **|
@@ -361,5 +362,4 @@ class OrderCancellationReactor < RubyReactor::Reactor
     end
   end
 end
-```</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/docs/examples/order_processing.md
+```

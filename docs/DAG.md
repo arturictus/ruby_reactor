@@ -471,5 +471,4 @@ class ComplexWorkflowReactor < RubyReactor::Reactor
 end
 ```
 
-This DAG allows `send_notification` and `update_audit_log` to execute in parallel after `process_data` completes, demonstrating how RubyReactor maximizes concurrency while maintaining dependency ordering.</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/docs/DAG.md
+This DAG allows `send_notification` and `update_audit_log` to execute in parallel after `process_data` completes, demonstrating how RubyReactor maximizes concurrency while maintaining dependency ordering

@@ -47,7 +47,6 @@ result = OrderProcessingReactor.run(order_id: 123)
 - **Non-Blocking Retries**: Job requeuing instead of blocking workers
 - **Sidekiq Integration**: Seamless background processing
 - **Retry Configuration**: Flexible retry policies per step
-- **Idempotency Support**: Built-in idempotent operation handling
 
 ## Architecture
 
@@ -121,5 +120,4 @@ gem 'ruby_reactor'
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for development setup and contribution guidelines.</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/docs/README.md
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for development setup and contribution guidelines.

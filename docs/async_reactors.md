@@ -152,7 +152,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
   end
 
   step :charge_card, async: true do
-    retry max_attempts: 5, backoff: :linear, base_delay: 5.seconds, idempotent: true
+    retry max_attempts: 5, backoff: :linear, base_delay: 5.seconds
     run { charge_card_logic }
   end
 
@@ -179,7 +179,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
 
   step :charge_card do
     # Override defaults for this step
-    retry max_attempts: 5, backoff: :linear, base_delay: 10.seconds, idempotent: true
+    retry max_attempts: 5, backoff: :linear, base_delay: 10.seconds
     run { charge_card_logic }
   end
 end
@@ -193,17 +193,6 @@ end
 - **`:linear`**: Delay increases linearly (5s, 10s, 15s, 20s...)
 - **`:fixed`**: Same delay for each attempt (5s, 5s, 5s, 5s...)
 
-### Idempotency
-
-Mark steps as idempotent to enable safe retries:
-
-```ruby
-step :send_notification do
-  idempotent true  # Safe to retry multiple times
-  run { send_email_notification }
-end
-```
-
 ## Error Handling and Compensation
 
 Async reactors support full compensation and rollback in the worker context:
@@ -214,6 +203,11 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :process_payment do
     run { process_payment_logic }
+
+    undo do |payment_id:, **|
+      # Runs in worker if execution fails later
+      PaymentService.refund(payment_id)
+    end
 
     compensate do |payment_id:, **|
       # Runs in worker if execution fails later
@@ -233,16 +227,6 @@ end
 ```
 
 ## Monitoring and Observability
-
-### Logging
-
-All retry attempts are logged with Sidekiq's logger:
-
-```
-INFO: Executing step 'charge_card' - attempt 2
-INFO: Requeuing job for step 'charge_card' retry 2 in 10 seconds
-INFO: Step 'charge_card' succeeded after retry
-```
 
 ### Job Visibility
 
@@ -287,8 +271,3 @@ Track these key metrics:
 - Average retry delays
 - Success rates after retries
 - Worker utilization during peak loads
-
-## Migration from Sync to Async
-
-See the [migration guide](migration_guide.md) for converting existing synchronous reactors to async execution.</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/docs/async_reactors.md

@@ -161,7 +161,7 @@ module RubyReactor
         result
       elsif result.is_a?(RubyReactor::Failure)
         # Step failed, check if we can retry
-        if can_retry_step?(step_config)
+        if can_retry_step?(step_config) && result.retryable?
           requeue_job_for_step_retry(step_config, result.error)
           RetryQueuedResult.new(
             step_config.name,

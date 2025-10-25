@@ -746,5 +746,4 @@ INVENTORY_ALERTS = {
   high_lock_contention: "Lock contention above 10%",
   replenishment_failures: "Failed replenishment orders in last hour"
 }
-```</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/docs/examples/inventory_management.md
+```

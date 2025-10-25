@@ -93,17 +93,6 @@ retry base_delay: 5.seconds
 retry base_delay: 300  # 5 minutes in seconds
 ```
 
-### idempotent
-Marks the step as safe for multiple executions.
-
-```ruby
-step :send_notification do
-  idempotent true
-  retry max_attempts: 3
-  run { EmailService.send_notification(email, message) }
-end
-```
-
 ## Backoff Strategies
 
 ### Exponential Backoff
@@ -154,18 +143,6 @@ retry max_attempts: 4, backoff: :fixed, base_delay: 10.seconds
 
 An operation is idempotent if executing it multiple times produces the same result as executing it once.
 
-### Marking Steps as Idempotent
-
-```ruby
-step :update_inventory do
-  idempotent true
-  retry max_attempts: 5
-  run do |product_id, quantity|
-    InventoryService.decrement(product_id, quantity)
-  end
-end
-```
-
 ### Idempotent vs Non-Idempotent Operations
 
 **Idempotent operations (safe to retry):**
@@ -184,8 +161,7 @@ end
 
 1. **Design for idempotency**: Structure operations to be safely retryable
 2. **Use idempotency keys**: For payments, orders, etc.
-3. **Mark appropriately**: Only mark truly idempotent steps
-4. **Test thoroughly**: Verify retry behavior doesn't cause issues
+3. **Test thoroughly**: Verify retry behavior doesn't cause issues
 
 ## Advanced Configuration
 
@@ -210,7 +186,6 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :reserve_inventory do
     # Inventory reservation - must be idempotent
-    idempotent true
     retry max_attempts: 3, backoff: :fixed, base_delay: 5.seconds
     run { InventoryService.reserve_items(order.items) }
 
@@ -233,7 +208,6 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :confirm_order do
     # Final confirmation - must succeed
-    idempotent true
     run { OrderService.mark_completed(order_id) }
   end
 end
@@ -254,11 +228,11 @@ class CustomRetryReactor < RubyReactor::Reactor
       # Raise specific errors based on response
       case result.status
       when 429  # Rate limited
-        raise RateLimitError.new("Rate limited", retryable: true)
+        Failure(RateLimitError.new(result) retryable: true)
       when 500  # Server error
-        raise ServerError.new("Server error", retryable: true)
+        Failure(ServerError.new(result) retryable: true)
       when 400  # Bad request
-        raise ValidationError.new("Bad request", retryable: false)
+        Failure(ValidationError.new(result) retryable: false)
       else
         result
       end
@@ -281,17 +255,6 @@ average_retry_delay(step_name)
 retry_timeout_count(step_name)
 ```
 
-### Logging
-
-All retry attempts are automatically logged:
-
-```
-INFO: Executing step 'charge_card' - attempt 1
-INFO: Step 'charge_card' failed: Payment timeout
-INFO: Requeuing job for step 'charge_card' retry 1 in 5 seconds
-INFO: Executing step 'charge_card' - attempt 2
-INFO: Step 'charge_card' succeeded after retry
-```
 
 ### Sidekiq Web UI
 
@@ -350,26 +313,6 @@ class ValidationError < StandardError
 end
 ```
 
-### Custom Retry Logic
-
-```ruby
-class SmartRetryReactor < RubyReactor::Reactor
-  step :process_with_smart_retry do
-    run do
-      attempt = context.retry_context.retry_attempt_for_step(:process_with_smart_retry)
-
-      # Custom logic based on attempt number
-      if attempt > 2
-        # Try alternative approach on later attempts
-        alternative_processing_logic
-      else
-        normal_processing_logic
-      end
-    end
-  end
-end
-```
-
 ## Testing Retry Behavior
 
 ### Unit Testing
@@ -413,8 +356,3 @@ describe "Retry integration" do
   end
 end
 ```
-
-## Migration Guide
-
-See the [migration guide](migration_guide.md) for converting existing reactors to use retry configuration.</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/docs/retry_configuration.md

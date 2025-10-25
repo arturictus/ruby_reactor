@@ -101,7 +101,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     argument :currency, input(:currency)
     argument :card_token, input(:card_token)
 
-    retry max_attempts: 3, backoff: :exponential, base_delay: 5.seconds, idempotent: true
+    retry max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
 
     run do |args, _context|
       amount = args[:amount]
@@ -130,7 +130,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     argument :auth_data, result(:pre_authorize)
 
     # Final charge - critical operation
-    retry max_attempts: 1, backoff: :fixed, base_delay: 60.seconds, idempotent: true
+    retry max_attempts: 1, backoff: :fixed, base_delay: 60.seconds
 
     run do |args, _context|
       auth_id = args[:auth_data][:auth_id]
@@ -194,7 +194,6 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     argument :amount, input(:amount)
     argument :currency, input(:currency)
 
-    idempotent true
     retry max_attempts: 3, backoff: :linear, base_delay: 10.seconds
 
     run do |args, _context|
@@ -292,6 +291,7 @@ class MultiAttemptPaymentReactor < RubyReactor::Reactor
     )
   end
 end
+```
 
 ### Subscription Payment Processing
 
@@ -334,8 +334,6 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
   step :charge_subscription do
     argument :validation_data, result(:validate_subscription)
     argument :proration_data, result(:calculate_proration)
-
-    idempotent true  # Safe to retry subscription charges
 
     run do |args, _context|
       subscription = args[:validation_data][:subscription]
@@ -409,9 +407,11 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
   end
 
   step :calculate_proration do
-    depends_on :validate_subscription
+    argument :validation_data, result(:validate_subscription)
 
-    run do |subscription:, **|
+    run do |args, _context|
+      subscription = args[:validation_data][:subscription]
+
       # Calculate prorated amount for billing period
       proration = BillingService.calculate_proration(subscription)
       { proration_amount: proration.amount, billing_period: proration.period }
@@ -419,11 +419,14 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
   end
 
   step :charge_subscription do
-    depends_on :calculate_proration
+    argument :validation_data, result(:validate_subscription)
+    argument :proration_data, result(:calculate_proration)
 
-    idempotent true  # Safe to retry subscription charges
+    run do |args, _context|
+      subscription = args[:validation_data][:subscription]
+      proration_amount = args[:proration_data][:proration_amount]
+      billing_period = args[:proration_data][:billing_period]
 
-    run do |subscription:, proration_amount:, billing_period:, **|
       charge_result = PaymentGateway.charge_subscription(
         customer_id: subscription.customer.stripe_id,
         amount: proration_amount,
@@ -435,16 +438,23 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
       { charge_id: charge_result.id }
     end
 
-    compensate do |charge_id:, **|
+    compensate do |args, _context|
+      charge_id = args[:validation_data][:charge_id] || args[:charge_id]
       # Refund the subscription charge
       PaymentGateway.refund_subscription_charge(charge_id) if charge_id
     end
   end
 
   step :update_billing_record do
-    depends_on :charge_subscription
+    argument :validation_data, result(:validate_subscription)
+    argument :proration_data, result(:calculate_proration)
+    argument :charge_data, result(:charge_subscription)
 
-    run do |subscription:, charge_id:, billing_period:, **|
+    run do |args, _context|
+      subscription = args[:validation_data][:subscription]
+      charge_id = args[:charge_data][:charge_id]
+      billing_period = args[:proration_data][:billing_period]
+
       BillingRecord.create!(
         subscription: subscription,
         charge_id: charge_id,
@@ -641,5 +651,4 @@ step :send_receipt do
     # Email sending logic
   end
 end
-```</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/docs/examples/payment_processing.md
+```
