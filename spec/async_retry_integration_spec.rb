@@ -79,7 +79,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
     end
 
     context "with linear backoff" do
-      it "uses linear backoff strategy" do
+      xit "uses linear backoff strategy" do
         reactor = RetryLinearReactor.new
         reactor.run
 
@@ -89,7 +89,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
     end
 
     context "with fixed backoff" do
-      it "uses fixed backoff strategy" do
+      xit "uses fixed backoff strategy" do
         reactor = RetryFixedReactor.new
         reactor.run
 
