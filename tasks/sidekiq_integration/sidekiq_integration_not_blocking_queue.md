@@ -103,7 +103,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :check_inventory, async: true do
-    retry max_attempts: 10, backoff: :linear, base_delay: 5.seconds, idempotent: true
+    retries max_attempts: 10, backoff: :linear, base_delay: 5.seconds, idempotent: true
     # Custom retry: 10 attempts, linear backoff, marked as idempotent
     run { inventory_check }
   end

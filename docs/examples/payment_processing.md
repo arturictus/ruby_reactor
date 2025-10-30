@@ -101,7 +101,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     argument :currency, input(:currency)
     argument :card_token, input(:card_token)
 
-    retry max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
+    retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
 
     run do |args, _context|
       amount = args[:amount]
@@ -130,7 +130,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     argument :auth_data, result(:pre_authorize)
 
     # Final charge - critical operation
-    retry max_attempts: 1, backoff: :fixed, base_delay: 60.seconds
+    retries max_attempts: 1, backoff: :fixed, base_delay: 60.seconds
 
     run do |args, _context|
       auth_id = args[:auth_data][:auth_id]
@@ -194,7 +194,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     argument :amount, input(:amount)
     argument :currency, input(:currency)
 
-    retry max_attempts: 3, backoff: :linear, base_delay: 10.seconds
+    retries max_attempts: 3, backoff: :linear, base_delay: 10.seconds
 
     run do |args, _context|
       transaction_id = args[:transaction_data][:transaction_id]
@@ -475,7 +475,7 @@ end
 ```ruby
 class TimeoutHandlingReactor < RubyReactor::Reactor
   step :handle_timeout do
-    retry max_attempts: 5, backoff: :exponential, base_delay: 2.seconds
+    retries max_attempts: 5, backoff: :exponential, base_delay: 2.seconds
 
     run do
       begin

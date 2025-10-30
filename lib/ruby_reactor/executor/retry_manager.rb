@@ -7,6 +7,44 @@ module RubyReactor
         @context = context
       end
 
+      def execute_with_retry(step_config, reactor_class, &block)
+        @context.retry_context.current_step = step_config.name
+        @context.retry_context.increment_attempt_for_step(step_config.name)
+
+        result = yield
+
+        if result.is_a?(RubyReactor::Success)
+          # Step succeeded, clear retry state
+          clear_retry_state
+          result
+        elsif result.is_a?(RubyReactor::Failure)
+          # Step failed, check if we can retry
+          if can_retry_step?(step_config) && result.retryable?
+            if reactor_class.async?
+              requeue_job_for_step_retry(step_config, result.error, reactor_class)
+              RetryQueuedResult.new(
+                step_config.name,
+                @context.retry_context.attempts_for_step(step_config.name),
+                @context.retry_context.next_retry_at
+              )
+            else
+              # Sync retry - execute again immediately
+              execute_with_retry(step_config, reactor_class, &block)
+            end
+          else
+            # Cannot retry, fail
+            clear_retry_state
+            result
+          end
+        else
+          # Unexpected result type
+          clear_retry_state
+          RubyReactor::Failure("Step '#{step_config.name}' returned unexpected result: #{result.inspect}")
+        end
+      end
+
+      private
+
       def can_retry_step?(step_config)
         step_config.retryable? && @context.retry_context.can_retry_step?(step_config.name,
                                                                         step_config.retry_config[:max_attempts])
@@ -30,49 +68,11 @@ module RubyReactor
         RubyReactor::Worker.perform_in(delay, serialized_context, reactor_class.name)
       end
 
-      def retry_step_sync(step_config, reactor_class, &block)
-        delay = calculate_backoff_delay(step_config, nil, reactor_class)
-        sleep(delay)
-        execute_with_retry(step_config, reactor_class, &block)
-      end
-
-      def execute_with_retry(step_config, reactor_class, &block)
-        @context.retry_context.current_step = step_config.name
-        @context.retry_context.increment_attempt_for_step(step_config.name)
-
-        result = yield
-
-        if result.is_a?(RubyReactor::Success)
-          # Step succeeded, clear retry state
-          clear_retry_state
-          result
-        elsif result.is_a?(RubyReactor::Failure)
-          # Step failed, check if we can retry
-          if can_retry_step?(step_config) && result.retryable?
-            if reactor_class.async?
-              requeue_job_for_step_retry(step_config, result.error, reactor_class)
-              RetryQueuedResult.new(
-                step_config.name,
-                @context.retry_context.attempts_for_step(step_config.name),
-                @context.retry_context.next_retry_at
-              )
-            else
-              # Sync retry - execute again immediately
-              retry_step_sync(step_config, reactor_class, &block)
-            end
-          else
-            # Cannot retry, fail
-            clear_retry_state
-            result
-          end
-        else
-          # Unexpected result type
-          clear_retry_state
-          RubyReactor::Failure("Step '#{step_config.name}' returned unexpected result: #{result.inspect}")
-        end
-      end
-
-      private
+      # def retry_step_sync(step_config, reactor_class, &block)
+      #   delay = calculate_backoff_delay(step_config, nil, reactor_class)
+      #   sleep(delay)
+      #   execute_with_retry(step_config, reactor_class, &block)
+      # end
 
       def clear_retry_state
         @context.retry_context.current_step = nil

@@ -199,7 +199,7 @@ class InventoryManagementReactor < RubyReactor::Reactor
     argument :replenishment_data, result(:check_replenishment)
 
     idempotent true
-    retry max_attempts: 3, backoff: :linear, base_delay: 5.seconds
+    retries max_attempts: 3, backoff: :linear, base_delay: 5.seconds
 
     run do |args, _context|
       product = args[:request_data][:product]

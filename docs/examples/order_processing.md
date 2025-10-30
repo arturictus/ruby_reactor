@@ -104,7 +104,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
     argument :order, result(:validate_order)
 
     # Payment processing needs careful retry handling
-    retry max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
+    retries max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
 
     run do |order:, **|
       payment_result = PaymentService.charge(
@@ -163,7 +163,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
     argument :order, result(:validate_order)
     argument :payment_id, result(:process_payment)
 
-    retry max_attempts: 3, backoff: :linear, base_delay: 10.seconds
+    retries max_attempts: 3, backoff: :linear, base_delay: 10.seconds
 
     run do |order:, payment_id:, **|
       email_result = EmailService.send_order_confirmation(

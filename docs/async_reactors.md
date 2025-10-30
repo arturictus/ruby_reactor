@@ -147,12 +147,12 @@ class PaymentProcessingReactor < RubyReactor::Reactor
   async true
 
   step :validate_payment do
-    retry max_attempts: 3, backoff: :exponential, base_delay: 1.second
+    retries max_attempts: 3, backoff: :exponential, base_delay: 1.second
     run { validate_payment_logic }
   end
 
   step :charge_card, async: true do
-    retry max_attempts: 5, backoff: :linear, base_delay: 5.seconds
+    retries max_attempts: 5, backoff: :linear, base_delay: 5.seconds
     run { charge_card_logic }
   end
 
@@ -179,7 +179,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
 
   step :charge_card do
     # Override defaults for this step
-    retry max_attempts: 5, backoff: :linear, base_delay: 10.seconds
+    retries max_attempts: 5, backoff: :linear, base_delay: 10.seconds
     run { charge_card_logic }
   end
 end

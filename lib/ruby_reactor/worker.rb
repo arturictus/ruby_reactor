@@ -44,6 +44,7 @@ module RubyReactor
       Sidekiq.logger.error("Job details: #{msg.inspect}")
     end
 
+    # TODO: delete from here --------------------------------
     def run_compensation_for_current_step(context)
       return unless context.current_step
 
