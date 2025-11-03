@@ -60,7 +60,7 @@ module RubyReactor
 
       def execute_step_sync_with_retry(step_config)
         @retry_manager.execute_with_retry(step_config, @reactor_class) do
-          execute_step_sync(step_config)
+          safe_execute_step_sync(step_config)
         end
       end
 

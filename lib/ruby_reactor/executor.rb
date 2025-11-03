@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-require_relative 'executor/input_validator'
-require_relative 'executor/graph_manager'
-require_relative 'executor/retry_manager'
-require_relative 'executor/compensation_manager'
-require_relative 'executor/result_handler'
-require_relative 'executor/step_executor'
+require_relative "executor/input_validator"
+require_relative "executor/graph_manager"
+require_relative "executor/retry_manager"
+require_relative "executor/compensation_manager"
+require_relative "executor/result_handler"
+require_relative "executor/step_executor"
 
 module RubyReactor
   class Executor

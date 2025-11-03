@@ -47,7 +47,7 @@ module RubyReactor
 
       def can_retry_step?(step_config)
         step_config.retryable? && @context.retry_context.can_retry_step?(step_config.name,
-                                                                        step_config.retry_config[:max_attempts])
+                                                                         step_config.retry_config[:max_attempts])
       end
 
       def calculate_backoff_delay(step_config, error, reactor_class)

@@ -41,6 +41,7 @@ module Support
       argument :product_id, input(:product_id)
       argument :quantity, input(:quantity)
       argument :fail_at, input(:fail_at)
+      argument :success_at_retry, input(:success_at_retry)
       run do |args, _context|
         puts "Checking inventory for product #{args[:product_id]}, quantity #{args[:quantity]}"
         if args[:fail_at] == :check_inventory
@@ -59,12 +60,11 @@ module Support
     end
 
     step :reserve_inventory do
-      async true
       argument :inventory, result(:check_inventory)
       argument :fail_at, input(:fail_at)
       argument :success_at_retry, input(:success_at_retry)
-      run do |args, _context|
-        if args[:fail_at] == :reserve_inventory && (args[:success_at_retry].nil? || _context.retry_context.attempts_for_step(:reserve_inventory) < args[:success_at_retry])
+      run do |args, context|
+        if args[:fail_at] == :reserve_inventory && (args[:success_at_retry].nil? || context.retry_context.attempts_for_step(:reserve_inventory) < args[:success_at_retry])
           Failure("Failure triggered for reserve_inventory")
         else
           # Simulate inventory reservation
@@ -81,7 +81,6 @@ module Support
     end
 
     step :process_payment do
-      async true
       argument :order, result(:validate_order)
       argument :amount, input(:amount)
       argument :fail_at, input(:fail_at)
