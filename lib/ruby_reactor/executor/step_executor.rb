@@ -31,6 +31,11 @@ module RubyReactor
 
             # If a step returns RetryQueuedResult, we need to stop and return it
             return result if result.is_a?(RetryQueuedResult)
+
+            # If a step returns Failure after exhausting retries, we need to stop
+            if result.is_a?(RubyReactor::Failure) && result.error.include?("failed after") && result.error.include?("attempts")
+              return result
+            end
           end
         end
 
