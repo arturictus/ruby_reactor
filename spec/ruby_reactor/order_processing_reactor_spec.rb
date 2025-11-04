@@ -59,6 +59,27 @@ RSpec.describe Support::OrderProcessingReactor do
       result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0,
                            fail_at: :reserve_inventory)
       expect(result).to be_a(RubyReactor::Failure)
+
+      steps = reactor.execution_trace.each_with_index.map do |trace_entry, index|
+        "#{index +1}. #{trace_entry[:type]} step=#{trace_entry[:step]}"
+      end
+      expected_steps = [
+        "1. run step=validate_order",
+        "2. run step=check_inventory",
+        "3. run step=reserve_inventory",
+        "4. compensate step=reserve_inventory",
+        "5. run step=reserve_inventory",
+        "6. compensate step=reserve_inventory",
+        "7. run step=reserve_inventory",
+        "8. compensate step=reserve_inventory",
+        "9. run step=reserve_inventory",
+        "10. compensate step=reserve_inventory",
+        "11. run step=reserve_inventory",
+        "12. compensate step=reserve_inventory",
+        "13. undo step=check_inventory",
+        "14. undo step=validate_order"
+      ]
+      expect(steps).to eq(expected_steps)
     end
 
     it "retries reserve_inventory step until success_at_retry" do
