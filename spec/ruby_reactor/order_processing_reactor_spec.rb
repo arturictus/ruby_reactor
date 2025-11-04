@@ -33,7 +33,7 @@ RSpec.describe Support::OrderProcessingReactor do
       expect(result).to be_a(RubyReactor::Failure)
     end
 
-    xit "retries check_inventory step until success_at_retry" do
+    it "retries check_inventory step until success_at_retry" do
       reactor = described_class.new
       result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0,
                            fail_at: :check_inventory, success_at_retry: 3)

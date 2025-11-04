@@ -42,9 +42,10 @@ module Support
       argument :quantity, input(:quantity)
       argument :fail_at, input(:fail_at)
       argument :success_at_retry, input(:success_at_retry)
-      run do |args, _context|
+      run do |args, context|
         puts "Checking inventory for product #{args[:product_id]}, quantity #{args[:quantity]}"
-        if args[:fail_at] == :check_inventory
+        if args[:fail_at] == :check_inventory &&
+           (args[:success_at_retry].nil? || context.retry_context.attempts_for_step(:check_inventory) < args[:success_at_retry])
           Failure("Failure triggered for check_inventory")
         else
           # Simulate inventory check
