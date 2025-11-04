@@ -39,7 +39,7 @@ module RubyReactor
               clear_retry_state
               current_attempts = @context.retry_context.attempts_for_step(step_config.name)
               return MaxRetriesExhaustedFailure.new(
-                "Step '#{step_config.name}' failed after #{current_attempts} attempts",
+                "Step '#{step_config.name}' failed after #{current_attempts} attempts: #{result.error.message}",
                 step: step_config.name,
                 attempts: current_attempts,
                 original_error: result.error

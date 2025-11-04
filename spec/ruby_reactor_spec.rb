@@ -96,7 +96,7 @@ RSpec.describe RubyReactor do
         )
 
         expect(result).to be_a(RubyReactor::Failure)
-        expect(result.error).to eq("Step 'validate_email' failed: Email must contain @")
+        expect(result.error).to eq("Step 'validate_email' failed after 3 attempts: Step 'validate_email' failed: Email must contain @")
       end
 
       it "fails with nil email" do
@@ -106,7 +106,7 @@ RSpec.describe RubyReactor do
         )
 
         expect(result).to be_a(RubyReactor::Failure)
-        expect(result.error).to eq("Step 'validate_email' failed: Email must contain @")
+        expect(result.error).to eq("Step 'validate_email' failed after 3 attempts: Step 'validate_email' failed: Email must contain @")
       end
 
       it "fails with empty email" do
@@ -116,7 +116,7 @@ RSpec.describe RubyReactor do
         )
 
         expect(result).to be_a(RubyReactor::Failure)
-        expect(result.error).to eq("Step 'validate_email' failed: Email must contain @")
+        expect(result.error).to eq("Step 'validate_email' failed after 3 attempts: Step 'validate_email' failed: Email must contain @")
       end
     end
 
