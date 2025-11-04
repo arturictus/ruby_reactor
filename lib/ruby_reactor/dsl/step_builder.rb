@@ -165,7 +165,7 @@ module RubyReactor
       end
 
       def retryable?
-        retry_config[:max_attempts] > 1
+        (retry_config[:max_attempts] || 0) > 1
       end
 
       def should_run?(context)
