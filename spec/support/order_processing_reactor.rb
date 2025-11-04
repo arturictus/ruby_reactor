@@ -29,11 +29,23 @@ module Support
       argument :order_id, input(:order_id)
       argument :fail_at, input(:fail_at)
       run do |args, _context|
+        puts "1. validate_order run"
         if args[:fail_at] == :validate_order
           Failure("Failure triggered for validate_order")
         else
           Success({ id: args[:order_id], amount: 100.0, currency: "USD" })
         end
+      end
+
+      compensate do |reason, args, _context|
+        puts "1** compensate validate_order"
+        Success("Compensation failed for validate_order")
+      end
+
+      undo do |error, context|
+        puts "1* Undo validate_order due to error: #{error}"
+        # Simulate compensation logic
+        Success("Compensated for order #{context[:order_id]}")
       end
     end
 
@@ -43,7 +55,7 @@ module Support
       argument :fail_at, input(:fail_at)
       argument :success_at_retry, input(:success_at_retry)
       run do |args, context|
-        puts "Checking inventory for product #{args[:product_id]}, quantity #{args[:quantity]}"
+        puts "2.check_inventory run"
         if args[:fail_at] == :check_inventory &&
            (args[:success_at_retry].nil? || context.retry_context.attempts_for_step(:check_inventory) < args[:success_at_retry])
           Failure("Failure triggered for check_inventory")
@@ -54,9 +66,14 @@ module Support
       end
 
       undo do |error, context|
-        puts "Undo check_inventory due to error: #{error}"
+        puts "2.Undo check_inventory"
         # Simulate compensation logic
         Success("Compensated inventory check for product #{context[:product_id]}")
+      end
+
+      compensate do |reason, args, _context|
+        puts "2** compensate check_inventory"
+        Success("Compensation failed for check_inventory")
       end
     end
 
@@ -65,6 +82,7 @@ module Support
       argument :fail_at, input(:fail_at)
       argument :success_at_retry, input(:success_at_retry)
       run do |args, context|
+        puts "3. reserve_inventory run"
         if args[:fail_at] == :reserve_inventory && (args[:success_at_retry].nil? || context.retry_context.attempts_for_step(:reserve_inventory) < args[:success_at_retry])
           Failure("Failure triggered for reserve_inventory")
         else
@@ -75,9 +93,14 @@ module Support
       end
 
       undo do |error, context|
-        puts "Undo reserve_inventory due to error: #{error}"
+        puts "3* reserve_inventory Undo"
         # Simulate compensation logic
         Success("Released reserved inventory for product #{context[:inventory][:product_id]}")
+      end
+
+      compensate do |reason, args, _context|
+        puts "3** reserve_inventory compensate"
+        Success("Compensation failed for reserve_inventory")
       end
     end
 
@@ -88,6 +111,7 @@ module Support
       argument :inventory, result(:reserve_inventory)
 
       run do |args, _context|
+        puts "4. process_payment run"
         if args[:fail_at] == :process_payment
           Failure("Failure triggered for process_payment")
         else
@@ -97,7 +121,7 @@ module Support
       end
 
       undo do |error, context|
-        puts "Undo process_payment due to error: #{error}"
+        puts "4*Undo process_payment"
         # Simulate compensation logic
         Success("Refunded payment for order #{context[:order][:id]}")
       end
