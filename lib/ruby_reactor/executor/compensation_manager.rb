@@ -39,7 +39,7 @@ module RubyReactor
         @undo_stack.reverse_each do |step_info|
           result = undo_step(step_info[:step], step_info[:result], step_info[:arguments])
           @undo_trace << { type: :undo, step: step_info[:step].name, result: result,
-                          arguments: step_info[:arguments] }
+                           arguments: step_info[:arguments] }
         end
         @undo_stack.clear
       end
@@ -48,9 +48,13 @@ module RubyReactor
 
       def compensate_step(step_config, error, arguments)
         if step_config.compensate_block
+          @context.execution_trace << { type: :compensate, step: step_config.name, timestamp: Time.now, error: error,
+                                        arguments: arguments }
           @undo_trace << { type: :compensation, step: step_config.name, error: error, arguments: arguments }
           step_config.compensate_block.call(error, arguments, @context)
         elsif step_config.has_impl?
+          @context.execution_trace << { type: :compensate, step: step_config.name, timestamp: Time.now, error: error,
+                                        arguments: arguments }
           @undo_trace << { type: :compensation, step: step_config.name, error: error, arguments: arguments }
           step_config.impl.compensate(error, arguments, @context)
         else
@@ -59,6 +63,8 @@ module RubyReactor
       end
 
       def undo_step(step_config, result, arguments)
+        @context.execution_trace << { type: :undo, step: step_config.name, timestamp: Time.now, result: result.value,
+                                      arguments: arguments }
         if step_config.undo_block
           step_config.undo_block.call(result.value, arguments, @context)
         elsif step_config.has_impl?

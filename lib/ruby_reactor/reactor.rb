@@ -4,12 +4,13 @@ module RubyReactor
   class Reactor
     include RubyReactor::Dsl::Reactor
 
-    attr_reader :context, :result, :undo_trace
+    attr_reader :context, :result, :undo_trace, :execution_trace
 
     def initialize(context = {})
       @context = context
       @result = :unexecuted
       @undo_trace = []
+      @execution_trace = []
     end
 
     def run(inputs = {})
@@ -29,6 +30,7 @@ module RubyReactor
         @context = executor.context
 
         @undo_trace = executor.undo_trace
+        @execution_trace = executor.execution_trace
 
         # If execution returned an AsyncResult (from step-level async), return it
         return @result if @result.is_a?(RubyReactor::AsyncResult)

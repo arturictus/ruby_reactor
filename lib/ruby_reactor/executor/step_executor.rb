@@ -127,6 +127,7 @@ module RubyReactor
       end
 
       def run_step_implementation(step_config, arguments)
+        @context.execution_trace << { type: :run, step: step_config.name, timestamp: Time.now, arguments: arguments }
         if step_config.has_run_block?
           # Execute inline block
           step_config.run_block.call(arguments, @context)

@@ -72,5 +72,9 @@ module RubyReactor
     def undo_trace
       @compensation_manager.undo_trace
     end
+
+    def execution_trace
+      @context.execution_trace
+    end
   end
 end
