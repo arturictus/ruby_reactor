@@ -221,5 +221,4 @@ end
 - Learn about [async reactors](async_reactors.md)
 - Configure [retry policies](retry_configuration.md)
 - See [examples](examples/) for more patterns
-- Check the [API reference](api_reference.md) for detailed documentation</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/docs/getting_started.md
+- Check the [API reference](api_reference.md) for detailed documentation

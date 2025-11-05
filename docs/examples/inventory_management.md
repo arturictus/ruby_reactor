@@ -199,7 +199,7 @@ class InventoryManagementReactor < RubyReactor::Reactor
     argument :replenishment_data, result(:check_replenishment)
 
     idempotent true
-    retry max_attempts: 3, backoff: :linear, base_delay: 5.seconds
+    retries max_attempts: 3, backoff: :linear, base_delay: 5.seconds
 
     run do |args, _context|
       product = args[:request_data][:product]
@@ -746,5 +746,4 @@ INVENTORY_ALERTS = {
   high_lock_contention: "Lock contention above 10%",
   replenishment_failures: "Failed replenishment orders in last hour"
 }
-```</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/docs/examples/inventory_management.md
+```

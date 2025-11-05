@@ -102,7 +102,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :check_inventory, async: true do
-    retry max_attempts: 10, backoff: :linear, base_delay: 5.seconds, idempotent: true
+    retries max_attempts: 10, backoff: :linear, base_delay: 5.seconds, idempotent: true
     # Custom retry: 10 attempts, linear backoff, marked as idempotent
     run { inventory_check }
   end
@@ -1149,5 +1149,4 @@ end
 5. **Timeout Configuration**: Set reasonable worker timeouts based on expected execution times
 6. **Idempotency**: Focus on making individual steps idempotent rather than entire reactors
 
-Would you like me to proceed with implementing the step-level retry infrastructure first?</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/tasks/sidekiq_integration_single_async.md
+Would you like me to proceed with implementing the step-level retry infrastructure first?

@@ -45,7 +45,7 @@ RSpec.describe "RubyReactor Async and Retry DSL" do
     it "supports retry configuration in step builder" do
       reactor_class = Class.new(RubyReactor::Reactor) do
         step :test_step do
-          retries max_attempts: 3, backoff: :exponential, base_delay: 1, idempotent: true
+          retries max_attempts: 3, backoff: :exponential, base_delay: 1
 
           run { |_args, _context| RubyReactor.Success("done") }
         end
@@ -53,23 +53,9 @@ RSpec.describe "RubyReactor Async and Retry DSL" do
 
       step_config = reactor_class.steps[:test_step]
       expect(step_config.retryable?).to be true
-      expect(step_config.idempotent?).to be true
       expect(step_config.retry_config[:max_attempts]).to eq(3)
       expect(step_config.retry_config[:backoff]).to eq(:exponential)
       expect(step_config.retry_config[:base_delay]).to eq(1)
-    end
-
-    it "supports idempotent method in step builder" do
-      reactor_class = Class.new(RubyReactor::Reactor) do
-        step :test_step do
-          idempotent true
-
-          run { |_args, _context| RubyReactor.Success("done") }
-        end
-      end
-
-      step_config = reactor_class.steps[:test_step]
-      expect(step_config.idempotent?).to be true
     end
   end
 

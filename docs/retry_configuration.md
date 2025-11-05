@@ -40,7 +40,7 @@ class PaymentReactor < RubyReactor::Reactor
   async true
 
   step :charge_card do
-    retry max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
+    retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
     run { PaymentService.charge(card_token, amount) }
   end
 end
@@ -62,7 +62,7 @@ class PaymentReactor < RubyReactor::Reactor
 
   step :charge_card do
     # Override for this specific step
-    retry max_attempts: 5, backoff: :linear, base_delay: 10.seconds
+    retries max_attempts: 5, backoff: :linear, base_delay: 10.seconds
     run { PaymentService.charge(card_token, amount) }
   end
 end
@@ -74,7 +74,7 @@ end
 Maximum number of execution attempts (including the initial attempt).
 
 ```ruby
-retry max_attempts: 5  # 1 initial + 4 retries = 5 total attempts
+retries max_attempts: 5  # 1 initial + 4 retries = 5 total attempts
 ```
 
 ### backoff
@@ -93,17 +93,6 @@ retry base_delay: 5.seconds
 retry base_delay: 300  # 5 minutes in seconds
 ```
 
-### idempotent
-Marks the step as safe for multiple executions.
-
-```ruby
-step :send_notification do
-  idempotent true
-  retry max_attempts: 3
-  run { EmailService.send_notification(email, message) }
-end
-```
-
 ## Backoff Strategies
 
 ### Exponential Backoff
@@ -111,7 +100,7 @@ end
 Delay doubles with each retry attempt. Best for external services that may be temporarily overloaded.
 
 ```ruby
-retry max_attempts: 4, backoff: :exponential, base_delay: 1.second
+retries max_attempts: 4, backoff: :exponential, base_delay: 1.second
 # Delays: 1s, 2s, 4s (total: 7 seconds)
 ```
 
@@ -125,7 +114,7 @@ retry max_attempts: 4, backoff: :exponential, base_delay: 1.second
 Delay increases linearly with each attempt. Provides predictable, gradually increasing delays.
 
 ```ruby
-retry max_attempts: 4, backoff: :linear, base_delay: 5.seconds
+retries max_attempts: 4, backoff: :linear, base_delay: 5.seconds
 # Delays: 5s, 10s, 15s (total: 30 seconds)
 ```
 
@@ -139,7 +128,7 @@ retry max_attempts: 4, backoff: :linear, base_delay: 5.seconds
 Same delay between each retry attempt. Simplest strategy with predictable timing.
 
 ```ruby
-retry max_attempts: 4, backoff: :fixed, base_delay: 10.seconds
+retries max_attempts: 4, backoff: :fixed, base_delay: 10.seconds
 # Delays: 10s, 10s, 10s (total: 30 seconds)
 ```
 
@@ -153,18 +142,6 @@ retry max_attempts: 4, backoff: :fixed, base_delay: 10.seconds
 ### What is Idempotency?
 
 An operation is idempotent if executing it multiple times produces the same result as executing it once.
-
-### Marking Steps as Idempotent
-
-```ruby
-step :update_inventory do
-  idempotent true
-  retry max_attempts: 5
-  run do |product_id, quantity|
-    InventoryService.decrement(product_id, quantity)
-  end
-end
-```
 
 ### Idempotent vs Non-Idempotent Operations
 
@@ -184,8 +161,7 @@ end
 
 1. **Design for idempotency**: Structure operations to be safely retryable
 2. **Use idempotency keys**: For payments, orders, etc.
-3. **Mark appropriately**: Only mark truly idempotent steps
-4. **Test thoroughly**: Verify retry behavior doesn't cause issues
+3. **Test thoroughly**: Verify retry behavior doesn't cause issues
 
 ## Advanced Configuration
 
@@ -204,14 +180,13 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :check_inventory do
     # Inventory checks can be retried
-    retry max_attempts: 5, backoff: :linear, base_delay: 1.second
+    retries max_attempts: 5, backoff: :linear, base_delay: 1.second
     run { check_inventory_availability(order) }
   end
 
   step :reserve_inventory do
     # Inventory reservation - must be idempotent
-    idempotent true
-    retry max_attempts: 3, backoff: :fixed, base_delay: 5.seconds
+    retries max_attempts: 3, backoff: :fixed, base_delay: 5.seconds
     run { InventoryService.reserve_items(order.items) }
 
     compensate do
@@ -222,7 +197,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :process_payment do
     # Payment processing - critical, fewer retries
-    retry max_attempts: 2, backoff: :exponential, base_delay: 10.seconds
+    retries max_attempts: 2, backoff: :exponential, base_delay: 10.seconds
     run { PaymentService.charge(order.total, order.card_token) }
 
     compensate do |payment_id:|
@@ -233,7 +208,6 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :confirm_order do
     # Final confirmation - must succeed
-    idempotent true
     run { OrderService.mark_completed(order_id) }
   end
 end
@@ -248,17 +222,17 @@ class CustomRetryReactor < RubyReactor::Reactor
   async true
 
   step :call_external_api do
-    retry max_attempts: 5, backoff: :exponential, base_delay: 1.second
+    retries max_attempts: 5, backoff: :exponential, base_delay: 1.second
     run do
       result = ExternalAPI.call
       # Raise specific errors based on response
       case result.status
       when 429  # Rate limited
-        raise RateLimitError.new("Rate limited", retryable: true)
+        Failure(RateLimitError.new(result) retryable: true)
       when 500  # Server error
-        raise ServerError.new("Server error", retryable: true)
+        Failure(ServerError.new(result) retryable: true)
       when 400  # Bad request
-        raise ValidationError.new("Bad request", retryable: false)
+        Failure(ValidationError.new(result) retryable: false)
       else
         result
       end
@@ -281,17 +255,6 @@ average_retry_delay(step_name)
 retry_timeout_count(step_name)
 ```
 
-### Logging
-
-All retry attempts are automatically logged:
-
-```
-INFO: Executing step 'charge_card' - attempt 1
-INFO: Step 'charge_card' failed: Payment timeout
-INFO: Requeuing job for step 'charge_card' retry 1 in 5 seconds
-INFO: Executing step 'charge_card' - attempt 2
-INFO: Step 'charge_card' succeeded after retry
-```
 
 ### Sidekiq Web UI
 
@@ -323,13 +286,13 @@ Avoid retry storms by:
 
 ```ruby
 # Fast-retry scenario (API calls)
-retry max_attempts: 3, backoff: :exponential, base_delay: 1.second
+retries max_attempts: 3, backoff: :exponential, base_delay: 1.second
 
 # Slow-retry scenario (batch processing)
-retry max_attempts: 5, backoff: :linear, base_delay: 5.minutes
+retries max_attempts: 5, backoff: :linear, base_delay: 5.minutes
 
 # Critical operations (payments)
-retry max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
+retries max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
 ```
 
 ## Error Types and Handling
@@ -346,26 +309,6 @@ end
 class ValidationError < StandardError
   def retryable?
     false  # Don't retry validation errors
-  end
-end
-```
-
-### Custom Retry Logic
-
-```ruby
-class SmartRetryReactor < RubyReactor::Reactor
-  step :process_with_smart_retry do
-    run do
-      attempt = context.retry_context.retry_attempt_for_step(:process_with_smart_retry)
-
-      # Custom logic based on attempt number
-      if attempt > 2
-        # Try alternative approach on later attempts
-        alternative_processing_logic
-      else
-        normal_processing_logic
-      end
-    end
   end
 end
 ```
@@ -413,8 +356,3 @@ describe "Retry integration" do
   end
 end
 ```
-
-## Migration Guide
-
-See the [migration guide](migration_guide.md) for converting existing reactors to use retry configuration.</content>
-<parameter name="filePath">/Users/artur.panach/dev/republic/ruby_reactor/docs/retry_configuration.md

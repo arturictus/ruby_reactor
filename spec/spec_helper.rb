@@ -42,4 +42,9 @@ RSpec.configure do |config|
   config.after do
     Sidekiq::Testing.fake!
   end
+
+  # Stub retry backoff delay to 0 to speed up tests
+  config.before do
+    allow(RubyReactor::RetryContext).to receive(:calculate_backoff_delay).and_return(0)
+  end
 end

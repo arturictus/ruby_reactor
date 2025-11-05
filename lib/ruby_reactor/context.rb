@@ -3,7 +3,7 @@
 module RubyReactor
   class Context
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
-                  :retry_context, :reactor_class
+                  :retry_context, :reactor_class, :execution_trace
 
     def initialize(inputs = {}, reactor_class = nil)
       @inputs = inputs
@@ -14,6 +14,7 @@ module RubyReactor
       @concurrency_key = nil
       @retry_context = RetryContext.new
       @reactor_class = reactor_class
+      @execution_trace = []
     end
 
     def get_input(name, path = nil)
@@ -57,7 +58,8 @@ module RubyReactor
         current_step: @current_step,
         retry_count: @retry_count,
         retry_context: @retry_context,
-        reactor_class: @reactor_class
+        reactor_class: @reactor_class,
+        execution_trace: @execution_trace
       }
     end
 
@@ -72,7 +74,8 @@ module RubyReactor
         current_step: @current_step,
         retry_count: @retry_count,
         concurrency_key: @concurrency_key,
-        retry_context: @retry_context.serialize_for_retry
+        retry_context: @retry_context.serialize_for_retry,
+        execution_trace: serialize_value(@execution_trace)
       }
     end
 
@@ -86,6 +89,7 @@ module RubyReactor
       context.retry_count = data["retry_count"] || 0
       context.concurrency_key = data["concurrency_key"]
       context.retry_context = RetryContext.deserialize_from_retry(data["retry_context"] || {})
+      context.execution_trace = deserialize_value(data["execution_trace"]) || []
       context
     end
 

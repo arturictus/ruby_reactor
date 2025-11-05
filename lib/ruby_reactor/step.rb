@@ -7,6 +7,16 @@ module RubyReactor
     end
 
     module ClassMethods
+      # rubocop:disable Naming/MethodName
+      def Success(value = nil)
+        RubyReactor::Success(value)
+      end
+
+      def Failure(error = nil)
+        RubyReactor::Failure(error)
+      end
+      # rubocop:enable Naming/MethodName
+
       def run(arguments, context)
         raise NotImplementedError, "#{self} must implement .run method"
       end
