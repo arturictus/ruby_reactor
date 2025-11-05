@@ -76,13 +76,17 @@ module RubyReactor
 
         # Serialize context and requeue the job
         serialized_context = ContextSerializer.serialize(@context)
-        RubyReactor::Worker.perform_in(delay, serialized_context, reactor_class.name)
+        configuration.worker_class.perform_in(delay, serialized_context, reactor_class.name)
       end
 
       def clear_retry_state
         @context.retry_context.current_step = nil
         @context.retry_context.failure_reason = nil
         @context.retry_context.next_retry_at = nil
+      end
+
+      def configuration
+        RubyReactor::Configuration.instance
       end
     end
   end
