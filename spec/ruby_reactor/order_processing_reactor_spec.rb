@@ -87,13 +87,118 @@ RSpec.describe Support::OrderProcessingReactor do
       expect(result).to be_a(RubyReactor::Success)
       expect(result.value[:reserve_inventory]).to eq({ product_id: "prod_456", status: "reserved", quantity: 2 })
       expect(reactor.context.retry_context.step_attempts["reserve_inventory"]).to eq(2)
-      # result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0,
-      #                     fail_at: :reserve_inventory, success_at_retry: 5)
-
-      # expect(result).to be_a(RubyReactor::Success)
-      # expect(result.value[:reserve_inventory]).to eq({ product_id: "prod_456", status: "reserved", quantity: 2 })
-      # expect(reactor.context.retry_context.step_attempts["reserve_inventory"]).to eq(5)
     end
   end
+
+  describe "execution order verification" do
+    # These tests are critical for ensuring the reactor maintains correct execution order:
+    # 1. Steps execute in dependency order (validate -> check -> reserve -> process)
+    # 2. Retries happen before compensation
+    # 3. Compensation/undo happens in reverse order of successful execution
+    # 4. Timestamps maintain chronological order throughout the entire flow
+    
+    it "executes steps in correct order for successful flow" do
+      reactor = described_class.new
+      result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0)
+
+      expect(result).to be_a(RubyReactor::Success)
+      
+      # Verify execution trace exists and has correct structure
+      expect(reactor.execution_trace).to be_an(Array)
+      expect(reactor.execution_trace).not_to be_empty
+      
+      # Extract only run operations for successful flow
+      run_steps = reactor.execution_trace.select { |e| e[:type] == :run }.map { |e| e[:step] }
+      
+      # Verify exact execution order
+      expected_order = [:validate_order, :check_inventory, :reserve_inventory, :process_payment]
+      expect(run_steps).to eq(expected_order)
+      
+      # Verify timestamps are in ascending order (steps executed sequentially)
+      timestamps = reactor.execution_trace.map { |e| e[:timestamp] }
+      expect(timestamps).to eq(timestamps.sort)
+      
+      # Verify no undo or compensate operations in successful flow
+      expect(reactor.execution_trace.select { |e| e[:type] == :undo }).to be_empty
+      expect(reactor.execution_trace.select { |e| e[:type] == :compensate }).to be_empty
+    end
+
+    it "maintains correct execution order during early failure with compensation" do
+      reactor = described_class.new
+      result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0,
+                           fail_at: :check_inventory)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      
+      # Verify execution order with compensation
+      steps_with_types = reactor.execution_trace.map { |e| "#{e[:type]}:#{e[:step]}" }
+      
+      # Should have: validate_order run, then check_inventory retries, then undo
+      expect(steps_with_types.first).to eq("run:validate_order")
+      expect(steps_with_types.count { |s| s == "run:check_inventory" }).to eq(5) # max_attempts
+      
+      # Verify undos happen after all retries exhausted
+      undo_steps = reactor.execution_trace.select { |e| e[:type] == :undo }.map { |e| e[:step] }
+      expect(undo_steps).to eq([:validate_order])
+      
+      # Verify undo comes last
+      expect(reactor.execution_trace.last[:type]).to eq(:undo)
+    end
+
+    it "executes compensation in reverse order of successful steps" do
+      allow_any_instance_of(RubyReactor::Dsl::StepConfig).to receive(:async?).and_return(false)
+      
+      reactor = described_class.new
+      result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0,
+                           fail_at: :process_payment)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      
+      # Get successful steps (before failure)
+      successful_runs = []
+      reactor.execution_trace.each do |entry|
+        break if entry[:step] == :process_payment && entry[:type] == :run
+        successful_runs << entry[:step] if entry[:type] == :run && !successful_runs.include?(entry[:step])
+      end
+      
+      # Get undo operations
+      undo_steps = reactor.execution_trace.select { |e| e[:type] == :undo }.map { |e| e[:step] }
+      
+      # Verify undo order is reverse of successful execution
+      expect(undo_steps).to eq(successful_runs.reverse)
+      
+      # Verify all successful steps were undone
+      expect(undo_steps.length).to eq(successful_runs.length)
+    end
+
+    it "ensures timestamps maintain chronological order across retries and compensation" do
+      allow_any_instance_of(RubyReactor::Dsl::StepConfig).to receive(:async?).and_return(false)
+      
+      reactor = described_class.new
+      result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0,
+                           fail_at: :reserve_inventory)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      
+      # Verify all timestamps are present and chronological
+      timestamps = reactor.execution_trace.map { |e| e[:timestamp] }
+      expect(timestamps).to all(be_a(Time))
+      expect(timestamps).to eq(timestamps.sort), "Timestamps should be in chronological order"
+      
+      # Verify time progresses through: runs -> retries -> compensate -> undo
+      run_times = reactor.execution_trace.select { |e| e[:type] == :run }.map { |e| e[:timestamp] }
+      compensate_times = reactor.execution_trace.select { |e| e[:type] == :compensate }.map { |e| e[:timestamp] }
+      undo_times = reactor.execution_trace.select { |e| e[:type] == :undo }.map { |e| e[:timestamp] }
+      
+      if compensate_times.any?
+        expect(run_times.max).to be <= compensate_times.min
+      end
+      
+      if undo_times.any? && run_times.any?
+        expect(run_times.max).to be <= undo_times.min
+      end
+    end
+  end
+  
   # Additional tests for other steps would go here...
 end
