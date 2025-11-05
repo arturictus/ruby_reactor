@@ -20,6 +20,12 @@ module RubyReactor
           @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments, result: result })
           @context.set_result(step_config.name, result.value)
           @dependency_graph.complete_step(step_config.name)
+        when RubyReactor::MaxRetriesExhaustedFailure
+          # For MaxRetriesExhaustedFailure, use the original error to avoid double-wrapping the message
+          # The error message from MaxRetriesExhaustedFailure already includes "failed after N attempts"
+          @compensation_manager.handle_step_failure(step_config, result.original_error, resolved_arguments)
+          # Use the MaxRetriesExhaustedFailure error message for the final error
+          raise Error::StepFailureError.new(result.error, step: step_config.name, context: @context)
         when RubyReactor::Failure
           failure_result = @compensation_manager.handle_step_failure(step_config, result.error, resolved_arguments)
           raise Error::StepFailureError.new(failure_result.error, step: step_config.name, context: @context)
@@ -28,7 +34,8 @@ module RubyReactor
           validate_step_output(step_config, result)
           success_result = RubyReactor.Success(result)
           @step_results[step_config.name] = success_result
-          @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments, result: success_result })
+          @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments,
+                                                    result: success_result })
           @context.set_result(step_config.name, result)
           @dependency_graph.complete_step(step_config.name)
         end

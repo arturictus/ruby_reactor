@@ -31,9 +31,6 @@ module RubyReactor
 
             # If a step returns RetryQueuedResult, we need to stop and return it
             return result if result.is_a?(RetryQueuedResult)
-
-            # If a step returns MaxRetriesExhaustedFailure, we need to stop and return it
-            return result if result.is_a?(RubyReactor::MaxRetriesExhaustedFailure)
           end
         end
 
@@ -56,19 +53,37 @@ module RubyReactor
       end
 
       def execute_step_with_retry(step_config)
-        @retry_manager.execute_with_retry(step_config, @reactor_class) do
+        result = @retry_manager.execute_with_retry(step_config, @reactor_class) do
           safe_execute_step_sync(step_config)
         end
+
+        # For async reactors, handle results the same way as sync
+        # Special async results (RetryQueuedResult, AsyncResult) are returned as-is
+        unless result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::AsyncResult)
+          resolved_arguments = resolve_arguments(step_config)
+          @result_handler.handle_step_result(step_config, result, resolved_arguments)
+        end
+
+        result
       end
 
       def execute_step_sync_with_retry(step_config)
-        @retry_manager.execute_with_retry(step_config, @reactor_class) do
+        result = @retry_manager.execute_with_retry(step_config, @reactor_class) do
           safe_execute_step_sync(step_config)
         end
+
+        # Now handle the result (success, failure, or max retries exhausted)
+        # Only call handle_step_result if we're not dealing with special async results
+        unless result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::AsyncResult)
+          resolved_arguments = resolve_arguments(step_config)
+          @result_handler.handle_step_result(step_config, result, resolved_arguments)
+        end
+
+        result
       end
 
       def safe_execute_step_sync(step_config)
-        execute_step_sync(step_config)
+        execute_step_sync_without_result_handling(step_config)
       rescue StandardError => e
         RubyReactor::Failure(e)
       end
@@ -78,7 +93,7 @@ module RubyReactor
           # Check conditions and guards
           unless step_config.should_run?(@context)
             @dependency_graph.complete_step(step_config.name)
-            return
+            return RubyReactor.Success(nil)
           end
 
           # Resolve arguments
@@ -92,6 +107,26 @@ module RubyReactor
 
           # Handle the result
           @result_handler.handle_step_result(step_config, result, resolved_arguments)
+        end
+      end
+
+      # Execute step without handling the result (used during retries)
+      def execute_step_sync_without_result_handling(step_config)
+        @context.with_step(step_config.name) do
+          # Check conditions and guards
+          unless step_config.should_run?(@context)
+            @dependency_graph.complete_step(step_config.name)
+            return RubyReactor.Success(nil)
+          end
+
+          # Resolve arguments
+          resolved_arguments = resolve_arguments(step_config)
+
+          # Validate arguments if validator is defined
+          validate_step_arguments(step_config, resolved_arguments)
+
+          # Execute the step
+          run_step_implementation(step_config, resolved_arguments)
         end
       end
 

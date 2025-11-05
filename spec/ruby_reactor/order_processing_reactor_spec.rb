@@ -67,17 +67,13 @@ RSpec.describe Support::OrderProcessingReactor do
         "1. run step=validate_order",
         "2. run step=check_inventory",
         "3. run step=reserve_inventory",
-        "4. compensate step=reserve_inventory",
+        "4. run step=reserve_inventory",
         "5. run step=reserve_inventory",
-        "6. compensate step=reserve_inventory",
+        "6. run step=reserve_inventory",
         "7. run step=reserve_inventory",
         "8. compensate step=reserve_inventory",
-        "9. run step=reserve_inventory",
-        "10. compensate step=reserve_inventory",
-        "11. run step=reserve_inventory",
-        "12. compensate step=reserve_inventory",
-        "13. undo step=check_inventory",
-        "14. undo step=validate_order"
+        "9. undo step=check_inventory",
+        "10. undo step=validate_order"
       ]
       expect(steps).to eq(expected_steps)
     end
