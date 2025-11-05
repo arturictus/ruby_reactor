@@ -100,7 +100,7 @@ RSpec.describe RubyReactor do
 
         # Check the steps are in order
         run_steps = reactor.execution_trace.select { |entry| entry[:type] == :run }.map { |entry| entry[:step] }
-        expect(run_steps).to eq([:validate_email, :hash_password, :create_user])
+        expect(run_steps).to eq(%i[validate_email hash_password create_user])
 
         # Check each run entry has timestamp and arguments
         reactor.execution_trace.each do |entry|

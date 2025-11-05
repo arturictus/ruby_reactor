@@ -7,7 +7,7 @@ module RubyReactor
         @context = context
       end
 
-      def execute_with_retry(step_config, reactor_class, &block)
+      def execute_with_retry(step_config, reactor_class)
         loop do
           @context.retry_context.current_step = step_config.name
           @context.retry_context.increment_attempt_for_step(step_config.name)

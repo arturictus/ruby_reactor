@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 RSpec.describe Support::PaymentWorkflow do
   describe "get order step" do
     it "successfully retrieves order details" do
@@ -69,6 +71,7 @@ RSpec.describe Support::PaymentWorkflow do
       expect(reactor.undo_trace[0][:step]).to eq(:authorize_payment)
     end
   end
+
   describe "step fullfill_order" do
     it "succeeds" do
       reactor = described_class.new
