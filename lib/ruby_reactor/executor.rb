@@ -69,6 +69,14 @@ module RubyReactor
         # No current step, execute remaining steps
         @step_executor.execute_all_steps
       end
+    rescue StandardError => e
+      # Only handle errors that haven't already triggered compensation
+      # StepFailureError means compensation already happened, just convert to Failure
+      if e.is_a?(Error::StepFailureError)
+        RubyReactor.Failure(e.message)
+      else
+        @result_handler.handle_execution_error(e)
+      end
     end
 
     def undo_stack
