@@ -10,7 +10,7 @@ require_relative "executor/step_executor"
 module RubyReactor
   class Executor
     attr_reader :reactor_class, :context, :dependency_graph, :compensation_manager, :retry_manager, :result_handler,
-                :step_executor
+                :step_executor, :result
 
     def initialize(reactor_class, inputs = {}, context = nil)
       @reactor_class = reactor_class
@@ -21,6 +21,7 @@ module RubyReactor
       @result_handler = ResultHandler.new(@context, @compensation_manager, @dependency_graph)
       @step_executor = StepExecutor.new(@context, @dependency_graph, @retry_manager, @result_handler, @reactor_class,
                                         @compensation_manager)
+      @result = nil
     end
 
     def execute
@@ -30,9 +31,9 @@ module RubyReactor
       graph_manager = GraphManager.new(@reactor_class, @dependency_graph, @context)
       graph_manager.build_and_validate!
 
-      @step_executor.execute_all_steps
+      @result = @step_executor.execute_all_steps
     rescue StandardError => e
-      @result_handler.handle_execution_error(e)
+      @result = @result_handler.handle_execution_error(e)
     end
 
     def resume_execution
@@ -54,28 +55,34 @@ module RubyReactor
 
         # execute_step returns nil for inline async, meaning continue execution
         if result.nil?
-          @step_executor.execute_all_steps
+          @result = @step_executor.execute_all_steps
+          @result
         else
           case result
           when RetryQueuedResult, RubyReactor::Failure, RubyReactor::AsyncResult
             # Step was requeued, failed, or handed off to async - return the result
+            @result = result
             result
           when RubyReactor::Success
             # Step succeeded, continue with remaining steps
-            @step_executor.execute_all_steps
+            @result = @step_executor.execute_all_steps
+            @result
           end
         end
       else
         # No current step, execute remaining steps
-        @step_executor.execute_all_steps
+        @result = @step_executor.execute_all_steps
+        @result
       end
     rescue StandardError => e
       # Only handle errors that haven't already triggered compensation
       # StepFailureError means compensation already happened, just convert to Failure
       if e.is_a?(Error::StepFailureError)
-        RubyReactor.Failure(e.message)
+        @result = RubyReactor.Failure(e.message)
+        @result
       else
-        @result_handler.handle_execution_error(e)
+        @result = @result_handler.handle_execution_error(e)
+        @result
       end
     end
 

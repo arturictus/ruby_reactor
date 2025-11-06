@@ -33,6 +33,9 @@ module RubyReactor
             # If a step returns RetryQueuedResult, we need to stop and return it
             return result if result.is_a?(RetryQueuedResult)
 
+            # If a step returns Failure, we need to stop execution and return it
+            return result if result.is_a?(RubyReactor::Failure)
+
             # If result is nil, it means async was executed inline (test mode), continue
             next if result.nil?
           end
@@ -54,39 +57,25 @@ module RubyReactor
           serialized_context = ContextSerializer.serialize(@context)
 
           step_failed = false
-          begin
-            result = configuration.async_router.perform_async(serialized_context, @reactor_class.name)
-            puts "[ASYNC] Got result type: #{result.class}, is Executor?: #{result.is_a?(Executor)}"
-          rescue Error::StepFailureError => e
-            # Step failed after all retries - the executor is in the exception's context
-            # We need to create an executor from it to merge the state
-            puts "[ASYNC] Caught StepFailureError, extracting executor from context"
-            result = Executor.new(e.context.reactor_class, {}, e.context)
-            step_failed = true
-          end
+          result = configuration.async_router.perform_async(serialized_context, @reactor_class.name)
+          puts "[ASYNC] Got result type: #{result.class}, is Executor?: #{result.is_a?(Executor)}"
 
           # Handle different result types from async router
           case result
           when RubyReactor::AsyncResult
             # Production behavior: return async result to caller
+            puts "[ASYNC] Returning AsyncResult to caller"
             result
           when Executor
-            # Test behavior: WorkerMock executed inline and returned a full executor
+            # Worker executed inline and returned an executor
             # The worker has executed the current step via resume_execution
             # We need to merge the state back into our executor
             puts "[ASYNC] Calling merge_executor_state"
             merge_executor_state(result)
 
-            # If the step failed, we need to propagate the failure up
-            # by returning a Failure result
-            if step_failed
-              puts "[ASYNC] Step failed after all retries, returning Failure to stop execution"
-              # Return the Failure result which will be caught by resume_execution
-              RubyReactor::Failure(result.context.retry_context&.failure_reason || "Step failed after all retries")
-            else
-              # Continue with the execution loop (step was already processed successfully)
-              nil
-            end
+            # Always handle the step result
+            resolved_arguments = resolve_arguments(step_config)
+            @result_handler.handle_step_result(step_config, result.result, resolved_arguments)
           else
             # Unexpected result type, treat as error
             raise Error::ValidationError.new(
@@ -134,6 +123,9 @@ module RubyReactor
         other_executor.context.intermediate_results.keys.each do |step_name|
           @dependency_graph.complete_step(step_name)
         end
+
+        # Also mark the current_step as completed if it exists (for failed steps that don't have results)
+        @dependency_graph.complete_step(other_executor.context.current_step) if other_executor.context.current_step
 
         # Merge any undo stack items
         other_executor.undo_stack.each do |item|

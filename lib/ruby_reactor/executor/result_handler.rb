@@ -44,7 +44,9 @@ module RubyReactor
       def handle_execution_error(error)
         case error
         when Error::StepFailureError
-          # Step failure has already been handled (compensation and rollback)
+          # Step failure has already been handled (compensation and rollback for the failed step)
+          # But we need to rollback all completed steps
+          @compensation_manager.rollback_completed_steps
           RubyReactor.Failure(error.message)
         when Error::InputValidationError
           # Preserve validation errors as-is for proper error handling
