@@ -18,10 +18,7 @@ module RubyReactor
         # For async reactors, enqueue the job and return immediately
         context = Context.new(inputs, self.class)
         serialized_context = ContextSerializer.serialize(context)
-        configuration.worker_class.perform_async(serialized_context)
-
-        # Return a result indicating the job was queued
-        RubyReactor::AsyncResult.new(job_id: nil) # TODO: Get job ID from Sidekiq
+        configuration.async_router.perform_async(serialized_context)
       else
         # For sync reactors (potentially with async steps), execute normally
         executor = Executor.new(self.class, inputs)

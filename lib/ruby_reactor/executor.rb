@@ -9,7 +9,8 @@ require_relative "executor/step_executor"
 
 module RubyReactor
   class Executor
-    attr_reader :reactor_class, :context, :dependency_graph, :compensation_manager
+    attr_reader :reactor_class, :context, :dependency_graph, :compensation_manager, :retry_manager, :result_handler,
+                :step_executor
 
     def initialize(reactor_class, inputs = {}, context = nil)
       @reactor_class = reactor_class

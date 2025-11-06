@@ -8,7 +8,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
   before do
     Sidekiq::Testing.fake!
     Sidekiq::Worker.clear_all
-    allow_any_instance_of(RubyReactor::Configuration).to receive(:worker_class).and_return(RubyReactor::Worker)
+    allow_any_instance_of(RubyReactor::Configuration).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
   end
 
   after do

@@ -35,6 +35,7 @@ module RubyReactor
       # Resume execution from the failed step
       executor = Executor.new(context.reactor_class, {}, context)
       executor.resume_execution
+      executor
     end
 
     private

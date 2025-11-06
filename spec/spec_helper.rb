@@ -23,7 +23,7 @@ Sidekiq.configure_client do |config|
 end
 
 RubyReactor.configure do |config|
-  config.worker_class = Support::WorkerMock
+  config.async_router = Support::WorkerMock
 end
 
 RSpec.configure do |config|

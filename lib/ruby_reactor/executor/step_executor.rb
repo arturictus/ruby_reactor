@@ -43,8 +43,20 @@ module RubyReactor
           # Step-level async: hand off execution to worker
           @context.current_step = step_config.name
           serialized_context = ContextSerializer.serialize(@context)
-          configuration.worker_class.perform_async(serialized_context, @reactor_class.name)
-          RubyReactor::AsyncResult.new(job_id: nil) # TODO: Get job ID
+          result = configuration.async_router.perform_async(serialized_context, @reactor_class.name)
+          return result if result.is_a?(RubyReactor::AsyncResult)
+
+          # if result.is_a?(Executor)
+          #   @context = result.context
+          #   @dependency_graph = result.dependency_graph
+          #   @retry_manager = result.retry_manager
+          #   @result_handler = result.result_handler
+          #   @reactor_class = result.reactor_class
+
+          #   return @context.intermediate_results
+          # end
+
+          result
         elsif @reactor_class.async?
           execute_step_with_retry(step_config)
         else
