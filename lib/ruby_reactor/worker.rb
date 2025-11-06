@@ -32,6 +32,9 @@ module RubyReactor
         end
       end
 
+      # Mark that we're executing inline to prevent nested async calls
+      context.inline_async_execution = true
+
       # Resume execution from the failed step
       executor = Executor.new(context.reactor_class, {}, context)
       executor.resume_execution

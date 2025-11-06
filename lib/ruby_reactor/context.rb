@@ -3,7 +3,7 @@
 module RubyReactor
   class Context
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
-                  :retry_context, :reactor_class, :execution_trace
+                  :retry_context, :reactor_class, :execution_trace, :inline_async_execution
 
     def initialize(inputs = {}, reactor_class = nil)
       @inputs = inputs
@@ -15,6 +15,7 @@ module RubyReactor
       @retry_context = RetryContext.new
       @reactor_class = reactor_class
       @execution_trace = []
+      @inline_async_execution = false # Flag to prevent nested async calls
     end
 
     def get_input(name, path = nil)
@@ -85,7 +86,7 @@ module RubyReactor
       context.inputs = deserialize_value(data["inputs"]) || {}
       context.intermediate_results = deserialize_value(data["intermediate_results"]) || {}
       context.private_data = deserialize_value(data["private_data"]) || {}
-      context.current_step = data["current_step"]
+      context.current_step = data["current_step"]&.to_sym
       context.retry_count = data["retry_count"] || 0
       context.concurrency_key = data["concurrency_key"]
       context.retry_context = RetryContext.deserialize_from_retry(data["retry_context"] || {})
@@ -114,6 +115,7 @@ module RubyReactor
       case value
       when Hash
         if value.key?("_type")
+          # Special serialized types (Time, BigDecimal, etc.)
           case value["_type"]
           when "Time"
             Time.iso8601(value["value"])
@@ -123,6 +125,7 @@ module RubyReactor
             value
           end
         else
+          # Regular hash - symbolize all keys recursively
           value.transform_keys(&:to_sym).transform_values { |v| deserialize_value(v) }
         end
       when Array

@@ -19,7 +19,8 @@ module RubyReactor
       @compensation_manager = CompensationManager.new(@context)
       @retry_manager = RetryManager.new(@context)
       @result_handler = ResultHandler.new(@context, @compensation_manager, @dependency_graph)
-      @step_executor = StepExecutor.new(@context, @dependency_graph, @retry_manager, @result_handler, @reactor_class)
+      @step_executor = StepExecutor.new(@context, @dependency_graph, @retry_manager, @result_handler, @reactor_class,
+                                        @compensation_manager)
     end
 
     def execute
@@ -43,23 +44,27 @@ module RubyReactor
       graph_manager.build_and_validate!
       graph_manager.mark_completed_steps_from_context
 
-      # If there's a current_step, it means we need to retry that step
+      # If there's a current_step, it means we need to execute that step
       if @context.current_step
         step_config = @reactor_class.steps[@context.current_step]
         return RubyReactor::Failure("Step '#{@context.current_step}' not found in reactor") unless step_config
 
-        result = @step_executor.execute_step_with_retry(step_config)
-        case result
-        when RetryQueuedResult, RubyReactor::Failure
-          # Step was requeued again, return the result
-          result
-        when RubyReactor::Success
-          # Step succeeded, continue with remaining steps
+        # Use execute_step (not execute_step_with_retry) so that async steps can be handled properly in inline mode
+        result = @step_executor.execute_step(step_config)
+
+        # execute_step returns nil for inline async, meaning continue execution
+        if result.nil?
           @step_executor.execute_all_steps
+        else
+          case result
+          when RetryQueuedResult, RubyReactor::Failure, RubyReactor::AsyncResult
+            # Step was requeued, failed, or handed off to async - return the result
+            result
+          when RubyReactor::Success
+            # Step succeeded, continue with remaining steps
+            @step_executor.execute_all_steps
+          end
         end
-
-      # Step not found, this is an error
-
       else
         # No current step, execute remaining steps
         @step_executor.execute_all_steps

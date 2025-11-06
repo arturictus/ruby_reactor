@@ -3,12 +3,13 @@
 module RubyReactor
   class Executor
     class StepExecutor
-      def initialize(context, dependency_graph, retry_manager, result_handler, reactor_class)
+      def initialize(context, dependency_graph, retry_manager, result_handler, reactor_class, compensation_manager)
         @context = context
         @dependency_graph = dependency_graph
         @retry_manager = retry_manager
         @result_handler = result_handler
         @reactor_class = reactor_class
+        @compensation_manager = compensation_manager
       end
 
       def execute_all_steps
@@ -31,6 +32,9 @@ module RubyReactor
 
             # If a step returns RetryQueuedResult, we need to stop and return it
             return result if result.is_a?(RetryQueuedResult)
+
+            # If result is nil, it means async was executed inline (test mode), continue
+            next if result.nil?
           end
         end
 
@@ -39,28 +43,75 @@ module RubyReactor
       end
 
       def execute_step(step_config)
-        if step_config.async?
+        # If we're already in inline async execution mode (inside Worker),
+        # treat async steps as sync to avoid infinite recursion
+        if step_config.async? && !@context.inline_async_execution
           # Step-level async: hand off execution to worker
           @context.current_step = step_config.name
           serialized_context = ContextSerializer.serialize(@context)
           result = configuration.async_router.perform_async(serialized_context, @reactor_class.name)
-          return result if result.is_a?(RubyReactor::AsyncResult)
 
-          # if result.is_a?(Executor)
-          #   @context = result.context
-          #   @dependency_graph = result.dependency_graph
-          #   @retry_manager = result.retry_manager
-          #   @result_handler = result.result_handler
-          #   @reactor_class = result.reactor_class
+          # Handle different result types from async router
+          case result
+          when RubyReactor::AsyncResult
+            # Production behavior: return async result to caller
+            result
+          when Executor
+            # Test behavior: WorkerMock executed inline and returned a full executor
+            # The worker has executed the current step via resume_execution
+            # We need to merge the state back into our executor
+            merge_executor_state(result)
 
-          #   return @context.intermediate_results
-          # end
-
-          result
+            # Continue with the execution loop (step was already processed)
+            nil
+          else
+            # Unexpected result type, treat as error
+            raise Error::ValidationError.new(
+              "Unexpected result type from async router: #{result.class}",
+              context: @context
+            )
+          end
         elsif @reactor_class.async?
           execute_step_with_retry(step_config)
         else
           execute_step_sync_with_retry(step_config)
+        end
+      end
+
+      def merge_executor_state(other_executor)
+        # Merge the state from the async-executed executor back into ours
+        # We need to update our context IN PLACE, not replace the reference,
+        # because the Executor also holds a reference to the same context object
+
+        # Update intermediate results
+        other_executor.context.intermediate_results.each do |step_name, value|
+          @context.set_result(step_name, value)
+        end
+
+        # Append execution trace from the async execution
+        # The Worker's execution will have ALL steps including ones we already executed,
+        # but we only want to add the NEW entries (from current_step onwards)
+        current_trace_length = @context.execution_trace.length
+        new_trace_entries = other_executor.context.execution_trace[current_trace_length..-1] || []
+        @context.execution_trace.concat(new_trace_entries)
+
+        # Update retry context
+        @context.retry_context = other_executor.context.retry_context
+
+        # Clear current_step since we've completed it
+        @context.current_step = nil
+
+        # Update our dependency graph to reflect completed steps
+        other_executor.context.intermediate_results.keys.each do |step_name|
+          @dependency_graph.complete_step(step_name)
+        end
+
+        # Merge any undo stack items
+        other_executor.undo_stack.each do |item|
+          # Avoid duplicates by checking if this step is already in the undo stack
+          unless @compensation_manager.undo_stack.any? { |existing| existing[:step].name == item[:step].name }
+            @compensation_manager.add_to_undo_stack(item)
+          end
         end
       end
 
