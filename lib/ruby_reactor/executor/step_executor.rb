@@ -56,7 +56,6 @@ module RubyReactor
           @context.current_step = step_config.name
           serialized_context = ContextSerializer.serialize(@context)
 
-          step_failed = false
           result = configuration.async_router.perform_async(serialized_context, @reactor_class.name)
           puts "[ASYNC] Got result type: #{result.class}, is Executor?: #{result.is_a?(Executor)}"
 
@@ -71,11 +70,26 @@ module RubyReactor
             # The worker has executed the current step via resume_execution
             # We need to merge the state back into our executor
             puts "[ASYNC] Calling merge_executor_state"
+            
+            # Get the step name before merging (as merge clears current_step)
+            step_name = @context.current_step
+            
             merge_executor_state(result)
 
-            # Always handle the step result
-            resolved_arguments = resolve_arguments(step_config)
-            @result_handler.handle_step_result(step_config, result.result, resolved_arguments)
+            # Check if the async execution resulted in a failure
+            if result.result.is_a?(RubyReactor::Failure)
+              # Async execution failed - we need to rollback steps completed before the handoff
+              @compensation_manager.rollback_completed_steps
+              # Return the failure to stop execution
+              result.result
+            else
+              # Handle the step result - use the result of the current step
+              resolved_arguments = resolve_arguments(step_config)
+              step_result_value = result.context.intermediate_results[step_name]
+              @result_handler.handle_step_result(step_config, RubyReactor.Success(step_result_value), resolved_arguments)
+              # Return nil to continue execution
+              nil
+            end
           else
             # Unexpected result type, treat as error
             raise Error::ValidationError.new(
@@ -133,6 +147,11 @@ module RubyReactor
           unless @compensation_manager.undo_stack.any? { |existing| existing[:step].name == item[:step].name }
             @compensation_manager.add_to_undo_stack(item)
           end
+        end
+
+        # Merge undo trace from the other executor
+        other_executor.undo_trace.each do |trace_entry|
+          @compensation_manager.undo_trace << trace_entry
         end
       end
 
