@@ -67,29 +67,13 @@ module RubyReactor
             result
           when Executor
             # Worker executed inline and returned an executor
-            # The worker has executed the current step via resume_execution
+            # The worker has executed the current step and potentially remaining steps via resume_execution
             # We need to merge the state back into our executor
             puts "[ASYNC] Calling merge_executor_state"
-            
-            # Get the step name before merging (as merge clears current_step)
-            step_name = @context.current_step
-            
+
             merge_executor_state(result)
 
-            # Check if the async execution resulted in a failure
-            if result.result.is_a?(RubyReactor::Failure)
-              # Async execution failed - we need to rollback steps completed before the handoff
-              @compensation_manager.rollback_completed_steps
-              # Return the failure to stop execution
-              result.result
-            else
-              # Handle the step result - use the result of the current step
-              resolved_arguments = resolve_arguments(step_config)
-              step_result_value = result.context.intermediate_results[step_name]
-              @result_handler.handle_step_result(step_config, RubyReactor.Success(step_result_value), resolved_arguments)
-              # Return nil to continue execution
-              nil
-            end
+            result.result
           else
             # Unexpected result type, treat as error
             raise Error::ValidationError.new(
@@ -97,10 +81,8 @@ module RubyReactor
               context: @context
             )
           end
-        elsif @reactor_class.async?
-          execute_step_with_retry(step_config)
         else
-          execute_step_sync_with_retry(step_config)
+          execute_step_with_retry(step_config)
         end
       end
 
@@ -160,23 +142,6 @@ module RubyReactor
           safe_execute_step_sync(step_config)
         end
 
-        # For async reactors, handle results the same way as sync
-        # Special async results (RetryQueuedResult, AsyncResult) are returned as-is
-        unless result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::AsyncResult)
-          resolved_arguments = resolve_arguments(step_config)
-          @result_handler.handle_step_result(step_config, result, resolved_arguments)
-        end
-
-        result
-      end
-
-      def execute_step_sync_with_retry(step_config)
-        result = @retry_manager.execute_with_retry(step_config, @reactor_class) do
-          safe_execute_step_sync(step_config)
-        end
-
-        # Now handle the result (success, failure, or max retries exhausted)
-        # Only call handle_step_result if we're not dealing with special async results
         unless result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::AsyncResult)
           resolved_arguments = resolve_arguments(step_config)
           @result_handler.handle_step_result(step_config, result, resolved_arguments)
