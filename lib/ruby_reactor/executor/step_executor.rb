@@ -54,6 +54,7 @@ module RubyReactor
           # Step-level async: hand off execution to worker
           puts "[ASYNC] Calling async router for #{step_config.name}"
           @context.current_step = step_config.name
+          @context.undo_stack = @compensation_manager.undo_stack
           serialized_context = ContextSerializer.serialize(@context)
 
           result = configuration.async_router.perform_async(serialized_context, @reactor_class.name)
