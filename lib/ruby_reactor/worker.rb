@@ -14,7 +14,6 @@ module RubyReactor
 
     sidekiq_retries_exhausted do |_, exception|
       # Handle infrastructure failures (network, Redis, etc.)
-      puts "RubyReactor infrastructure failure: #{exception.message}"
     end
 
     def perform(serialized_context, reactor_class_name = nil)

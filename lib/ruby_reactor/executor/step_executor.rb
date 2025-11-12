@@ -48,29 +48,26 @@ module RubyReactor
       def execute_step(step_config)
         # If we're already in inline async execution mode (inside Worker),
         # treat async steps as sync to avoid infinite recursion
-        puts "[EXECUTE_STEP] step: #{step_config.name}, async?: #{step_config.async?}, inline_async: #{@context.inline_async_execution}"
 
         if step_config.async? && !@context.inline_async_execution
           # Step-level async: hand off execution to worker
-          puts "[ASYNC] Calling async router for #{step_config.name}"
+
           @context.current_step = step_config.name
           @context.undo_stack = @compensation_manager.undo_stack
           serialized_context = ContextSerializer.serialize(@context)
 
           result = configuration.async_router.perform_async(serialized_context, @reactor_class.name)
-          puts "[ASYNC] Got result type: #{result.class}, is Executor?: #{result.is_a?(Executor)}"
 
           # Handle different result types from async router
           case result
           when RubyReactor::AsyncResult
             # Production behavior: return async result to caller
-            puts "[ASYNC] Returning AsyncResult to caller"
+
             result
           when Executor
             # Worker executed inline and returned an executor
             # The worker has executed the current step and potentially remaining steps via resume_execution
             # We need to merge the state back into our executor
-            puts "[ASYNC] Calling merge_executor_state"
 
             merge_executor_state(result)
 
@@ -92,10 +89,6 @@ module RubyReactor
         # We need to update our context IN PLACE, not replace the reference,
         # because the Executor also holds a reference to the same context object
 
-        puts "[MERGE] Current trace length: #{@context.execution_trace.length}"
-        puts "[MERGE] Other executor trace length: #{other_executor.context.execution_trace.length}"
-        puts "[MERGE] Other executor trace: #{other_executor.context.execution_trace.inspect}"
-
         # Update intermediate results
         other_executor.context.intermediate_results.each do |step_name, value|
           @context.set_result(step_name, value)
@@ -106,9 +99,8 @@ module RubyReactor
         # but we only want to add the NEW entries (from current_step onwards)
         current_trace_length = @context.execution_trace.length
         new_trace_entries = other_executor.context.execution_trace[current_trace_length..-1] || []
-        puts "[MERGE] New trace entries to add: #{new_trace_entries.inspect}"
+
         @context.execution_trace.concat(new_trace_entries)
-        puts "[MERGE] Final trace length: #{@context.execution_trace.length}"
 
         # Update retry context
         @context.retry_context = other_executor.context.retry_context
