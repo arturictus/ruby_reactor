@@ -22,7 +22,7 @@ module RubyReactor
     end
 
     def async_router
-      @async_router ||= Worker
+      @async_router ||= RubyReactor::AsyncRouter
     end
   end
 end
