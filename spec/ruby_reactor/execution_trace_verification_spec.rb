@@ -2,39 +2,42 @@
 
 require "spec_helper"
 
+# rubocop:disable RSpec/DescribeClass
 RSpec.describe "Execution Trace Verification", type: :integration do
+  # rubocop:enable RSpec/DescribeClass
   let(:captured_output) { StringIO.new }
-  
+
+  # rubocop:disable RSpec/ExpectOutput
   around do |example|
     original_stdout = $stdout
     $stdout = captured_output
     example.run
     $stdout = original_stdout
   end
+  # rubocop:enable RSpec/ExpectOutput
 
   def parse_execution_logs(output)
     executions = []
     output.each_line do |line|
-      if line.match(/\[EXECUTION\] (RUN|UNDO|COMPENSATE) (\w+)/)
-        type = $1.downcase.to_sym
-        step = $2
-        executions << { type: type, step: step }
-      end
+      next unless line.match(/\[EXECUTION\] (RUN|UNDO|COMPENSATE) (\w+)/)
+
+      type = Regexp.last_match(1).downcase.to_sym
+      step = Regexp.last_match(2)
+      executions << { type: type, step: step }
     end
     executions
   end
 
-  context "asynchronous reactor execution" do
-
+  context "when executing asynchronously" do
     it "verifies that execution trace matches actual execution for successful flow" do
-      reactor = Support::OrderProcessingReactor.new
+      reactor = RubyReactor::OrderProcessingReactor.new
       result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0)
 
       expect(result).to be_a(RubyReactor::Success)
 
       # Parse actual execution logs
       actual_execution = parse_execution_logs(captured_output.string)
-      
+
       # Parse execution trace
       trace_execution = reactor.execution_trace.map do |entry|
         {
@@ -49,7 +52,7 @@ RSpec.describe "Execution Trace Verification", type: :integration do
       actual_execution.each_with_index do |exec, idx|
         puts "#{idx + 1}. #{exec[:type].upcase} #{exec[:step]}"
       end
-      
+
       puts "\n=== EXECUTION TRACE ==="
       trace_execution.each_with_index do |trace, idx|
         puts "#{idx + 1}. #{trace[:type].upcase} #{trace[:step]}"
@@ -57,15 +60,15 @@ RSpec.describe "Execution Trace Verification", type: :integration do
 
       # Verify counts match
       expect(actual_execution.length).to eq(trace_execution.length),
-        "Expected #{trace_execution.length} executions but got #{actual_execution.length}"
+                                         "Expected #{trace_execution.length} executions, got #{actual_execution.length}"
 
       # Verify each execution matches
       actual_execution.each_with_index do |actual, idx|
         trace = trace_execution[idx]
         expect(actual[:type]).to eq(trace[:type]),
-          "Step #{idx + 1}: Expected type #{trace[:type]} but got #{actual[:type]}"
+                                 "Step #{idx + 1}: Expected type #{trace[:type]} but got #{actual[:type]}"
         expect(actual[:step]).to eq(trace[:step].to_s),
-          "Step #{idx + 1}: Expected step #{trace[:step]} but got #{actual[:step]}"
+                                 "Step #{idx + 1}: Expected step #{trace[:step]} but got #{actual[:step]}"
       end
 
       # Verify order of execution
@@ -75,11 +78,11 @@ RSpec.describe "Execution Trace Verification", type: :integration do
     end
 
     it "verifies execution trace matches actual execution with retries" do
-      reactor = Support::OrderProcessingReactor.new
+      reactor = RubyReactor::OrderProcessingReactor.new
       result = reactor.run(
-        order_id: "order_123", 
-        product_id: "prod_456", 
-        quantity: 2, 
+        order_id: "order_123",
+        product_id: "prod_456",
+        quantity: 2,
         amount: 200.0,
         fail_at: :check_inventory,
         success_at_retry: 3
@@ -89,7 +92,7 @@ RSpec.describe "Execution Trace Verification", type: :integration do
 
       # Parse actual execution logs
       actual_execution = parse_execution_logs(captured_output.string)
-      
+
       # Parse execution trace
       trace_execution = reactor.execution_trace.map do |entry|
         {
@@ -101,15 +104,15 @@ RSpec.describe "Execution Trace Verification", type: :integration do
 
       # Verify counts match
       expect(actual_execution.length).to eq(trace_execution.length),
-        "Expected #{trace_execution.length} executions but got #{actual_execution.length}"
+                                         "Expected #{trace_execution.length} executions, got #{actual_execution.length}"
 
       # Verify each execution matches
       actual_execution.each_with_index do |actual, idx|
         trace = trace_execution[idx]
         expect(actual[:type]).to eq(trace[:type]),
-          "Step #{idx + 1}: Expected type #{trace[:type]} but got #{actual[:type]}"
+                                 "Step #{idx + 1}: Expected type #{trace[:type]} but got #{actual[:type]}"
         expect(actual[:step]).to eq(trace[:step].to_s),
-          "Step #{idx + 1}: Expected step #{trace[:step]} but got #{actual[:step]}"
+                                 "Step #{idx + 1}: Expected step #{trace[:step]} but got #{actual[:step]}"
       end
 
       # Verify retry attempts
@@ -118,14 +121,14 @@ RSpec.describe "Execution Trace Verification", type: :integration do
     end
 
     it "verifies execution trace matches actual execution with compensation" do
-      reactor = Support::OrderProcessingReactor.new
+      reactor = RubyReactor::OrderProcessingReactor.new
       result = reactor.run(
-        order_id: "order_123", 
-        product_id: "prod_456", 
-        quantity: 2, 
+        order_id: "order_123",
+        product_id: "prod_456",
+        quantity: 2,
         amount: 200.0,
         fail_at: :reserve_inventory,
-        success_at_retry: 999  # Never succeed, exhaust all retries
+        success_at_retry: 999 # Never succeed, exhaust all retries
       )
 
       # Debug output - write to real stdout
@@ -140,7 +143,7 @@ RSpec.describe "Execution Trace Verification", type: :integration do
 
       # Parse actual execution logs
       actual_execution = parse_execution_logs(captured_output.string)
-      
+
       # Parse execution trace
       trace_execution = reactor.execution_trace.map do |entry|
         {
@@ -155,24 +158,24 @@ RSpec.describe "Execution Trace Verification", type: :integration do
 
       # Verify counts match
       expect(actual_execution.length).to eq(trace_execution.length),
-        "Expected #{trace_execution.length} executions but got #{actual_execution.length}. Actual: #{actual_execution.inspect}, Trace: #{trace_execution.inspect}"
+                                         "Expected #{trace_execution.length} executions, got #{actual_execution.length}"
 
       # Verify each execution matches
       actual_execution.each_with_index do |actual, idx|
         trace = trace_execution[idx]
         expect(actual[:type]).to eq(trace[:type]),
-          "Step #{idx + 1}: Expected type #{trace[:type]} but got #{actual[:type]}"
+                                 "Step #{idx + 1}: Expected type #{trace[:type]} but got #{actual[:type]}"
         expect(actual[:step]).to eq(trace[:step].to_s),
-          "Step #{idx + 1}: Expected step #{trace[:step]} but got #{actual[:step]}"
+                                 "Step #{idx + 1}: Expected step #{trace[:step]} but got #{actual[:step]}"
       end
 
       # Verify compensation occurred
       compensate_steps = actual_execution.select { |e| e[:type] == :compensate }
       undo_steps = actual_execution.select { |e| e[:type] == :undo }
-      
+
       expect(compensate_steps.length).to eq(1), "Expected 1 compensate step"
       expect(compensate_steps.first[:step]).to eq("reserve_inventory")
-      
+
       expect(undo_steps.length).to eq(2), "Expected 2 undo steps"
       expect(undo_steps.map { |u| u[:step] }).to eq(%w[check_inventory validate_order])
     end

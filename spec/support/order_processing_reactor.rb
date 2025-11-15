@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-module Support
-  class OrderProcessingReactor < RubyReactor::Reactor
+module RubyReactor
+  class OrderProcessingReactor < Reactor
     input :order_id do
       required(:order_id).filled(:string)
     end
@@ -57,9 +57,11 @@ module Support
       argument :fail_at, input(:fail_at)
       argument :success_at_retry, input(:success_at_retry)
       run do |args, context|
-        puts "[EXECUTION] RUN check_inventory - product_id: #{args[:product_id]}, quantity: #{args[:quantity]}, attempt: #{context.retry_context.attempts_for_step(:check_inventory) + 1}"
+        puts "[EXECUTION] RUN check_inventory - product_id: #{args[:product_id]}, " \
+             "quantity: #{args[:quantity]}, attempt: #{context.retry_context.attempts_for_step(:check_inventory) + 1}"
         if args[:fail_at] == :check_inventory &&
-           (args[:success_at_retry].nil? || context.retry_context.attempts_for_step(:check_inventory) < args[:success_at_retry])
+           (args[:success_at_retry].nil? ||
+            context.retry_context.attempts_for_step(:check_inventory) < args[:success_at_retry])
           Failure("Failure triggered for check_inventory")
         else
           # Simulate inventory check
@@ -85,8 +87,16 @@ module Support
       argument :fail_at, input(:fail_at)
       argument :success_at_retry, input(:success_at_retry)
       run do |args, context|
-        puts "[EXECUTION] RUN reserve_inventory - product_id: #{args[:inventory][:product_id]}, quantity: #{args[:inventory][:requested_quantity]}, attempt: #{context.retry_context.attempts_for_step(:reserve_inventory) + 1}, inline_async: #{context.inline_async_execution}, fail_at: #{args[:fail_at].inspect}, success_at_retry: #{args[:success_at_retry].inspect}, check: #{args[:fail_at]&.to_sym == :reserve_inventory}, attempts: #{context.retry_context.attempts_for_step(:reserve_inventory)}"
-        if args[:fail_at]&.to_sym == :reserve_inventory && (args[:success_at_retry].nil? || context.retry_context.attempts_for_step(:reserve_inventory) < args[:success_at_retry])
+        puts "[EXECUTION] RUN reserve_inventory - product_id: #{args[:inventory][:product_id]}, " \
+             "quantity: #{args[:inventory][:requested_quantity]}, " \
+             "attempt: #{context.retry_context.attempts_for_step(:reserve_inventory) + 1}, " \
+             "inline_async: #{context.inline_async_execution}, fail_at: #{args[:fail_at].inspect}, " \
+             "success_at_retry: #{args[:success_at_retry].inspect}, " \
+             "check: #{args[:fail_at]&.to_sym == :reserve_inventory}, " \
+             "attempts: #{context.retry_context.attempts_for_step(:reserve_inventory)}"
+        if args[:fail_at]&.to_sym == :reserve_inventory &&
+           (args[:success_at_retry].nil? ||
+            context.retry_context.attempts_for_step(:reserve_inventory) < args[:success_at_retry])
           Failure("Failure triggered for reserve_inventory")
         else
           # Simulate inventory reservation

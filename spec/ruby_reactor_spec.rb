@@ -197,7 +197,7 @@ RSpec.describe RubyReactor do
     let(:flaky_step_class) do
       Class.new(RubyReactor::Reactor) do
         step :flaky_step do
-          run do |args, context|
+          run do |_args, context|
             puts "running flaky_step"
             attempt = context.retry_context.attempts_for_step(:flaky_step)
             Failure("Intentional failure on attempt #{attempt}")
@@ -214,6 +214,7 @@ RSpec.describe RubyReactor do
       expect(result.error).to eq("Step 'flaky_step' failed after 1 attempts: Intentional failure on attempt 1")
     end
   end
+
   describe "Max attempts behavior" do
     let(:flaky_step_class) do
       Class.new(RubyReactor::Reactor) do
@@ -245,7 +246,7 @@ RSpec.describe RubyReactor do
       expect(result).to be_a(RubyReactor::Failure)
       expect(result.error).to eq("Step 'flaky_step' failed after 3 attempts: Intentional failure on attempt 3")
     end
-    
+
     it "retries until max attempts are reached returning success" do
       reactor = flaky_step_class.new
       result = reactor.run(should_fail_times: 2)

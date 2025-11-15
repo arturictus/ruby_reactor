@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-module Support
+module RubyReactor
   class ReserveInventory
     include RubyReactor::Step
 
@@ -38,7 +38,7 @@ module Support
     end
   end
 
-  class PaymentWorkflow < RubyReactor::Reactor
+  class PaymentWorkflow < Reactor
     input :order_id do
       required(:order_id).filled(:string)
     end

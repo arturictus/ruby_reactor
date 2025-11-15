@@ -11,7 +11,7 @@ RSpec.describe RubyReactor::ContextSerializer do
     context.inputs = { user_id: 123, amount: BigDecimal("100.50") }
     context.intermediate_results = { step1: { result: "success" } }
     context.private_data = { api_key: "secret" }
-    context.current_step = :payment_step  # Symbol, as used in production
+    context.current_step = :payment_step # Symbol, as used in production
     context.retry_count = 2
     context.concurrency_key = "user-123"
     context.reactor_class = TestReactor
@@ -34,7 +34,7 @@ RSpec.describe RubyReactor::ContextSerializer do
       expect(data["reactor_class"]).to eq("TestReactor")
       expect(data["inputs"]["user_id"]).to eq(123)
       expect(data["inputs"]["amount"]["_type"]).to eq("BigDecimal")
-      expect(data["current_step"]).to eq("payment_step")  # Serialized as string
+      expect(data["current_step"]).to eq("payment_step") # Serialized as string
       expect(data["retry_context"]["step_attempts"]["payment_step"]).to eq(2)
     end
 
@@ -70,7 +70,7 @@ RSpec.describe RubyReactor::ContextSerializer do
       expect(deserialized.inputs[:amount]).to be_a(BigDecimal)
       expect(deserialized.inputs[:amount]).to eq(BigDecimal("100.50"))
       expect(deserialized.intermediate_results[:step1][:result]).to eq("success")
-      expect(deserialized.current_step).to eq(:payment_step)  # Deserialized as symbol
+      expect(deserialized.current_step).to eq(:payment_step) # Deserialized as symbol
       expect(deserialized.retry_count).to eq(2)
       expect(deserialized.concurrency_key).to eq("user-123")
       expect(deserialized.reactor_class).to eq(TestReactor)

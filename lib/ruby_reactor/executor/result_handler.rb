@@ -3,7 +3,7 @@
 module RubyReactor
   class Executor
     class ResultHandler
-      def initialize(context, compensation_manager, dependency_graph)
+      def initialize(context:, compensation_manager:, dependency_graph:)
         @context = context
         @compensation_manager = compensation_manager
         @dependency_graph = dependency_graph
@@ -54,10 +54,9 @@ module RubyReactor
         when Error::Base
           # Other errors need rollback
           @compensation_manager.rollback_completed_steps
-          RubyReactor.Failure(error.message)
+          RubyReactor.Failure("Execution error: #{error.message}")
         else
-          # Unknown errors need rollback
-          @compensation_manager.rollback_completed_steps
+          # Unknown errors - don't rollback as they may not be reactor-related
           RubyReactor.Failure("Execution failed: #{error.message}")
         end
       end

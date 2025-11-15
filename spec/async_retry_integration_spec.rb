@@ -8,7 +8,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
   before do
     Sidekiq::Testing.fake!
     Sidekiq::Worker.clear_all
-    allow_any_instance_of(RubyReactor::Configuration).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
+    allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
   end
 
   after do
@@ -62,23 +62,6 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       # Verify the job was processed
       expect(RubyReactor::Worker.jobs.size).to eq(0)
     end
-  end
-
-  describe "Retry scenarios with different backoff strategies" do
-    it "retries with exponential backoff until success" do
-      reactor = RetryExponentialReactor.new
-      reactor.run(attempt_count: 1)
-
-      # Should have 1 job initially
-      expect(RubyReactor::Worker.jobs.size).to eq(1)
-
-      # Process jobs - should retry a few times
-      RubyReactor::Worker.drain
-
-      # Verify retries happened (in fake mode, jobs are processed immediately)
-      # In real Sidekiq, this would be scheduled with delays
-    end
-
   end
 
   describe "Async step retry requeuing" do

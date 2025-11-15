@@ -3,13 +3,13 @@
 module RubyReactor
   class Executor
     class StepExecutor
-      def initialize(context, dependency_graph, retry_manager, result_handler, reactor_class, compensation_manager)
+      def initialize(context:, dependency_graph:, reactor_class:, managers:)
         @context = context
         @dependency_graph = dependency_graph
-        @retry_manager = retry_manager
-        @result_handler = result_handler
         @reactor_class = reactor_class
-        @compensation_manager = compensation_manager
+        @retry_manager = managers[:retry_manager]
+        @result_handler = managers[:result_handler]
+        @compensation_manager = managers[:compensation_manager]
       end
 
       def execute_all_steps
@@ -98,7 +98,7 @@ module RubyReactor
         # The Worker's execution will have ALL steps including ones we already executed,
         # but we only want to add the NEW entries (from current_step onwards)
         current_trace_length = @context.execution_trace.length
-        new_trace_entries = other_executor.context.execution_trace[current_trace_length..-1] || []
+        new_trace_entries = other_executor.context.execution_trace[current_trace_length..] || []
 
         @context.execution_trace.concat(new_trace_entries)
 
@@ -109,7 +109,7 @@ module RubyReactor
         @context.current_step = nil
 
         # Update our dependency graph to reflect completed steps
-        other_executor.context.intermediate_results.keys.each do |step_name|
+        other_executor.context.intermediate_results.each_key do |step_name|
           @dependency_graph.complete_step(step_name)
         end
 

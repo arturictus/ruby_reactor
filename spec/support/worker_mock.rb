@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Support
   class WorkerMock
     def self.perform_async(serialized_context, reactor_class_name = nil)
