@@ -7,6 +7,13 @@ module Support
       result = perform(serialized_context, reactor_class_name)
       warn "[WORKER_MOCK] perform returned: #{result.class}"
 
+      # If the result is RetryQueuedResult, simulate requeue by executing again
+      while result.is_a?(RubyReactor::RetryQueuedResult)
+        warn "[WORKER_MOCK] Got RetryQueuedResult, simulating requeue"
+        result = perform(serialized_context, reactor_class_name)
+        warn "[WORKER_MOCK] Re-executed, got: #{result.class}"
+      end
+
       if result.is_a?(RubyReactor::Executor)
         warn "[WORKER_MOCK] Executor trace length: #{result.context.execution_trace.length}"
         warn "[WORKER_MOCK] Executor trace: #{result.context.execution_trace.map do |t|
@@ -28,6 +35,9 @@ module Support
     end
 
     def self.perform(serialized_context, reactor_class_name = nil)
+      context = RubyReactor::ContextSerializer.deserialize(serialized_context)
+      context.test_mode = true
+      serialized_context = RubyReactor::ContextSerializer.serialize(context)
       result = RubyReactor::Worker.new.perform(serialized_context, reactor_class_name)
       puts "[WORKER_MOCK.perform] Returning result: #{result.class}, result.result: #{result.result&.class}"
       result

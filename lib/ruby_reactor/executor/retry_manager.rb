@@ -21,7 +21,7 @@ module RubyReactor
           elsif result.is_a?(RubyReactor::Failure)
             # Step failed, check if we can retry
             if can_retry_step?(step_config) && result.retryable?
-              if reactor_class.async?
+              if (reactor_class.async? || step_config.async?) && !@context.test_mode
                 requeue_job_for_step_retry(step_config, result.error, reactor_class)
                 return RetryQueuedResult.new(
                   step_config.name,

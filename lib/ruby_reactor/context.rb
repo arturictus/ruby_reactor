@@ -3,7 +3,7 @@
 module RubyReactor
   class Context
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
-                  :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack
+                  :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack, :test_mode
 
     def initialize(inputs = {}, reactor_class = nil)
       @inputs = inputs
@@ -17,6 +17,7 @@ module RubyReactor
       @execution_trace = []
       @inline_async_execution = false # Flag to prevent nested async calls
       @undo_stack = [] # Initialize the undo stack
+      @test_mode = false
     end
 
     def get_input(name, path = nil)
@@ -61,7 +62,8 @@ module RubyReactor
         retry_count: @retry_count,
         retry_context: @retry_context,
         reactor_class: @reactor_class,
-        execution_trace: @execution_trace
+        execution_trace: @execution_trace,
+        test_mode: @test_mode
       }
     end
 
@@ -78,7 +80,8 @@ module RubyReactor
         concurrency_key: @concurrency_key,
         retry_context: @retry_context.serialize_for_retry,
         execution_trace: serialize_value(@execution_trace),
-        undo_stack: serialize_undo_stack
+        undo_stack: serialize_undo_stack,
+        test_mode: @test_mode
       }
     end
 
@@ -94,6 +97,7 @@ module RubyReactor
       context.retry_context = RetryContext.deserialize_from_retry(data["retry_context"] || {})
       context.execution_trace = deserialize_value(data["execution_trace"]) || []
       context.undo_stack = deserialize_undo_stack(data["undo_stack"] || [], context.reactor_class)
+      context.test_mode = data["test_mode"] || false
       context
     end
 
