@@ -3,12 +3,13 @@
 module RubyReactor
   class Executor
     class StepExecutor
-      def initialize(context, dependency_graph, retry_manager, result_handler, reactor_class)
+      def initialize(context:, dependency_graph:, reactor_class:, managers:)
         @context = context
         @dependency_graph = dependency_graph
-        @retry_manager = retry_manager
-        @result_handler = result_handler
         @reactor_class = reactor_class
+        @retry_manager = managers[:retry_manager]
+        @result_handler = managers[:result_handler]
+        @compensation_manager = managers[:compensation_manager]
       end
 
       def execute_all_steps
@@ -31,6 +32,12 @@ module RubyReactor
 
             # If a step returns RetryQueuedResult, we need to stop and return it
             return result if result.is_a?(RetryQueuedResult)
+
+            # If a step returns Failure, we need to stop execution and return it
+            return result if result.is_a?(RubyReactor::Failure)
+
+            # If result is nil, it means async was executed inline (test mode), continue
+            next if result.nil?
           end
         end
 
@@ -39,16 +46,87 @@ module RubyReactor
       end
 
       def execute_step(step_config)
-        if step_config.async?
+        # If we're already in inline async execution mode (inside Worker),
+        # treat async steps as sync to avoid infinite recursion
+
+        if step_config.async? && !@context.inline_async_execution
           # Step-level async: hand off execution to worker
+
           @context.current_step = step_config.name
+          @context.undo_stack = @compensation_manager.undo_stack
           serialized_context = ContextSerializer.serialize(@context)
-          RubyReactor::Worker.perform_async(serialized_context, @reactor_class.name)
-          RubyReactor::AsyncResult.new(job_id: nil) # TODO: Get job ID
-        elsif @reactor_class.async?
-          execute_step_with_retry(step_config)
+
+          result = configuration.async_router.perform_async(serialized_context, @reactor_class.name)
+
+          # Handle different result types from async router
+          case result
+          when RubyReactor::AsyncResult
+            # Production behavior: return async result to caller
+
+            result
+          when Executor
+            # Worker executed inline and returned an executor
+            # The worker has executed the current step and potentially remaining steps via resume_execution
+            # We need to merge the state back into our executor
+
+            merge_executor_state(result)
+
+            result.result
+          else
+            # Unexpected result type, treat as error
+            raise Error::ValidationError.new(
+              "Unexpected result type from async router: #{result.class}",
+              context: @context
+            )
+          end
         else
-          execute_step_sync_with_retry(step_config)
+          execute_step_with_retry(step_config)
+        end
+      end
+
+      def merge_executor_state(other_executor)
+        # Merge the state from the async-executed executor back into ours
+        # We need to update our context IN PLACE, not replace the reference,
+        # because the Executor also holds a reference to the same context object
+
+        # Update intermediate results
+        other_executor.context.intermediate_results.each do |step_name, value|
+          @context.set_result(step_name, value)
+        end
+
+        # Append execution trace from the async execution
+        # The Worker's execution will have ALL steps including ones we already executed,
+        # but we only want to add the NEW entries (from current_step onwards)
+        current_trace_length = @context.execution_trace.length
+        new_trace_entries = other_executor.context.execution_trace[current_trace_length..] || []
+
+        @context.execution_trace.concat(new_trace_entries)
+
+        # Update retry context
+        @context.retry_context = other_executor.context.retry_context
+
+        # Clear current_step since we've completed it
+        @context.current_step = nil
+
+        # Update our dependency graph to reflect completed steps
+        other_executor.context.intermediate_results.each_key do |step_name|
+          @dependency_graph.complete_step(step_name)
+        end
+
+        # Also mark the current_step as completed if it exists (for failed steps that don't have results)
+        @dependency_graph.complete_step(other_executor.context.current_step) if other_executor.context.current_step
+
+        # Merge any undo stack items
+        other_executor.undo_stack.each do |item|
+          # Avoid duplicates by checking if this step is already in the undo stack
+          unless @compensation_manager.undo_stack.any? { |existing| existing[:step].name == item[:step].name }
+            @compensation_manager.add_to_undo_stack(item)
+          end
+        end
+
+        # Merge undo trace from the other executor
+        other_executor.undo_trace.each do |trace_entry|
+          @compensation_manager.undo_trace << trace_entry
         end
       end
 
@@ -57,23 +135,6 @@ module RubyReactor
           safe_execute_step_sync(step_config)
         end
 
-        # For async reactors, handle results the same way as sync
-        # Special async results (RetryQueuedResult, AsyncResult) are returned as-is
-        unless result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::AsyncResult)
-          resolved_arguments = resolve_arguments(step_config)
-          @result_handler.handle_step_result(step_config, result, resolved_arguments)
-        end
-
-        result
-      end
-
-      def execute_step_sync_with_retry(step_config)
-        result = @retry_manager.execute_with_retry(step_config, @reactor_class) do
-          safe_execute_step_sync(step_config)
-        end
-
-        # Now handle the result (success, failure, or max retries exhausted)
-        # Only call handle_step_result if we're not dealing with special async results
         unless result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::AsyncResult)
           resolved_arguments = resolve_arguments(step_config)
           @result_handler.handle_step_result(step_config, result, resolved_arguments)
@@ -131,6 +192,10 @@ module RubyReactor
       end
 
       private
+
+      def configuration
+        RubyReactor::Configuration.instance
+      end
 
       def validate_step_arguments(step_config, resolved_arguments)
         return unless step_config.args_validator

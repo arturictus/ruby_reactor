@@ -9,7 +9,8 @@ require_relative "executor/step_executor"
 
 module RubyReactor
   class Executor
-    attr_reader :reactor_class, :context, :dependency_graph, :compensation_manager
+    attr_reader :reactor_class, :context, :dependency_graph, :compensation_manager, :retry_manager, :result_handler,
+                :step_executor, :result
 
     def initialize(reactor_class, inputs = {}, context = nil)
       @reactor_class = reactor_class
@@ -17,8 +18,22 @@ module RubyReactor
       @dependency_graph = DependencyGraph.new
       @compensation_manager = CompensationManager.new(@context)
       @retry_manager = RetryManager.new(@context)
-      @result_handler = ResultHandler.new(@context, @compensation_manager, @dependency_graph)
-      @step_executor = StepExecutor.new(@context, @dependency_graph, @retry_manager, @result_handler, @reactor_class)
+      @result_handler = ResultHandler.new(
+        context: @context,
+        compensation_manager: @compensation_manager,
+        dependency_graph: @dependency_graph
+      )
+      @step_executor = StepExecutor.new(
+        context: @context,
+        dependency_graph: @dependency_graph,
+        reactor_class: @reactor_class,
+        managers: {
+          retry_manager: @retry_manager,
+          result_handler: @result_handler,
+          compensation_manager: @compensation_manager
+        }
+      )
+      @result = nil
     end
 
     def execute
@@ -28,41 +43,21 @@ module RubyReactor
       graph_manager = GraphManager.new(@reactor_class, @dependency_graph, @context)
       graph_manager.build_and_validate!
 
-      @step_executor.execute_all_steps
+      @result = @step_executor.execute_all_steps
     rescue StandardError => e
-      @result_handler.handle_execution_error(e)
+      @result = @result_handler.handle_execution_error(e)
     end
 
     def resume_execution
-      # Resume execution from the current state
-      # This is called when a job is requeued after a step retry
+      prepare_for_resume
 
-      # Build dependency graph and mark completed steps
-      graph_manager = GraphManager.new(@reactor_class, @dependency_graph, @context)
-      graph_manager.build_and_validate!
-      graph_manager.mark_completed_steps_from_context
-
-      # If there's a current_step, it means we need to retry that step
       if @context.current_step
-        step_config = @reactor_class.steps[@context.current_step]
-        return RubyReactor::Failure("Step '#{@context.current_step}' not found in reactor") unless step_config
-
-        result = @step_executor.execute_step_with_retry(step_config)
-        case result
-        when RetryQueuedResult, RubyReactor::Failure
-          # Step was requeued again, return the result
-          result
-        when RubyReactor::Success
-          # Step succeeded, continue with remaining steps
-          @step_executor.execute_all_steps
-        end
-
-      # Step not found, this is an error
-
+        execute_current_step_and_continue
       else
-        # No current step, execute remaining steps
-        @step_executor.execute_all_steps
+        execute_remaining_steps
       end
+    rescue StandardError => e
+      handle_resume_error(e)
     end
 
     def undo_stack
@@ -75,6 +70,54 @@ module RubyReactor
 
     def execution_trace
       @context.execution_trace
+    end
+
+    private
+
+    def prepare_for_resume
+      # Build dependency graph and mark completed steps
+      graph_manager = GraphManager.new(@reactor_class, @dependency_graph, @context)
+      graph_manager.build_and_validate!
+      graph_manager.mark_completed_steps_from_context
+    end
+
+    def execute_current_step_and_continue
+      step_config = @reactor_class.steps[@context.current_step]
+      return RubyReactor::Failure("Step '#{@context.current_step}' not found in reactor") unless step_config
+
+      # Use execute_step (not execute_step_with_retry) so that async steps can be handled properly in inline mode
+      result = @step_executor.execute_step(step_config)
+
+      # execute_step returns nil for inline async, meaning continue execution
+      if result.nil?
+        @result = @step_executor.execute_all_steps
+      else
+        case result
+        when RetryQueuedResult, RubyReactor::Failure, RubyReactor::AsyncResult
+          # Step was requeued, failed, or handed off to async - return the result
+          @result = result
+        when RubyReactor::Success
+          # Step succeeded, continue with remaining steps
+          @result = @step_executor.execute_all_steps
+        end
+      end
+      @result
+    end
+
+    def execute_remaining_steps
+      @result = @step_executor.execute_all_steps
+      @result
+    end
+
+    def handle_resume_error(error)
+      # Only handle errors that haven't already triggered compensation
+      # StepFailureError means compensation already happened, just convert to Failure
+      @result = if error.is_a?(Error::StepFailureError)
+                  RubyReactor.Failure(error.message)
+                else
+                  @result_handler.handle_execution_error(error)
+                end
+      @result
     end
   end
 end

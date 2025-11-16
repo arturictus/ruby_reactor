@@ -7,7 +7,7 @@ module RubyReactor
   class Configuration
     include Singleton
 
-    attr_writer :sidekiq_queue, :sidekiq_retry_count, :logger
+    attr_writer :sidekiq_queue, :sidekiq_retry_count, :logger, :async_router
 
     def sidekiq_queue
       @sidekiq_queue ||= :default
@@ -19,6 +19,10 @@ module RubyReactor
 
     def logger
       @logger ||= Logger.new($stderr)
+    end
+
+    def async_router
+      @async_router ||= RubyReactor::AsyncRouter
     end
   end
 end

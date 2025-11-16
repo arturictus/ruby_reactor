@@ -3,7 +3,7 @@
 module RubyReactor
   class Executor
     class ResultHandler
-      def initialize(context, compensation_manager, dependency_graph)
+      def initialize(context:, compensation_manager:, dependency_graph:)
         @context = context
         @compensation_manager = compensation_manager
         @dependency_graph = dependency_graph
@@ -44,7 +44,9 @@ module RubyReactor
       def handle_execution_error(error)
         case error
         when Error::StepFailureError
-          # Step failure has already been handled (compensation and rollback)
+          # Step failure has already been handled (compensation and rollback for the failed step)
+          # But we need to rollback all completed steps
+          @compensation_manager.rollback_completed_steps
           RubyReactor.Failure(error.message)
         when Error::InputValidationError
           # Preserve validation errors as-is for proper error handling
@@ -52,10 +54,9 @@ module RubyReactor
         when Error::Base
           # Other errors need rollback
           @compensation_manager.rollback_completed_steps
-          RubyReactor.Failure(error.message)
+          RubyReactor.Failure("Execution error: #{error.message}")
         else
-          # Unknown errors need rollback
-          @compensation_manager.rollback_completed_steps
+          # Unknown errors - don't rollback as they may not be reactor-related
           RubyReactor.Failure("Execution failed: #{error.message}")
         end
       end

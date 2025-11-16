@@ -8,6 +8,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
   before do
     Sidekiq::Testing.fake!
     Sidekiq::Worker.clear_all
+    allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
   end
 
   after do
@@ -63,6 +64,52 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
     end
   end
 
+  describe "Async step retry requeuing" do
+    before do
+      Sidekiq::Testing.fake!
+      Sidekiq::Worker.clear_all
+    end
+
+    after do
+      Sidekiq::Testing.fake!
+    end
+
+    it "requeues jobs for async step retries instead of executing inline" do
+      # Create a reactor with an async step that will fail
+      reactor_class = Class.new(RubyReactor::Reactor) do
+        step :failing_async_step do
+          async true
+          retries max_attempts: 3, backoff: :fixed, base_delay: 1
+
+          run do |_args, _context|
+            RubyReactor::Failure("Step always fails")
+          end
+        end
+      end
+
+      reactor = reactor_class.new
+
+      # Run the reactor - this should queue the initial job
+      result = reactor.run
+
+      # Should return AsyncResult
+      expect(result).to be_a(RubyReactor::AsyncResult)
+
+      # Should have 1 job queued
+      expect(RubyReactor::Worker.jobs.size).to eq(1)
+
+      # Process the job - this should execute the step, fail, and requeue for retry
+      RubyReactor::Worker.drain
+
+      # In fake mode, drain processes all jobs, including scheduled ones
+      # Since the step fails and retries, it should process multiple jobs
+      # But ultimately, when max_attempts is reached, no more jobs should be queued
+
+      # After all processing, there should be no jobs left
+      expect(RubyReactor::Worker.jobs.size).to eq(0)
+    end
+  end
+
   describe "Retry scenarios with different backoff strategies" do
     it "retries with exponential backoff until success" do
       reactor = RetryExponentialReactor.new
@@ -79,7 +126,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
     end
 
     context "with linear backoff" do
-      xit "uses linear backoff strategy" do
+      it "uses linear backoff strategy" do
         reactor = RetryLinearReactor.new
         reactor.run
 
@@ -89,7 +136,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
     end
 
     context "with fixed backoff" do
-      xit "uses fixed backoff strategy" do
+      it "uses fixed backoff strategy" do
         reactor = RetryFixedReactor.new
         reactor.run
 

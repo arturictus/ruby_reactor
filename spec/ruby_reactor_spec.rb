@@ -11,6 +11,8 @@ RSpec.describe RubyReactor do
         input :email
         input :password
 
+        retry_defaults max_attempts: 3
+
         step :validate_email do
           argument :email, input(:email)
 
@@ -188,6 +190,68 @@ RSpec.describe RubyReactor do
                             "Expected #{email} to be invalid"
         end
       end
+    end
+  end
+
+  describe "doesn't retry with default max attempts of 1" do
+    let(:flaky_step_class) do
+      Class.new(RubyReactor::Reactor) do
+        step :flaky_step do
+          run do |_args, context|
+            puts "running flaky_step"
+            attempt = context.retry_context.attempts_for_step(:flaky_step)
+            Failure("Intentional failure on attempt #{attempt}")
+          end
+        end
+      end
+    end
+
+    it "never retries" do
+      executor = flaky_step_class.new
+      result = executor.run
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error).to eq("Step 'flaky_step' failed after 1 attempts: Intentional failure on attempt 1")
+    end
+  end
+
+  describe "Max attempts behavior" do
+    let(:flaky_step_class) do
+      Class.new(RubyReactor::Reactor) do
+        retry_defaults max_attempts: 3
+        input :should_fail_times do
+          required(:should_fail_times).filled(:integer, gteq?: 0)
+        end
+
+        step :flaky_step do
+          argument :should_fail_times, input(:should_fail_times)
+
+          run do |args, context|
+            attempt = context.retry_context.attempts_for_step(:flaky_step)
+            if attempt < args[:should_fail_times]
+              Failure("Intentional failure on attempt #{attempt}")
+            else
+              Success("Succeeded on attempt #{attempt}")
+            end
+          end
+        end
+
+        returns :flaky_step
+      end
+    end
+
+    it "retries until max attempts are reached returning failure" do
+      reactor = flaky_step_class.new
+      result = reactor.run(should_fail_times: 4)
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error).to eq("Step 'flaky_step' failed after 3 attempts: Intentional failure on attempt 3")
+    end
+
+    it "retries until max attempts are reached returning success" do
+      reactor = flaky_step_class.new
+      result = reactor.run(should_fail_times: 2)
+      expect(result).to be_a(RubyReactor::Success)
+      expect(result.value).to eq("Succeeded on attempt 2")
     end
   end
 

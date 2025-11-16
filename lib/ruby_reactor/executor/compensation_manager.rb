@@ -70,10 +70,9 @@ module RubyReactor
         elsif step_config.has_impl?
           step_config.impl.undo(result.value, arguments, @context)
         end
-      rescue StandardError => e
+      rescue StandardError
         # Log undo failure but don't halt the rollback process
         # In a real implementation, this would use a logger
-        puts "Warning: Undo failed for step '#{step_config.name}': #{e.message}"
       end
     end
   end
