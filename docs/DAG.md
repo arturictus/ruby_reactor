@@ -80,13 +80,13 @@ graph TD
     A[Saga Initiated] --> B[Execute Step 1]
     B --> C{Step 1<br/>Success?}
     C -->|Yes| D[Execute Step 2]
-    C -->|No| E[Compensation Started]
+    C -->|No| E[Compensation Step 1]
     D --> F{Step 2<br/>Success?}
     F -->|Yes| G[Execute Step 3]
-    F -->|No| H[Compensate Step 1]
+    F -->|No| H[Compensate Step 2, Undo Step 1]
     G --> I{Step 3<br/>Success?}
     I -->|Yes| J[Saga Complete]
-    I -->|No| K[Compensate Step 2<br/>Then Step 1]
+    I -->|No| K[Compensate Step 3<br/>Then Undo Steps 2 and 1]
     H --> L[Saga Failed]
     K --> L
     E --> L
@@ -107,8 +107,8 @@ graph TD
     C --> D[Step C Fails]
     D --> E[Start Compensation]
     E --> F[Compensate C]
-    F --> G[Compensate B]
-    G --> H[Compensate A]
+    F --> G[Undo B]
+    G --> H[Undo A]
     H --> I[Consistent State Restored]
 
     style A fill:#e3f2fd
@@ -160,23 +160,6 @@ graph TD
     style D fill:#ffebee
 ```
 
-### Payment Processing with Multiple Attempts
-
-```mermaid
-graph TD
-    A[Payment Required] --> B[Attempt Primary Card]
-    B --> C{Success?}
-    C -->|Yes| D[Payment Complete]
-    C -->|No| E[Attempt Backup Card]
-    E --> F{Success?}
-    F -->|Yes| D
-    F -->|No| G[Notify Customer]
-    G --> H[Manual Review Required]
-
-    style A fill:#e3f2fd
-    style D fill:#e8f5e8
-    style H fill:#fff3e0
-```
 
 ## DAG + Saga Integration
 

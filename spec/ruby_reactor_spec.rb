@@ -255,6 +255,54 @@ RSpec.describe RubyReactor do
     end
   end
 
+  describe "wait_for" do
+    let(:wait_for_reactor_class) do
+      Class.new(RubyReactor::Reactor) do
+        step :step_one do
+          run do |_args, _context|
+            Success("Result from step one")
+          end
+        end
+
+        step :step_two do
+          wait_for :step_one
+
+          run do |args, context|
+            Success("Result from step two using #{context.get_result(:step_one)}")
+          end
+        end
+
+        step :step_after_two do
+          wait_for :step_two  
+
+          run do |args, context|
+            Success("Result from step after two using #{context.get_result(:step_two)}")
+          end
+        end
+
+        step :step_four do
+          wait_for :step_two, :step_after_two
+
+          run do |args, context|
+            Success("Result from step four using #{context.get_result(:step_two)} and #{context.get_result(:step_after_two)}")
+          end
+        end
+
+        returns :step_two
+      end
+    end
+
+    it "executes dependent steps in order" do
+      reactor = wait_for_reactor_class.new
+      result = reactor.run
+      expect(reactor.context.execution_trace.select { |e| e[:type] == :run }.map { |e| e[:step] }).to eq(
+        [:step_one, :step_two, :step_after_two, :step_four]
+      )
+      expect(result).to be_a(RubyReactor::Success)
+      expect(result.value).to eq("Result from step two using Result from step one")
+    end
+  end
+
   describe "Dry-Ruby Validation Integration" do
     describe "input validation with dry-schema" do
       let(:validated_user_class) do

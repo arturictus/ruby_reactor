@@ -47,10 +47,10 @@ module RubyReactor
 
         def retry_defaults(**kwargs)
           if kwargs.empty?
-            @retry_defaults ||= { max_attempts: 0, backoff: :exponential, base_delay: 1 }
+            @retry_defaults ||= { max_attempts: 1, backoff: :exponential, base_delay: 1 }
           else
             @retry_defaults = {
-              max_attempts: kwargs[:max_attempts] || 0,
+              max_attempts: kwargs[:max_attempts] || 1,
               backoff: kwargs[:backoff] || :exponential,
               base_delay: kwargs[:base_delay] || 1
             }
