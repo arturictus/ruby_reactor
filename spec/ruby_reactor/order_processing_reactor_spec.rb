@@ -222,11 +222,11 @@ RSpec.describe RubyReactor::OrderProcessingReactor do
     end
     # rubocop:enable RSpec/AnyInstance
 
-    include_examples "order processing reactor step execution"
+    it_behaves_like "order processing reactor step execution"
   end
 
   context "when executing asynchronously" do
-    include_examples "order processing reactor step execution"
+    it_behaves_like "order processing reactor step execution"
   end
   # Additional tests for other steps would go here...
 end

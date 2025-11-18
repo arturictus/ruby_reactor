@@ -1,7 +1,6 @@
 plugins:
   - rubocop-rake
-
-require: rubocop-rspec
+  - rubocop-rspec
 
 AllCops:
   TargetRubyVersion: 3.0
@@ -60,8 +59,6 @@ Naming/PredicatePrefix:
 
 Metrics/AbcSize:
   Max: 40
-
-
   Enabled: false
 
 RSpec/MultipleExpectations:
