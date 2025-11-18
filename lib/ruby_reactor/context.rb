@@ -113,6 +113,8 @@ module RubyReactor
         { "_type" => "Time", "value" => value.iso8601 }
       when BigDecimal
         { "_type" => "BigDecimal", "value" => value.to_s("F") }
+      when ->(v) { v.respond_to?(:to_global_id) }
+        { "_type" => "GlobalID", "gid" => value.to_global_id.to_s }
       when Hash
         value.transform_values { |v| serialize_value(v) }
       when Array
@@ -136,6 +138,8 @@ module RubyReactor
             Time.iso8601(value["value"])
           when "BigDecimal"
             BigDecimal(value["value"])
+          when "GlobalID"
+            GlobalID::Locator.locate(value["gid"])
           else
             value
           end
