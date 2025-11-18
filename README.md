@@ -416,6 +416,16 @@ For detailed documentation, see the following guides:
 - [Payment Processing](documentation/examples/payment_processing.md) - Payment handling with compensation
 - [Inventory Management](documentation/examples/inventory_management.md) - Inventory management system example
 
+## Future improvements
+
+- [ ] Global id to serialize ActiveRecord classes
+- [ ] Descriptive errors
+- [ ] Middlewares
+- [ ] `map` step to iterate over arrays asyncronously
+- [ ] `compose` special step to execute reactors as step
+- [ ] Async ruby to parallelize same level steps
+- [ ] Dedicated interface to inspect reactor results and errors
+
 ## Development
 
 After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
