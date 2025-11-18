@@ -103,6 +103,7 @@ module RubyReactor
 
     private
 
+    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/MethodLength
     def serialize_value(value)
       case value
       when RubyReactor::Success
@@ -113,6 +114,21 @@ module RubyReactor
         { "_type" => "Time", "value" => value.iso8601 }
       when BigDecimal
         { "_type" => "BigDecimal", "value" => value.to_s("F") }
+      when Rational
+        { "_type" => "Rational", "numerator" => value.numerator, "denominator" => value.denominator }
+      when Date
+        { "_type" => "Date", "value" => value.iso8601 }
+      when DateTime
+        { "_type" => "DateTime", "value" => value.iso8601 }
+      when Complex
+        { "_type" => "Complex", "real" => value.real, "imag" => value.imag }
+      when Range
+        { "_type" => "Range", "begin" => serialize_value(value.begin), "end" => serialize_value(value.end),
+          "exclude_end" => value.exclude_end? }
+      when Regexp
+        { "_type" => "Regexp", "source" => value.source, "options" => value.options }
+      when ->(v) { v.respond_to?(:to_global_id) }
+        { "_type" => "GlobalID", "gid" => value.to_global_id.to_s }
       when Hash
         value.transform_values { |v| serialize_value(v) }
       when Array
@@ -136,6 +152,20 @@ module RubyReactor
             Time.iso8601(value["value"])
           when "BigDecimal"
             BigDecimal(value["value"])
+          when "Rational"
+            Rational(value["numerator"], value["denominator"])
+          when "Date"
+            Date.iso8601(value["value"])
+          when "DateTime"
+            DateTime.iso8601(value["value"])
+          when "Complex"
+            Complex(value["real"], value["imag"])
+          when "Range"
+            Range.new(deserialize_value(value["begin"]), deserialize_value(value["end"]), value["exclude_end"])
+          when "Regexp"
+            Regexp.new(value["source"], value["options"])
+          when "GlobalID"
+            GlobalID::Locator.locate(value["gid"])
           else
             value
           end
@@ -149,6 +179,7 @@ module RubyReactor
         value
       end
     end
+    # rubocop:enable Metrics/CyclomaticComplexity, Metrics/MethodLength
 
     private_class_method :deserialize_value
 

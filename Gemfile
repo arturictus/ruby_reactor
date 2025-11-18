@@ -16,3 +16,5 @@ gem "rubocop-rake", "~> 0.7"
 gem "rubocop-rspec", "~> 3.8"
 
 gem "dry-validation", "~> 1.10"
+
+gem "globalid", "~> 1.0"

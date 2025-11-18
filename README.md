@@ -418,10 +418,10 @@ For detailed documentation, see the following guides:
 
 ## Future improvements
 
-- [ ] Global id to serialize ActiveRecord classes
-- [ ] Descriptive errors
+- [X] Global id to serialize ActiveRecord classes
 - [ ] Middlewares
-- [ ] `map` step to iterate over arrays asyncronously
+- [ ] Descriptive errors
+- [ ] `map` step to iterate over arrays in parallel
 - [ ] `compose` special step to execute reactors as step
 - [ ] Async ruby to parallelize same level steps
 - [ ] Dedicated interface to inspect reactor results and errors
