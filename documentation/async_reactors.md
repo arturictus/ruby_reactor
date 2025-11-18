@@ -136,6 +136,102 @@ graph LR
 Client → Reactor.run() → Sync Steps → Queue Job → Worker → Remaining Steps
 ```
 
+## Async Steps
+
+Individual steps can be configured with `async true`, which changes the execution behavior at the point where the first async step is encountered.
+
+### Key Behavior
+
+When an async step is encountered during synchronous execution:
+
+1. **All previous steps have already executed synchronously** in the main thread
+2. **The Sidekiq job is queued** at the moment the async step would be executed
+3. **The async step itself and all subsequent steps execute** in the Sidekiq worker
+4. **The main thread returns immediately** with an async result handle
+
+### Important Distinction
+
+- **Before async step**: All execution is synchronous
+- **At async step**: Job is queued instead of executing the step
+- **After async step**: All remaining execution happens in the worker
+
+### Example
+
+```ruby
+class OrderProcessingReactor < RubyReactor::Reactor
+  step :validate_input do
+    # Executes synchronously in main thread
+    run { validate_order_input }
+  end
+
+  step :check_inventory do
+    # Executes synchronously in main thread
+    run { check_inventory_levels }
+  end
+
+  step :process_payment do
+    async true
+    # Job is queued here - this step executes in worker
+    run { process_payment_logic }
+  end
+
+  step :update_inventory do
+    # Executes in worker
+    run { update_inventory_records }
+  end
+
+  step :send_notification do
+    # Executes in worker
+    run { send_order_confirmation }
+  end
+end
+```
+
+### Execution Flow with Mermaid
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Reactor
+    participant Sidekiq
+    participant Worker
+
+    Client->>Reactor: run(order_data)
+    Reactor->>Reactor: Execute validate_input (sync)
+    Reactor->>Reactor: Execute check_inventory (sync)
+    Reactor->>Reactor: Reach process_payment (async: true)
+    Reactor->>Sidekiq: Queue job with context
+    Reactor->>Client: Return AsyncResult (pending)
+    Sidekiq->>Worker: Process job
+    Worker->>Worker: Execute process_payment
+    Worker->>Worker: Execute update_inventory
+    Worker->>Worker: Execute send_notification
+    Worker->>Sidekiq: Mark job complete
+```
+
+```mermaid
+graph TD
+    A[Client Calls Reactor.run] --> B[Execute Previous Steps Synchronously]
+    B --> C[Encounter First Async Step]
+    C --> D[Queue Sidekiq Job<br/>with Current Context]
+    D --> E[Return AsyncResult to Client<br/>Status: :pending]
+    D --> F[Sidekiq Worker Receives Job]
+    F --> G[Deserialize Context]
+    G --> H[Execute Async Step<br/>and All Subsequent Steps]
+    H --> I{Execution<br/>Successful?}
+    I -->|Yes| J[Mark AsyncResult<br/>Status: :success]
+    I -->|No| K[Run Compensation<br/>in Worker Context]
+    K --> L[Mark AsyncResult<br/>Status: :failed]
+```
+
+### Critical Points
+
+- **Synchronous Prefix Guarantee**: Steps before the first async step always complete synchronously
+- **Single Handoff Point**: Only one job is queued per reactor execution
+- **Worker Execution**: The async step and all following steps run in the same worker
+- **Context Preservation**: Execution state is serialized and passed to the worker
+- **Compensation Scope**: All compensation for failed async execution happens in the worker
+
 ## Retry Configuration
 
 Both async models support sophisticated retry mechanisms with non-blocking job requeuing.
