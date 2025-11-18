@@ -7,7 +7,7 @@ class TestGlobalIDModel
   include GlobalID::Identification
 
   def self.find(id)
-    new(id)
+    new(id.to_i)
   end
 
   def initialize(id)
@@ -65,6 +65,28 @@ RSpec.describe RubyReactor::ContextSerializer do
 
       expect(data["inputs"]["timestamp"]["_type"]).to eq("Time")
       expect(data["inputs"]["timestamp"]["value"]).to eq("2023-01-01T12:00:00+00:00")
+    end
+
+    it "serializes Rational numbers" do
+      context.inputs[:ratio] = Rational(3, 4)
+
+      serialized = described_class.serialize(context)
+      data = JSON.parse(serialized)
+
+      expect(data["inputs"]["ratio"]["_type"]).to eq("Rational")
+      expect(data["inputs"]["ratio"]["numerator"]).to eq(3)
+      expect(data["inputs"]["ratio"]["denominator"]).to eq(4)
+    end
+
+    it "serializes Complex numbers" do
+      context.inputs[:complex] = Complex(1, 2)
+
+      serialized = described_class.serialize(context)
+      data = JSON.parse(serialized)
+
+      expect(data["inputs"]["complex"]["_type"]).to eq("Complex")
+      expect(data["inputs"]["complex"]["real"]).to eq(1)
+      expect(data["inputs"]["complex"]["imag"]).to eq(2)
     end
 
     it "serializes objects that respond to to_global_id" do
@@ -127,10 +149,27 @@ RSpec.describe RubyReactor::ContextSerializer do
       expect(deserialized.inputs[:timestamp]).to eq(Time.new(2023, 1, 1, 12, 0, 0, "+00:00"))
     end
 
-    it "deserializes GlobalID objects" do
-      located_object = TestGlobalIDModel.new(123)
-      allow(GlobalID::Locator).to receive(:locate).with("gid://app/TestGlobalIDModel/123").and_return(located_object)
+    it "deserializes Rational numbers" do
+      context.inputs[:ratio] = Rational(3, 4)
 
+      serialized = described_class.serialize(context)
+      deserialized = described_class.deserialize(serialized)
+
+      expect(deserialized.inputs[:ratio]).to be_a(Rational)
+      expect(deserialized.inputs[:ratio]).to eq(Rational(3, 4))
+    end
+
+    it "deserializes Complex numbers" do
+      context.inputs[:complex] = Complex(1, 2)
+
+      serialized = described_class.serialize(context)
+      deserialized = described_class.deserialize(serialized)
+
+      expect(deserialized.inputs[:complex]).to be_a(Complex)
+      expect(deserialized.inputs[:complex]).to eq(Complex(1, 2))
+    end
+
+    it "deserializes GlobalID objects" do
       # Manually create serialized data with GlobalID
       data = {
         "schema_version" => "1.0",
@@ -151,7 +190,8 @@ RSpec.describe RubyReactor::ContextSerializer do
 
       deserialized = described_class.deserialize(serialized)
 
-      expect(deserialized.inputs[:global_id_object]).to eq(located_object)
+      expect(deserialized.inputs[:global_id_object]).to be_a(TestGlobalIDModel)
+      expect(deserialized.inputs[:global_id_object].id).to eq(123)
     end
 
     it "raises error for invalid JSON" do
