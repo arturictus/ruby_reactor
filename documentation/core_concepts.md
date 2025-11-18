@@ -210,6 +210,127 @@ graph TD
 - **ValidationError**: Input validation failures
 - **CompensationError**: Compensation logic failures
 
+## Retries
+
+RubyReactor supports automatic retry mechanisms for failed steps with configurable backoff strategies.
+
+### When Retries Occur
+
+When a step fails during execution, RubyReactor can automatically retry the step before triggering compensation and rollback. Retries occur when:
+
+1. A step raises an exception during its `run` block
+2. The step has retry configuration (either reactor-level defaults or step-specific settings)
+3. The maximum retry attempts haven't been exceeded
+
+### Retry Execution Flow
+
+```mermaid
+graph TD
+    A[Step Fails] --> B{Attempts < Max<br/>Attempts?}
+    B -->|Yes| C[Calculate Backoff Delay]
+    C --> D[Queue for Retry<br/>with Delay]
+    D --> E[Resume Execution<br/>from Failed Step]
+    B -->|No| F[All Retries Exhausted]
+    F --> G[Run Compensation<br/>for Failing Step]
+    G --> H[Run Undo for<br/>Successful Steps<br/>in Reverse Order]
+```
+
+### Retry Configuration
+
+Retries can be configured at the reactor level (as defaults) or per step:
+
+```ruby
+class OrderProcessingReactor < RubyReactor::Reactor
+  step :validate_order do
+    run do
+      # validate input
+    end
+
+    undo do
+      # Nothing to do here just as example
+    end
+  end
+
+  step :check_inventory do
+    # Uses reactor defaults (5 attempts, fixed backoff)
+    run do 
+      InventoryService.check_availability(product_id, quantity) 
+    end
+
+    undo do
+      # Nothing to do here just as example
+    end
+  end
+
+  step :reserve_inventory do
+    retries max_attempts: 5, backoff: :fixed, base_delay: 2 # 2 seconds
+    
+    run do 
+      InventoryService.reserve(product_id, quantity)
+    end
+
+    compensate do |error, arguments, context|
+      # Cleanup partial reservations
+      puts "Cleaning up inventory reservation due to: #{error.message}"
+    end
+  end
+end
+```
+
+### Retry Parameters
+
+- **`max_attempts`**: Maximum number of execution attempts (including initial attempt)
+- **`backoff`**: Strategy for calculating delays between retries
+  - `:exponential` (default): Delay doubles with each attempt
+  - `:linear`: Delay increases linearly  
+  - `:fixed`: Same delay for each attempt
+- **`base_delay`**: Base delay for calculations (in seconds or ActiveSupport duration)
+
+### Example Execution with Retries
+
+Consider a reactor where `reserve_inventory` fails has a set `retries` with max_attemps of 5 max attempts with fixed backoff:
+
+```
+1. run step=validate_order          # Success
+2. run step=check_inventory         # Success  
+3. run step=reserve_inventory       # Attempt 1 - Fails
+4. run step=reserve_inventory       # Attempt 2 - Fails (retry with 2s delay)
+5. run step=reserve_inventory       # Attempt 3 - Fails (retry with 2s delay)
+6. run step=reserve_inventory       # Attempt 4 - Fails (retry with 2s delay)
+7. run step=reserve_inventory       # Attempt 5 - Fails (retry with 2s delay)
+8. compensate step=reserve_inventory # All retries exhausted
+9. undo step=check_inventory        # Rollback successful steps
+10. undo step=validate_order        # in reverse order
+```
+
+### Retry vs Compensation vs Undo
+
+- **Retries**: Re-attempt the failing step with backoff delays
+- **Compensation**: Cleanup logic for the failing step after all retries are exhausted
+- **Undo**: Rollback logic for previously successful steps during reactor failure
+
+Retries happen first, followed by compensation and undo only if all retry attempts fail.
+
+### Asynchronous Retries
+
+For asynchronous reactors, retries are queued as background jobs with calculated delays, preventing worker thread blocking:
+
+```ruby
+class AsyncPaymentReactor < RubyReactor::Reactor
+  async true
+
+  step :charge_card do
+    retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
+    run do
+      # This might fail due to network issues
+      PaymentService.charge(card_token, amount)
+    end
+  end
+end
+```
+
+Failed steps are automatically requeued with exponential backoff delays, allowing workers to process other jobs while waiting.
+
 ## Execution Models
 
 ### Synchronous Execution
@@ -399,12 +520,7 @@ step :process_payment do
 end
 ```
 
-### Compensation vs Undo
 
-- **Compensation**: Cleanup logic for the currently failing step only
-- **Undo**: Rollback logic for previously successful steps during reactor failure
-
-The distinction ensures that failing steps can handle their own cleanup while successful steps can be properly rolled back.
 
 ## Validation
 

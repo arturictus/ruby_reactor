@@ -1,6 +1,6 @@
 # RubyReactor
 
-A dynamic, concurrent, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning.
+A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning.
 
 ## Installation
 
@@ -38,7 +38,7 @@ class UserRegistrationReactor < RubyReactor::Reactor
 
     run do |args, context|
       if args[:email] && args[:email].include?('@')
-        Success(args[:email])
+        Success(args[:email].trim)
       else
         Failure("Email must contain @")
       end
@@ -70,14 +70,25 @@ class UserRegistrationReactor < RubyReactor::Reactor
       Success(user)
     end
 
-    # Define compensation for rollback on failure
-    compensate do |error, args, context|
-      puts "Rolling back user creation for: #{args[:email]}"
-      # Here you would delete the user from database
-      Success()
+    conpensate do |error, args, context|
+      Notify.to(args[:email])
     end
   end
 
+  step :notify_user do
+    argument :email, result(:validate_email)
+    wait_for :create_user
+
+    run do |args, _context| 
+      Email.sent!(args[:email], "verify your email")
+      Success()
+    end
+
+    compensate do |error, args, context|
+      Email.send("support@acme.com", "Email verification for #{args[:email]} couldn't be sent")
+      Success()
+    end
+  end
   # Specify which step's result to return
   returns :create_user
 end
@@ -215,7 +226,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
       Success(payment_id)
     end
 
-    compensate do |error, args, context|
+    undo do |error, args, context|
       # Refund payment on failure
       refund_payment(args[:payment_id])
       Success()
@@ -232,7 +243,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
       Success(order)
     end
 
-    compensate do |error, args, context|
+    undo do |error, args, context|
       # Cancel order and update inventory
       cancel_order(args[:order][:id])
       Success()
@@ -247,7 +258,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
       Success(true)
     end
 
-    compensate do |error, args, context|
+    undo do |error, args, context|
       # Restock products
       args[:products].each { |p| increment_stock(p[:id]) }
       Success()
@@ -332,11 +343,22 @@ class TransactionReactor < RubyReactor::Reactor
       Success({transaction_id: generate_transaction_id()})
     end
 
-    compensate do |error, args, context|
+    undo do |error, args, context|
       # Debit the amount back from recipient
       debit(args[:accounts][:to][:id], args[:amount])
       Success()
     end
+  end
+
+  step :notify do
+    argument :accounts, result(:validate_accounts)
+    wait_for :credit_account, :debit_account
+
+    run do |args, context|
+      Notify.to(args[:accounts][:from])
+      Notify.to(args[:accounts][:to])
+    end
+     
   end
 
   returns :credit_account
@@ -377,6 +399,32 @@ class SchemaValidatedReactor < RubyReactor::Reactor
   returns :process_user
 end
 ```
+
+## Documentation
+
+For detailed documentation, see the following guides:
+
+### Core Documentation
+- [Getting Started](documentation/getting_started.md) - Introduction and setup guide
+- [Core Concepts](documentation/core_concepts.md) - Understanding reactors, steps, and execution flow
+- [DAG (Directed Acyclic Graph)](documentation/DAG.md) - How RubyReactor manages dependencies and execution order
+- [Async Reactors](documentation/async_reactors.md) - Working with asynchronous operations
+- [Retry Configuration](documentation/retry_configuration.md) - Configuring retry behavior and failure handling
+
+### Examples
+- [Order Processing](documentation/examples/order_processing.md) - Complete order processing workflow example
+- [Payment Processing](documentation/examples/payment_processing.md) - Payment handling with compensation
+- [Inventory Management](documentation/examples/inventory_management.md) - Inventory management system example
+
+## Future improvements
+
+- [ ] Global id to serialize ActiveRecord classes
+- [ ] Descriptive errors
+- [ ] Middlewares
+- [ ] `map` step to iterate over arrays asyncronously
+- [ ] `compose` special step to execute reactors as step
+- [ ] Async ruby to parallelize same level steps
+- [ ] Dedicated interface to inspect reactor results and errors
 
 ## Development
 

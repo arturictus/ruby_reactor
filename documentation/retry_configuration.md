@@ -6,10 +6,9 @@ RubyReactor provides flexible, non-blocking retry mechanisms that requeue jobs i
 
 The retry system offers:
 
-- **Non-blocking retries**: Jobs are requeued with calculated delays
+- **Non-blocking retries on Async**: Jobs are requeued with calculated delays
 - **Multiple backoff strategies**: Exponential, linear, and fixed delays
-- **Step-level control**: Different policies for different steps
-- **Idempotency support**: Safe retry of idempotent operations
+- **Step-level control**: Different retry policies for different steps
 - **Full observability**: Complete visibility into retry attempts
 
 ### Retry Flow Architecture

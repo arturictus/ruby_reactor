@@ -119,7 +119,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
       Success({ auth_id: auth_result.id, auth_amount: amount })
     end
 
-    compensate do |args, _context|
+    undo do |args, _context|
       auth_id = args[:fraud_data][:auth_id] || args[:auth_id]
       # Void the pre-authorization
       PaymentGateway.void_authorization(auth_id) if auth_id
@@ -130,7 +130,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     argument :auth_data, result(:pre_authorize)
 
     # Final charge - critical operation
-    retries max_attempts: 1, backoff: :fixed, base_delay: 60.seconds
+    retries max_attempts: 3, backoff: :fixed, base_delay: 60.seconds
 
     run do |args, _context|
       auth_id = args[:auth_data][:auth_id]
@@ -148,7 +148,7 @@ class PaymentProcessingReactor < RubyReactor::Reactor
       Success({ charge_id: charge_result.id, charged_amount: amount })
     end
 
-    compensate do |args, _context|
+    undo do |args, _context|
       charge_id = args[:auth_data][:charge_id] || args[:charge_id]
       # Refund the charge
       PaymentGateway.refund(charge_id) if charge_id

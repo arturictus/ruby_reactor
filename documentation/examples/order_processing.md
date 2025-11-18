@@ -94,7 +94,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
       Success({ reservation_id: reservation_id })
     end
 
-    compensate do |reservation_id:, **|
+    undo do |reservation_id:, **|
       # Release reservation on failure
       InventoryService.release_reservation(reservation_id) if reservation_id
     end
@@ -119,7 +119,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
       Success({ payment_id: payment_result.id, payment_amount: order.total })
     end
 
-    compensate do |payment_id:, **|
+    undo do |payment_id:, **|
       # Refund payment on failure
       PaymentService.refund(payment_id) if payment_id
     end
@@ -137,7 +137,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
       Success({ inventory_updated: true })
     end
 
-    compensate do |order:, reservation_id:, **|
+    undo do |order:, reservation_id:, **|
       # This shouldn't normally happen since payment succeeded
       # But if it does, we need to restore inventory
       InventoryService.restore_from_reservation(reservation_id) if reservation_id

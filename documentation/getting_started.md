@@ -173,7 +173,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
   step :process_payment do
     run { process_payment_logic }
 
-    compensate do |payment_id:, **|
+    undo do |payment_id:, **|
       # Undo the payment if something fails later
       PaymentService.refund(payment_id)
     end
@@ -194,7 +194,7 @@ end
 
 If `update_inventory` fails, RubyReactor will:
 1. Run the `update_inventory` compensate block
-2. Run the `process_payment` compensate block
+2. Run the `process_payment` undo block
 3. Return a failure result
 
 ## Configuration
