@@ -400,6 +400,22 @@ class SchemaValidatedReactor < RubyReactor::Reactor
 end
 ```
 
+## Documentation
+
+For detailed documentation, see the following guides:
+
+### Core Documentation
+- [Getting Started](documentation/getting_started.md) - Introduction and setup guide
+- [Core Concepts](documentation/core_concepts.md) - Understanding reactors, steps, and execution flow
+- [DAG (Directed Acyclic Graph)](documentation/DAG.md) - How RubyReactor manages dependencies and execution order
+- [Async Reactors](documentation/async_reactors.md) - Working with asynchronous operations
+- [Retry Configuration](documentation/retry_configuration.md) - Configuring retry behavior and failure handling
+
+### Examples
+- [Order Processing](documentation/examples/order_processing.md) - Complete order processing workflow example
+- [Payment Processing](documentation/examples/payment_processing.md) - Payment handling with compensation
+- [Inventory Management](documentation/examples/inventory_management.md) - Inventory management system example
+
 ## Development
 
 After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
