@@ -596,4 +596,72 @@ RSpec.describe RubyReactor do
       end
     end
   end
+
+  describe "compose feature" do
+    let(:inner_reactor_class) do
+      Class.new(RubyReactor::Reactor) do
+        input :value
+
+        step :double_value do
+          argument :value, input(:value)
+
+          run do |args, _context|
+            Success(args[:value] * 2)
+          end
+        end
+
+        returns :double_value
+      end
+    end
+
+    let(:outer_reactor_class) do
+      inner_class = inner_reactor_class
+      Class.new(RubyReactor::Reactor) do
+        input :number
+
+        compose :process_number, inner_class do
+          argument :value, input(:number)
+        end
+
+        returns :process_number
+      end
+    end
+
+    it "executes composed reactors successfully" do
+      result = outer_reactor_class.run(number: 5)
+
+      expect(result).to be_a(RubyReactor::Success)
+      expect(result.value).to eq(10)
+    end
+
+    it "handles composed reactor failures" do
+      # Create an inner reactor that fails
+      failing_inner_class = Class.new(RubyReactor::Reactor) do
+        input :value
+
+        step :fail_step do
+          run do |_args, _context|
+            Failure("Intentional failure")
+          end
+        end
+
+        returns :fail_step
+      end
+
+      failing_outer_class = Class.new(RubyReactor::Reactor) do
+        input :number
+
+        compose :failing_process, failing_inner_class do
+          argument :value, input(:number)
+        end
+
+        returns :failing_process
+      end
+
+      result = failing_outer_class.run(number: 5)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error).to include("Intentional failure")
+    end
+  end
 end
