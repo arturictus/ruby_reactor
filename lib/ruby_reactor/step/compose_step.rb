@@ -13,10 +13,6 @@ module RubyReactor
       end
 
       def self.run(arguments, context)
-        new(arguments[:composed_reactor_class], arguments[:argument_mappings]).run(arguments, context)
-      end
-
-      def run(arguments, context)
         # Extract the composed reactor class and argument mappings from arguments
         composed_reactor = arguments[:composed_reactor_class]
         mappings = arguments[:argument_mappings] || {}
@@ -38,7 +34,7 @@ module RubyReactor
         end
       end
 
-      def compensate(_reason, _arguments, _context)
+      def self.compensate(_reason, _arguments, _context)
         # TODO: Implement proper compensation for composed reactors
         # This requires tracking the execution state of the composed reactor
         # and being able to trigger compensation on its completed steps.
@@ -48,17 +44,19 @@ module RubyReactor
         RubyReactor.Success()
       end
 
-      private
+      class << self
+        private
 
-      def build_composed_inputs(mappings, context)
-        inputs = {}
+        def build_composed_inputs(mappings, context)
+          inputs = {}
 
-        mappings.each do |composed_input_name, source|
-          value = source.resolve(context)
-          inputs[composed_input_name] = value
+          mappings.each do |composed_input_name, source|
+            value = source.resolve(context)
+            inputs[composed_input_name] = value
+          end
+
+          inputs
         end
-
-        inputs
       end
     end
   end

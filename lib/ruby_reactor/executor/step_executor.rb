@@ -230,7 +230,9 @@ module RubyReactor
         @context.execution_trace << { type: :run, step: step_config.name, timestamp: Time.now, arguments: arguments }
         if step_config.has_run_block?
           # Execute inline block
-          step_config.run_block.call(arguments, @context)
+          # If no arguments are defined for the step, pass the reactor inputs as arguments
+          args_to_pass = arguments.empty? ? @context.inputs : arguments
+          step_config.run_block.call(args_to_pass, @context)
         elsif step_config.has_impl?
           # Execute step class
           step_config.impl.run(arguments, @context)

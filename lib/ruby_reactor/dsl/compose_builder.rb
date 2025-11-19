@@ -5,7 +5,7 @@ module RubyReactor
     class ComposeBuilder
       include RubyReactor::Dsl::TemplateHelpers
 
-      attr_accessor :name, :composed_reactor_class, :argument_mappings, :async
+      attr_accessor :name, :composed_reactor_class, :argument_mappings
 
       def initialize(name, composed_reactor_class, reactor = nil)
         @name = name
@@ -13,10 +13,23 @@ module RubyReactor
         @reactor = reactor
         @argument_mappings = {}
         @async = false
+        @retry_config = {}
       end
 
       def argument(composed_input_name, source)
         @argument_mappings[composed_input_name] = source
+      end
+
+      def async(async = true)
+        @async = async
+      end
+
+      def retries(max_attempts: 3, backoff: :exponential, base_delay: 1)
+        @retry_config = {
+          max_attempts: max_attempts,
+          backoff: backoff,
+          base_delay: base_delay
+        }
       end
 
       def build
@@ -36,7 +49,7 @@ module RubyReactor
           args_validator: nil,
           output_validator: nil,
           async: @async,
-          retry_config: @reactor&.retry_defaults || {}
+          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)

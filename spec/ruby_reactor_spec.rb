@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "support/worker_mock"
+
 RSpec.describe RubyReactor do
   it "has a version number" do
     expect(RubyReactor::VERSION).not_to be_nil
@@ -662,6 +664,108 @@ RSpec.describe RubyReactor do
 
       expect(result).to be_a(RubyReactor::Failure)
       expect(result.error).to include("Intentional failure")
+    end
+
+    # Define named classes for async testing
+    class TestInnerReactorWithAsync < RubyReactor::Reactor
+      input :value
+
+      step :sync_step do
+        run do |args, _context|
+          puts "[INNER] Executing sync_step with value: #{args[:value]}"
+          RubyReactor.Success(args[:value] * 2)
+        end
+      end
+
+      step :async_step do
+        async true
+        argument :doubled, result(:sync_step)
+
+        run do |args, _context|
+          puts "[INNER] Executing async_step with doubled: #{args[:doubled]}"
+          RubyReactor.Success(args[:doubled] + 1)
+        end
+      end
+
+      returns :async_step
+    end
+
+    class TestOuterReactorWithAsyncCompose < RubyReactor::Reactor
+      input :number
+
+      compose :async_process, TestInnerReactorWithAsync do
+        async true
+        argument :value, input(:number)
+      end
+
+      returns :async_process
+    end
+
+    it "executes async composed reactors in a single worker with internal async steps" do
+      # Check that the compose step is configured as async
+      step_config = TestOuterReactorWithAsyncCompose.steps[:async_process]
+      expect(step_config.async?).to be true
+
+      # Mock the async router
+      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(Support::WorkerMock)
+
+      # Run the reactor - this should hand off the compose step to async execution
+      result = TestOuterReactorWithAsyncCompose.run(number: 5)
+
+      # In test mode, the worker executes inline and returns the actual result
+      expect(result.success?).to be true
+      expect(result.value).to eq(11) # 5 * 2 = 10, then 10 * 1.1 = 11
+    end
+
+    # Define named classes for retry testing
+    class TestRetryInnerReactor < RubyReactor::Reactor
+      input :value
+
+      step :failing_step do
+        retries max_attempts: 2, backoff: :fixed, base_delay: 1
+
+        run do |args, context|
+          attempt = context.retry_context.attempts_for_step(:failing_step)
+          puts "[INNER RETRY] Attempt #{attempt} for value: #{args[:value]}"
+
+          if attempt < 1 # First attempt fails, second succeeds
+            RubyReactor.Failure("Temporary failure")
+          else
+            RubyReactor.Success(args[:value] * 3)
+          end
+        end
+      end
+
+      returns :failing_step
+    end
+
+    class TestRetryOuterReactor < RubyReactor::Reactor
+      input :number
+
+      compose :retry_process, TestRetryInnerReactor do
+        async true
+        retries max_attempts: 2, backoff: :fixed, base_delay: 1
+        argument :value, input(:number)
+      end
+
+      returns :retry_process
+    end
+
+    it "retries async composed reactors by queuing new jobs" do
+      # Check that the compose step has retry configuration
+      step_config = TestRetryOuterReactor.steps[:retry_process]
+      expect(step_config.async?).to be true
+      expect(step_config.retryable?).to be true
+
+      # Mock the async router
+      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(Support::WorkerMock)
+
+      # Run the reactor - this should hand off to async execution
+      result = TestRetryOuterReactor.run(number: 5)
+
+      # In test mode, the worker executes inline and returns the actual result
+      expect(result.success?).to be true
+      expect(result.value).to eq(15) # 5 * 3 = 15 after retry
     end
   end
 end
