@@ -4,9 +4,10 @@ module RubyReactor
   class Context
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
                   :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack, :test_mode,
-                  :parent_context, :root_context, :composed_contexts
+                  :parent_context, :root_context, :composed_contexts, :context_id
 
     def initialize(inputs = {}, reactor_class = nil)
+      @context_id = SecureRandom.uuid
       @inputs = inputs
       @intermediate_results = {}
       @private_data = {}
@@ -75,6 +76,7 @@ module RubyReactor
     def serialize_for_retry(job_id: nil, started_at: nil)
       {
         job_id: job_id,
+        context_id: @context_id,
         started_at: (started_at || Time.now).iso8601,
         reactor_class: @reactor_class&.name,
         inputs: serialize_value(@inputs),
@@ -93,6 +95,7 @@ module RubyReactor
 
     def self.deserialize_from_retry(data)
       context = new
+      context.context_id = data["context_id"] if data["context_id"]
       context.reactor_class = data["reactor_class"] ? Object.const_get(data["reactor_class"]) : nil
       context.inputs = deserialize_value(data["inputs"]) || {}
       context.intermediate_results = deserialize_value(data["intermediate_results"]) || {}

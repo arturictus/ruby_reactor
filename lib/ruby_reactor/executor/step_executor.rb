@@ -70,54 +70,31 @@ module RubyReactor
 
             result
           when Executor
-            # Worker executed inline and returned an executor
-            # The worker has executed the current step and potentially remaining steps via resume_execution
-            # We need to merge the state back into our executor
-
-            # If we used root context, the result executor will be for the root context
-            # We need to find our part of the execution in it?
-            # Actually, if we handed off the root context, the worker executed the root reactor.
-            # If we are a child reactor, the worker execution includes us.
-            # But `merge_executor_state` expects `result` to be an executor compatible with `@context`.
-
-            # If we sent root context, the worker returns an executor for the root context.
-            # If we are the root, it matches.
-            # If we are a child, we need to extract our child context from the root result.
-
-            # Find our child context in the root result
-            # This is complex because the root result might have updated our context in its private_data
-            # But for inline execution (test mode), we might just want to merge what we can.
-            # For now, let's assume if we are in a child reactor, we shouldn't be here
-            # because inline_async_execution should be propagated?
-            # Wait, if we are in a child reactor, and we hit an async step,
-            # we send the WHOLE tree to the worker.
-            # The worker executes the WHOLE tree from the root.
-            # It will eventually reach us again and execute this step.
-            # But since it's a new execution (or resume), it will have `inline_async_execution = true`.
-            # So it won't hit this block again.
-            # So, if we are here, we are the original execution.
-            # We sent the job.
-            # If it was inline (test mode), the worker returned the executor of the ROOT.
-            # We need to update our local state from that root executor.
-            # But we are just a child.
-            # We should probably just return AsyncResult if we are not the root?
-            # No, if it's inline, we expect the work to be done.
-            # Let's trust that if we are here, we can merge.
-            # But we need to handle the mismatch if `result.context` is root and `@context` is child.
+            # Worker executed inline and returned an executor.
+            # This happens when running in test mode or when perform_async returns an executor.
+            # We need to merge the state back into our current executor.
+            #
+            # If we are a child reactor, the worker executed the root reactor, so the result
+            # will be a Root executor. We handle this mismatch below by finding our
+            # corresponding child context within the root result.
             if @context.root_context && (result.context.reactor_class != @reactor_class)
               # We are a child, and result is root.
-              # We need to find ourselves in the root.
-              # This is hard.
-              # Maybe for inline execution we shouldn't use root context?
-              # But we MUST for correctness of state.
+              # We need to find ourselves in the root result using context_id.
+              matching_context = find_context_by_id(result.context, @context.context_id)
 
-              # If we are in test mode (inline), maybe we can just rely on the fact that
-              # the worker modified the objects in place?
-              # No, serialization creates copies.
-
-              # Let's just support root context for now and assume standard async behavior (return AsyncResult).
-              # Inline execution with nested reactors is an edge case for tests.
-              # We can fix it if tests fail.
+              if matching_context
+                # Replace the result's context with the matching child context
+                # so merge_executor_state works correctly
+                result.instance_variable_set(:@context, matching_context)
+              else
+                # Fallback: if we can't find it (shouldn't happen), we might be in trouble.
+                # But let's try to proceed, maybe it's not nested?
+                # For now, raise an error to be explicit
+                raise Error::ValidationError.new(
+                  "Could not find child context with ID #{@context.context_id} in root result",
+                  context: @context
+                )
+              end
             end
 
             merge_executor_state(result)
@@ -294,6 +271,21 @@ module RubyReactor
             context: @context
           )
         end
+      end
+
+      def find_context_by_id(root_context, target_id)
+        return root_context if root_context.context_id == target_id
+
+        # Search in composed contexts
+        root_context.composed_contexts.each_value do |composed_data|
+          # composed_data is a hash with :context key
+          next unless composed_data.is_a?(Hash) && composed_data[:context].is_a?(RubyReactor::Context)
+
+          found = find_context_by_id(composed_data[:context], target_id)
+          return found if found
+        end
+
+        nil
       end
     end
   end
