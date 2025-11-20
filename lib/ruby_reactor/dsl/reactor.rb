@@ -81,8 +81,8 @@ module RubyReactor
           step_config
         end
 
-        def compose(name, composed_reactor_class, &block)
-          builder = RubyReactor::Dsl::ComposeBuilder.new(name, composed_reactor_class, self)
+        def compose(name, composed_reactor_class = nil, &block)
+          builder = RubyReactor::Dsl::ComposeBuilder.new(name, composed_reactor_class, self, &block)
 
           builder.instance_eval(&block) if block_given?
 

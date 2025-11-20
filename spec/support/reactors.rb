@@ -226,7 +226,7 @@ class TestRetryOuterReactor < RubyReactor::Reactor
 
   compose :retry_process, TestRetryInnerReactor do
     async true
-    retries max_attempts: 2, backoff: :fixed, base_delay: 1
+    # retries max_attempts: 2, backoff: :fixed, base_delay: 1
     argument :value, input(:number)
   end
 

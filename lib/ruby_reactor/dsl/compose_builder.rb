@@ -7,9 +7,9 @@ module RubyReactor
 
       attr_accessor :name, :composed_reactor_class, :argument_mappings
 
-      def initialize(name, composed_reactor_class, reactor = nil)
+      def initialize(name, composed_reactor_class = nil, reactor = nil, &block)
         @name = name
-        @composed_reactor_class = composed_reactor_class
+        @composed_reactor_class = composed_reactor_class || (block ? Class.new(RubyReactor::Reactor) : nil)
         @reactor = reactor
         @argument_mappings = {}
         @async = false
@@ -33,6 +33,8 @@ module RubyReactor
       end
 
       def build
+        dependencies = extract_dependencies_from_mappings
+
         step_config = {
           name: @name,
           impl: RubyReactor::Step::ComposeStep,
@@ -45,7 +47,7 @@ module RubyReactor
           undo_block: nil,
           conditions: [],
           guards: [],
-          dependencies: [],
+          dependencies: dependencies,
           args_validator: nil,
           output_validator: nil,
           async: @async,
@@ -53,6 +55,31 @@ module RubyReactor
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)
+      end
+
+      # Delegate step definition methods to the composed reactor class
+      def step(name, &block)
+        ensure_composed_reactor_class!
+        @composed_reactor_class.step(name, &block)
+      end
+
+      def compose(name, reactor_class = nil, &block)
+        ensure_composed_reactor_class!
+        @composed_reactor_class.compose(name, reactor_class, &block)
+      end
+
+      private
+
+      def ensure_composed_reactor_class!
+        raise ArgumentError, "No block provided for inline compose" unless @composed_reactor_class
+      end
+
+      def extract_dependencies_from_mappings
+        dependencies = []
+        @argument_mappings.each_value do |source|
+          dependencies << source.step_name if source.is_a?(RubyReactor::Template::Result)
+        end
+        dependencies.uniq
       end
     end
   end

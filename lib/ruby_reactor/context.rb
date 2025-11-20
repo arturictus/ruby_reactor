@@ -3,12 +3,14 @@
 module RubyReactor
   class Context
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
-                  :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack, :test_mode
+                  :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack, :test_mode,
+                  :parent_context, :root_context, :composed_contexts
 
     def initialize(inputs = {}, reactor_class = nil)
       @inputs = inputs
       @intermediate_results = {}
       @private_data = {}
+      @composed_contexts = {}
       @current_step = nil
       @retry_count = 0
       @concurrency_key = nil
@@ -18,6 +20,8 @@ module RubyReactor
       @inline_async_execution = false # Flag to prevent nested async calls
       @undo_stack = [] # Initialize the undo stack
       @test_mode = false
+      @parent_context = nil
+      @root_context = nil
     end
 
     def get_input(name, path = nil)
@@ -58,6 +62,7 @@ module RubyReactor
       {
         inputs: @inputs,
         intermediate_results: @intermediate_results,
+        composed_contexts: @composed_contexts,
         current_step: @current_step,
         retry_count: @retry_count,
         retry_context: @retry_context,
@@ -75,6 +80,7 @@ module RubyReactor
         inputs: serialize_value(@inputs),
         intermediate_results: serialize_value(@intermediate_results),
         private_data: serialize_value(@private_data),
+        composed_contexts: serialize_value(@composed_contexts),
         current_step: @current_step,
         retry_count: @retry_count,
         concurrency_key: @concurrency_key,
@@ -91,6 +97,7 @@ module RubyReactor
       context.inputs = deserialize_value(data["inputs"]) || {}
       context.intermediate_results = deserialize_value(data["intermediate_results"]) || {}
       context.private_data = deserialize_value(data["private_data"]) || {}
+      context.composed_contexts = deserialize_value(data["composed_contexts"]) || {}
       context.current_step = data["current_step"]&.to_sym
       context.retry_count = data["retry_count"] || 0
       context.concurrency_key = data["concurrency_key"]
@@ -98,6 +105,12 @@ module RubyReactor
       context.execution_trace = deserialize_value(data["execution_trace"]) || []
       context.undo_stack = deserialize_undo_stack(data["undo_stack"] || [], context.reactor_class)
       context.test_mode = data["test_mode"] || false
+
+      # Reconstruct parent/root relationships if nested contexts exist in private_data
+      # This is tricky because private_data is just a hash.
+      # We rely on the fact that nested contexts are stored in private_data by ComposeStep
+      # But here we just deserialize the values.
+
       context
     end
 
@@ -110,6 +123,8 @@ module RubyReactor
         { "_type" => "Success", "value" => serialize_value(value.value) }
       when RubyReactor::Failure
         { "_type" => "Failure", "error" => serialize_value(value.error), "retryable" => value.retryable }
+      when RubyReactor::Context
+        { "_type" => "Context", "value" => value.serialize_for_retry }
       when Time
         { "_type" => "Time", "value" => value.iso8601 }
       when BigDecimal
@@ -148,6 +163,8 @@ module RubyReactor
             RubyReactor::Success(deserialize_value(value["value"]))
           when "Failure"
             RubyReactor::Failure(deserialize_value(value["error"]), retryable: value["retryable"])
+          when "Context"
+            Context.deserialize_from_retry(value["value"])
           when "Time"
             Time.iso8601(value["value"])
           when "BigDecimal"
