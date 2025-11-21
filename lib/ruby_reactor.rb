@@ -65,10 +65,11 @@ module RubyReactor
 
   # Async result for background job execution
   class AsyncResult
-    attr_reader :job_id
+    attr_reader :job_id, :intermediate_results
 
-    def initialize(job_id:)
+    def initialize(job_id:, intermediate_results: {})
       @job_id = job_id
+      @intermediate_results = intermediate_results
     end
 
     def async?
@@ -81,6 +82,13 @@ module RubyReactor
 
     def failure?
       false
+    end
+
+    # Get the result of a specific step that has already been executed
+    # @param step_name [Symbol, String] The name of the step
+    # @return [Object, nil] The result of the step, or nil if not found
+    def get(step_name)
+      @intermediate_results[step_name.to_sym] || @intermediate_results[step_name.to_s]
     end
   end
 
