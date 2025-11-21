@@ -409,6 +409,7 @@ For detailed documentation, see the following guides:
 - [Core Concepts](documentation/core_concepts.md) - Understanding reactors, steps, and execution flow
 - [DAG (Directed Acyclic Graph)](documentation/DAG.md) - How RubyReactor manages dependencies and execution order
 - [Async Reactors](documentation/async_reactors.md) - Working with asynchronous operations
+- [Composition](documentation/composition.md) - Building complex workflows with nested reactors
 - [Retry Configuration](documentation/retry_configuration.md) - Configuring retry behavior and failure handling
 
 ### Examples

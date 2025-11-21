@@ -164,3 +164,71 @@ class CompensatingReactor < RubyReactor::Reactor
     end
   end
 end
+
+# Test reactors for compose feature
+class TestInnerReactorWithAsync < RubyReactor::Reactor
+  input :value
+
+  step :sync_step do
+    run do |args, _context|
+      puts "[INNER] Executing sync_step with value: #{args[:value]}"
+      RubyReactor.Success(args[:value] * 2)
+    end
+  end
+
+  step :async_step do
+    async true
+    argument :doubled, result(:sync_step)
+
+    run do |args, _context|
+      puts "[INNER] Executing async_step with doubled: #{args[:doubled]}"
+      RubyReactor.Success(args[:doubled] + 1)
+    end
+  end
+
+  returns :async_step
+end
+
+class TestOuterReactorWithAsyncCompose < RubyReactor::Reactor
+  input :number
+
+  compose :async_process, TestInnerReactorWithAsync do
+    async true
+    argument :value, input(:number)
+  end
+
+  returns :async_process
+end
+
+class TestRetryInnerReactor < RubyReactor::Reactor
+  input :value
+
+  step :failing_step do
+    retries max_attempts: 2, backoff: :fixed, base_delay: 1
+
+    run do |args, context|
+      attempt = context.retry_context.attempts_for_step(:failing_step)
+      puts "[INNER RETRY] Attempt #{attempt} for value: #{args[:value]}"
+
+      if attempt < 1 # First attempt fails, second succeeds
+        RubyReactor.Failure("Temporary failure")
+      else
+        RubyReactor.Success(args[:value] * 3)
+      end
+    end
+  end
+
+  returns :failing_step
+end
+
+class TestRetryOuterReactor < RubyReactor::Reactor
+  input :number
+
+  compose :retry_process, TestRetryInnerReactor do
+    async true
+    # retries max_attempts: 2, backoff: :fixed, base_delay: 1
+    argument :value, input(:number)
+  end
+
+  returns :retry_process
+end

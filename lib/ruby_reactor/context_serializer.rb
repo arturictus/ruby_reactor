@@ -28,6 +28,88 @@ module RubyReactor
         raise RubyReactor::Error::DeserializationError, "Failed to parse serialized context: #{e.message}"
       end
 
+      # rubocop:disable Metrics/CyclomaticComplexity, Metrics/MethodLength
+      def serialize_value(value)
+        case value
+        when RubyReactor::Success
+          { "_type" => "Success", "value" => serialize_value(value.value) }
+        when RubyReactor::Failure
+          { "_type" => "Failure", "error" => serialize_value(value.error), "retryable" => value.retryable }
+        when RubyReactor::Context
+          { "_type" => "Context", "value" => value.serialize_for_retry }
+        when Time
+          { "_type" => "Time", "value" => value.iso8601 }
+        when BigDecimal
+          { "_type" => "BigDecimal", "value" => value.to_s("F") }
+        when Rational
+          { "_type" => "Rational", "numerator" => value.numerator, "denominator" => value.denominator }
+        when Date
+          { "_type" => "Date", "value" => value.iso8601 }
+        when DateTime
+          { "_type" => "DateTime", "value" => value.iso8601 }
+        when Complex
+          { "_type" => "Complex", "real" => value.real, "imag" => value.imag }
+        when Range
+          { "_type" => "Range", "begin" => serialize_value(value.begin), "end" => serialize_value(value.end),
+            "exclude_end" => value.exclude_end? }
+        when Regexp
+          { "_type" => "Regexp", "source" => value.source, "options" => value.options }
+        when ->(v) { v.respond_to?(:to_global_id) }
+          { "_type" => "GlobalID", "gid" => value.to_global_id.to_s }
+        when Hash
+          value.transform_values { |v| serialize_value(v) }
+        when Array
+          value.map { |v| serialize_value(v) }
+        else
+          value
+        end
+      end
+
+      def deserialize_value(value)
+        case value
+        when Hash
+          if value.key?("_type")
+            # Special serialized types (Time, BigDecimal, etc.)
+            case value["_type"]
+            when "Success"
+              RubyReactor::Success(deserialize_value(value["value"]))
+            when "Failure"
+              RubyReactor::Failure(deserialize_value(value["error"]), retryable: value["retryable"])
+            when "Context"
+              Context.deserialize_from_retry(value["value"])
+            when "Time"
+              Time.iso8601(value["value"])
+            when "BigDecimal"
+              BigDecimal(value["value"])
+            when "Rational"
+              Rational(value["numerator"], value["denominator"])
+            when "Date"
+              Date.iso8601(value["value"])
+            when "DateTime"
+              DateTime.iso8601(value["value"])
+            when "Complex"
+              Complex(value["real"], value["imag"])
+            when "Range"
+              Range.new(deserialize_value(value["begin"]), deserialize_value(value["end"]), value["exclude_end"])
+            when "Regexp"
+              Regexp.new(value["source"], value["options"])
+            when "GlobalID"
+              GlobalID::Locator.locate(value["gid"])
+            else
+              value
+            end
+          else
+            # Regular hash - symbolize all keys recursively
+            value.transform_keys(&:to_sym).transform_values { |v| deserialize_value(v) }
+          end
+        when Array
+          value.map { |v| deserialize_value(v) }
+        else
+          value
+        end
+      end
+      # rubocop:enable Metrics/CyclomaticComplexity, Metrics/MethodLength
+
       private
 
       def validate_size(data)

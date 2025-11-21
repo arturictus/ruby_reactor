@@ -37,8 +37,12 @@ module RubyReactor
         delay = calculate_backoff_delay(step_config, error, reactor_class)
 
         # Serialize context and requeue the job
-        serialized_context = ContextSerializer.serialize(@context)
-        configuration.async_router.perform_in(delay, serialized_context, reactor_class.name)
+        # Use root context if available to ensure we serialize the full tree
+        context_to_serialize = @context.root_context || @context
+        reactor_class_name = context_to_serialize.reactor_class.name
+
+        serialized_context = ContextSerializer.serialize(context_to_serialize)
+        configuration.async_router.perform_in(delay, serialized_context, reactor_class_name)
       end
 
       def clear_retry_state
@@ -66,7 +70,17 @@ module RubyReactor
 
       def handle_failure_result(step_config, reactor_class, result)
         if can_retry_step?(step_config) && result.retryable?
-          if (reactor_class.async? || step_config.async?) && !@context.test_mode
+          # Check if we should requeue (async retry)
+          # Requeue if:
+          # 1. The current reactor is async
+          # 2. The current step is async
+          # 3. The root reactor (if nested) is async
+          # 4. We are running inside a worker (inline_async_execution is true)
+          is_async = reactor_class.async? || step_config.async? ||
+                     @context.root_context&.reactor_class&.async? ||
+                     @context.inline_async_execution
+
+          if is_async && !@context.test_mode
             requeue_job_for_step_retry(step_config, result.error, reactor_class)
             RetryQueuedResult.new(
               step_config.name,
