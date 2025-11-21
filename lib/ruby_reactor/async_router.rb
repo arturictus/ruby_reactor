@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module RubyReactor
   class AsyncRouter
     def self.perform_async(serialized_context, reactor_class_name = nil)
@@ -29,6 +31,7 @@ module RubyReactor
       intermediate_results_data = context_data["intermediate_results"] || {}
 
       # Deserialize the intermediate_results if they are serialized
+      # ContextSerializer is auto-loaded by Zeitwerk
       ContextSerializer.deserialize_value(intermediate_results_data)
     rescue StandardError
       {}
