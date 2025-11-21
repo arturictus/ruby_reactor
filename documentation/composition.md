@@ -73,6 +73,115 @@ class MainReactor < RubyReactor::Reactor
 end
 ```
 
+## Multiple Compose Declarations
+
+A single reactor can include multiple `compose` declarations, allowing you to orchestrate several sub-workflows. You can mix both class-based and inline compositions, and combine them with regular steps.
+
+```ruby
+class OrderProcessingReactor < RubyReactor::Reactor
+  input :order_id
+  input :customer_data
+  input :payment_info
+
+  step :validate_order do
+    argument :order_id, input(:order_id)
+    run { |args| ... }
+  end
+
+  # First compose: Class-based reactor
+  compose :update_customer_profile, CustomerProfileReactor do
+    argument :customer_data, input(:customer_data)
+  end
+
+  # Second compose: Inline reactor
+  compose :process_payment do
+    argument :order_id, input(:order_id)
+    argument :payment_info, input(:payment_info)
+    
+    async true  # This sub-workflow can run async
+    
+    step :authorize_payment do
+      run { |args| ... }
+    end
+    
+    step :capture_payment do
+      run { |args| ... }
+    end
+  end
+
+  # Third compose: Another inline reactor
+  compose :allocate_inventory do
+    argument :order_id, input(:order_id)
+    argument :order, input(:validate_order)
+    
+    step :check_availability do
+      run { |args| ... }
+    end
+    
+    step :reserve_items do
+      run { |args| ... }
+    end
+  end
+
+  step :send_confirmation do
+    # Wait for all compose steps to complete
+    wait_for :update_customer_profile, :process_payment, :allocate_inventory
+    
+    argument :customer_email, input(:customer_data)
+    argument :order_id, input(:order_id)
+    run { |args| ... }
+  end
+end
+```
+
+### Execution Flow
+
+When you have multiple `compose` declarations:
+
+1. **Execution Order**: Composed reactors execute in topological order based on their dependencies. Dependencies are determined automatically when you reference results from other steps (using `result(:step_name)`), or explicitly using `wait_for`. If no dependencies exist.
+
+2. **Access Compose Results**: A compose step returns the final result of the composed reactor. By default, this is a hash containing all of its step results, unless the composed reactor uses the `returns` DSL to specify a custom return value:
+
+```ruby
+step :final_step do
+  # Get the complete result hash from the composed reactor
+  argument :payment_result, result(:process_payment)
+  
+  run { |args| 
+    # args[:payment_result] contains the full hash: 
+    # { authorize_payment: ..., capture_payment: ... }
+    # 
+    # args[:payment_status] contains just the capture_payment result
+  }
+end
+```
+
+3. **Async Execution**: If a composed reactor is marked with `async true`, execution will pause at that compose step, serialize the entire reactor context, and queue a background job. The worker will resume execution from that compose step and continue sequentially through remaining steps. Only one worker executes the main reactor at a time.
+
+4. **Shared Context**: All composed reactors share access to the parent reactor's inputs and results of previous steps and can be configured with different retry strategies.
+
+### Async Compose Execution Flow
+
+When you mark a compose as async:
+
+```ruby
+compose :process_payment do
+  async true
+  # ... steps
+end
+```
+
+The execution flow is:
+
+1. Parent reactor executes steps up to `process_payment`
+2. Serializes entire context and queues a background job
+3. Returns `AsyncResult` to caller
+4. Worker picks up job and resumes from `process_payment`
+5. After `process_payment` completes, continues to next step sequentially
+6. If another async step is encountered, the process repeats
+
+This ensures proper ordering and state consistency across async boundaries.
+
 ## Nested Async Retries
 
 One of the powerful features of composition in RubyReactor is the handling of asynchronous retries within nested reactors.

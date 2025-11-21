@@ -10,8 +10,9 @@ RSpec.describe "Nested Reactor Inline Execution" do
       worker = RubyReactor::Worker.new
       worker.perform(serialized_context, reactor_class_name)
     end
+    reactor = Support::NestedInlineRootReactor.new
 
-    result = Support::NestedInlineRootReactor.run(id: "123")
+    result = reactor.run(id: "123")
 
     expect(result).to be_a(RubyReactor::Success)
     # The result of the root reactor is a hash of all step results
