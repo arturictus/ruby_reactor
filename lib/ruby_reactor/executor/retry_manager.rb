@@ -77,7 +77,7 @@ module RubyReactor
           # 3. The root reactor (if nested) is async
           # 4. We are running inside a worker (inline_async_execution is true)
           is_async = reactor_class.async? || step_config.async? ||
-                     (@context.root_context && @context.root_context.reactor_class.async?) ||
+                     @context.root_context&.reactor_class&.async? ||
                      @context.inline_async_execution
 
           if is_async && !@context.test_mode

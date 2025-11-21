@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "spec_helper"
 
 RSpec.describe "Compose Reproduction" do
@@ -6,7 +8,7 @@ RSpec.describe "Compose Reproduction" do
 
     step :validate_id do
       argument :id, input(:id)
-      run { |args, context| RubyReactor::Success(args[:id]) }
+      run { |args, _context| RubyReactor::Success(args[:id]) }
     end
 
     # We want to support this syntax:
@@ -107,7 +109,7 @@ RSpec.describe "Compose Reproduction" do
     # Actually, `Executor#resume_execution` catches the retry and returns the result.
     # The `RetryManager` requeues the job.
 
-    result = worker_executor.resume_execution
+    worker_executor.resume_execution
 
     # The result of the executor should be the result of the step that was executed.
     # Since it failed and requeued, it should be a RetryQueuedResult?
