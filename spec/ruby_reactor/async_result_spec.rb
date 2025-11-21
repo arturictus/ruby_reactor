@@ -95,12 +95,12 @@ RSpec.describe RubyReactor::AsyncResult do
         reactor = reactor_class.new
         result = reactor.run(email: "Test@Example.com", password: "secret123")
 
-        expect(result).to be_a(RubyReactor::AsyncResult)
-        
+        expect(result).to be_a(described_class)
+
         # Steps that ran before async handoff should be available
         expect(result.get(:validate_email)).to eq("test@example.com")
         expect(result.get(:hash_password)).to eq("hashed_secret123")
-        
+
         # The async step hasn't executed yet, so it shouldn't have a result
         expect(result.get(:create_user)).to be_nil
       end
@@ -129,7 +129,7 @@ RSpec.describe RubyReactor::AsyncResult do
         reactor = reactor_class.new
         result = reactor.run(user_id: 123)
 
-        expect(result).to be_a(RubyReactor::AsyncResult)
+        expect(result).to be_a(described_class)
         expect(result.get(:fetch_user)).to be_nil
       end
     end
@@ -139,13 +139,13 @@ RSpec.describe RubyReactor::AsyncResult do
     it "exposes intermediate_results as a reader" do
       intermediate_results = { step1: "result1", step2: "result2" }
       async_result = described_class.new(job_id: "job_123", intermediate_results: intermediate_results)
-      
+
       expect(async_result.intermediate_results).to eq(intermediate_results)
     end
 
     it "defaults to empty hash when not provided" do
       async_result = described_class.new(job_id: "job_123")
-      
+
       expect(async_result.intermediate_results).to eq({})
     end
   end
