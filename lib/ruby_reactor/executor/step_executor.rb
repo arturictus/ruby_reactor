@@ -50,63 +50,7 @@ module RubyReactor
         # treat async steps as sync to avoid infinite recursion
 
         if step_config.async? && !@context.inline_async_execution
-          # Step-level async: hand off execution to worker
-
-          @context.current_step = step_config.name
-          @context.undo_stack = @compensation_manager.undo_stack
-
-          # Use root context if available to ensure we serialize the full tree
-          context_to_serialize = @context.root_context || @context
-          reactor_class_name = context_to_serialize.reactor_class.name
-
-          serialized_context = ContextSerializer.serialize(context_to_serialize)
-
-          result = configuration.async_router.perform_async(serialized_context, reactor_class_name)
-
-          # Handle different result types from async router
-          case result
-          when RubyReactor::AsyncResult
-            # Production behavior: return async result to caller
-
-            result
-          when Executor
-            # Worker executed inline and returned an executor.
-            # This happens when running in test mode or when perform_async returns an executor.
-            # We need to merge the state back into our current executor.
-            #
-            # If we are a child reactor, the worker executed the root reactor, so the result
-            # will be a Root executor. We handle this mismatch below by finding our
-            # corresponding child context within the root result.
-            if @context.root_context && (result.context.reactor_class != @reactor_class)
-              # We are a child, and result is root.
-              # We need to find ourselves in the root result using context_id.
-              matching_context = find_context_by_id(result.context, @context.context_id)
-
-              if matching_context
-                # Replace the result's context with the matching child context
-                # so merge_executor_state works correctly
-                result.instance_variable_set(:@context, matching_context)
-              else
-                # Fallback: if we can't find it (shouldn't happen), we might be in trouble.
-                # But let's try to proceed, maybe it's not nested?
-                # For now, raise an error to be explicit
-                raise Error::ValidationError.new(
-                  "Could not find child context with ID #{@context.context_id} in root result",
-                  context: @context
-                )
-              end
-            end
-
-            merge_executor_state(result)
-
-            result.result
-          else
-            # Unexpected result type, treat as error
-            raise Error::ValidationError.new(
-              "Unexpected result type from async router: #{result.class}",
-              context: @context
-            )
-          end
+          handle_async_step(step_config)
         else
           execute_step_with_retry(step_config)
         end
@@ -220,6 +164,70 @@ module RubyReactor
       end
 
       private
+
+      def handle_async_step(step_config)
+        # Step-level async: hand off execution to worker
+
+        @context.current_step = step_config.name
+        @context.undo_stack = @compensation_manager.undo_stack
+
+        # Use root context if available to ensure we serialize the full tree
+        context_to_serialize = @context.root_context || @context
+        reactor_class_name = context_to_serialize.reactor_class.name
+
+        serialized_context = ContextSerializer.serialize(context_to_serialize)
+
+        result = configuration.async_router.perform_async(serialized_context, reactor_class_name)
+
+        # Handle different result types from async router
+        case result
+        when RubyReactor::AsyncResult
+          # Production behavior: return async result to caller
+
+          result
+        when Executor
+          handle_inline_executor_result(result)
+        else
+          # Unexpected result type, treat as error
+          raise Error::ValidationError.new(
+            "Unexpected result type from async router: #{result.class}",
+            context: @context
+          )
+        end
+      end
+
+      def handle_inline_executor_result(result)
+        # Worker executed inline and returned an executor.
+        # This happens when running in test mode or when perform_async returns an executor.
+        # We need to merge the state back into our current executor.
+        #
+        # If we are a child reactor, the worker executed the root reactor, so the result
+        # will be a Root executor. We handle this mismatch below by finding our
+        # corresponding child context within the root result.
+        if @context.root_context && (result.context.reactor_class != @reactor_class)
+          # We are a child, and result is root.
+          # We need to find ourselves in the root result using context_id.
+          matching_context = find_context_by_id(result.context, @context.context_id)
+
+          if matching_context
+            # Replace the result's context with the matching child context
+            # so merge_executor_state works correctly
+            result.instance_variable_set(:@context, matching_context)
+          else
+            # Fallback: if we can't find it (shouldn't happen), we might be in trouble.
+            # But let's try to proceed, maybe it's not nested?
+            # For now, raise an error to be explicit
+            raise Error::ValidationError.new(
+              "Could not find child context with ID #{@context.context_id} in root result",
+              context: @context
+            )
+          end
+        end
+
+        merge_executor_state(result)
+
+        result.result
+      end
 
       def configuration
         RubyReactor::Configuration.instance
