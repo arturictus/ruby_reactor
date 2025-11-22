@@ -91,12 +91,19 @@ module RubyReactor
           step_config
         end
 
+        def map(name, reactor_class = nil, &block)
+          builder = RubyReactor::Dsl::MapBuilder.new(name, reactor_class, self, &block)
+
+          builder.instance_eval(&block) if block_given?
+
+          step_config = builder.build
+          steps[name] = step_config
+          step_config
+        end
+
         def returns(step_name)
           @return_step = step_name
         end
-
-        # Alias for backward compatibility
-        alias return returns
 
         def middleware(middleware_class)
           middlewares << middleware_class

@@ -4,7 +4,7 @@ module RubyReactor
   class Context
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
                   :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack, :test_mode,
-                  :parent_context, :root_context, :composed_contexts, :context_id
+                  :parent_context, :root_context, :composed_contexts, :context_id, :map_operations
 
     def initialize(inputs = {}, reactor_class = nil)
       @context_id = SecureRandom.uuid
@@ -12,6 +12,7 @@ module RubyReactor
       @intermediate_results = {}
       @private_data = {}
       @composed_contexts = {}
+      @map_operations = {}
       @current_step = nil
       @retry_count = 0
       @concurrency_key = nil
@@ -64,6 +65,7 @@ module RubyReactor
         inputs: @inputs,
         intermediate_results: @intermediate_results,
         composed_contexts: @composed_contexts,
+        map_operations: @map_operations,
         current_step: @current_step,
         retry_count: @retry_count,
         retry_context: @retry_context,
@@ -83,6 +85,7 @@ module RubyReactor
         intermediate_results: ContextSerializer.serialize_value(@intermediate_results),
         private_data: ContextSerializer.serialize_value(@private_data),
         composed_contexts: ContextSerializer.serialize_value(@composed_contexts),
+        map_operations: ContextSerializer.serialize_value(@map_operations),
         current_step: @current_step,
         retry_count: @retry_count,
         concurrency_key: @concurrency_key,
@@ -101,6 +104,7 @@ module RubyReactor
       context.intermediate_results = ContextSerializer.deserialize_value(data["intermediate_results"]) || {}
       context.private_data = ContextSerializer.deserialize_value(data["private_data"]) || {}
       context.composed_contexts = ContextSerializer.deserialize_value(data["composed_contexts"]) || {}
+      context.map_operations = ContextSerializer.deserialize_value(data["map_operations"]) || {}
       context.current_step = data["current_step"]&.to_sym
       context.retry_count = data["retry_count"] || 0
       context.concurrency_key = data["concurrency_key"]

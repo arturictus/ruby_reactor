@@ -62,6 +62,9 @@ module RubyReactor
           result
         elsif result.is_a?(RubyReactor::Failure)
           handle_failure_result(step_config, reactor_class, result)
+        elsif result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::AsyncResult)
+          # Pass through async results
+          result
         else
           clear_retry_state
           RubyReactor::Failure("Step '#{step_config.name}' returned unexpected result: #{result.inspect}")

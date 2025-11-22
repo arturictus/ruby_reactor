@@ -24,5 +24,18 @@ module RubyReactor
     def async_router
       @async_router ||= RubyReactor::AsyncRouter
     end
+
+    def storage
+      @storage ||= RubyReactor::Storage::Configuration.new
+    end
+
+    def storage_adapter
+      @storage_adapter ||= case storage.adapter
+                           when :redis
+                             RubyReactor::Storage::RedisAdapter.new(url: storage.redis_url, **storage.redis_options)
+                           else
+                             raise "Unknown storage adapter: #{storage.adapter}"
+                           end
+    end
   end
 end

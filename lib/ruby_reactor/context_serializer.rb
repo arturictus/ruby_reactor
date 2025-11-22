@@ -57,7 +57,7 @@ module RubyReactor
         when ->(v) { v.respond_to?(:to_global_id) }
           { "_type" => "GlobalID", "gid" => value.to_global_id.to_s }
         when Hash
-          value.transform_values { |v| serialize_value(v) }
+          value.transform_keys(&:to_s).transform_values { |v| serialize_value(v) }
         when Array
           value.map { |v| serialize_value(v) }
         else
