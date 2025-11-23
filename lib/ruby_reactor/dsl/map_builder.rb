@@ -69,17 +69,6 @@ module RubyReactor
         @mapped_reactor_class.step(name, &block)
       end
 
-      def compose(name, reactor_class = nil, &block)
-        ensure_mapped_reactor_class!
-        @mapped_reactor_class.compose(name, reactor_class, &block)
-      end
-
-      # Support nested map
-      def map(name, reactor_class = nil, &block)
-        ensure_mapped_reactor_class!
-        @mapped_reactor_class.map(name, reactor_class, &block)
-      end
-
       def returns(step_name)
         ensure_mapped_reactor_class!
         @mapped_reactor_class.returns(step_name)
