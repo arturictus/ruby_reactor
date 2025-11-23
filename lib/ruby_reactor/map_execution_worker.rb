@@ -6,9 +6,16 @@ module RubyReactor
   class MapExecutionWorker
     include Sidekiq::Worker
 
-    # rubocop:disable Metrics/ParameterLists, Metrics/MethodLength, Metrics/PerceivedComplexity
-    def perform(_map_id, serialized_inputs, reactor_class_info, _strict_ordering, parent_context_id,
-                parent_reactor_class_name, step_name)
+    # rubocop:disable Metrics/MethodLength, Metrics/PerceivedComplexity
+    def perform(arguments)
+      arguments = arguments.transform_keys(&:to_sym)
+      _map_id = arguments[:map_id]
+      serialized_inputs = arguments[:serialized_inputs]
+      reactor_class_info = arguments[:reactor_class_info]
+      _strict_ordering = arguments[:strict_ordering]
+      parent_context_id = arguments[:parent_context_id]
+      parent_reactor_class_name = arguments[:parent_reactor_class_name]
+      step_name = arguments[:step_name]
       storage = RubyReactor.configuration.storage_adapter
 
       # Deserialize inputs
@@ -91,6 +98,6 @@ module RubyReactor
       executor = RubyReactor::Executor.new(parent_context.reactor_class, {}, parent_context)
       executor.resume_execution
     end
-    # rubocop:enable Metrics/ParameterLists, Metrics/MethodLength, Metrics/PerceivedComplexity
+    # rubocop:enable Metrics/MethodLength, Metrics/PerceivedComplexity
   end
 end

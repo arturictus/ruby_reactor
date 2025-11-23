@@ -4,10 +4,19 @@ module RubyReactor
   class MapElementWorker
     include Sidekiq::Worker
 
-    # rubocop:disable Metrics/ParameterLists
-    def perform(map_id, _element_id, index, serialized_inputs, reactor_class_info, strict_ordering, parent_context_id,
-                parent_reactor_class_name, step_name)
-      # rubocop:enable Metrics/ParameterLists
+    # rubocop:disable Metrics/MethodLength
+    def perform(arguments)
+      arguments = arguments.transform_keys(&:to_sym)
+      map_id = arguments[:map_id]
+      _element_id = arguments[:element_id]
+      index = arguments[:index]
+      serialized_inputs = arguments[:serialized_inputs]
+      reactor_class_info = arguments[:reactor_class_info]
+      strict_ordering = arguments[:strict_ordering]
+      parent_context_id = arguments[:parent_context_id]
+      parent_reactor_class_name = arguments[:parent_reactor_class_name]
+      step_name = arguments[:step_name]
+      # rubocop:enable Metrics/MethodLength
       # Deserialize inputs
       inputs = ContextSerializer.deserialize_value(serialized_inputs)
       storage = RubyReactor.configuration.storage_adapter

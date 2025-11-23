@@ -45,37 +45,62 @@ module Support
       result
     end
 
-    # rubocop:disable Metrics/ParameterLists, Layout/LineLength
+    # rubocop:disable Metrics/ParameterLists
     def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                        strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:)
       warn "[WORKER_MOCK] perform_map_element_async CALLED"
       job_id = RubyReactor::MapElementWorker.perform_async(
-        map_id, element_id, index, serialized_inputs, reactor_class_info, strict_ordering, parent_context_id, parent_reactor_class_name, step_name
+        {
+          "map_id" => map_id,
+          "element_id" => element_id,
+          "index" => index,
+          "serialized_inputs" => serialized_inputs,
+          "reactor_class_info" => reactor_class_info,
+          "strict_ordering" => strict_ordering,
+          "parent_context_id" => parent_context_id,
+          "parent_reactor_class_name" => parent_reactor_class_name,
+          "step_name" => step_name
+        }
       )
       RubyReactor::AsyncResult.new(job_id: job_id)
     end
-    # rubocop:enable Metrics/ParameterLists, Layout/LineLength
+    # rubocop:enable Metrics/ParameterLists
 
     # rubocop:disable Metrics/ParameterLists
     def self.perform_map_collection_async(parent_context_id:, map_id:, parent_reactor_class_name:, step_name:,
                                           strict_ordering:, timeout:)
       warn "[WORKER_MOCK] perform_map_collection_async CALLED"
       job_id = RubyReactor::MapCollectorWorker.perform_async(
-        parent_context_id, map_id, parent_reactor_class_name, step_name, strict_ordering, timeout
+        {
+          "parent_context_id" => parent_context_id,
+          "map_id" => map_id,
+          "parent_reactor_class_name" => parent_reactor_class_name,
+          "step_name" => step_name,
+          "strict_ordering" => strict_ordering,
+          "timeout" => timeout
+        }
       )
       RubyReactor::AsyncResult.new(job_id: job_id)
     end
     # rubocop:enable Metrics/ParameterLists
 
-    # rubocop:disable Metrics/ParameterLists, Layout/LineLength
+    # rubocop:disable Metrics/ParameterLists
     def self.perform_map_execution_async(map_id:, serialized_inputs:, reactor_class_info:, strict_ordering:,
                                          parent_context_id:, parent_reactor_class_name:, step_name:)
       warn "[WORKER_MOCK] perform_map_execution_async CALLED"
       job_id = RubyReactor::MapExecutionWorker.perform_async(
-        map_id, serialized_inputs, reactor_class_info, strict_ordering, parent_context_id, parent_reactor_class_name, step_name
+        {
+          "map_id" => map_id,
+          "serialized_inputs" => serialized_inputs,
+          "reactor_class_info" => reactor_class_info,
+          "strict_ordering" => strict_ordering,
+          "parent_context_id" => parent_context_id,
+          "parent_reactor_class_name" => parent_reactor_class_name,
+          "step_name" => step_name
+        }
       )
       RubyReactor::AsyncResult.new(job_id: job_id)
     end
-    # rubocop:enable Metrics/ParameterLists, Layout/LineLength
+    # rubocop:enable Metrics/ParameterLists
   end
 end

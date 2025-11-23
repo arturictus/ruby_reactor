@@ -4,8 +4,15 @@ module RubyReactor
   class MapCollectorWorker
     include Sidekiq::Worker
 
-    # rubocop:disable Metrics/ParameterLists, Metrics/MethodLength
-    def perform(parent_context_id, map_id, parent_reactor_class_name, step_name, strict_ordering, _timeout = nil)
+    # rubocop:disable Metrics/MethodLength
+    def perform(arguments)
+      arguments = arguments.transform_keys(&:to_sym)
+      parent_context_id = arguments[:parent_context_id]
+      map_id = arguments[:map_id]
+      parent_reactor_class_name = arguments[:parent_reactor_class_name]
+      step_name = arguments[:step_name]
+      strict_ordering = arguments[:strict_ordering]
+
       storage = RubyReactor.configuration.storage_adapter
 
       # Retrieve parent context
@@ -53,6 +60,6 @@ module RubyReactor
       executor = Executor.new(parent_class, {}, parent_context)
       executor.resume_execution
     end
-    # rubocop:enable Metrics/ParameterLists, Metrics/MethodLength
+    # rubocop:enable Metrics/MethodLength
   end
 end
