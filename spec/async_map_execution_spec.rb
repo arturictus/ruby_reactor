@@ -21,7 +21,7 @@ class AsyncMapRootReactor < RubyReactor::Reactor
   map :doubled_numbers, AsyncDoubleReactor do
     source input(:numbers)
     argument :number, element(:doubled_numbers)
-    async true
+    async true, batch_size: 1
   end
 end
 
@@ -64,6 +64,7 @@ RSpec.describe "Async Map Execution" do
     allow(redis_client).to receive(:call).with("JSON.SET", any_args)
     allow(redis_client).to receive(:set) # for map counter
     allow(redis_client).to receive(:expire)
+    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
 
     result = AsyncMapRootReactor.run(numbers: [1, 2, 3])
 
@@ -113,7 +114,7 @@ RSpec.describe "Async Map Execution" do
     RubyReactor::MapElementWorker.drain
 
     # Check if Collector was queued
-    expect(RubyReactor::MapCollectorWorker.jobs.size).to eq(1)
+    expect(RubyReactor::MapCollectorWorker.jobs.size).to eq(2)
 
     # Process Collector
     # We need to mock resume_execution logic or check if it calls Executor

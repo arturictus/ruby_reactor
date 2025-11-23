@@ -23,6 +23,10 @@ module RubyReactor
         raise NotImplementedError
       end
 
+      def initialize_map_operation(map_id, count, reactor_class_info:, strict_ordering: true)
+        raise NotImplementedError
+      end
+
       def increment_map_counter(map_id, reactor_class_name)
         raise NotImplementedError
       end

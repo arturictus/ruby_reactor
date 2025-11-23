@@ -44,5 +44,32 @@ module Support
       puts "[WORKER_MOCK.perform] Returning result: #{result.class}, result.result: #{result.result&.class}"
       result
     end
+
+    def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
+                                       strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:)
+      warn "[WORKER_MOCK] perform_map_element_async CALLED"
+      job_id = RubyReactor::MapElementWorker.perform_async(
+        map_id, element_id, index, serialized_inputs, reactor_class_info, strict_ordering, parent_context_id, parent_reactor_class_name, step_name
+      )
+      RubyReactor::AsyncResult.new(job_id: job_id)
+    end
+
+    def self.perform_map_collection_async(parent_context_id:, map_id:, parent_reactor_class_name:, step_name:,
+                                          strict_ordering:, timeout:)
+      warn "[WORKER_MOCK] perform_map_collection_async CALLED"
+      job_id = RubyReactor::MapCollectorWorker.perform_async(
+        parent_context_id, map_id, parent_reactor_class_name, step_name, strict_ordering, timeout
+      )
+      RubyReactor::AsyncResult.new(job_id: job_id)
+    end
+
+    def self.perform_map_execution_async(map_id:, serialized_inputs:, reactor_class_info:, strict_ordering:,
+                                         parent_context_id:, parent_reactor_class_name:, step_name:)
+      warn "[WORKER_MOCK] perform_map_execution_async CALLED"
+      job_id = RubyReactor::MapExecutionWorker.perform_async(
+        map_id, serialized_inputs, reactor_class_info, strict_ordering, parent_context_id, parent_reactor_class_name, step_name
+      )
+      RubyReactor::AsyncResult.new(job_id: job_id)
+    end
   end
 end

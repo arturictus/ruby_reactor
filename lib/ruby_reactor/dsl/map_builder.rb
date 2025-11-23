@@ -28,8 +28,12 @@ module RubyReactor
         @source_enumerable = enumerable
       end
 
-      def async(async = true)
+      def async(async = true, **options)
         @async = async
+        return unless options.any?
+
+        @batch_size = options[:batch_size] if options.key?(:batch_size)
+        # Add other options here as needed
       end
 
       def strict_ordering(enabled = true)

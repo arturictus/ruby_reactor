@@ -157,10 +157,10 @@ module RubyReactor
           storage.set_map_counter(map_id, count, context.reactor_class.name)
 
           # Prepare reactor class info for workers
-          reactor_class_info = if mapped_reactor_class.name
+          reactor_class_info = if mapped_reactor_class.respond_to?(:name)
                                  { "type" => "class", "name" => mapped_reactor_class.name }
                                else
-                                 # Inline reactor
+                                 # Inline reactor - store reference to parent and step
                                  # We need to pass enough info to reconstruct it.
                                  # Since it's defined in the parent reactor's step config,
                                  # we can pass the parent class name and step name.
@@ -171,23 +171,68 @@ module RubyReactor
                                  }
                                end
 
-          # Queue workers
-          source.each_with_index do |element, index|
-            mapped_inputs = build_mapped_inputs(mappings, context, element)
-            serialized_inputs = ContextSerializer.serialize_value(mapped_inputs)
+          # Determine strategy
+          batch_size = arguments[:batch_size]
 
-            MapElementWorker.perform_async(
+          if batch_size
+            # Fan-out strategy (Batched or Per-Element)
+            # For now, if batch_size is present, we use the existing fan-out logic (per element)
+            # TODO: Implement true batching if batch_size > 1
+
+            # Initialize counter and metadata
+            storage.initialize_map_operation(
               map_id,
-              index,
-              serialized_inputs,
-              reactor_class_info,
-              strict_ordering,
-              context.context_id,
-              context.reactor_class.name,
-              step_name.to_s
+              source.count,
+              strict_ordering: strict_ordering,
+              reactor_class_info: reactor_class_info
+            )
+
+            # Queue workers
+            source.each_with_index do |element, index|
+              mapped_inputs = build_mapped_inputs(mappings, context, element)
+              serialized_inputs = ContextSerializer.serialize_value(mapped_inputs)
+
+              RubyReactor.configuration.async_router.perform_map_element_async(
+                map_id: map_id,
+                element_id: "#{map_id}:#{index}",
+                index: index,
+                serialized_inputs: serialized_inputs,
+                reactor_class_info: reactor_class_info,
+                strict_ordering: strict_ordering,
+                parent_context_id: context.context_id,
+                parent_reactor_class_name: context.reactor_class.name,
+                step_name: step_name.to_s
+              )
+            end
+
+            # Queue collector
+            RubyReactor.configuration.async_router.perform_map_collection_async(
+              parent_context_id: context.context_id,
+              map_id: map_id,
+              parent_reactor_class_name: context.reactor_class.name,
+              step_name: step_name.to_s,
+              strict_ordering: strict_ordering,
+              timeout: 3600 # Default timeout 1 hour
+            )
+          else
+            # Single Worker strategy
+            # Serialize all inputs
+            inputs = {
+              source: source,
+              mappings: mappings
+            }
+            serialized_inputs = ContextSerializer.serialize_value(inputs)
+
+            RubyReactor.configuration.async_router.perform_map_execution_async(
+              map_id: map_id,
+              serialized_inputs: serialized_inputs,
+              reactor_class_info: reactor_class_info,
+              strict_ordering: strict_ordering,
+              parent_context_id: context.context_id,
+              parent_reactor_class_name: context.reactor_class.name,
+              step_name: step_name.to_s
             )
           end
-
           # Return RetryQueuedResult to stop current execution
           # We use a special "async_map" reason or just standard RetryQueuedResult
           # The Executor will see this and stop.

@@ -4,7 +4,7 @@ module RubyReactor
   class MapCollectorWorker
     include Sidekiq::Worker
 
-    def perform(map_id, parent_context_id, parent_reactor_class_name, strict_ordering, step_name)
+    def perform(parent_context_id, map_id, parent_reactor_class_name, step_name, strict_ordering, _timeout = nil)
       storage = RubyReactor.configuration.storage_adapter
 
       # Retrieve parent context

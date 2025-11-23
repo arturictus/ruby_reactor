@@ -4,10 +4,11 @@ module RubyReactor
   class MapElementWorker
     include Sidekiq::Worker
 
-    def perform(map_id, index, serialized_inputs, reactor_class_info, strict_ordering, parent_context_id,
+    def perform(map_id, _element_id, index, serialized_inputs, reactor_class_info, strict_ordering, parent_context_id,
                 parent_reactor_class_name, step_name)
       # Deserialize inputs
       inputs = ContextSerializer.deserialize_value(serialized_inputs)
+      storage = RubyReactor.configuration.storage_adapter
 
       # Resolve reactor class
       reactor_class = resolve_reactor_class(reactor_class_info)
@@ -22,7 +23,6 @@ module RubyReactor
       result = executor.result
 
       # Store result
-      storage = RubyReactor.configuration.storage_adapter
 
       if result.success?
         storage.store_map_result(map_id, index, result.value, parent_reactor_class_name,
@@ -39,8 +39,14 @@ module RubyReactor
       return unless new_count == 0
 
       # Trigger collection
-      MapCollectorWorker.perform_async(map_id, parent_context_id, parent_reactor_class_name, strict_ordering,
-                                       step_name)
+      RubyReactor.configuration.async_router.perform_map_collection_async(
+        parent_context_id: parent_context_id,
+        map_id: map_id,
+        parent_reactor_class_name: parent_reactor_class_name,
+        step_name: step_name,
+        strict_ordering: strict_ordering,
+        timeout: nil
+      )
     end
 
     private

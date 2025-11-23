@@ -60,6 +60,24 @@ module RubyReactor
         @redis.expire(key, 86_400)
       end
 
+      def initialize_map_operation(map_id, count, reactor_class_info:, strict_ordering: true)
+        reactor_class_name = reactor_class_info["name"] || reactor_class_info["parent"]
+
+        # Ensure counter is set
+        set_map_counter(map_id, count, reactor_class_name)
+
+        # Store metadata
+        key = "reactor:#{reactor_class_name}:map:#{map_id}:metadata"
+        metadata = {
+          count: count,
+          strict_ordering: strict_ordering,
+          reactor_class_info: reactor_class_info,
+          created_at: Time.now.to_i
+        }
+        @redis.call("JSON.SET", key, ".", metadata.to_json)
+        @redis.expire(key, 86_400)
+      end
+
       def increment_map_counter(map_id, reactor_class_name)
         key = map_counter_key(map_id, reactor_class_name)
         @redis.incr(key)

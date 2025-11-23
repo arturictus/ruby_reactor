@@ -56,6 +56,18 @@ module RubyReactor
           { "_type" => "Regexp", "source" => value.source, "options" => value.options }
         when ->(v) { v.respond_to?(:to_global_id) }
           { "_type" => "GlobalID", "gid" => value.to_global_id.to_s }
+        when RubyReactor::Template::Element
+          { "_type" => "Template::Element", "map_name" => value.map_name.to_s, "path" => value.path }
+        when RubyReactor::Template::Input
+          { "_type" => "Template::Input", "name" => value.name.to_s, "path" => value.path }
+        when RubyReactor::Template::Value
+          # Actually Template::Value holds a raw value. We should probably just serialize the raw value if possible,
+          # or keep it as a template if we need to distinguish.
+          # But wait, Template::Value is used to wrap raw values in arguments.
+          # If we serialize it, we should probably deserialize it back to Template::Value.
+          { "_type" => "Template::Value", "value" => serialize_value(value.instance_variable_get(:@value)) }
+        when RubyReactor::Template::Result
+          { "_type" => "Template::Result", "step_name" => value.step_name.to_s, "path" => value.path }
         when Hash
           value.transform_keys(&:to_s).transform_values { |v| serialize_value(v) }
         when Array
@@ -95,6 +107,14 @@ module RubyReactor
               Regexp.new(value["source"], value["options"])
             when "GlobalID"
               GlobalID::Locator.locate(value["gid"])
+            when "Template::Element"
+              RubyReactor::Template::Element.new(value["map_name"], value["path"])
+            when "Template::Input"
+              RubyReactor::Template::Input.new(value["name"], value["path"])
+            when "Template::Value"
+              RubyReactor::Template::Value.new(deserialize_value(value["value"]))
+            when "Template::Result"
+              RubyReactor::Template::Result.new(value["step_name"], value["path"])
             else
               value
             end
