@@ -58,35 +58,9 @@ module RubyReactor
 
       def build
         dependencies = extract_dependencies_from_mappings
-
-        # Add dependency on source if it's a result
         dependencies << @source_enumerable.step_name if @source_enumerable.is_a?(RubyReactor::Template::Result)
 
-        step_config = {
-          name: @name,
-          impl: RubyReactor::Step::MapStep,
-          arguments: {
-            mapped_reactor_class: { source: RubyReactor::Template::Value.new(@mapped_reactor_class) },
-            argument_mappings: { source: RubyReactor::Template::Value.new(@argument_mappings) },
-            source: { source: @source_enumerable },
-            strict_ordering: { source: RubyReactor::Template::Value.new(@strict_ordering) },
-            batch_size: { source: RubyReactor::Template::Value.new(@batch_size) },
-            collect_block: { source: RubyReactor::Template::Value.new(@collect_block) },
-            async: { source: RubyReactor::Template::Value.new(@async) }
-          },
-          run_block: nil,
-          compensate_block: nil,
-          undo_block: nil,
-          conditions: [],
-          guards: [],
-          dependencies: dependencies.uniq,
-          args_validator: nil,
-          output_validator: nil,
-          async: false, # MapStep handles async internally via run_async
-          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
-        }
-
-        RubyReactor::Dsl::StepConfig.new(step_config)
+        RubyReactor::Dsl::StepConfig.new(build_step_config(dependencies))
       end
 
       # Delegate step definition methods to the mapped reactor class
@@ -116,6 +90,32 @@ module RubyReactor
 
       def ensure_mapped_reactor_class!
         raise ArgumentError, "No block provided for inline map" unless @mapped_reactor_class
+      end
+
+      def build_step_config(dependencies)
+        {
+          name: @name,
+          impl: RubyReactor::Step::MapStep,
+          arguments: {
+            mapped_reactor_class: { source: RubyReactor::Template::Value.new(@mapped_reactor_class) },
+            argument_mappings: { source: RubyReactor::Template::Value.new(@argument_mappings) },
+            source: { source: @source_enumerable },
+            strict_ordering: { source: RubyReactor::Template::Value.new(@strict_ordering) },
+            batch_size: { source: RubyReactor::Template::Value.new(@batch_size) },
+            collect_block: { source: RubyReactor::Template::Value.new(@collect_block) },
+            async: { source: RubyReactor::Template::Value.new(@async) }
+          },
+          run_block: nil,
+          compensate_block: nil,
+          undo_block: nil,
+          conditions: [],
+          guards: [],
+          dependencies: dependencies.uniq,
+          args_validator: nil,
+          output_validator: nil,
+          async: false, # MapStep handles async internally via run_async
+          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
+        }
       end
 
       def extract_dependencies_from_mappings

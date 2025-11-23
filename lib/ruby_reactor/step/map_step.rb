@@ -6,69 +6,15 @@ module RubyReactor
       include RubyReactor::Step
 
       def self.run(arguments, context)
-        mapped_reactor_class = arguments[:mapped_reactor_class]
-        mappings = arguments[:argument_mappings] || {}
-        source = arguments[:source]
-        _strict_ordering = arguments[:strict_ordering]
-        collect_block = arguments[:collect_block]
-
-        # If source is nil, we can't do anything
-        return RubyReactor::Failure("Map source cannot be nil") if source.nil?
-
-        # Check if we have a stored context for this step (from a previous retry)
-        step_name = context.current_step
+        return RubyReactor::Failure("Map source cannot be nil") if arguments[:source].nil?
 
         # Initialize map state in context if not present
         context.map_operations ||= {}
 
-        # Check if we should run async
-        # Run async if:
-        # 1. Explicitly configured as async
-        # 2. Running in a context that requires async (e.g. inside a worker but not inline) - wait, if we are inside a worker, we usually run inline unless we want to fan out.
-        #    Fan out is the main reason for async map.
-        async = arguments[:async]
-
-        return run_async(arguments, context, step_name) if async && !context.inline_async_execution
-
-        # Inline execution
-        results = []
-
-        source.each_with_index do |element, _index|
-          # Build inputs for the mapped reactor
-          mapped_inputs = build_mapped_inputs(mappings, context, element)
-
-          # Create new context for this element
-          child_context = RubyReactor::Context.new(mapped_inputs, mapped_reactor_class)
-
-          # Link contexts
-          child_context.parent_context = context
-          child_context.root_context = context.root_context || context
-          child_context.test_mode = context.test_mode
-          child_context.inline_async_execution = context.inline_async_execution
-
-          # Execute the mapped reactor
-          executor = RubyReactor::Executor.new(mapped_reactor_class, {}, child_context)
-          executor.execute
-
-          result = executor.result
-
-          return result unless result.success?
-
-          results << result.value
-
-          # For now, fail fast on first error
-        end
-
-        # Apply collect block if provided
-        if collect_block
-          begin
-            collected = collect_block.call(results)
-            RubyReactor::Success(collected)
-          rescue StandardError => e
-            RubyReactor::Failure(e)
-          end
+        if should_run_async?(arguments, context)
+          run_async(arguments, context, context.current_step)
         else
-          RubyReactor::Success(results)
+          run_inline(arguments, context)
         end
       end
 
@@ -84,16 +30,15 @@ module RubyReactor
           inputs = {}
 
           mappings.each do |mapped_input_name, source|
-            if source.is_a?(RubyReactor::Template::Element)
-              # Handle element reference
-              # For now assuming element() refers to the current map's element
-              # In nested maps, we might need to check the name, but for now simple case
-              value = resolve_element(source, element)
-              inputs[mapped_input_name] = value
-            else
-              value = source.resolve(context)
-              inputs[mapped_input_name] = value
-            end
+            value = if source.is_a?(RubyReactor::Template::Element)
+                      # Handle element reference
+                      # For now assuming element() refers to the current map's element
+                      # In nested maps, we might need to check the name, but for now simple case
+                      resolve_element(source, element)
+                    else
+                      source.resolve(context)
+                    end
+            inputs[mapped_input_name] = value
           end
 
           inputs
@@ -108,6 +53,58 @@ module RubyReactor
           end
         end
 
+        def should_run_async?(arguments, context)
+          arguments[:async] && !context.inline_async_execution
+        end
+
+        def run_inline(arguments, context)
+          results = execute_inline_map(arguments, context)
+          return results if results.is_a?(RubyReactor::Failure)
+
+          process_results(results, arguments[:collect_block])
+        end
+
+        def execute_inline_map(arguments, context)
+          results = []
+          arguments[:source].each do |element|
+            result = execute_single_element(element, arguments, context)
+            return result unless result.success?
+
+            results << result.value
+          end
+          results
+        end
+
+        def execute_single_element(element, arguments, context)
+          mapped_inputs = build_mapped_inputs(arguments[:argument_mappings] || {}, context, element)
+          child_context = RubyReactor::Context.new(mapped_inputs, arguments[:mapped_reactor_class])
+
+          link_contexts(child_context, context)
+
+          executor = RubyReactor::Executor.new(arguments[:mapped_reactor_class], {}, child_context)
+          executor.execute
+          executor.result
+        end
+
+        def link_contexts(child_context, parent_context)
+          child_context.parent_context = parent_context
+          child_context.root_context = parent_context.root_context || parent_context
+          child_context.test_mode = parent_context.test_mode
+          child_context.inline_async_execution = parent_context.inline_async_execution
+        end
+
+        def process_results(results, collect_block)
+          if collect_block
+            begin
+              RubyReactor::Success(collect_block.call(results))
+            rescue StandardError => e
+              RubyReactor::Failure(e)
+            end
+          else
+            RubyReactor::Success(results)
+          end
+        end
+
         def extract_path(value, path)
           if path.is_a?(Symbol) && value.respond_to?(:[])
             value[path]
@@ -117,130 +114,85 @@ module RubyReactor
             path.reduce(value) { |v, key| v&.send(:[], key) }
           elsif value.respond_to?(path)
             value.send(path)
-          else
-            nil
           end
         end
 
         def run_async(arguments, context, step_name)
-          mapped_reactor_class = arguments[:mapped_reactor_class]
-          mappings = arguments[:argument_mappings] || {}
-          source = arguments[:source]
-          strict_ordering = arguments[:strict_ordering]
-
-          storage = RubyReactor.configuration.storage_adapter
-
-          # Generate a unique map ID
           map_id = "#{context.context_id}:#{step_name}"
+          prepare_async_execution(context, map_id, arguments[:source].count)
 
-          # Store parent context so workers can retrieve it
-          # We need to serialize the *current* state of the parent context
-          # But we are in the middle of execution.
-          # We should probably store it as "waiting" state.
-          # The Executor will handle saving the state if we return RetryQueuedResult?
-          # No, RetryQueuedResult assumes the job is already queued.
-          # But here we are queuing *child* jobs.
-          # The parent job needs to be suspended.
+          reactor_class_info = build_reactor_class_info(arguments[:mapped_reactor_class], context, step_name)
 
-          # We need to manually store the parent context because the workers need it
-          # to trigger the collector which will resume the parent.
-          # The parent context should be stored with its current state.
-
-          # IMPORTANT: We must ensure we don't overwrite the context if it's already stored?
-          # Context ID is unique per execution.
-
-          serialized_context = context.serialize_for_retry
-          storage.store_context(context.context_id, serialized_context, context.reactor_class.name)
-
-          # Set map counter
-          count = source.count
-          storage.set_map_counter(map_id, count, context.reactor_class.name)
-
-          # Prepare reactor class info for workers
-          reactor_class_info = if mapped_reactor_class.respond_to?(:name)
-                                 { "type" => "class", "name" => mapped_reactor_class.name }
-                               else
-                                 # Inline reactor - store reference to parent and step
-                                 # We need to pass enough info to reconstruct it.
-                                 # Since it's defined in the parent reactor's step config,
-                                 # we can pass the parent class name and step name.
-                                 {
-                                   "type" => "inline",
-                                   "parent" => context.reactor_class.name,
-                                   "step" => step_name.to_s
-                                 }
-                               end
-
-          # Determine strategy
-          batch_size = arguments[:batch_size]
-
-          if batch_size
-            # Fan-out strategy (Batched or Per-Element)
-            # For now, if batch_size is present, we use the existing fan-out logic (per element)
-            # TODO: Implement true batching if batch_size > 1
-
-            # Initialize counter and metadata
-            storage.initialize_map_operation(
-              map_id,
-              source.count,
-              strict_ordering: strict_ordering,
-              reactor_class_info: reactor_class_info
-            )
-
-            # Queue workers
-            source.each_with_index do |element, index|
-              mapped_inputs = build_mapped_inputs(mappings, context, element)
-              serialized_inputs = ContextSerializer.serialize_value(mapped_inputs)
-
-              RubyReactor.configuration.async_router.perform_map_element_async(
-                map_id: map_id,
-                element_id: "#{map_id}:#{index}",
-                index: index,
-                serialized_inputs: serialized_inputs,
-                reactor_class_info: reactor_class_info,
-                strict_ordering: strict_ordering,
-                parent_context_id: context.context_id,
-                parent_reactor_class_name: context.reactor_class.name,
-                step_name: step_name.to_s
-              )
-            end
-
-            # Queue collector
-            RubyReactor.configuration.async_router.perform_map_collection_async(
-              parent_context_id: context.context_id,
-              map_id: map_id,
-              parent_reactor_class_name: context.reactor_class.name,
-              step_name: step_name.to_s,
-              strict_ordering: strict_ordering,
-              timeout: 3600 # Default timeout 1 hour
-            )
+          if arguments[:batch_size]
+            queue_fan_out(map_id, arguments, context, reactor_class_info, step_name)
           else
-            # Single Worker strategy
-            # Serialize all inputs
-            inputs = {
-              source: source,
-              mappings: mappings
-            }
-            serialized_inputs = ContextSerializer.serialize_value(inputs)
-
-            RubyReactor.configuration.async_router.perform_map_execution_async(
-              map_id: map_id,
-              serialized_inputs: serialized_inputs,
-              reactor_class_info: reactor_class_info,
-              strict_ordering: strict_ordering,
-              parent_context_id: context.context_id,
-              parent_reactor_class_name: context.reactor_class.name,
-              step_name: step_name.to_s
-            )
+            queue_single_worker(map_id, arguments, context, reactor_class_info, step_name)
           end
-          # Return RetryQueuedResult to stop current execution
-          # We use a special "async_map" reason or just standard RetryQueuedResult
-          # The Executor will see this and stop.
-          # We set next_retry_at to nil or far future?
-          # Actually, we don't want it to retry automatically.
-          # We want it to be resumed explicitly by MapCollectorWorker.
 
           RetryQueuedResult.new(step_name, 1, nil)
+        end
+
+        def prepare_async_execution(context, map_id, count)
+          storage = RubyReactor.configuration.storage_adapter
+          serialized_context = context.serialize_for_retry
+          storage.store_context(context.context_id, serialized_context, context.reactor_class.name)
+          storage.set_map_counter(map_id, count, context.reactor_class.name)
+        end
+
+        def build_reactor_class_info(mapped_reactor_class, context, step_name)
+          if mapped_reactor_class.respond_to?(:name)
+            { "type" => "class", "name" => mapped_reactor_class.name }
+          else
+            { "type" => "inline", "parent" => context.reactor_class.name, "step" => step_name.to_s }
+          end
+        end
+
+        def queue_fan_out(map_id, arguments, context, reactor_class_info, step_name)
+          storage = RubyReactor.configuration.storage_adapter
+          storage.initialize_map_operation(
+            map_id, arguments[:source].count,
+            strict_ordering: arguments[:strict_ordering], reactor_class_info: reactor_class_info
+          )
+
+          arguments[:source].each_with_index do |element, index|
+            queue_map_element(map_id, element, index, arguments, context, reactor_class_info, step_name)
+          end
+
+          queue_collector(map_id, context, step_name, arguments[:strict_ordering])
+        end
+
+        # rubocop:disable Metrics/ParameterLists
+        def queue_map_element(map_id, element, index, arguments, context, reactor_class_info, step_name)
+          mapped_inputs = build_mapped_inputs(arguments[:argument_mappings] || {}, context, element)
+          serialized_inputs = ContextSerializer.serialize_value(mapped_inputs)
+
+          RubyReactor.configuration.async_router.perform_map_element_async(
+            map_id: map_id, element_id: "#{map_id}:#{index}", index: index,
+            serialized_inputs: serialized_inputs, reactor_class_info: reactor_class_info,
+            strict_ordering: arguments[:strict_ordering], parent_context_id: context.context_id,
+            parent_reactor_class_name: context.reactor_class.name, step_name: step_name.to_s
+          )
+        end
+        # rubocop:enable Metrics/ParameterLists
+
+        def queue_collector(map_id, context, step_name, strict_ordering)
+          RubyReactor.configuration.async_router.perform_map_collection_async(
+            parent_context_id: context.context_id, map_id: map_id,
+            parent_reactor_class_name: context.reactor_class.name, step_name: step_name.to_s,
+            strict_ordering: strict_ordering, timeout: 3600
+          )
+        end
+
+        def queue_single_worker(map_id, arguments, context, reactor_class_info, step_name)
+          inputs = { source: arguments[:source], mappings: arguments[:argument_mappings] || {} }
+          serialized_inputs = ContextSerializer.serialize_value(inputs)
+
+          RubyReactor.configuration.async_router.perform_map_execution_async(
+            map_id: map_id, serialized_inputs: serialized_inputs,
+            reactor_class_info: reactor_class_info, strict_ordering: arguments[:strict_ordering],
+            parent_context_id: context.context_id, parent_reactor_class_name: context.reactor_class.name,
+            step_name: step_name.to_s
+          )
         end
       end
     end

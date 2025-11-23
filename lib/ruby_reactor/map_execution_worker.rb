@@ -6,6 +6,7 @@ module RubyReactor
   class MapExecutionWorker
     include Sidekiq::Worker
 
+    # rubocop:disable Metrics/ParameterLists, Metrics/MethodLength, Metrics/PerceivedComplexity
     def perform(_map_id, serialized_inputs, reactor_class_info, _strict_ordering, parent_context_id,
                 parent_reactor_class_name, step_name)
       storage = RubyReactor.configuration.storage_adapter
@@ -49,10 +50,8 @@ module RubyReactor
           if source_template.is_a?(RubyReactor::Template::Element)
             # It refers to the element itself or a path within it
             val = element
-            if source_template.path
-              source_template.path.split(".").each do |segment|
-                val = val[segment] || val[segment.to_sym]
-              end
+            source_template.path&.split(".")&.each do |segment|
+              val = val[segment] || val[segment.to_sym]
             end
             element_inputs[input_name] = val
           else
@@ -92,5 +91,6 @@ module RubyReactor
       executor = RubyReactor::Executor.new(parent_context.reactor_class, {}, parent_context)
       executor.resume_execution
     end
+    # rubocop:enable Metrics/ParameterLists, Metrics/MethodLength, Metrics/PerceivedComplexity
   end
 end

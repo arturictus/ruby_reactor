@@ -4,8 +4,10 @@ module RubyReactor
   class MapElementWorker
     include Sidekiq::Worker
 
+    # rubocop:disable Metrics/ParameterLists
     def perform(map_id, _element_id, index, serialized_inputs, reactor_class_info, strict_ordering, parent_context_id,
                 parent_reactor_class_name, step_name)
+      # rubocop:enable Metrics/ParameterLists
       # Deserialize inputs
       inputs = ContextSerializer.deserialize_value(serialized_inputs)
       storage = RubyReactor.configuration.storage_adapter
@@ -36,7 +38,7 @@ module RubyReactor
       # Decrement counter
       new_count = storage.decrement_map_counter(map_id, parent_reactor_class_name)
 
-      return unless new_count == 0
+      return unless new_count.zero?
 
       # Trigger collection
       RubyReactor.configuration.async_router.perform_map_collection_async(

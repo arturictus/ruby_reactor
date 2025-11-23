@@ -18,10 +18,13 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       data = { foo: "bar" }
       key = "reactor:MyReactor:context:ctx-123"
 
-      expect(redis_client).to receive(:call).with("JSON.SET", key, ".", data.to_json)
-      expect(redis_client).to receive(:expire).with(key, 86_400)
+      allow(redis_client).to receive(:call)
+      allow(redis_client).to receive(:expire)
 
       adapter.store_context(context_id, data, reactor_class)
+
+      expect(redis_client).to have_received(:call).with("JSON.SET", key, ".", data.to_json)
+      expect(redis_client).to have_received(:expire).with(key, 86_400)
     end
   end
 
@@ -58,10 +61,13 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       reactor_class = "MyReactor"
       key = "reactor:MyReactor:map:map-123:results"
 
-      expect(redis_client).to receive(:hset).with(key, "0", result.to_json)
-      expect(redis_client).to receive(:expire).with(key, 86_400)
+      allow(redis_client).to receive(:hset)
+      allow(redis_client).to receive(:expire)
 
       adapter.store_map_result(map_id, index, result, reactor_class, strict_ordering: true)
+
+      expect(redis_client).to have_received(:hset).with(key, "0", result.to_json)
+      expect(redis_client).to have_received(:expire).with(key, 86_400)
     end
 
     it "stores unordered result using RPUSH" do
@@ -71,10 +77,13 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       reactor_class = "MyReactor"
       key = "reactor:MyReactor:map:map-123:results"
 
-      expect(redis_client).to receive(:rpush).with(key, result.to_json)
-      expect(redis_client).to receive(:expire).with(key, 86_400)
+      allow(redis_client).to receive(:rpush)
+      allow(redis_client).to receive(:expire)
 
       adapter.store_map_result(map_id, index, result, reactor_class, strict_ordering: false)
+
+      expect(redis_client).to have_received(:rpush).with(key, result.to_json)
+      expect(redis_client).to have_received(:expire).with(key, 86_400)
     end
   end
 

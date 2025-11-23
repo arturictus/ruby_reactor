@@ -54,7 +54,9 @@ class CollectMapReactor < RubyReactor::Reactor
 
     returns :double
 
+    # rubocop:disable Style/SymbolProc
     collect do |results|
+      # rubocop:enable Style/SymbolProc
       results.sum
     end
   end

@@ -13,71 +13,20 @@ module RubyReactor
       end
 
       def self.run(arguments, context)
-        # Extract the composed reactor class and argument mappings from arguments
-        composed_reactor = arguments[:composed_reactor_class]
-        mappings = arguments[:argument_mappings] || {}
-
-        # Check if we have a stored context for this step (from a previous retry)
         step_name = context.current_step
         composed_data = context.composed_contexts[step_name]
-        child_context = composed_data ? composed_data[:context] : nil
-
-        unless child_context
-          # Build inputs for the composed reactor by resolving argument mappings
-          composed_inputs = build_composed_inputs(mappings, context)
-
-          # Create new context
-          child_context = RubyReactor::Context.new(composed_inputs, composed_reactor)
-        end
-
-        # Link contexts
-        child_context.parent_context = context
-        child_context.root_context = context.root_context || context
-
-        # Propagate test mode
-        child_context.test_mode = context.test_mode
-
-        # Propagate inline_async_execution
-        child_context.inline_async_execution = context.inline_async_execution
+        child_context = prepare_child_context(arguments, context, composed_data)
 
         # Store the child context in composed_contexts BEFORE execution
-        context.composed_contexts[step_name] = {
-          name: step_name,
-          type: :composed,
-          context: child_context
-        }
+        store_child_context(context, step_name, child_context)
 
         # Execute the composed reactor
-        executor = RubyReactor::Executor.new(composed_reactor, {}, child_context)
+        result = execute_child_reactor(arguments[:composed_reactor_class], child_context, composed_data)
 
-        # If we are resuming (child_context existed), we need to resume execution
-        if composed_data && child_context.current_step
-          executor.resume_execution
-        else
-          executor.execute
-        end
+        # Update the stored context
+        store_child_context(context, step_name, child_context)
 
-        result = executor.result
-
-        # Update the stored context (though it should be the same object)
-        context.composed_contexts[step_name] = {
-          name: step_name,
-          type: :composed,
-          context: child_context
-        }
-
-        # Handle async results - if the composed reactor is async, we need to return the async result
-        return result if result.is_a?(RubyReactor::AsyncResult)
-
-        # Handle retry queued results - bubble up
-        return result if result.is_a?(RubyReactor::RetryQueuedResult)
-
-        # For sync results, wrap in Success/Failure based on the result type
-        if result.success?
-          RubyReactor.Success(result.value)
-        else
-          RubyReactor.Failure(result.error)
-        end
+        handle_execution_result(result)
       end
 
       def self.compensate(_reason, _arguments, _context)
@@ -102,6 +51,55 @@ module RubyReactor
           end
 
           inputs
+        end
+
+        def prepare_child_context(arguments, context, composed_data)
+          child_context = composed_data ? composed_data[:context] : nil
+
+          unless child_context
+            composed_inputs = build_composed_inputs(arguments[:argument_mappings] || {}, context)
+            child_context = RubyReactor::Context.new(composed_inputs, arguments[:composed_reactor_class])
+          end
+
+          link_contexts(child_context, context)
+          child_context
+        end
+
+        def link_contexts(child_context, parent_context)
+          child_context.parent_context = parent_context
+          child_context.root_context = parent_context.root_context || parent_context
+          child_context.test_mode = parent_context.test_mode
+          child_context.inline_async_execution = parent_context.inline_async_execution
+        end
+
+        def store_child_context(context, step_name, child_context)
+          context.composed_contexts[step_name] = {
+            name: step_name,
+            type: :composed,
+            context: child_context
+          }
+        end
+
+        def execute_child_reactor(composed_reactor, child_context, composed_data)
+          executor = RubyReactor::Executor.new(composed_reactor, {}, child_context)
+
+          if composed_data && child_context.current_step
+            executor.resume_execution
+          else
+            executor.execute
+          end
+
+          executor.result
+        end
+
+        def handle_execution_result(result)
+          return result if result.is_a?(RubyReactor::AsyncResult) || result.is_a?(RubyReactor::RetryQueuedResult)
+
+          if result.success?
+            RubyReactor.Success(result.value)
+          else
+            RubyReactor.Failure(result.error)
+          end
         end
       end
     end

@@ -57,12 +57,13 @@ module RubyReactor
       end
 
       def handle_retry_result(step_config, reactor_class, result)
-        if result.is_a?(RubyReactor::Success)
+        case result
+        when RubyReactor::Success
           clear_retry_state
           result
-        elsif result.is_a?(RubyReactor::Failure)
+        when RubyReactor::Failure
           handle_failure_result(step_config, reactor_class, result)
-        elsif result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::AsyncResult)
+        when RetryQueuedResult, RubyReactor::AsyncResult
           # Pass through async results
           result
         else
@@ -73,40 +74,50 @@ module RubyReactor
 
       def handle_failure_result(step_config, reactor_class, result)
         if can_retry_step?(step_config) && result.retryable?
-          # Check if we should requeue (async retry)
-          # Requeue if:
-          # 1. The current reactor is async
-          # 2. The current step is async
-          # 3. The root reactor (if nested) is async
-          # 4. We are running inside a worker (inline_async_execution is true)
-          is_async = reactor_class.async? || step_config.async? ||
-                     @context.root_context&.reactor_class&.async? ||
-                     @context.inline_async_execution
-
-          if is_async && !@context.test_mode
-            requeue_job_for_step_retry(step_config, result.error, reactor_class)
-            RetryQueuedResult.new(
-              step_config.name,
-              @context.retry_context.attempts_for_step(step_config.name),
-              @context.retry_context.next_retry_at
-            )
-          else
-            # Sync retry - apply backoff delay and continue loop
-            delay = calculate_backoff_delay(step_config, result.error, reactor_class)
-            sleep(delay)
-            nil # continue loop
-          end
+          handle_retryable_failure(step_config, reactor_class, result)
         else
-          clear_retry_state
-          current_attempts = @context.retry_context.attempts_for_step(step_config.name)
-          error_message = result.error.respond_to?(:message) ? result.error.message : result.error.to_s
-          MaxRetriesExhaustedFailure.new(
-            "Step '#{step_config.name}' failed after #{current_attempts} attempts: #{error_message}",
-            step: step_config.name,
-            attempts: current_attempts,
-            original_error: result.error
-          )
+          handle_non_retryable_failure(step_config, result)
         end
+      end
+
+      def handle_retryable_failure(step_config, reactor_class, result)
+        # Check if we should requeue (async retry)
+        is_async = reactor_class.async? || step_config.async? ||
+                   @context.root_context&.reactor_class&.async? ||
+                   @context.inline_async_execution
+
+        if is_async && !@context.test_mode
+          handle_async_retry(step_config, reactor_class, result)
+        else
+          handle_sync_retry(step_config, reactor_class, result)
+        end
+      end
+
+      def handle_async_retry(step_config, reactor_class, result)
+        requeue_job_for_step_retry(step_config, result.error, reactor_class)
+        RetryQueuedResult.new(
+          step_config.name,
+          @context.retry_context.attempts_for_step(step_config.name),
+          @context.retry_context.next_retry_at
+        )
+      end
+
+      def handle_sync_retry(step_config, reactor_class, result)
+        delay = calculate_backoff_delay(step_config, result.error, reactor_class)
+        sleep(delay)
+        nil # continue loop
+      end
+
+      def handle_non_retryable_failure(step_config, result)
+        clear_retry_state
+        current_attempts = @context.retry_context.attempts_for_step(step_config.name)
+        error_message = result.error.respond_to?(:message) ? result.error.message : result.error.to_s
+        MaxRetriesExhaustedFailure.new(
+          "Step '#{step_config.name}' failed after #{current_attempts} attempts: #{error_message}",
+          step: step_config.name,
+          attempts: current_attempts,
+          original_error: result.error
+        )
       end
 
       def configuration

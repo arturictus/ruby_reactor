@@ -4,6 +4,7 @@ module RubyReactor
   class MapCollectorWorker
     include Sidekiq::Worker
 
+    # rubocop:disable Metrics/ParameterLists, Metrics/MethodLength
     def perform(parent_context_id, map_id, parent_reactor_class_name, step_name, strict_ordering, _timeout = nil)
       storage = RubyReactor.configuration.storage_adapter
 
@@ -40,33 +41,18 @@ module RubyReactor
                        RubyReactor::Success(results)
                      end
 
-      if final_result.success?
-        # Set result in parent context
-        parent_context.set_result(step_name, final_result.value)
+      return unless final_result.success?
 
-        # Clear current step to avoid re-execution
-        parent_context.current_step = nil
+      # Set result in parent context
+      parent_context.set_result(step_name, final_result.value)
 
-        # Resume execution
-        executor = Executor.new(parent_class, {}, parent_context)
-        executor.resume_execution
-      else
-        # Handle failure
-        # We can't set result if it's a failure.
-        # We should probably resume execution but let it fail?
-        # If we resume with current_step = step_name, it will retry.
-        # But we want to fail it permanently (or according to retry policy).
+      # Clear current step to avoid re-execution
+      parent_context.current_step = nil
 
-        # If we want to fail the step, we can't easily inject the failure into Executor flow
-        # without running the step.
-
-        # Alternative: Set a special result that indicates failure?
-        # Or just let it retry? But retrying won't fix the map failure unless it was transient.
-
-        # For now, let's assume success path works.
-        # Handling failure in async map is complex.
-        # We might need to update Executor to handle "AsyncFailure".
-      end
+      # Resume execution
+      executor = Executor.new(parent_class, {}, parent_context)
+      executor.resume_execution
     end
+    # rubocop:enable Metrics/ParameterLists, Metrics/MethodLength
   end
 end
