@@ -72,26 +72,39 @@ RSpec.describe "Async Map Execution" do
     expect(result).to be_a(RubyReactor::RetryQueuedResult)
 
     # Check Sidekiq jobs
-    expect(RubyReactor::MapElementWorker.jobs.size).to eq(3)
+    # With batch_size: 1, only 1 job should be queued initially
+    expect(RubyReactor::MapElementWorker.jobs.size).to eq(1)
   end
 
   it "processes map elements and triggers collector" do
     # Setup context storage mock
-    context_data = nil
-    allow(redis_client).to receive(:call).with("JSON.SET", any_args) do |_, _, _, data|
-      context_data = data
+    redis_store = {}
+    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
+
+    allow(redis_client).to receive(:call).with("JSON.SET", any_args) do |_, key, _, data|
+      redis_store[key] = data
     end
 
-    allow(redis_client).to receive(:call).with("JSON.GET", any_args) do
-      context_data
+    allow(redis_client).to receive(:call).with("JSON.GET", any_args) do |_, key|
+      redis_store[key]
     end
 
-    # Setup map counter mock
-    counter = 3
-    allow(redis_client).to receive(:set)
-    allow(redis_client).to receive(:decr) do
-      counter -= 1
-      counter
+    allow(redis_client).to receive(:set) do |key, val|
+      redis_store[key] = val.to_i
+    end
+
+    allow(redis_client).to receive(:get) do |key|
+      redis_store[key]
+    end
+
+    allow(redis_client).to receive(:incr) do |key|
+      redis_store[key] ||= 0
+      redis_store[key] += 1
+    end
+
+    allow(redis_client).to receive(:decr) do |key|
+      redis_store[key] ||= 0
+      redis_store[key] -= 1
     end
 
     # Setup results storage

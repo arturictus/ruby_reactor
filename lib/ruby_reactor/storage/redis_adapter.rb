@@ -76,6 +76,15 @@ module RubyReactor
         }
         @redis.call("JSON.SET", key, ".", metadata.to_json)
         @redis.expire(key, 86_400)
+        @redis.expire(key, 86_400)
+      end
+
+      def retrieve_map_metadata(map_id, reactor_class_name)
+        key = "reactor:#{reactor_class_name}:map:#{map_id}:metadata"
+        json = @redis.call("JSON.GET", key)
+        return nil unless json
+
+        JSON.parse(json)
       end
 
       def increment_map_counter(map_id, reactor_class_name)
@@ -87,6 +96,17 @@ module RubyReactor
       def decrement_map_counter(map_id, reactor_class_name)
         key = map_counter_key(map_id, reactor_class_name)
         @redis.decr(key)
+      end
+
+      def set_last_queued_index(map_id, index, reactor_class_name)
+        key = map_last_queued_index_key(map_id, reactor_class_name)
+        @redis.set(key, index)
+        @redis.expire(key, 86_400)
+      end
+
+      def increment_last_queued_index(map_id, reactor_class_name)
+        key = map_last_queued_index_key(map_id, reactor_class_name)
+        @redis.incr(key)
       end
 
       def subscribe(channel, &block)
@@ -113,6 +133,10 @@ module RubyReactor
 
       def map_counter_key(map_id, reactor_class_name)
         "reactor:#{reactor_class_name}:map:#{map_id}:counter"
+      end
+
+      def map_last_queued_index_key(map_id, reactor_class_name)
+        "reactor:#{reactor_class_name}:map:#{map_id}:last_queued_index"
       end
     end
   end

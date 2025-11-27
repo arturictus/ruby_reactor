@@ -14,7 +14,8 @@ module RubyReactor
 
     # rubocop:disable Metrics/ParameterLists
     def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
-                                       strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:)
+                                       strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
+                                       batch_size: nil)
       RubyReactor::MapElementWorker.perform_async(
         {
           "map_id" => map_id,
@@ -25,7 +26,8 @@ module RubyReactor
           "strict_ordering" => strict_ordering,
           "parent_context_id" => parent_context_id,
           "parent_reactor_class_name" => parent_reactor_class_name,
-          "step_name" => step_name
+          "step_name" => step_name,
+          "batch_size" => batch_size
         }
       )
     end

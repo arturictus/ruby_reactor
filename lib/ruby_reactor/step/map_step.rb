@@ -24,8 +24,6 @@ module RubyReactor
       end
 
       class << self
-        private
-
         def build_mapped_inputs(mappings, context, element)
           inputs = {}
 
@@ -52,6 +50,8 @@ module RubyReactor
             current_element
           end
         end
+
+        private
 
         def should_run_async?(arguments, context)
           arguments[:async] && !context.inline_async_execution
@@ -124,9 +124,13 @@ module RubyReactor
           reactor_class_info = build_reactor_class_info(arguments[:mapped_reactor_class], context, step_name)
 
           if arguments[:batch_size]
-            queue_fan_out(map_id, arguments, context, reactor_class_info, step_name)
+            storage = RubyReactor.configuration.storage_adapter
+            storage.set_last_queued_index(map_id, arguments[:batch_size] - 1, context.reactor_class.name)
+            queue_fan_out(map_id: map_id, arguments: arguments, context: context,
+                          reactor_class_info: reactor_class_info, step_name: step_name, limit: arguments[:batch_size])
           else
-            queue_single_worker(map_id, arguments, context, reactor_class_info, step_name)
+            queue_single_worker(map_id: map_id, arguments: arguments, context: context,
+                                reactor_class_info: reactor_class_info, step_name: step_name)
           end
 
           RetryQueuedResult.new(step_name, 1, nil)
@@ -147,22 +151,26 @@ module RubyReactor
           end
         end
 
-        def queue_fan_out(map_id, arguments, context, reactor_class_info, step_name)
+        def queue_fan_out(map_id:, arguments:, context:, reactor_class_info:, step_name:, limit: nil)
           storage = RubyReactor.configuration.storage_adapter
           storage.initialize_map_operation(
             map_id, arguments[:source].count,
             strict_ordering: arguments[:strict_ordering], reactor_class_info: reactor_class_info
           )
 
+          limit ||= arguments[:source].count
           arguments[:source].each_with_index do |element, index|
-            queue_map_element(map_id, element, index, arguments, context, reactor_class_info, step_name)
+            break if index >= limit
+
+            queue_map_element(map_id: map_id, element: element, index: index, arguments: arguments, context: context,
+                              reactor_class_info: reactor_class_info, step_name: step_name)
           end
 
           queue_collector(map_id, context, step_name, arguments[:strict_ordering])
         end
 
         # rubocop:disable Metrics/ParameterLists
-        def queue_map_element(map_id, element, index, arguments, context, reactor_class_info, step_name)
+        def queue_map_element(map_id:, element:, index:, arguments:, context:, reactor_class_info:, step_name:)
           mapped_inputs = build_mapped_inputs(arguments[:argument_mappings] || {}, context, element)
           serialized_inputs = ContextSerializer.serialize_value(mapped_inputs)
 
@@ -170,7 +178,8 @@ module RubyReactor
             map_id: map_id, element_id: "#{map_id}:#{index}", index: index,
             serialized_inputs: serialized_inputs, reactor_class_info: reactor_class_info,
             strict_ordering: arguments[:strict_ordering], parent_context_id: context.context_id,
-            parent_reactor_class_name: context.reactor_class.name, step_name: step_name.to_s
+            parent_reactor_class_name: context.reactor_class.name, step_name: step_name.to_s,
+            batch_size: arguments[:batch_size]
           )
         end
         # rubocop:enable Metrics/ParameterLists
@@ -183,7 +192,7 @@ module RubyReactor
           )
         end
 
-        def queue_single_worker(map_id, arguments, context, reactor_class_info, step_name)
+        def queue_single_worker(map_id:, arguments:, context:, reactor_class_info:, step_name:)
           inputs = { source: arguments[:source], mappings: arguments[:argument_mappings] || {} }
           serialized_inputs = ContextSerializer.serialize_value(inputs)
 

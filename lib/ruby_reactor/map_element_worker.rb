@@ -16,6 +16,7 @@ module RubyReactor
       parent_context_id = arguments[:parent_context_id]
       parent_reactor_class_name = arguments[:parent_reactor_class_name]
       step_name = arguments[:step_name]
+      batch_size = arguments[:batch_size]
       # rubocop:enable Metrics/MethodLength
       # Deserialize inputs
       inputs = ContextSerializer.deserialize_value(serialized_inputs)
@@ -47,6 +48,8 @@ module RubyReactor
       # Decrement counter
       new_count = storage.decrement_map_counter(map_id, parent_reactor_class_name)
 
+      queue_next_batch(arguments) if batch_size
+
       return unless new_count.zero?
 
       # Trigger collection
@@ -72,6 +75,65 @@ module RubyReactor
       else
         raise "Unknown reactor class info: #{info}"
       end
+    end
+
+    def queue_next_batch(arguments)
+      storage = RubyReactor.configuration.storage_adapter
+      map_id = arguments[:map_id]
+      reactor_class_name = arguments[:parent_reactor_class_name]
+
+      next_index = storage.increment_last_queued_index(map_id, reactor_class_name)
+
+      metadata_reactor_class_name = arguments[:reactor_class_info]["name"] || arguments[:reactor_class_info]["parent"]
+      metadata = storage.retrieve_map_metadata(map_id, metadata_reactor_class_name)
+      total_count = metadata["count"]
+
+      return unless next_index < total_count
+
+      # Load parent context to resolve source
+      parent_context_data = storage.retrieve_context(arguments[:parent_context_id], reactor_class_name)
+      parent_reactor_class = Object.const_get(reactor_class_name)
+      parent_context = Context.new(ContextSerializer.deserialize_value(parent_context_data["inputs"]),
+                                   parent_reactor_class)
+      parent_context.context_id = arguments[:parent_context_id]
+
+      # Get step config
+      step_config = parent_reactor_class.steps[arguments[:step_name].to_sym]
+
+      # Extract source template
+      source_arg_config = step_config.arguments[:source]
+      source_template = source_arg_config[:source]
+
+      # Resolve source
+      source = source_template.resolve(parent_context)
+      element = source[next_index]
+
+      # Extract mappings template
+      mappings_arg_config = step_config.arguments[:argument_mappings]
+      mappings_template = mappings_arg_config[:source]
+      mappings = mappings_template.resolve(parent_context) || {}
+
+      # Build mapped inputs
+      mapped_inputs = RubyReactor::Step::MapStep.build_mapped_inputs(
+        mappings,
+        parent_context,
+        element
+      )
+      serialized_inputs = ContextSerializer.serialize_value(mapped_inputs)
+
+      # Queue next job
+      RubyReactor.configuration.async_router.perform_map_element_async(
+        map_id: map_id,
+        element_id: "#{map_id}:#{next_index}",
+        index: next_index,
+        serialized_inputs: serialized_inputs,
+        reactor_class_info: arguments[:reactor_class_info],
+        strict_ordering: arguments[:strict_ordering],
+        parent_context_id: arguments[:parent_context_id],
+        parent_reactor_class_name: reactor_class_name,
+        step_name: arguments[:step_name],
+        batch_size: arguments[:batch_size]
+      )
     end
   end
 end
