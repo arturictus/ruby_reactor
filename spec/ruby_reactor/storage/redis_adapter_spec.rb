@@ -15,7 +15,7 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
     it "stores context using JSON.SET" do
       context_id = "ctx-123"
       reactor_class = "MyReactor"
-      data = { foo: "bar" }
+      data = { foo: "bar" }.to_json
       key = "reactor:MyReactor:context:ctx-123"
 
       allow(redis_client).to receive(:call)
@@ -23,7 +23,7 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
 
       adapter.store_context(context_id, data, reactor_class)
 
-      expect(redis_client).to have_received(:call).with("JSON.SET", key, ".", data.to_json)
+      expect(redis_client).to have_received(:call).with("JSON.SET", key, ".", data)
       expect(redis_client).to have_received(:expire).with(key, 86_400)
     end
   end

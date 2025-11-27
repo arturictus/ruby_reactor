@@ -1,9 +1,6 @@
 # frozen_string_literal: true
 
 require "spec_helper"
-require "ruby_reactor"
-require "sidekiq/testing"
-require "redis"
 
 # Define a simple reactor for mapping
 class AsyncDoubleReactor < RubyReactor::Reactor
@@ -13,6 +10,8 @@ class AsyncDoubleReactor < RubyReactor::Reactor
     argument :number, input(:number)
     run { |args, _| RubyReactor::Success(args[:number] * 2) }
   end
+
+  returns :double
 end
 
 class AsyncMapRootReactor < RubyReactor::Reactor
@@ -26,31 +25,10 @@ class AsyncMapRootReactor < RubyReactor::Reactor
 end
 
 RSpec.describe "Async Map Execution" do
-  let(:redis_client) { instance_double(Redis) }
-  let(:adapter) { RubyReactor::Storage::RedisAdapter.new(url: "redis://localhost:6379") }
-
   before do
-    # Mock Redis
-    allow(Redis).to receive(:new).and_return(redis_client)
-    allow(redis_client).to receive(:set)
-    allow(redis_client).to receive(:get)
-    allow(redis_client).to receive(:expire)
-    allow(redis_client).to receive(:call).with("JSON.SET", any_args)
-    allow(redis_client).to receive(:call).with("JSON.GET", any_args).and_return(nil)
-    allow(redis_client).to receive(:hset)
-    allow(redis_client).to receive(:hgetall)
-    allow(redis_client).to receive(:incr)
-    allow(redis_client).to receive(:decr)
-
-    # Use fake adapter for testing logic if needed, but here we want to test interaction with RedisAdapter
-    # So we mock Redis calls.
-
-    # Configure storage
-    RubyReactor.configure do |config|
-      config.storage.adapter = :redis
-    end
-    # Reset adapter to ensure fresh mock
-    RubyReactor.configuration.instance_variable_set(:@storage_adapter, nil)
+    # Use real Redis from spec_helper configuration
+    # But we need to ensure AsyncRouter is used instead of WorkerMock for this test
+    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
 
     Sidekiq::Testing.fake!
   end
@@ -60,12 +38,6 @@ RSpec.describe "Async Map Execution" do
   end
 
   it "queues map element workers" do
-    # We need to mock context storage
-    allow(redis_client).to receive(:call).with("JSON.SET", any_args)
-    allow(redis_client).to receive(:set) # for map counter
-    allow(redis_client).to receive(:expire)
-    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
-
     result = AsyncMapRootReactor.run(numbers: [1, 2, 3])
 
     # Should return RetryQueuedResult because it went async
@@ -77,51 +49,12 @@ RSpec.describe "Async Map Execution" do
   end
 
   it "processes map elements and triggers collector" do
-    # Setup context storage mock
-    redis_store = {}
-    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
-
-    allow(redis_client).to receive(:call).with("JSON.SET", any_args) do |_, key, _, data|
-      redis_store[key] = data
-    end
-
-    allow(redis_client).to receive(:call).with("JSON.GET", any_args) do |_, key|
-      redis_store[key]
-    end
-
-    allow(redis_client).to receive(:set) do |key, val|
-      redis_store[key] = val.to_i
-    end
-
-    allow(redis_client).to receive(:get) do |key|
-      redis_store[key]
-    end
-
-    allow(redis_client).to receive(:incr) do |key|
-      redis_store[key] ||= 0
-      redis_store[key] += 1
-    end
-
-    allow(redis_client).to receive(:decr) do |key|
-      redis_store[key] ||= 0
-      redis_store[key] -= 1
-    end
-
-    # Setup results storage
-    results = {}
-    allow(redis_client).to receive(:hset) do |_key, field, value|
-      results[field] = value
-    end
-
-    allow(redis_client).to receive(:hgetall) do
-      results
-    end
-
-    allow(redis_client).to receive(:expire)
-
     # Run initial execution
-    result = AsyncMapRootReactor.run(numbers: [1, 2, 3])
+    reactor = AsyncMapRootReactor.new
+    result = reactor.run(numbers: [1, 2, 3])
     expect(result).to be_a(RubyReactor::RetryQueuedResult)
+
+    context_id = reactor.context.context_id
 
     # Process jobs
     RubyReactor::MapElementWorker.drain
@@ -130,17 +63,13 @@ RSpec.describe "Async Map Execution" do
     expect(RubyReactor::MapCollectorWorker.jobs.size).to eq(2)
 
     # Process Collector
-    # We need to mock resume_execution logic or check if it calls Executor
+    RubyReactor::MapCollectorWorker.drain
 
-    # Since we are mocking Redis, the Context deserialization in Collector will work
-    # if we captured context_data correctly.
+    # Verify result in Redis
+    storage = RubyReactor.configuration.storage_adapter
+    context = storage.retrieve_context(context_id, AsyncMapRootReactor.name)
 
-    # However, Collector creates a new Executor and calls resume_execution.
-    # This might be hard to test fully with just Redis mocks because of complex object serialization.
-    # But we can verify Collector runs.
-
-    expect do
-      RubyReactor::MapCollectorWorker.drain
-    end.not_to raise_error
+    expect(context).not_to be_nil
+    expect(context["intermediate_results"]["doubled_numbers"]).to eq([2, 4, 6])
   end
 end

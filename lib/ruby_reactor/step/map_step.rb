@@ -138,7 +138,7 @@ module RubyReactor
 
         def prepare_async_execution(context, map_id, count)
           storage = RubyReactor.configuration.storage_adapter
-          serialized_context = context.serialize_for_retry
+          serialized_context = ContextSerializer.serialize(context)
           storage.store_context(context.context_id, serialized_context, context.reactor_class.name)
           storage.set_map_counter(map_id, count, context.reactor_class.name)
         end
@@ -154,7 +154,7 @@ module RubyReactor
         def queue_fan_out(map_id:, arguments:, context:, reactor_class_info:, step_name:, limit: nil)
           storage = RubyReactor.configuration.storage_adapter
           storage.initialize_map_operation(
-            map_id, arguments[:source].count,
+            map_id, arguments[:source].count, context.reactor_class.name,
             strict_ordering: arguments[:strict_ordering], reactor_class_info: reactor_class_info
           )
 

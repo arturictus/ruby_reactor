@@ -84,8 +84,7 @@ module RubyReactor
 
       next_index = storage.increment_last_queued_index(map_id, reactor_class_name)
 
-      metadata_reactor_class_name = arguments[:reactor_class_info]["name"] || arguments[:reactor_class_info]["parent"]
-      metadata = storage.retrieve_map_metadata(map_id, metadata_reactor_class_name)
+      metadata = storage.retrieve_map_metadata(map_id, reactor_class_name)
       total_count = metadata["count"]
 
       return unless next_index < total_count

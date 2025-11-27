@@ -59,6 +59,9 @@ module RubyReactor
       # Resume execution
       executor = Executor.new(parent_class, {}, parent_context)
       executor.resume_execution
+
+      # Save updated context
+      storage.store_context(parent_context_id, ContextSerializer.serialize(parent_context), parent_reactor_class_name)
     end
     # rubocop:enable Metrics/MethodLength
   end

@@ -14,7 +14,7 @@ module RubyReactor
       def store_context(context_id, serialized_context, reactor_class_name)
         key = context_key(context_id, reactor_class_name)
         # Use JSON.SET for efficient storage and retrieval
-        @redis.call("JSON.SET", key, ".", serialized_context.to_json)
+        @redis.call("JSON.SET", key, ".", serialized_context)
         @redis.expire(key, 86_400) # 24h TTL
       end
 
@@ -60,14 +60,12 @@ module RubyReactor
         @redis.expire(key, 86_400)
       end
 
-      def initialize_map_operation(map_id, count, reactor_class_info:, strict_ordering: true)
-        reactor_class_name = reactor_class_info["name"] || reactor_class_info["parent"]
-
+      def initialize_map_operation(map_id, count, parent_reactor_class_name, reactor_class_info:, strict_ordering: true)
         # Ensure counter is set
-        set_map_counter(map_id, count, reactor_class_name)
+        set_map_counter(map_id, count, parent_reactor_class_name)
 
         # Store metadata
-        key = "reactor:#{reactor_class_name}:map:#{map_id}:metadata"
+        key = "reactor:#{parent_reactor_class_name}:map:#{map_id}:metadata"
         metadata = {
           count: count,
           strict_ordering: strict_ordering,
@@ -75,7 +73,6 @@ module RubyReactor
           created_at: Time.now.to_i
         }
         @redis.call("JSON.SET", key, ".", metadata.to_json)
-        @redis.expire(key, 86_400)
         @redis.expire(key, 86_400)
       end
 
