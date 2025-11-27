@@ -1,9 +1,6 @@
 # frozen_string_literal: true
 
 require "spec_helper"
-require "ruby_reactor"
-require "sidekiq/testing"
-require "redis"
 
 # Define a simple reactor for mapping
 class SingleWorkerDoubleReactor < RubyReactor::Reactor
@@ -13,6 +10,8 @@ class SingleWorkerDoubleReactor < RubyReactor::Reactor
     argument :number, input(:number)
     run { |args, _| RubyReactor::Success(args[:number] * 2) }
   end
+
+  returns :double
 end
 
 class SingleWorkerMapReactor < RubyReactor::Reactor
@@ -26,33 +25,13 @@ class SingleWorkerMapReactor < RubyReactor::Reactor
 end
 
 RSpec.describe "Single Worker Async Map Execution" do
-  let(:redis_client) { instance_double(Redis) }
-
   before do
-    # Mock Redis
-    allow(Redis).to receive(:new).and_return(redis_client)
-    allow(redis_client).to receive(:set)
-    allow(redis_client).to receive(:get)
-    allow(redis_client).to receive(:expire)
-    allow(redis_client).to receive(:call).with("JSON.SET", any_args)
-    allow(redis_client).to receive(:call).with("JSON.GET", any_args).and_return(nil)
-
-    # Configure storage
-    RubyReactor.configure do |config|
-      config.storage.adapter = :redis
-    end
-    # Reset adapter
-    RubyReactor.configuration.instance_variable_set(:@storage_adapter, nil)
-
-    Sidekiq::Testing.fake!
+    # Ensure clean state
+    Sidekiq::Worker.clear_all
   end
 
   it "queues MapExecutionWorker for single worker strategy" do
-    allow(redis_client).to receive(:call).with("JSON.SET", any_args)
-
-    result = SingleWorkerMapReactor.run(numbers: [1, 2, 3])
-
-    expect(result).to be_a(RubyReactor::RetryQueuedResult)
+    SingleWorkerMapReactor.run(numbers: [1, 2, 3])
 
     # Should queue MapExecutionWorker, NOT MapElementWorker
     expect(RubyReactor::MapExecutionWorker.jobs.size).to eq(1)
@@ -60,30 +39,20 @@ RSpec.describe "Single Worker Async Map Execution" do
   end
 
   it "executes map loop in worker" do
-    # Setup context storage mock
-    context_data = nil
-    allow(redis_client).to receive(:call).with("JSON.SET", any_args) do |_, _, _, data|
-      context_data = data
-    end
-
-    allow(redis_client).to receive(:call).with("JSON.GET", any_args) do
-      context_data
-    end
-
     # Run initial execution
-    SingleWorkerMapReactor.run(numbers: [1, 2, 3])
+    reactor = SingleWorkerMapReactor.new
+    result = reactor.run(numbers: [1, 2, 3])
+    context_id = reactor.context.context_id
 
     # Process job
-    # We need to mock Executor#resume_execution because it will try to run
-    # and we don't want to spin up a full execution in this unit test
-    allow_any_instance_of(RubyReactor::Executor).to receive(:resume_execution)
+    RubyReactor::MapExecutionWorker.drain
 
-    expect do
-      RubyReactor::MapExecutionWorker.drain
-    end.not_to raise_error
+    # Verify result in Redis
+    storage = RubyReactor.configuration.storage_adapter
+    context = storage.retrieve_context(context_id, SingleWorkerMapReactor.name)
 
-    # Verify result was set in context (we can check if set_result was called on context)
-    # But context is deserialized inside worker.
-    # We can verify resume_execution was called.
+    expect(context).not_to be_nil
+    # Since SingleWorkerDoubleReactor returns :double, the result should be [2, 4, 6]
+    expect(context["intermediate_results"]["doubled_numbers"]).to eq([2, 4, 6])
   end
 end

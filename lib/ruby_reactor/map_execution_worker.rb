@@ -91,12 +91,17 @@ module RubyReactor
                      end
 
       # Update parent context
-      # We need to set the result for the map step
-      parent_context.set_result(step_name.to_sym, { step_name.to_sym => final_result })
+      parent_context.set_result(step_name.to_sym, final_result)
+
+      # Clear current step to avoid re-execution
+      parent_context.current_step = nil
 
       # Resume parent execution
       executor = RubyReactor::Executor.new(parent_context.reactor_class, {}, parent_context)
       executor.resume_execution
+
+      # Save updated context
+      storage.store_context(parent_context_id, ContextSerializer.serialize(parent_context), parent_reactor_class_name)
     end
     # rubocop:enable Metrics/MethodLength, Metrics/PerceivedComplexity
   end
