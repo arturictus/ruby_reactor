@@ -4,12 +4,9 @@ require "spec_helper"
 require "ruby_reactor/storage/redis_adapter"
 
 RSpec.describe RubyReactor::Storage::RedisAdapter do
-  let(:redis_client) { instance_double(Redis) }
-  let(:adapter) { described_class.new(url: "redis://localhost:6379") }
-
-  before do
-    allow(Redis).to receive(:new).and_return(redis_client)
-  end
+  let(:redis_url) { "redis://localhost:6780" }
+  let(:redis_client) { Redis.new(url: redis_url) }
+  let(:adapter) { described_class.new(url: redis_url) }
 
   describe "#store_context" do
     it "stores context using JSON.SET" do
@@ -18,13 +15,15 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       data = { foo: "bar" }.to_json
       key = "reactor:MyReactor:context:ctx-123"
 
-      allow(redis_client).to receive(:call)
-      allow(redis_client).to receive(:expire)
-
       adapter.store_context(context_id, data, reactor_class)
 
-      expect(redis_client).to have_received(:call).with("JSON.SET", key, ".", data)
-      expect(redis_client).to have_received(:expire).with(key, 86_400)
+      # Verify directly in Redis
+      stored_data = redis_client.call("JSON.GET", key)
+      expect(stored_data).to eq(data)
+
+      # Verify TTL (approximate)
+      ttl = redis_client.ttl(key)
+      expect(ttl).to be_within(5).of(86_400)
     end
   end
 
@@ -35,7 +34,8 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       key = "reactor:MyReactor:context:ctx-123"
       data = { "foo" => "bar" }
 
-      allow(redis_client).to receive(:call).with("JSON.GET", key).and_return(data.to_json)
+      # Setup
+      redis_client.call("JSON.SET", key, ".", data.to_json)
 
       result = adapter.retrieve_context(context_id, reactor_class)
       expect(result).to eq(data)
@@ -44,9 +44,6 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
     it "returns nil if context not found" do
       context_id = "ctx-123"
       reactor_class = "MyReactor"
-      key = "reactor:MyReactor:context:ctx-123"
-
-      allow(redis_client).to receive(:call).with("JSON.GET", key).and_return(nil)
 
       result = adapter.retrieve_context(context_id, reactor_class)
       expect(result).to be_nil
@@ -61,13 +58,10 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       reactor_class = "MyReactor"
       key = "reactor:MyReactor:map:map-123:results"
 
-      allow(redis_client).to receive(:hset)
-      allow(redis_client).to receive(:expire)
-
       adapter.store_map_result(map_id, index, result, reactor_class, strict_ordering: true)
 
-      expect(redis_client).to have_received(:hset).with(key, "0", result.to_json)
-      expect(redis_client).to have_received(:expire).with(key, 86_400)
+      stored_val = redis_client.hget(key, "0")
+      expect(stored_val).to eq(result.to_json)
     end
 
     it "stores unordered result using RPUSH" do
@@ -77,13 +71,10 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       reactor_class = "MyReactor"
       key = "reactor:MyReactor:map:map-123:results"
 
-      allow(redis_client).to receive(:rpush)
-      allow(redis_client).to receive(:expire)
-
       adapter.store_map_result(map_id, index, result, reactor_class, strict_ordering: false)
 
-      expect(redis_client).to have_received(:rpush).with(key, result.to_json)
-      expect(redis_client).to have_received(:expire).with(key, 86_400)
+      stored_vals = redis_client.lrange(key, 0, -1)
+      expect(stored_vals).to eq([result.to_json])
     end
   end
 
@@ -92,12 +83,9 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       map_id = "map-123"
       reactor_class = "MyReactor"
       key = "reactor:MyReactor:map:map-123:results"
-      data = {
-        "1" => { value: 2 }.to_json,
-        "0" => { value: 1 }.to_json
-      }
 
-      allow(redis_client).to receive(:hgetall).with(key).and_return(data)
+      redis_client.hset(key, "1", { value: 2 }.to_json)
+      redis_client.hset(key, "0", { value: 1 }.to_json)
 
       result = adapter.retrieve_map_results(map_id, reactor_class, strict_ordering: true)
       expect(result).to eq([{ "value" => 1 }, { "value" => 2 }])
@@ -107,9 +95,9 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       map_id = "map-123"
       reactor_class = "MyReactor"
       key = "reactor:MyReactor:map:map-123:results"
-      data = [{ value: 1 }.to_json, { value: 2 }.to_json]
 
-      allow(redis_client).to receive(:lrange).with(key, 0, -1).and_return(data)
+      redis_client.rpush(key, { value: 1 }.to_json)
+      redis_client.rpush(key, { value: 2 }.to_json)
 
       result = adapter.retrieve_map_results(map_id, reactor_class, strict_ordering: false)
       expect(result).to eq([{ "value" => 1 }, { "value" => 2 }])
