@@ -40,8 +40,8 @@ RSpec.describe "Async Map Execution" do
   it "queues map element workers" do
     result = AsyncMapRootReactor.run(numbers: [1, 2, 3])
 
-    # Should return RetryQueuedResult because it went async
-    expect(result).to be_a(RubyReactor::RetryQueuedResult)
+    # Should return AsyncResult because it went async
+    expect(result).to be_a(RubyReactor::AsyncResult)
 
     # Check Sidekiq jobs
     # With batch_size: 1, only 1 job should be queued initially
@@ -52,7 +52,7 @@ RSpec.describe "Async Map Execution" do
     # Run initial execution
     reactor = AsyncMapRootReactor.new
     result = reactor.run(numbers: [1, 2, 3])
-    expect(result).to be_a(RubyReactor::RetryQueuedResult)
+    expect(result).to be_a(RubyReactor::AsyncResult)
 
     context_id = reactor.context.context_id
 

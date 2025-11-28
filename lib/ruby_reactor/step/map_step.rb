@@ -61,17 +61,24 @@ module RubyReactor
           results = execute_inline_map(arguments, context)
           return results if results.is_a?(RubyReactor::Failure)
 
-          process_results(results, arguments[:collect_block])
+          process_results(results, arguments[:collect_block], arguments[:fail_fast])
         end
 
         def execute_inline_map(arguments, context)
           results = []
+          fail_fast = arguments[:fail_fast].nil? || arguments[:fail_fast]
+
           arguments[:source].each do |element|
             result = execute_single_element(element, arguments, context)
-            return result unless result.success?
 
-            results << result.value
+            if fail_fast && result.failure?
+              return result # Stop immediately on first failure
+            end
+
+            # When fail_fast is false, store Result objects; when true, store values
+            results << (fail_fast ? result.value : result)
           end
+
           results
         end
 
@@ -93,15 +100,22 @@ module RubyReactor
           child_context.inline_async_execution = parent_context.inline_async_execution
         end
 
-        def process_results(results, collect_block)
+        def process_results(results, collect_block, fail_fast = true)
           if collect_block
             begin
+              # Collect block receives Result objects when fail_fast is false, values when true
               RubyReactor::Success(collect_block.call(results))
             rescue StandardError => e
               RubyReactor::Failure(e)
             end
-          else
+          elsif fail_fast
+            # Default behavior when no collect block
+            # Current behavior: results are already values
             RubyReactor::Success(results)
+          else
+            # New behavior: extract successful values only
+            successes = results.select(&:success?).map(&:value)
+            RubyReactor::Success(successes)
           end
         end
 
@@ -123,17 +137,17 @@ module RubyReactor
 
           reactor_class_info = build_reactor_class_info(arguments[:mapped_reactor_class], context, step_name)
 
-          if arguments[:batch_size]
-            storage = RubyReactor.configuration.storage_adapter
-            storage.set_last_queued_index(map_id, arguments[:batch_size] - 1, context.reactor_class.name)
-            queue_fan_out(map_id: map_id, arguments: arguments, context: context,
-                          reactor_class_info: reactor_class_info, step_name: step_name, limit: arguments[:batch_size])
-          else
-            queue_single_worker(map_id: map_id, arguments: arguments, context: context,
-                                reactor_class_info: reactor_class_info, step_name: step_name)
-          end
+          job_id = if arguments[:batch_size]
+                     storage = RubyReactor.configuration.storage_adapter
+                     storage.set_last_queued_index(map_id, arguments[:batch_size] - 1, context.reactor_class.name)
+                     queue_fan_out(map_id: map_id, arguments: arguments, context: context,
+                                   reactor_class_info: reactor_class_info, step_name: step_name, limit: arguments[:batch_size])
+                   else
+                     queue_single_worker(map_id: map_id, arguments: arguments, context: context,
+                                         reactor_class_info: reactor_class_info, step_name: step_name)
+                   end
 
-          RetryQueuedResult.new(step_name, 1, nil)
+          RubyReactor::AsyncResult.new(job_id: job_id)
         end
 
         def prepare_async_execution(context, map_id, count)
@@ -159,14 +173,17 @@ module RubyReactor
           )
 
           limit ||= arguments[:source].count
+          first_job_id = nil
           arguments[:source].each_with_index do |element, index|
             break if index >= limit
 
-            queue_map_element(map_id: map_id, element: element, index: index, arguments: arguments, context: context,
-                              reactor_class_info: reactor_class_info, step_name: step_name)
+            job_id = queue_map_element(map_id: map_id, element: element, index: index, arguments: arguments, context: context,
+                                       reactor_class_info: reactor_class_info, step_name: step_name)
+            first_job_id ||= job_id
           end
 
           queue_collector(map_id, context, step_name, arguments[:strict_ordering])
+          first_job_id
         end
 
         # rubocop:disable Metrics/ParameterLists

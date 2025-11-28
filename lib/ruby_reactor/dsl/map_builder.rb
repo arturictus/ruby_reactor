@@ -13,11 +13,11 @@ module RubyReactor
         @reactor = reactor
         @argument_mappings = {}
         @async = false
-        @retry_config = {}
         @strict_ordering = true
         @batch_size = nil
         @source_enumerable = nil
         @collect_block = nil
+        @fail_fast = true # Default: stop on first error
       end
 
       def argument(mapped_input_name, source)
@@ -28,12 +28,9 @@ module RubyReactor
         @source_enumerable = enumerable
       end
 
-      def async(async = true, **options)
+      def async(async = true, batch_size: nil)
         @async = async
-        return unless options.any?
-
-        @batch_size = options[:batch_size] if options.key?(:batch_size)
-        # Add other options here as needed
+        @batch_size = batch_size if batch_size
       end
 
       def strict_ordering(enabled = true)
@@ -48,12 +45,8 @@ module RubyReactor
         @collect_block = block
       end
 
-      def retries(max_attempts: 3, backoff: :exponential, base_delay: 1)
-        @retry_config = {
-          max_attempts: max_attempts,
-          backoff: backoff,
-          base_delay: base_delay
-        }
+      def fail_fast(enabled = true)
+        @fail_fast = enabled
       end
 
       def build
@@ -92,6 +85,7 @@ module RubyReactor
             strict_ordering: { source: RubyReactor::Template::Value.new(@strict_ordering) },
             batch_size: { source: RubyReactor::Template::Value.new(@batch_size) },
             collect_block: { source: RubyReactor::Template::Value.new(@collect_block) },
+            fail_fast: { source: RubyReactor::Template::Value.new(@fail_fast) },
             async: { source: RubyReactor::Template::Value.new(@async) }
           },
           run_block: nil,
@@ -102,8 +96,7 @@ module RubyReactor
           dependencies: dependencies.uniq,
           args_validator: nil,
           output_validator: nil,
-          async: false, # MapStep handles async internally via run_async
-          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
+          async: false # MapStep handles async internally via run_async
         }
       end
 
