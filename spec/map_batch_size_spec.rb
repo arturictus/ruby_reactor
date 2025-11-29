@@ -2,25 +2,6 @@
 
 require "spec_helper"
 
-class BatchSizeReactor < RubyReactor::Reactor
-  input :numbers
-
-  step :double do
-    argument :number, input(:numbers)
-    run { |args, _| RubyReactor::Success(args[:number] * 2) }
-  end
-end
-
-class BatchMapReactor < RubyReactor::Reactor
-  input :numbers
-
-  map :doubled_numbers, BatchSizeReactor do
-    source input(:numbers)
-    argument :number, element(:doubled_numbers)
-    async true, batch_size: 2
-  end
-end
-
 RSpec.describe "Map Batch Size Execution" do
   before do
     # Use real Redis from spec_helper configuration
@@ -37,7 +18,7 @@ RSpec.describe "Map Batch Size Execution" do
   it "queues only batch_size elements initially and queues more as they finish" do
     # 10 elements
     numbers = (1..10).to_a
-    result = BatchMapReactor.run(numbers: numbers)
+    result = MapTestReactors::BatchMapReactor.run(numbers: numbers)
 
     expect(result).to be_a(RubyReactor::AsyncResult)
 

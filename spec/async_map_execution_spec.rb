@@ -2,28 +2,6 @@
 
 require "spec_helper"
 
-# Define a simple reactor for mapping
-class AsyncDoubleReactor < RubyReactor::Reactor
-  input :number
-
-  step :double do
-    argument :number, input(:number)
-    run { |args, _| RubyReactor::Success(args[:number] * 2) }
-  end
-
-  returns :double
-end
-
-class AsyncMapRootReactor < RubyReactor::Reactor
-  input :numbers
-
-  map :doubled_numbers, AsyncDoubleReactor do
-    source input(:numbers)
-    argument :number, element(:doubled_numbers)
-    async true, batch_size: 1
-  end
-end
-
 RSpec.describe "Async Map Execution" do
   before do
     # Use real Redis from spec_helper configuration
@@ -38,7 +16,7 @@ RSpec.describe "Async Map Execution" do
   end
 
   it "queues map element workers" do
-    result = AsyncMapRootReactor.run(numbers: [1, 2, 3])
+    result = MapTestReactors::AsyncMapReactor.run(numbers: [1, 2, 3])
 
     # Should return AsyncResult because it went async
     expect(result).to be_a(RubyReactor::AsyncResult)
@@ -50,7 +28,7 @@ RSpec.describe "Async Map Execution" do
 
   it "processes map elements and triggers collector" do
     # Run initial execution
-    reactor = AsyncMapRootReactor.new
+    reactor = MapTestReactors::AsyncMapReactor.new
     result = reactor.run(numbers: [1, 2, 3])
     expect(result).to be_a(RubyReactor::AsyncResult)
 
@@ -67,7 +45,7 @@ RSpec.describe "Async Map Execution" do
 
     # Verify result in Redis
     storage = RubyReactor.configuration.storage_adapter
-    context = storage.retrieve_context(context_id, AsyncMapRootReactor.name)
+    context = storage.retrieve_context(context_id, MapTestReactors::AsyncMapReactor.name)
 
     expect(context).not_to be_nil
     expect(context["intermediate_results"]["doubled_numbers"]).to eq([2, 4, 6])
