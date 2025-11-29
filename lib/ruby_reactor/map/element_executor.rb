@@ -3,6 +3,8 @@
 module RubyReactor
   module Map
     class ElementExecutor
+      extend Helpers
+
       # rubocop:disable Metrics/MethodLength
       def self.perform(arguments)
         arguments = arguments.transform_keys(&:to_sym)
@@ -62,62 +64,55 @@ module RubyReactor
         )
       end
 
-      def self.resolve_reactor_class(info)
-        if info["type"] == "class"
-          Object.const_get(info["name"])
-        elsif info["type"] == "inline"
-          parent_class = Object.const_get(info["parent"])
-          step_config = parent_class.steps[info["step"].to_sym]
-          step_config.arguments[:mapped_reactor_class][:source].value
-        else
-          raise "Unknown reactor class info: #{info}"
-        end
-      end
-
       def self.queue_next_batch(arguments)
         storage = RubyReactor.configuration.storage_adapter
         map_id = arguments[:map_id]
         reactor_class_name = arguments[:parent_reactor_class_name]
 
         next_index = storage.increment_last_queued_index(map_id, reactor_class_name)
-
-        metadata = storage.retrieve_map_metadata(map_id, reactor_class_name)
-        total_count = metadata["count"]
+        total_count = storage.retrieve_map_metadata(map_id, reactor_class_name)["count"]
 
         return unless next_index < total_count
 
-        # Load parent context to resolve source
+        parent_context = load_parent_context(arguments, reactor_class_name, storage)
+        element = resolve_next_element(arguments, parent_context, next_index)
+        serialized_inputs = build_serialized_inputs(arguments, parent_context, element)
+
+        queue_element_job(arguments, map_id, next_index, serialized_inputs, reactor_class_name)
+      end
+
+      def self.load_parent_context(arguments, reactor_class_name, storage)
         parent_context_data = storage.retrieve_context(arguments[:parent_context_id], reactor_class_name)
         parent_reactor_class = Object.const_get(reactor_class_name)
-        parent_context = Context.new(ContextSerializer.deserialize_value(parent_context_data["inputs"]),
-                                     parent_reactor_class)
+        parent_context = Context.new(
+          ContextSerializer.deserialize_value(parent_context_data["inputs"]),
+          parent_reactor_class
+        )
         parent_context.context_id = arguments[:parent_context_id]
+        parent_context
+      end
 
-        # Get step config
+      def self.resolve_next_element(arguments, parent_context, next_index)
+        parent_reactor_class = parent_context.reactor_class
         step_config = parent_reactor_class.steps[arguments[:step_name].to_sym]
 
-        # Extract source template
-        source_arg_config = step_config.arguments[:source]
-        source_template = source_arg_config[:source]
-
-        # Resolve source
+        source_template = step_config.arguments[:source][:source]
         source = source_template.resolve(parent_context)
-        element = source[next_index]
+        source[next_index]
+      end
 
-        # Extract mappings template
-        mappings_arg_config = step_config.arguments[:argument_mappings]
-        mappings_template = mappings_arg_config[:source]
+      def self.build_serialized_inputs(arguments, parent_context, element)
+        parent_reactor_class = parent_context.reactor_class
+        step_config = parent_reactor_class.steps[arguments[:step_name].to_sym]
+
+        mappings_template = step_config.arguments[:argument_mappings][:source]
         mappings = mappings_template.resolve(parent_context) || {}
 
-        # Build mapped inputs
-        mapped_inputs = RubyReactor::Step::MapStep.build_mapped_inputs(
-          mappings,
-          parent_context,
-          element
-        )
-        serialized_inputs = ContextSerializer.serialize_value(mapped_inputs)
+        mapped_inputs = build_element_inputs(mappings, parent_context, element)
+        ContextSerializer.serialize_value(mapped_inputs)
+      end
 
-        # Queue next job
+      def self.queue_element_job(arguments, map_id, next_index, serialized_inputs, reactor_class_name)
         RubyReactor.configuration.async_router.perform_map_element_async(
           map_id: map_id,
           element_id: "#{map_id}:#{next_index}",
@@ -131,7 +126,8 @@ module RubyReactor
           batch_size: arguments[:batch_size]
         )
       end
-      private_class_method :resolve_reactor_class, :queue_next_batch
+      private_class_method :queue_next_batch, :load_parent_context,
+                           :resolve_next_element, :build_serialized_inputs, :queue_element_job
     end
   end
 end

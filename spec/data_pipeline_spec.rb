@@ -363,11 +363,11 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
       expect(alice[:name]).to eq("Alice Smith")
       expect(alice[:phone]).to eq("+15550100")
       expect(alice[:age]).to eq(30)
-      expect(alice[:verified]).to eq(false)
+      expect(alice[:verified]).to be(false)
 
       # Verify enrichment worked
       bob = transformed.find { |u| u[:email] == "verified@example.com" }
-      expect(bob[:verified]).to eq(true)
+      expect(bob[:verified]).to be(true)
       expect(bob[:company]).to eq("Acme Corp")
       expect(bob[:location]).to eq("San Francisco")
 

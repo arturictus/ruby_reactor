@@ -140,8 +140,11 @@ module RubyReactor
           job_id = if arguments[:batch_size]
                      storage = RubyReactor.configuration.storage_adapter
                      storage.set_last_queued_index(map_id, arguments[:batch_size] - 1, context.reactor_class.name)
-                     queue_fan_out(map_id: map_id, arguments: arguments, context: context,
-                                   reactor_class_info: reactor_class_info, step_name: step_name, limit: arguments[:batch_size])
+                     queue_fan_out(
+                       map_id: map_id, arguments: arguments, context: context,
+                       reactor_class_info: reactor_class_info, step_name: step_name,
+                       limit: arguments[:batch_size]
+                     )
                    else
                      queue_single_worker(map_id: map_id, arguments: arguments, context: context,
                                          reactor_class_info: reactor_class_info, step_name: step_name)
@@ -165,7 +168,9 @@ module RubyReactor
           end
         end
 
+        # rubocop:disable Metrics/ParameterLists
         def queue_fan_out(map_id:, arguments:, context:, reactor_class_info:, step_name:, limit: nil)
+          # rubocop:enable Metrics/ParameterLists
           storage = RubyReactor.configuration.storage_adapter
           storage.initialize_map_operation(
             map_id, arguments[:source].count, context.reactor_class.name,
@@ -177,8 +182,10 @@ module RubyReactor
           arguments[:source].each_with_index do |element, index|
             break if index >= limit
 
-            job_id = queue_map_element(map_id: map_id, element: element, index: index, arguments: arguments, context: context,
-                                       reactor_class_info: reactor_class_info, step_name: step_name)
+            job_id = queue_map_element(
+              map_id: map_id, element: element, index: index, arguments: arguments,
+              context: context, reactor_class_info: reactor_class_info, step_name: step_name
+            )
             first_job_id ||= job_id
           end
 
