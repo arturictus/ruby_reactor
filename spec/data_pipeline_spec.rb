@@ -578,7 +578,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
       expect(result).to be_a(RubyReactor::AsyncResult)
 
       # With batch_size: 2, should queue 2 jobs initially
-      expect(RubyReactor::MapElementWorker.jobs.size).to eq(2)
+      expect(RubyReactor::SidekiqWorkers::MapElementWorker.jobs.size).to eq(2)
     end
   end
 

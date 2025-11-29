@@ -3,12 +3,12 @@
 module RubyReactor
   class AsyncRouter
     def self.perform_async(serialized_context, reactor_class_name = nil)
-      job_id = Worker.perform_async(serialized_context, reactor_class_name)
+      job_id = SidekiqWorkers::Worker.perform_async(serialized_context, reactor_class_name)
       RubyReactor::AsyncResult.new(job_id: job_id)
     end
 
     def self.perform_in(delay, serialized_context, reactor_class_name = nil)
-      job_id = Worker.perform_in(delay, serialized_context, reactor_class_name)
+      job_id = SidekiqWorkers::Worker.perform_in(delay, serialized_context, reactor_class_name)
       RubyReactor::AsyncResult.new(job_id: job_id)
     end
 
@@ -16,7 +16,7 @@ module RubyReactor
     def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                        strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
                                        batch_size: nil)
-      RubyReactor::MapElementWorker.perform_async(
+      RubyReactor::SidekiqWorkers::MapElementWorker.perform_async(
         {
           "map_id" => map_id,
           "element_id" => element_id,
@@ -36,7 +36,7 @@ module RubyReactor
     # rubocop:disable Metrics/ParameterLists
     def self.perform_map_collection_async(parent_context_id:, map_id:, parent_reactor_class_name:, step_name:,
                                           strict_ordering:, timeout:)
-      RubyReactor::MapCollectorWorker.perform_async(
+      RubyReactor::SidekiqWorkers::MapCollectorWorker.perform_async(
         {
           "parent_context_id" => parent_context_id,
           "map_id" => map_id,
@@ -52,7 +52,7 @@ module RubyReactor
     # rubocop:disable Metrics/ParameterLists
     def self.perform_map_execution_async(map_id:, serialized_inputs:, reactor_class_info:, strict_ordering:,
                                          parent_context_id:, parent_reactor_class_name:, step_name:)
-      RubyReactor::MapExecutionWorker.perform_async(
+      RubyReactor::SidekiqWorkers::MapExecutionWorker.perform_async(
         {
           "map_id" => map_id,
           "serialized_inputs" => serialized_inputs,

@@ -45,7 +45,7 @@ RSpec.describe "Async Map Execution" do
 
     # Check Sidekiq jobs
     # With batch_size: 1, only 1 job should be queued initially
-    expect(RubyReactor::MapElementWorker.jobs.size).to eq(1)
+    expect(RubyReactor::SidekiqWorkers::MapElementWorker.jobs.size).to eq(1)
   end
 
   it "processes map elements and triggers collector" do
@@ -57,13 +57,13 @@ RSpec.describe "Async Map Execution" do
     context_id = reactor.context.context_id
 
     # Process jobs
-    RubyReactor::MapElementWorker.drain
+    RubyReactor::SidekiqWorkers::MapElementWorker.drain
 
     # Check if Collector was queued
-    expect(RubyReactor::MapCollectorWorker.jobs.size).to eq(2)
+    expect(RubyReactor::SidekiqWorkers::MapCollectorWorker.jobs.size).to eq(2)
 
     # Process Collector
-    RubyReactor::MapCollectorWorker.drain
+    RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
 
     # Verify result in Redis
     storage = RubyReactor.configuration.storage_adapter

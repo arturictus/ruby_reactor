@@ -40,7 +40,7 @@ module Support
       context = RubyReactor::ContextSerializer.deserialize(serialized_context)
       context.test_mode = true
       serialized_context = RubyReactor::ContextSerializer.serialize(context)
-      result = RubyReactor::Worker.new.perform(serialized_context, reactor_class_name)
+      result = RubyReactor::SidekiqWorkers::Worker.new.perform(serialized_context, reactor_class_name)
       puts "[WORKER_MOCK.perform] Returning result: #{result.class}, result.result: #{result.result&.class}"
       result
     end
@@ -49,7 +49,7 @@ module Support
     def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                        strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:)
       warn "[WORKER_MOCK] perform_map_element_async CALLED"
-      job_id = RubyReactor::MapElementWorker.perform_async(
+      job_id = RubyReactor::SidekiqWorkers::MapElementWorker.perform_async(
         {
           "map_id" => map_id,
           "element_id" => element_id,
@@ -70,7 +70,7 @@ module Support
     def self.perform_map_collection_async(parent_context_id:, map_id:, parent_reactor_class_name:, step_name:,
                                           strict_ordering:, timeout:)
       warn "[WORKER_MOCK] perform_map_collection_async CALLED"
-      job_id = RubyReactor::MapCollectorWorker.perform_async(
+      job_id = RubyReactor::SidekiqWorkers::MapCollectorWorker.perform_async(
         {
           "parent_context_id" => parent_context_id,
           "map_id" => map_id,
@@ -88,7 +88,7 @@ module Support
     def self.perform_map_execution_async(map_id:, serialized_inputs:, reactor_class_info:, strict_ordering:,
                                          parent_context_id:, parent_reactor_class_name:, step_name:)
       warn "[WORKER_MOCK] perform_map_execution_async CALLED"
-      job_id = RubyReactor::MapExecutionWorker.perform_async(
+      job_id = RubyReactor::SidekiqWorkers::MapExecutionWorker.perform_async(
         {
           "map_id" => map_id,
           "serialized_inputs" => serialized_inputs,

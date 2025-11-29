@@ -42,22 +42,21 @@ RSpec.describe "Map Batch Size Execution" do
     expect(result).to be_a(RubyReactor::AsyncResult)
 
     # Should only queue 2 jobs initially because batch_size is 2
-    expect(RubyReactor::MapElementWorker.jobs.size).to eq(2)
+    expect(RubyReactor::SidekiqWorkers::MapElementWorker.jobs.size).to eq(2)
 
-    # Process the first 2 jobs manually to verify they queue the next batch
-    initial_jobs = RubyReactor::MapElementWorker.jobs.dup
-    RubyReactor::MapElementWorker.clear
+    # Process the first batch
+    initial_jobs = RubyReactor::SidekiqWorkers::MapElementWorker.jobs.dup
+    RubyReactor::SidekiqWorkers::MapElementWorker.clear
 
     initial_jobs.each do |job|
-      RubyReactor::MapElementWorker.new.perform(*job["args"])
+      RubyReactor::SidekiqWorkers::MapElementWorker.new.perform(*job["args"])
     end
 
-    # Each finished job should have queued 1 more job (total 2 more)
-    # So queue should have 2 jobs again (index 2 and 3)
-    expect(RubyReactor::MapElementWorker.jobs.size).to eq(2)
+    # Should have queued 2 more jobs (indices 2 and 3)
+    expect(RubyReactor::SidekiqWorkers::MapElementWorker.jobs.size).to eq(2)
 
-    # Check that we are processing the right indices
-    job_args = RubyReactor::MapElementWorker.jobs.map { |j| j["args"].first }
+    # Verify the indices
+    job_args = RubyReactor::SidekiqWorkers::MapElementWorker.jobs.map { |j| j["args"].first }
     indices = job_args.map { |a| a["index"] }
     expect(indices).to contain_exactly(2, 3)
   end

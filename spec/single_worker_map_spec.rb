@@ -31,21 +31,23 @@ RSpec.describe "Single Worker Async Map Execution" do
   end
 
   it "queues MapExecutionWorker for single worker strategy" do
-    SingleWorkerMapReactor.run(numbers: [1, 2, 3])
-
-    # Should queue MapExecutionWorker, NOT MapElementWorker
-    expect(RubyReactor::MapExecutionWorker.jobs.size).to eq(1)
-    expect(RubyReactor::MapElementWorker.jobs.size).to eq(0)
-  end
-
-  it "executes map loop in worker" do
     # Run initial execution
     reactor = SingleWorkerMapReactor.new
-    result = reactor.run(numbers: [1, 2, 3])
+    reactor.run(numbers: [1, 2, 3])
     context_id = reactor.context.context_id
 
-    # Process job
-    RubyReactor::MapExecutionWorker.drain
+    # Should queue MapExecutionWorker, NOT MapElementWorker
+    expect(RubyReactor::SidekiqWorkers::MapExecutionWorker.jobs.size).to eq(1)
+    expect(RubyReactor::SidekiqWorkers::MapElementWorker.jobs.size).to eq(0)
+
+    # Verify the job arguments
+    job = RubyReactor::SidekiqWorkers::MapExecutionWorker.jobs.first
+    args = job["args"].first
+    expect(args["serialized_inputs"]).to be_a(Hash)
+    expect(args["reactor_class_info"]).to eq({ "type" => "class", "name" => "SingleWorkerDoubleReactor" })
+
+    # Process the job
+    RubyReactor::SidekiqWorkers::MapExecutionWorker.drain
 
     # Verify result in Redis
     storage = RubyReactor.configuration.storage_adapter
