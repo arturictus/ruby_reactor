@@ -19,21 +19,42 @@ module RubyReactor
         step_name = arguments[:step_name]
         batch_size = arguments[:batch_size]
         # rubocop:enable Metrics/MethodLength
-        # Deserialize inputs
-        inputs = ContextSerializer.deserialize_value(serialized_inputs)
+        serialized_context = arguments[:serialized_context]
+
+        if serialized_context
+          context = ContextSerializer.deserialize(serialized_context)
+          context.map_metadata = arguments
+          reactor_class = context.reactor_class
+        else
+          # Deserialize inputs
+          inputs = ContextSerializer.deserialize_value(serialized_inputs)
+
+          # Resolve reactor class
+          reactor_class = resolve_reactor_class(reactor_class_info)
+
+          # Create context
+          context = Context.new(inputs, reactor_class)
+          context.map_metadata = arguments
+        end
         storage = RubyReactor.configuration.storage_adapter
-
-        # Resolve reactor class
-        reactor_class = resolve_reactor_class(reactor_class_info)
-
-        # Create context
-        context = Context.new(inputs, reactor_class)
 
         # Execute
         executor = Executor.new(reactor_class, {}, context)
-        executor.execute
+
+        if serialized_context
+          executor.resume_execution
+        else
+          executor.execute
+        end
 
         result = executor.result
+
+        if result.is_a?(RetryQueuedResult)
+          queue_next_batch(arguments) if batch_size
+          return
+        end
+
+        # Store result
 
         # Store result
 
@@ -60,7 +81,7 @@ module RubyReactor
           parent_reactor_class_name: parent_reactor_class_name,
           step_name: step_name,
           strict_ordering: strict_ordering,
-          timeout: nil
+          timeout: 3600
         )
       end
 

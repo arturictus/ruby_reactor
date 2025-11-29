@@ -33,9 +33,17 @@ module RubyReactor
         collect_block = step_config.arguments[:collect_block][:source].value
 
         if collect_block
-          collect_block.call(results.map(&:value))
+          # Pass all results (Success and Failure) to collect block
+          begin
+            collected = collect_block.call(results)
+            RubyReactor::Success(collected)
+          rescue StandardError => e
+            RubyReactor::Failure(e)
+          end
         else
-          results.map(&:value)
+          # Default behavior: fail if any failure
+          first_failure = results.find(&:failure?)
+          first_failure || RubyReactor::Success(results.map(&:value))
         end
       end
 

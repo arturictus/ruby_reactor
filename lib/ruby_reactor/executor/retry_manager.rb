@@ -42,7 +42,26 @@ module RubyReactor
         reactor_class_name = context_to_serialize.reactor_class.name
 
         serialized_context = ContextSerializer.serialize(context_to_serialize)
-        configuration.async_router.perform_in(delay, serialized_context, reactor_class_name)
+
+        if @context.map_metadata
+          map_args = @context.map_metadata.transform_keys(&:to_sym)
+          configuration.async_router.perform_map_element_in(
+            delay,
+            map_id: map_args[:map_id],
+            element_id: map_args[:element_id],
+            index: map_args[:index],
+            serialized_inputs: map_args[:serialized_inputs],
+            reactor_class_info: map_args[:reactor_class_info],
+            strict_ordering: map_args[:strict_ordering],
+            parent_context_id: map_args[:parent_context_id],
+            parent_reactor_class_name: map_args[:parent_reactor_class_name],
+            step_name: map_args[:step_name],
+            batch_size: map_args[:batch_size],
+            serialized_context: serialized_context
+          )
+        else
+          configuration.async_router.perform_in(delay, serialized_context, reactor_class_name)
+        end
       end
 
       def clear_retry_state

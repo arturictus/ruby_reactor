@@ -133,6 +133,7 @@ module RubyReactor
 
         def run_async(arguments, context, step_name)
           map_id = "#{context.context_id}:#{step_name}"
+          context.map_operations[step_name.to_s] = map_id
           prepare_async_execution(context, map_id, arguments[:source].count)
 
           reactor_class_info = build_reactor_class_info(arguments[:mapped_reactor_class], context, step_name)
