@@ -410,6 +410,7 @@ For detailed documentation, see the following guides:
 - [DAG (Directed Acyclic Graph)](documentation/DAG.md) - How RubyReactor manages dependencies and execution order
 - [Async Reactors](documentation/async_reactors.md) - Working with asynchronous operations
 - [Composition](documentation/composition.md) - Building complex workflows with nested reactors
+- [Data Pipelines](documentation/data_pipelines.md) - Processing collections with map, async, and batching
 - [Retry Configuration](documentation/retry_configuration.md) - Configuring retry behavior and failure handling
 
 ### Examples
@@ -422,8 +423,8 @@ For detailed documentation, see the following guides:
 - [X] Global id to serialize ActiveRecord classes
 - [ ] Middlewares
 - [ ] Descriptive errors
-- [ ] `map` step to iterate over arrays in parallel
-- [ ] `compose` special step to execute reactors as step
+- [X] `map` step to iterate over arrays in parallel
+- [X] `compose` special step to execute reactors as step
 - [ ] Async ruby to parallelize same level steps
 - [ ] Dedicated interface to inspect reactor results and errors
 
