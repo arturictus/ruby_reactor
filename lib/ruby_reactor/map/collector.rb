@@ -56,10 +56,8 @@ module RubyReactor
                          first_failure || RubyReactor::Success(results.map(&:value))
                        end
 
-        return unless final_result.success?
-
         # Resume execution
-        resume_parent_execution(parent_context, step_name, final_result.value, storage)
+        resume_parent_execution(parent_context, step_name, final_result, storage)
       end
       # rubocop:enable Metrics/MethodLength
     end

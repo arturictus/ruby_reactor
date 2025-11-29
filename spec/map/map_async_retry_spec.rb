@@ -63,7 +63,7 @@ RSpec.describe "Map Async Retry Behavior" do
       storage = RubyReactor.configuration.storage_adapter
       context = storage.retrieve_context(context_id, AsyncRetryMapReactorV2.name)
 
-      expect(context["intermediate_results"]["processed"]["value"]).to eq(%w[HELLO WORLD])
+      expect(context["intermediate_results"]["processed"]).to eq(%w[HELLO WORLD])
     end
 
     it "fails after max retries in async mode" do

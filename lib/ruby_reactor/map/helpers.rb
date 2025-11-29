@@ -49,7 +49,8 @@ module RubyReactor
 
       # Resumes parent reactor execution after map completion
       def resume_parent_execution(parent_context, step_name, final_result, storage)
-        parent_context.set_result(step_name.to_sym, final_result)
+        value = final_result.success? ? final_result.value : final_result
+        parent_context.set_result(step_name.to_sym, value)
         parent_context.current_step = nil
 
         executor = RubyReactor::Executor.new(parent_context.reactor_class, {}, parent_context)
