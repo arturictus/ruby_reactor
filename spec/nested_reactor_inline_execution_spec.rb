@@ -32,8 +32,8 @@ RSpec.describe "Nested Reactor Inline Execution" do
 
     expect(result).to be_a(RubyReactor::Success)
     expect(result.value[:first_step]).to eq("first_step_done")
-    expect(result.value[:child_1][:async_step]).to eq("async_done_child_1")
-    expect(result.value[:child_2][:async_step]).to eq("async_done_child_2")
+    expect(result.value[:child1][:async_step]).to eq("async_done_child1")
+    expect(result.value[:child2][:async_step]).to eq("async_done_child2")
     expect(result.value[:last_step]).to eq("last_step_done")
   end
 end

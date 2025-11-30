@@ -29,11 +29,11 @@ module Support
       run { |_, _| RubyReactor::Success("first_step_done") }
     end
 
-    compose :child_1, NestedInlineChildReactor do
-      argument :id, value("child_1")
+    compose :child1, NestedInlineChildReactor do
+      argument :id, value("child1")
     end
 
-    compose :child_2 do
+    compose :child2 do
       input :id
 
       step :async_step do
@@ -41,7 +41,7 @@ module Support
         run { |args, _| RubyReactor::Success("async_done_#{args[:id]}") }
       end
 
-      argument :id, value("child_2")
+      argument :id, value("child2")
     end
 
     step :last_step do

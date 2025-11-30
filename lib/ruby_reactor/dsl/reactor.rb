@@ -16,6 +16,7 @@ module RubyReactor
 
       module ClassMethods
         include RubyReactor::Dsl::TemplateHelpers
+        include RubyReactor::Dsl::ValidationHelpers
 
         def inputs
           @inputs ||= {}
@@ -91,12 +92,19 @@ module RubyReactor
           step_config
         end
 
+        def map(name, reactor_class = nil, &block)
+          builder = RubyReactor::Dsl::MapBuilder.new(name, reactor_class, self, &block)
+
+          builder.instance_eval(&block) if block_given?
+
+          step_config = builder.build
+          steps[name] = step_config
+          step_config
+        end
+
         def returns(step_name)
           @return_step = step_name
         end
-
-        # Alias for backward compatibility
-        alias return returns
 
         def middleware(middleware_class)
           middlewares << middleware_class
@@ -124,25 +132,6 @@ module RubyReactor
           end
         end
 
-        # Validation helper methods
-        def build_validation_schema(&block)
-          check_dry_validation_available!
-          RubyReactor::Validation::SchemaBuilder.build_from_block(&block)
-        end
-
-        def create_input_validator(schema_or_block)
-          check_dry_validation_available!
-
-          schema = case schema_or_block
-                   when Proc
-                     build_validation_schema(&schema_or_block)
-                   else
-                     schema_or_block
-                   end
-
-          RubyReactor::Validation::InputValidator.new(schema)
-        end
-
         # Entry point for running the reactor
         def run(inputs = {})
           reactor = new
@@ -151,15 +140,6 @@ module RubyReactor
 
         def call(inputs = {})
           run(inputs)
-        end
-
-        private
-
-        def check_dry_validation_available!
-          return if defined?(Dry::Schema)
-
-          raise LoadError,
-                "dry-validation gem is required for validation features. Add 'gem \"dry-validation\"' to your Gemfile."
         end
       end
     end

@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe "Compose Reproduction" do
+RSpec.describe "Compose" do
   class TestComposeReactor < RubyReactor::Reactor
     input :id
 

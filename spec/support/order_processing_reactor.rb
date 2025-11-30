@@ -32,7 +32,7 @@ module RubyReactor
       argument :fail_at, input(:fail_at)
       run do |args, _context|
         puts "[EXECUTION] RUN validate_order - order_id: #{args[:order_id]}"
-        if args[:fail_at] == :validate_order
+        if args[:fail_at]&.to_sym == :validate_order
           Failure("Failure triggered for validate_order")
         else
           Success({ id: args[:order_id], amount: 100.0, currency: "USD" })
@@ -59,7 +59,7 @@ module RubyReactor
       run do |args, context|
         puts "[EXECUTION] RUN check_inventory - product_id: #{args[:product_id]}, " \
              "quantity: #{args[:quantity]}, attempt: #{context.retry_context.attempts_for_step(:check_inventory) + 1}"
-        if args[:fail_at] == :check_inventory &&
+        if args[:fail_at]&.to_sym == :check_inventory &&
            (args[:success_at_retry].nil? ||
             context.retry_context.attempts_for_step(:check_inventory) < args[:success_at_retry])
           Failure("Failure triggered for check_inventory")
@@ -125,7 +125,7 @@ module RubyReactor
 
       run do |args, _context|
         puts "[EXECUTION] RUN process_payment - order_id: #{args[:order][:id]}, amount: #{args[:amount]}"
-        if args[:fail_at] == :process_payment
+        if args[:fail_at]&.to_sym == :process_payment
           Failure("Failure triggered for process_payment")
         else
           # Simulate payment processing

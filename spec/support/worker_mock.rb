@@ -40,9 +40,88 @@ module Support
       context = RubyReactor::ContextSerializer.deserialize(serialized_context)
       context.test_mode = true
       serialized_context = RubyReactor::ContextSerializer.serialize(context)
-      result = RubyReactor::Worker.new.perform(serialized_context, reactor_class_name)
+      result = RubyReactor::SidekiqWorkers::Worker.new.perform(serialized_context, reactor_class_name)
       puts "[WORKER_MOCK.perform] Returning result: #{result.class}, result.result: #{result.result&.class}"
       result
     end
+
+    # rubocop:disable Metrics/ParameterLists
+    def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
+                                       strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
+                                       batch_size: nil, serialized_context: nil)
+      warn "[WORKER_MOCK] perform_map_element_async CALLED"
+      job_id = RubyReactor::SidekiqWorkers::MapElementWorker.perform_async(
+        {
+          "map_id" => map_id,
+          "element_id" => element_id,
+          "index" => index,
+          "serialized_inputs" => serialized_inputs,
+          "reactor_class_info" => reactor_class_info,
+          "strict_ordering" => strict_ordering,
+          "parent_context_id" => parent_context_id,
+          "parent_reactor_class_name" => parent_reactor_class_name,
+          "step_name" => step_name,
+          "batch_size" => batch_size,
+          "serialized_context" => serialized_context
+        }
+      )
+      RubyReactor::AsyncResult.new(job_id: job_id)
+    end
+
+    def self.perform_map_element_in(_delay, map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
+                                    strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
+                                    batch_size: nil, serialized_context: nil)
+      perform_map_element_async(
+        map_id: map_id,
+        element_id: element_id,
+        index: index,
+        serialized_inputs: serialized_inputs,
+        reactor_class_info: reactor_class_info,
+        strict_ordering: strict_ordering,
+        parent_context_id: parent_context_id,
+        parent_reactor_class_name: parent_reactor_class_name,
+        step_name: step_name,
+        batch_size: batch_size,
+        serialized_context: serialized_context
+      )
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # rubocop:disable Metrics/ParameterLists
+    def self.perform_map_collection_async(parent_context_id:, map_id:, parent_reactor_class_name:, step_name:,
+                                          strict_ordering:, timeout:)
+      warn "[WORKER_MOCK] perform_map_collection_async CALLED"
+      job_id = RubyReactor::SidekiqWorkers::MapCollectorWorker.perform_async(
+        {
+          "parent_context_id" => parent_context_id,
+          "map_id" => map_id,
+          "parent_reactor_class_name" => parent_reactor_class_name,
+          "step_name" => step_name,
+          "strict_ordering" => strict_ordering,
+          "timeout" => timeout
+        }
+      )
+      RubyReactor::AsyncResult.new(job_id: job_id)
+    end
+    # rubocop:enable Metrics/ParameterLists
+
+    # rubocop:disable Metrics/ParameterLists
+    def self.perform_map_execution_async(map_id:, serialized_inputs:, reactor_class_info:, strict_ordering:,
+                                         parent_context_id:, parent_reactor_class_name:, step_name:)
+      warn "[WORKER_MOCK] perform_map_execution_async CALLED"
+      job_id = RubyReactor::SidekiqWorkers::MapExecutionWorker.perform_async(
+        {
+          "map_id" => map_id,
+          "serialized_inputs" => serialized_inputs,
+          "reactor_class_info" => reactor_class_info,
+          "strict_ordering" => strict_ordering,
+          "parent_context_id" => parent_context_id,
+          "parent_reactor_class_name" => parent_reactor_class_name,
+          "step_name" => step_name
+        }
+      )
+      RubyReactor::AsyncResult.new(job_id: job_id)
+    end
+    # rubocop:enable Metrics/ParameterLists
   end
 end

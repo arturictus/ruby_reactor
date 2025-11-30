@@ -24,7 +24,6 @@ RSpec.describe RubyReactor::OrderProcessingReactor do
 
     describe "step reserve_inventory" do
       it "compensates for reserve_inventory step" do
-        # rubocop:disable RSpec/AnyInstance
         if described_class.respond_to?(:async?)
           allow_any_instance_of(RubyReactor::Dsl::StepConfig).to receive(:async?).and_return(false)
         end
@@ -54,9 +53,6 @@ RSpec.describe RubyReactor::OrderProcessingReactor do
       end
 
       it "retries reserve_inventory step until success_at_retry" do
-        # rubocop:disable RSpec/AnyInstance
-        allow_any_instance_of(RubyReactor::Dsl::StepConfig).to receive(:async?).and_return(false)
-        # rubocop:enable RSpec/AnyInstance
         reactor = described_class.new
 
         result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0,
@@ -97,10 +93,6 @@ RSpec.describe RubyReactor::OrderProcessingReactor do
       end
 
       it "executes compensation in reverse order of successful steps" do
-        # rubocop:disable RSpec/AnyInstance
-        allow_any_instance_of(RubyReactor::Dsl::StepConfig).to receive(:async?).and_return(false)
-        # rubocop:enable RSpec/AnyInstance
-
         reactor = described_class.new
         result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0,
                              fail_at: :process_payment)
@@ -126,10 +118,6 @@ RSpec.describe RubyReactor::OrderProcessingReactor do
       end
 
       it "ensures timestamps maintain chronological order across retries and compensation" do
-        # rubocop:disable RSpec/AnyInstance
-        allow_any_instance_of(RubyReactor::Dsl::StepConfig).to receive(:async?).and_return(false)
-        # rubocop:enable RSpec/AnyInstance
-
         reactor = described_class.new
         result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0,
                              fail_at: :reserve_inventory)

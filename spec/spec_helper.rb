@@ -4,6 +4,7 @@ require "ruby_reactor"
 require "sidekiq/testing"
 require "debug"
 require "fileutils"
+require "redis"
 
 # Load support files
 Dir[File.expand_path("support/**/*.rb", __dir__)].each { |f| require f }
@@ -23,6 +24,8 @@ Sidekiq.configure_client do |config|
 end
 
 RubyReactor.configure do |config|
+  config.storage.adapter = :redis
+  config.storage.redis_url = "redis://localhost:6780"
   config.async_router = Support::WorkerMock
 end
 
@@ -41,6 +44,10 @@ RSpec.configure do |config|
   config.before do
     Sidekiq::Testing.fake!
     Sidekiq::Worker.clear_all
+
+    # Flush Redis
+    redis = Redis.new(url: "redis://localhost:6780")
+    redis.flushdb
   end
 
   config.after do

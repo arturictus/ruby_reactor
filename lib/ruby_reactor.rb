@@ -100,4 +100,15 @@ module RubyReactor
   def self.configuration
     Configuration.instance
   end
+
+  # Backward compatibility alias for Worker class
+  # This allows existing code to reference RubyReactor::Worker
+  # while the actual class is now RubyReactor::SidekiqWorkers::Worker
+  def self.const_missing(name)
+    if name == :Worker
+      SidekiqWorkers::Worker
+    else
+      super
+    end
+  end
 end
