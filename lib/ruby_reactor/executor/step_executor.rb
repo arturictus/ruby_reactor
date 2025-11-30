@@ -177,7 +177,11 @@ module RubyReactor
 
         serialized_context = ContextSerializer.serialize(context_to_serialize)
 
-        result = configuration.async_router.perform_async(serialized_context, reactor_class_name)
+        result = configuration.async_router.perform_async(
+          serialized_context,
+          reactor_class_name,
+          intermediate_results: @context.intermediate_results
+        )
 
         # Handle different result types from async router
         case result

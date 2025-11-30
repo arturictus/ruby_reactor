@@ -151,7 +151,7 @@ module RubyReactor
                                          reactor_class_info: reactor_class_info, step_name: step_name)
                    end
 
-          RubyReactor::AsyncResult.new(job_id: job_id)
+          RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: context.intermediate_results)
         end
 
         def prepare_async_execution(context, map_id, count)

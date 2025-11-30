@@ -2,7 +2,7 @@
 
 module Support
   class WorkerMock
-    def self.perform_async(serialized_context, reactor_class_name = nil)
+    def self.perform_async(serialized_context, reactor_class_name = nil, intermediate_results: {})
       warn "[WORKER_MOCK] perform_async CALLED"
       # Execute inline by calling Worker.perform which returns an Executor or Failure
       warn "[WORKER_MOCK] About to call perform"
@@ -31,9 +31,9 @@ module Support
       raise
     end
 
-    def self.perform_in(_delay, serialized_context, reactor_class_name = nil)
+    def self.perform_in(_delay, serialized_context, reactor_class_name = nil, intermediate_results: {})
       # Mock implementation of perform_in - same as perform_async for testing
-      perform_async(serialized_context, reactor_class_name)
+      perform_async(serialized_context, reactor_class_name, intermediate_results: intermediate_results)
     end
 
     def self.perform(serialized_context, reactor_class_name = nil)

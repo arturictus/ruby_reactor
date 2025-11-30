@@ -796,4 +796,40 @@ RSpec.describe RubyReactor do
       expect(result.value).to eq(20) # 5 * 3 = 15 after retry, then + 5 in after_compose
     end
   end
+
+  describe "AsyncResult returns job_id and intermediate_results" do
+    let(:reactor_class) do
+      Class.new(RubyReactor::Reactor) do
+        input :value
+
+        step :sync_step do
+          run do |args, _context|
+            Success(args[:value] + 1)
+          end
+        end
+        step :async_step do
+          async true
+          argument :value, result(:sync_step)
+          run do |args, _context|
+            Success(args[:value] * 2)
+          end
+        end
+      end
+    end
+
+    before do
+      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
+    end
+
+    it "returns job_id and intermediate_results correctly" do
+      reactor = reactor_class.new
+      async_result = reactor.run(value: 10)
+
+      expect(async_result).to be_a(RubyReactor::AsyncResult)
+      expect(async_result.job_id).not_to be_nil
+      expect(async_result.intermediate_results).to be_a(Hash)
+      expect(async_result.intermediate_results).to have_key(:sync_step)
+      expect(async_result.intermediate_results[:sync_step]).to eq(11) # 10 + 1
+    end
+  end
 end

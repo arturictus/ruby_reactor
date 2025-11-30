@@ -2,14 +2,14 @@
 
 module RubyReactor
   class AsyncRouter
-    def self.perform_async(serialized_context, reactor_class_name = nil)
+    def self.perform_async(serialized_context, reactor_class_name = nil, intermediate_results: {})
       job_id = SidekiqWorkers::Worker.perform_async(serialized_context, reactor_class_name)
-      RubyReactor::AsyncResult.new(job_id: job_id)
+      RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: intermediate_results)
     end
 
-    def self.perform_in(delay, serialized_context, reactor_class_name = nil)
+    def self.perform_in(delay, serialized_context, reactor_class_name = nil, intermediate_results: {})
       job_id = SidekiqWorkers::Worker.perform_in(delay, serialized_context, reactor_class_name)
-      RubyReactor::AsyncResult.new(job_id: job_id)
+      RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: intermediate_results)
     end
 
     # rubocop:disable Metrics/ParameterLists
