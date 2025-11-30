@@ -65,10 +65,11 @@ module RubyReactor
 
   # Async result for background job execution
   class AsyncResult
-    attr_reader :job_id
+    attr_reader :job_id, :intermediate_results
 
-    def initialize(job_id:)
+    def initialize(job_id:, intermediate_results: {})
       @job_id = job_id
+      @intermediate_results = intermediate_results
     end
 
     def async?
