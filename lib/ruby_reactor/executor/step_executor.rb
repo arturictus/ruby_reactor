@@ -118,7 +118,16 @@ module RubyReactor
       def safe_execute_step_sync(step_config)
         execute_step_sync_without_result_handling(step_config)
       rescue StandardError => e
-        RubyReactor::Failure(e)
+        # Identify redacted inputs
+        redact_inputs = @reactor_class.inputs.select { |_, config| config[:redact] }.keys
+
+        RubyReactor::Failure(
+          e,
+          step_name: step_config.name,
+          inputs: @context.inputs,
+          redact_inputs: redact_inputs,
+          reactor_name: @reactor_class.name
+        )
       end
 
       def execute_step_sync(step_config)

@@ -95,7 +95,7 @@ module RubyReactor
         if can_retry_step?(step_config) && result.retryable?
           handle_retryable_failure(step_config, reactor_class, result)
         else
-          handle_non_retryable_failure(step_config, result)
+          handle_non_retryable_failure(step_config, result, reactor_class)
         end
       end
 
@@ -127,7 +127,7 @@ module RubyReactor
         nil # continue loop
       end
 
-      def handle_non_retryable_failure(step_config, result)
+      def handle_non_retryable_failure(step_config, result, reactor_class)
         clear_retry_state
         current_attempts = @context.retry_context.attempts_for_step(step_config.name)
         error_message = result.error.respond_to?(:message) ? result.error.message : result.error.to_s
@@ -135,7 +135,11 @@ module RubyReactor
           "Step '#{step_config.name}' failed after #{current_attempts} attempts: #{error_message}",
           step: step_config.name,
           attempts: current_attempts,
-          original_error: result.error
+          original_error: result.error,
+          inputs: result.respond_to?(:inputs) ? result.inputs : {},
+          backtrace: result.respond_to?(:backtrace) ? result.backtrace : nil,
+          redact_inputs: result.respond_to?(:instance_variable_get) ? result.instance_variable_get(:@redact_inputs) : [],
+          reactor_name: reactor_class.name
         )
       end
 

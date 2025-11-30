@@ -47,7 +47,17 @@ module RubyReactor
           # Step failure has already been handled (compensation and rollback for the failed step)
           # But we need to rollback all completed steps
           @compensation_manager.rollback_completed_steps
-          RubyReactor.Failure(error.message)
+
+          redact_inputs = error.context.reactor_class.inputs.select { |_, config| config[:redact] }.keys
+
+          RubyReactor::Failure(
+            error.message,
+            step_name: error.step,
+            inputs: error.context.inputs,
+            redact_inputs: redact_inputs,
+            backtrace: error.backtrace,
+            reactor_name: error.context.reactor_class.name
+          )
         when Error::InputValidationError
           # Preserve validation errors as-is for proper error handling
           RubyReactor.Failure(error)

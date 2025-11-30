@@ -58,11 +58,13 @@ module RubyReactor
           end
         end
 
-        def input(name, transform: nil, description: nil, validate: nil, optional: false, &validation_block)
+        def input(name, transform: nil, description: nil, validate: nil, optional: false, redact: false,
+                  &validation_block)
           inputs[name] = {
             transform: transform,
             description: description,
-            optional: optional
+            optional: optional,
+            redact: redact
           }
 
           # Handle validation
