@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "concurrent"
 require "zeitwerk"
 
 # Load dry-validation if available (for validation features)
