@@ -7,7 +7,7 @@ RSpec.describe "Nested Reactor Inline Execution" do
     # Mock async_router to run inline and return the executor
     allow(RubyReactor.configuration.async_router).to receive(:perform_async) do |serialized_context, reactor_class_name|
       # Simulate inline execution
-      worker = RubyReactor::Worker.new
+      worker = RubyReactor::SidekiqWorkers::Worker.new
       worker.perform(serialized_context, reactor_class_name)
     end
     reactor = Support::NestedInlineRootReactor.new
@@ -24,7 +24,7 @@ RSpec.describe "Nested Reactor Inline Execution" do
     # Mock async_router to run inline and return the executor
     allow(RubyReactor.configuration.async_router).to receive(:perform_async) do |serialized_context, reactor_class_name|
       # Simulate inline execution
-      worker = RubyReactor::Worker.new
+      worker = RubyReactor::SidekiqWorkers::Worker.new
       worker.perform(serialized_context, reactor_class_name)
     end
 

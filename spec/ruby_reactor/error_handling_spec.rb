@@ -52,6 +52,37 @@ RSpec.describe "Error Handling Improvements" do
     expect(result.message).to include("ruby_reactor")
   end
 
+  it "does not include step arguments if none are defined" do
+    result = reactor_class.run(username: "user", password: "secret_password", api_key: "12345")
+    expect(result).to be_a(RubyReactor::Failure)
+    expect(result.message).not_to include("Step Arguments:")
+  end
+
+  context "when step has specific arguments" do
+    let(:reactor_with_args) do
+      Class.new(RubyReactor::Reactor) do
+        input :username
+
+        step :step_with_args do
+          argument :user_id, input(:username)
+          run do |_args, _context|
+            raise "Something went wrong"
+          end
+        end
+      end
+    end
+
+    it "includes specific step arguments" do
+      klass = reactor_with_args
+      stub_const("ReactorWithArgs", klass)
+
+      result = klass.run(username: "user123")
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.message).to include("Step Arguments:")
+      expect(result.message).to include("user_id: \"user123\"")
+    end
+  end
+
   context "when failure is returned explicitly" do
     let(:explicit_failure_reactor) do
       klass = Class.new(RubyReactor::Reactor) do

@@ -344,10 +344,10 @@ describe "Retry integration" do
       result = FailingReactor.run(input: "test")
 
       # Verify job was queued for retry
-      expect(RubyReactor::Worker.jobs.size).to eq(1)
+      expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(1)
 
       # Process the retry
-      RubyReactor::Worker.drain
+      RubyReactor::SidekiqWorkers::Worker.drain
 
       # Verify final success
       expect(result).to be_success

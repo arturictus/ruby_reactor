@@ -58,8 +58,10 @@ module RubyReactor
           end
         end
 
+        # rubocop:disable Metrics/ParameterLists
         def input(name, transform: nil, description: nil, validate: nil, optional: false, redact: false,
                   &validation_block)
+          # rubocop:enable Metrics/ParameterLists
           inputs[name] = {
             transform: transform,
             description: description,

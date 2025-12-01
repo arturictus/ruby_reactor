@@ -138,8 +138,13 @@ module RubyReactor
           original_error: result.error,
           inputs: result.respond_to?(:inputs) ? result.inputs : {},
           backtrace: result.respond_to?(:backtrace) ? result.backtrace : nil,
-          redact_inputs: result.respond_to?(:instance_variable_get) ? result.instance_variable_get(:@redact_inputs) : [],
-          reactor_name: reactor_class.name
+          redact_inputs: if result.respond_to?(:instance_variable_get)
+                           result.instance_variable_get(:@redact_inputs)
+                         else
+                           []
+                         end,
+          reactor_name: reactor_class.name,
+          step_arguments: result.respond_to?(:step_arguments) ? result.step_arguments : {}
         )
       end
 

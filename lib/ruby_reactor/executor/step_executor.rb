@@ -116,7 +116,10 @@ module RubyReactor
       end
 
       def safe_execute_step_sync(step_config)
-        execute_step_sync_without_result_handling(step_config)
+        resolved_arguments = {}
+        execute_step_sync_without_result_handling(step_config) do |args|
+          resolved_arguments = args
+        end
       rescue StandardError => e
         # Identify redacted inputs
         redact_inputs = @reactor_class.inputs.select { |_, config| config[:redact] }.keys
@@ -126,7 +129,8 @@ module RubyReactor
           step_name: step_config.name,
           inputs: @context.inputs,
           redact_inputs: redact_inputs,
-          reactor_name: @reactor_class.name
+          reactor_name: @reactor_class.name,
+          step_arguments: resolved_arguments
         )
       end
 
@@ -163,6 +167,8 @@ module RubyReactor
 
           # Resolve arguments
           resolved_arguments = resolve_arguments(step_config)
+
+          yield resolved_arguments if block_given?
 
           # Validate arguments if validator is defined
           validate_step_arguments(step_config, resolved_arguments)
