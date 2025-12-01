@@ -58,11 +58,15 @@ module RubyReactor
           end
         end
 
-        def input(name, transform: nil, description: nil, validate: nil, optional: false, &validation_block)
+        # rubocop:disable Metrics/ParameterLists
+        def input(name, transform: nil, description: nil, validate: nil, optional: false, redact: false,
+                  &validation_block)
+          # rubocop:enable Metrics/ParameterLists
           inputs[name] = {
             transform: transform,
             description: description,
-            optional: optional
+            optional: optional,
+            redact: redact
           }
 
           # Handle validation

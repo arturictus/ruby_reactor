@@ -2,6 +2,7 @@
 
 module Support
   class WorkerMock
+    # rubocop:disable Lint/UnusedMethodArgument
     def self.perform_async(serialized_context, reactor_class_name = nil, intermediate_results: {})
       warn "[WORKER_MOCK] perform_async CALLED"
       # Execute inline by calling Worker.perform which returns an Executor or Failure
@@ -123,5 +124,6 @@ module Support
       RubyReactor::AsyncResult.new(job_id: job_id)
     end
     # rubocop:enable Metrics/ParameterLists
+    # rubocop:enable Lint/UnusedMethodArgument
   end
 end

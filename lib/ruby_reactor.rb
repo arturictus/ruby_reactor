@@ -39,15 +39,24 @@ module RubyReactor
   end
 
   class Failure
-    attr_reader :error, :retryable
+    attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments
 
-    def initialize(error, retryable: nil)
+    # rubocop:disable Metrics/ParameterLists
+    def initialize(error, retryable: nil, step_name: nil, inputs: {}, backtrace: nil, redact_inputs: [],
+                   reactor_name: nil, step_arguments: {})
+      # rubocop:enable Metrics/ParameterLists
       @error = error
       @retryable = if retryable.nil?
                      error.respond_to?(:retryable?) ? error.retryable? : true
                    else
                      retryable
                    end
+      @step_name = step_name
+      @reactor_name = reactor_name
+      @inputs = inputs
+      @step_arguments = step_arguments
+      @backtrace = backtrace || (error.respond_to?(:backtrace) ? error.backtrace : caller)
+      @redact_inputs = redact_inputs
     end
 
     def success?
@@ -60,6 +69,53 @@ module RubyReactor
 
     def retryable?
       @retryable
+    end
+
+    def message
+      msg = []
+      header = "Error"
+      header += " in reactor '#{reactor_name}'" if reactor_name
+      header += " step '#{step_name}'" if step_name
+      header += ": #{error_message}"
+
+      msg << header
+
+      if inputs && !inputs.empty?
+        msg << "Inputs:"
+        inputs.each do |key, value|
+          val = @redact_inputs.include?(key) ? "[REDACTED]" : value.inspect
+          msg << "  #{key}: #{val}"
+        end
+      end
+
+      if step_arguments && !step_arguments.empty?
+        msg << "Step Arguments:"
+        step_arguments.each do |key, value|
+          # We might want to redact step arguments too if they come from redacted inputs
+          # For now, let's assume if the input key matches a redacted input key, it should be redacted
+          # But step arguments have different names.
+          # We can't easily track redaction for step arguments without more metadata.
+          # For now, let's just display them.
+          msg << "  #{key}: #{value.inspect}"
+        end
+      end
+
+      if backtrace
+        msg << "Backtrace:"
+        msg << backtrace.take(5).map { |line| "  #{line}" }.join("\n")
+      end
+
+      msg.join("\n")
+    end
+
+    def to_s
+      message
+    end
+
+    private
+
+    def error_message
+      @error.respond_to?(:message) ? @error.message : @error.to_s
     end
   end
 
@@ -90,8 +146,8 @@ module RubyReactor
     Success.new(value)
   end
 
-  def self.Failure(error)
-    Failure.new(error)
+  def self.Failure(error, **kwargs)
+    Failure.new(error, **kwargs)
   end
 
   def self.configure
@@ -100,16 +156,5 @@ module RubyReactor
 
   def self.configuration
     Configuration.instance
-  end
-
-  # Backward compatibility alias for Worker class
-  # This allows existing code to reference RubyReactor::Worker
-  # while the actual class is now RubyReactor::SidekiqWorkers::Worker
-  def self.const_missing(name)
-    if name == :Worker
-      SidekiqWorkers::Worker
-    else
-      super
-    end
   end
 end

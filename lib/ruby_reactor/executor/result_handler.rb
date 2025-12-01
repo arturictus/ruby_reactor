@@ -15,7 +15,7 @@ module RubyReactor
       def handle_step_result(step_config, result, resolved_arguments)
         case result
         when RubyReactor::Success
-          validate_step_output(step_config, result.value)
+          validate_step_output(step_config, result.value, resolved_arguments)
           @step_results[step_config.name] = result
           @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments, result: result })
           @context.set_result(step_config.name, result.value)
@@ -25,13 +25,15 @@ module RubyReactor
           # The error message from MaxRetriesExhaustedFailure already includes "failed after N attempts"
           @compensation_manager.handle_step_failure(step_config, result.original_error, resolved_arguments)
           # Use the MaxRetriesExhaustedFailure error message for the final error
-          raise Error::StepFailureError.new(result.error, step: step_config.name, context: @context)
+          raise Error::StepFailureError.new(result.error, step: step_config.name, context: @context,
+                                                          step_arguments: resolved_arguments)
         when RubyReactor::Failure
           failure_result = @compensation_manager.handle_step_failure(step_config, result.error, resolved_arguments)
-          raise Error::StepFailureError.new(failure_result.error, step: step_config.name, context: @context)
+          raise Error::StepFailureError.new(failure_result.error, step: step_config.name, context: @context,
+                                                                  step_arguments: resolved_arguments)
         else
           # Treat non-Success/Failure results as success with that value
-          validate_step_output(step_config, result)
+          validate_step_output(step_config, result, resolved_arguments)
           success_result = RubyReactor.Success(result)
           @step_results[step_config.name] = success_result
           @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments,
@@ -47,7 +49,18 @@ module RubyReactor
           # Step failure has already been handled (compensation and rollback for the failed step)
           # But we need to rollback all completed steps
           @compensation_manager.rollback_completed_steps
-          RubyReactor.Failure(error.message)
+
+          redact_inputs = error.context.reactor_class.inputs.select { |_, config| config[:redact] }.keys
+
+          RubyReactor::Failure(
+            error.message,
+            step_name: error.step,
+            inputs: error.context.inputs,
+            redact_inputs: redact_inputs,
+            backtrace: error.backtrace,
+            reactor_name: error.context.reactor_class.name,
+            step_arguments: error.step_arguments
+          )
         when Error::InputValidationError
           # Preserve validation errors as-is for proper error handling
           RubyReactor.Failure(error)
@@ -72,7 +85,7 @@ module RubyReactor
 
       private
 
-      def validate_step_output(step_config, value)
+      def validate_step_output(step_config, value, resolved_arguments = {})
         return unless step_config.output_validator
 
         output_validation_result = step_config.output_validator.call(value)
@@ -81,7 +94,8 @@ module RubyReactor
         raise Error::StepFailureError.new(
           "Step '#{step_config.name}' output validation failed: #{output_validation_result.error.message}",
           step: step_config.name,
-          context: @context
+          context: @context,
+          step_arguments: resolved_arguments
         )
       end
     end
