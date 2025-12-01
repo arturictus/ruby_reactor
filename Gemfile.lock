@@ -2,7 +2,6 @@ PATH
   remote: .
   specs:
     ruby_reactor (0.1.0)
-      concurrent-ruby (~> 1.2)
       dry-validation (~> 1.10)
       redis (~> 5.0)
       sidekiq (~> 7.0)

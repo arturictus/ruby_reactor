@@ -1,6 +1,15 @@
 # RubyReactor
 
-A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning.
+A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq** for asynchronous execution and **Redis** for state persistence.
+
+## Features
+
+- **DAG-based Execution**: Steps are executed based on their dependencies, allowing for parallel execution of independent steps.
+- **Async Execution**: Steps can be executed asynchronously in the background using Sidekiq.
+- **Map & Parallel Execution**: Iterate over collections in parallel with the `map` step, distributing work across multiple workers.
+- **Retries**: Configurable retry logic for failed steps, with exponential backoff.
+- **Compensation**: Automatic rollback of completed steps when a failure occurs.
+- **Input Validation**: Integrated with `dry-validation` for robust input checking.
 
 ## Installation
 
@@ -17,6 +26,26 @@ And then execute:
 Or install it yourself as:
 
     $ gem install ruby_reactor
+
+## Configuration
+
+Configure RubyReactor with your Sidekiq and Redis settings:
+
+```ruby
+RubyReactor.configure do |config|
+  # Redis configuration for state persistence
+  config.storage.adapter = :redis
+  config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
+  config.storage.redis_options = { timeout: 1 }
+
+  # Sidekiq configuration for async execution
+  config.sidekiq_queue = :default
+  config.sidekiq_retry_count = 3
+  
+  # Logger configuration
+  config.logger = Logger.new($stdout)
+end
+```
 
 ## Usage
 
@@ -103,6 +132,94 @@ if result.success?
   puts "User created: #{result.value[:email]}"
 else
   puts "Failed: #{result.error}"
+end
+```
+
+### Async Execution
+
+Execute reactors in the background using Sidekiq.
+
+#### Full Reactor Async
+
+```ruby
+class AsyncReactor < RubyReactor::Reactor
+  async true # Entire reactor runs in background
+
+  step :long_running_task do
+    run { perform_heavy_work }
+  end
+end
+
+# Returns immediately with AsyncResult
+result = AsyncReactor.run(params)
+```
+
+#### Step-Level Async
+
+You can also mark individual steps as async. Execution will proceed synchronously until the first async step is encountered, at which point the reactor execution is offloaded to a background job.
+
+```ruby
+class CreateUserReactor < RubyReactor::Reactor
+  input :params
+
+  step :validate_inputs do
+    run { |args| validate(args[:params]) }
+  end
+
+  step :create_user do
+    argument :params, result(:validate_inputs)
+    run { |args| User.create(args[:params]) }
+  end
+
+  # From here on will run async
+  step :open_account do
+    async true
+    argument :user, result(:create_user)
+    run { |args| Bank.open_account(args[:user]) }
+  end
+
+  step :report_new_user do
+    async true
+    argument :user, result(:create_user)
+    wait_for :open_account
+    run { |args| Analytics.track(args[:user]) }
+  end
+end
+
+# Usage
+def create(params)
+   # Returns an AsyncResult immediately when 'open_account' is reached
+   result = CreateUserReactor.run(params)
+   
+   # Access synchronous results immediately
+   user = result.intermediate_results[:create_user]
+   
+   # do something with user
+end
+```
+
+### Map & Parallel Execution
+
+Process collections in parallel using the `map` step:
+
+```ruby
+class DataProcessingReactor < RubyReactor::Reactor
+  input :items
+
+  map :process_items do
+    source input(:items)
+    argument :item, element(:process_items)
+    
+    # Enable async execution with batching
+    async true, batch_size: 50
+
+    step :transform do
+      argument :item, input(:item)
+      run { |args| transform_item(args[:item]) }
+    end
+
+    returns :transform
+  end
 end
 ```
 
@@ -400,18 +517,28 @@ class SchemaValidatedReactor < RubyReactor::Reactor
 end
 ```
 
+
 ## Documentation
 
 For detailed documentation, see the following guides:
 
-### Core Documentation
-- [Getting Started](documentation/getting_started.md) - Introduction and setup guide
-- [Core Concepts](documentation/core_concepts.md) - Understanding reactors, steps, and execution flow
-- [DAG (Directed Acyclic Graph)](documentation/DAG.md) - How RubyReactor manages dependencies and execution order
-- [Async Reactors](documentation/async_reactors.md) - Working with asynchronous operations
-- [Composition](documentation/composition.md) - Building complex workflows with nested reactors
-- [Data Pipelines](documentation/data_pipelines.md) - Processing collections with map, async, and batching
-- [Retry Configuration](documentation/retry_configuration.md) - Configuring retry behavior and failure handling
+### [Core Concepts](documentation/core_concepts.md)
+Learn about the fundamental building blocks of RubyReactor: Reactors, Steps, Context, and Results. Understand how steps are defined, how data flows between them, and how the context maintains state throughout execution.
+
+### [DAG (Directed Acyclic Graph)](documentation/DAG.md)
+Deep dive into how RubyReactor manages dependencies. This guide explains how the Directed Acyclic Graph is constructed to ensure steps execute in the correct topological order, enabling automatic parallelization of independent steps.
+
+### [Async Reactors](documentation/async_reactors.md)
+Explore the two asynchronous execution models: Full Reactor Async and Step-Level Async. Learn how RubyReactor leverages Sidekiq for background processing, non-blocking execution, and scalable worker management.
+
+### [Composition](documentation/composition.md)
+Discover how to build complex, modular workflows by composing reactors within other reactors. This guide covers inline composition, class-based composition, and how to manage dependencies between composed workflows.
+
+### [Data Pipelines](documentation/data_pipelines.md)
+Master the `map` feature for processing collections. Learn about parallel execution, batch processing for large datasets, and error handling strategies like fail-fast vs. partial result collection.
+
+### [Retry Configuration](documentation/retry_configuration.md)
+Configure robust retry policies for your steps. This guide details the available backoff strategies (exponential, linear, fixed), how to configure retries at the reactor or step level, and how async retries work without blocking workers.
 
 ### Examples
 - [Order Processing](documentation/examples/order_processing.md) - Complete order processing workflow example

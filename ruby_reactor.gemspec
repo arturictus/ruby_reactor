@@ -10,7 +10,8 @@ Gem::Specification.new do |spec|
 
   spec.summary = "A dynamic, concurrent, dependency-resolving saga orchestrator for Ruby."
   spec.description = "Ruby Reactor implements the Saga pattern with compensation-based " \
-                     "error handling and DAG-based execution planning."
+                     "error handling and DAG-based execution planning. " \
+                     "It supports async execution via Sidekiq and persistence via Redis."
   spec.homepage = "https://github.com/arturictus/ruby_reactor"
   spec.required_ruby_version = ">= 3.0.0"
 
@@ -35,7 +36,6 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   # Core dependencies
-  spec.add_dependency "concurrent-ruby", "~> 1.2"
   spec.add_dependency "dry-validation", "~> 1.10"
   spec.add_dependency "redis", "~> 5.0"
   spec.add_dependency "sidekiq", "~> 7.0"
