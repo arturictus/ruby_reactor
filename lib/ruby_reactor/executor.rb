@@ -44,6 +44,10 @@ module RubyReactor
       graph_manager.build_and_validate!
 
       @result = @step_executor.execute_all_steps
+
+      handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
+
+      @result
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
     end
@@ -118,6 +122,24 @@ module RubyReactor
                   @result_handler.handle_execution_error(error)
                 end
       @result
+    end
+
+    def handle_interrupt(interrupt_result)
+      storage = RubyReactor::Configuration.instance.storage_adapter
+      reactor_class_name = @reactor_class.name
+
+      # Serialize context
+      serialized_context = ContextSerializer.serialize(@context)
+      storage.store_context(@context.context_id, serialized_context, reactor_class_name)
+
+      # Store correlation ID mapping if present
+      return unless interrupt_result.correlation_id
+
+      storage.store_correlation_id(
+        interrupt_result.correlation_id,
+        @context.context_id,
+        reactor_class_name
+      )
     end
   end
 end

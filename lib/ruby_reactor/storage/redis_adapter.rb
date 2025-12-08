@@ -106,6 +106,24 @@ module RubyReactor
         @redis.incr(key)
       end
 
+      def store_correlation_id(correlation_id, context_id, reactor_class_name)
+        key = correlation_id_key(correlation_id, reactor_class_name)
+        # Store mapping correlation_id -> context_id
+        success = @redis.set(key, context_id, nx: true, ex: 86_400) # 24h TTL, fail if exists
+
+        raise Error::ValidationError, "Correlation ID '#{correlation_id}' already exists" unless success
+      end
+
+      def retrieve_context_id_by_correlation_id(correlation_id, reactor_class_name)
+        key = correlation_id_key(correlation_id, reactor_class_name)
+        @redis.get(key)
+      end
+
+      def delete_correlation_id(correlation_id, reactor_class_name)
+        key = correlation_id_key(correlation_id, reactor_class_name)
+        @redis.del(key)
+      end
+
       def subscribe(channel, &block)
         @redis.subscribe(channel, &block)
       end
@@ -134,6 +152,10 @@ module RubyReactor
 
       def map_last_queued_index_key(map_id, reactor_class_name)
         "reactor:#{reactor_class_name}:map:#{map_id}:last_queued_index"
+      end
+
+      def correlation_id_key(correlation_id, reactor_class_name)
+        "reactor:#{reactor_class_name}:correlation:#{correlation_id}"
       end
     end
   end

@@ -37,6 +37,7 @@ module RubyReactor
         value
       end
     end
+    alias input get_input
 
     def get_result(step_name, path = nil)
       value = @intermediate_results[step_name.to_sym] || @intermediate_results[step_name.to_s]
@@ -48,6 +49,7 @@ module RubyReactor
         value
       end
     end
+    alias result get_result
 
     def set_result(step_name, value)
       @intermediate_results[step_name.to_sym] = value
