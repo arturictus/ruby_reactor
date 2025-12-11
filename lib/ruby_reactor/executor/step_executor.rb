@@ -96,7 +96,8 @@ module RubyReactor
         # Merge any undo stack items
         other_executor.undo_stack.each do |item|
           # Avoid duplicates by checking if this step is already in the undo stack
-          unless @compensation_manager.undo_stack.any? { |existing| existing[:step].name == item[:step].name }
+          # Use string comparison for step names to avoid symbol/string mismatch issues
+          unless @compensation_manager.undo_stack.any? { |existing| existing[:step].name.to_s == item[:step].name.to_s }
             @compensation_manager.add_to_undo_stack(item)
           end
         end

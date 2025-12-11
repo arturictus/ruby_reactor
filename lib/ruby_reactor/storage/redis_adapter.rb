@@ -124,6 +124,11 @@ module RubyReactor
         @redis.del(key)
       end
 
+      def delete_context(context_id, reactor_class_name)
+        key = context_key(context_id, reactor_class_name)
+        @redis.del(key)
+      end
+
       def subscribe(channel, &block)
         @redis.subscribe(channel, &block)
       end

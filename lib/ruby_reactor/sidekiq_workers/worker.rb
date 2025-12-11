@@ -37,7 +37,9 @@ module RubyReactor
 
         # Resume execution from the failed step
         executor = Executor.new(context.reactor_class, {}, context)
-        executor.compensation_manager.undo_stack.concat(context.undo_stack)
+        # executor.compensation_manager.undo_stack is already referencing context.undo_stack
+        # because CompensationManager uses the context instance passed to Executor.
+        # Removing the explicit concat fixes the duplication issue.
         executor.resume_execution
 
         # Return the executor (which now has the result stored in it)

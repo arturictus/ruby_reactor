@@ -5,14 +5,17 @@ module RubyReactor
     class CompensationManager
       def initialize(context)
         @context = context
-        @undo_stack = []
         @undo_trace = []
       end
 
-      attr_reader :undo_stack, :undo_trace
+      def undo_stack
+        @context.undo_stack
+      end
+
+      attr_reader :undo_trace
 
       def add_to_undo_stack(step_info)
-        @undo_stack << step_info
+        @context.undo_stack << step_info
       end
 
       def handle_step_failure(step_config, error, arguments)
@@ -36,12 +39,12 @@ module RubyReactor
       end
 
       def rollback_completed_steps
-        @undo_stack.reverse_each do |step_info|
+        undo_stack.reverse_each do |step_info|
           result = undo_step(step_info[:step], step_info[:result], step_info[:arguments])
           @undo_trace << { type: :undo, step: step_info[:step].name, result: result,
                            arguments: step_info[:arguments] }
         end
-        @undo_stack.clear
+        undo_stack.clear
       end
 
       private

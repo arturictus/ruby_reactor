@@ -6,68 +6,63 @@ module RubyReactor
 
     attr_reader :context, :result, :undo_trace, :execution_trace
 
-    def self.continue(id:, payload:, idempotency_key: nil)
+    def self.find(id)
       reactor_class_name = name
       serialized_context = configuration.storage_adapter.retrieve_context(id, reactor_class_name)
       raise Error::ValidationError, "Context '#{id}' not found" unless serialized_context
 
       context = Context.deserialize_from_retry(serialized_context)
-
-      # TODO: Implement idempotency check using idempotency_key
-      _ = idempotency_key
-
-      resume_with_payload(context, payload)
+      new(context)
     end
 
-    def self.continue_by_correlation_id(correlation_id:, payload:, idempotency_key: nil)
+    def self.find_by_correlation_id(correlation_id)
       reactor_class_name = name
-      context_id = configuration.storage_adapter.retrieve_context_id_by_correlation_id(correlation_id,
-                                                                                       reactor_class_name)
+      context_id = configuration.storage_adapter.retrieve_context_id_by_correlation_id(
+        correlation_id,
+        reactor_class_name
+      )
       raise Error::ValidationError, "Correlation ID '#{correlation_id}' not found" unless context_id
 
-      continue(id: context_id, payload: payload, idempotency_key: idempotency_key)
+      find(context_id)
+    end
+
+    def self.continue(id:, payload:, step_name: nil, idempotency_key: nil)
+      reactor = find(id)
+      result = reactor.continue(payload: payload, step_name: step_name, idempotency_key: idempotency_key)
+
+      if result.is_a?(RubyReactor::Failure) && result.invalid_payload?
+        undo(id)
+        cancel(id: id, reason: "Payload validation failed")
+
+        # Raise exception to match expected behavior (strict mode for class method)
+        raise Error::InputValidationError.new(result.error)
+      end
+
+      result
+    end
+
+    def self.continue_by_correlation_id(correlation_id:, payload:, step_name: nil, idempotency_key: nil)
+      reactor = find_by_correlation_id(correlation_id)
+      # We delegate to the class-level continue method to ensure auto-compensation logic applies
+      # by using the context ID found by find_by_correlation_id
+      continue(id: reactor.context.context_id, payload: payload, step_name: step_name, idempotency_key: idempotency_key)
     end
 
     def self.cancel(id:, reason:)
-      # Placeholder for cancellation logic
-      # 1. Retrieve context
-      # 2. Mark as cancelled
-      # 3. Trigger compensations if needed
-      # 4. Clean up storage
-
       _ = reason
       reactor_class_name = name
-      # For now, just remove from storage
-      configuration.storage_adapter.expire(
-        "reactor:#{reactor_class_name}:context:#{id}",
-        0
-      )
+
+      # Clean up storage
+      configuration.storage_adapter.delete_context(id, reactor_class_name)
+
+      # We might want to remove correlation IDs too, but we don't always know them here easily
+      # unless we rehydrate the context. For now, we rely on TTL or separate cleanup.
     end
 
-    def self.resume_with_payload(context, payload)
-      # Store payload as the result of the current step (the interrupt step)
-      # The step name is stored in context.current_step
-
-      unless context.current_step
-        raise Error::ValidationError, "Cannot resume: context does not have a current step (was it interrupted?)"
-      end
-
-      # Validate payload if the step has validation
-      step_config = steps[context.current_step]
-      if step_config && step_config.validation_schema
-        validation = step_config.validation_schema.call(payload)
-        raise Error::InputValidationError, validation.errors.to_h if validation.failure?
-      end
-
-      context.set_result(context.current_step, payload)
-
-      # Resume execution
-      executor = Executor.new(self, {}, context)
-      executor.resume_execution
-
-      # Clean up correlation ID from storage if it exists?
-      # Maybe better to do this in Executor or keep it until TTL?
-      # For now, let's leave it to expire.
+    def self.undo(id)
+      reactor = find(id)
+      reactor.undo
+      cancel(id: id, reason: "Undo triggered")
     end
 
     def self.configuration
@@ -89,11 +84,13 @@ module RubyReactor
         configuration.async_router.perform_async(serialized_context)
       else
         # For sync reactors (potentially with async steps), execute normally
-        executor = Executor.new(self.class, inputs)
+        context = @context.is_a?(Context) ? @context : nil
+        executor = Executor.new(self.class, inputs, context)
         @result = executor.execute
 
         @context = executor.context
 
+        # Merge traces
         @undo_trace = executor.undo_trace
         @execution_trace = executor.execution_trace
 
@@ -102,6 +99,61 @@ module RubyReactor
 
         @result
       end
+    end
+
+    def continue(payload:, step_name: nil, idempotency_key: nil)
+      _ = idempotency_key
+
+      unless @context.current_step
+        raise Error::ValidationError, "Cannot resume: context does not have a current step (was it interrupted?)"
+      end
+
+      # Validate step_name if provided
+      if step_name && step_name.to_s != @context.current_step.to_s
+        raise Error::ValidationError, "Cannot resume: expected step '#{@context.current_step}' but got '#{step_name}'"
+      end
+
+      # Validate payload if the step has validation
+      step_config = self.class.steps[@context.current_step]
+      if step_config && step_config.validation_schema
+        validation = step_config.validation_schema.call(payload)
+
+        if validation.failure?
+          failure = RubyReactor::Failure(validation.errors.to_h)
+          # We need a way to mark this failure as a validation failure
+          # For now, we rely on the error object inside Failure or just return Failure
+          # The PRD requires `result.invalid_payload?` to be true.
+          # Since we don't have that method on Failure yet, we might need to enhance Failure
+          # OR wrap it. For now, let's assume Failure wraps the error and we can check it.
+          # We'll use a specific error type to identify it.
+          failure.instance_variable_set(:@type, :input_validation)
+          def failure.invalid_payload? = true
+          return failure
+        end
+      end
+
+      @context.set_result(@context.current_step, payload)
+
+      # Resume execution
+      executor = Executor.new(self.class, {}, @context)
+      @result = executor.resume_execution
+
+      @context = executor.context
+      @undo_trace = executor.undo_trace
+      @execution_trace = executor.execution_trace
+
+      @result
+    rescue Error::InputValidationError => e
+      # This might catch other validations, but here we specifically want payload validation.
+      # The block above handles payload validation explicitly.
+      failure = RubyReactor::Failure(e.message)
+      def failure.invalid_payload? = true
+      failure
+    end
+
+    def undo
+      executor = Executor.new(self.class, {}, @context)
+      executor.undo_all
     end
 
     def validate!

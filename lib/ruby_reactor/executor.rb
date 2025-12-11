@@ -64,6 +64,10 @@ module RubyReactor
       handle_resume_error(e)
     end
 
+    def undo_all
+      @compensation_manager.rollback_completed_steps
+    end
+
     def undo_stack
       @compensation_manager.undo_stack
     end
