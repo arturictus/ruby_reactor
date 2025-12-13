@@ -82,8 +82,10 @@ module RubyReactor
         # Update retry context
         @context.retry_context = other_executor.context.retry_context
 
-        # Clear current_step since we've completed it
-        @context.current_step = nil
+        # Update current_step:
+        # If the other executor has a current_step, it means it paused/interrupted there. We should adopt it.
+        # If it's nil, it means it completed successfully, so we clear our current_step (which was the async step).
+        @context.current_step = other_executor.context.current_step
 
         # Update our dependency graph to reflect completed steps
         other_executor.context.intermediate_results.each_key do |step_name|

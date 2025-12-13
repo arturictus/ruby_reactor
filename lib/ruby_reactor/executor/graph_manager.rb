@@ -3,6 +3,8 @@
 module RubyReactor
   class Executor
     class GraphManager
+      attr_reader :dependency_graph
+
       def initialize(reactor_class, dependency_graph, context)
         @reactor_class = reactor_class
         @dependency_graph = dependency_graph

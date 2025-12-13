@@ -55,11 +55,15 @@ module RubyReactor
     def resume_execution
       prepare_for_resume
 
-      if @context.current_step
-        execute_current_step_and_continue
-      else
-        execute_remaining_steps
-      end
+      @result = if @context.current_step
+                  execute_current_step_and_continue
+                else
+                  execute_remaining_steps
+                end
+
+      handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
+
+      @result
     rescue StandardError => e
       handle_resume_error(e)
     end
@@ -78,6 +82,15 @@ module RubyReactor
 
     def execution_trace
       @context.execution_trace
+    end
+
+    def save_context
+      storage = RubyReactor::Configuration.instance.storage_adapter
+      reactor_class_name = @reactor_class.name
+
+      # Serialize context
+      serialized_context = ContextSerializer.serialize(@context)
+      storage.store_context(@context.context_id, serialized_context, reactor_class_name)
     end
 
     private
@@ -101,7 +114,7 @@ module RubyReactor
         @result = @step_executor.execute_all_steps
       else
         case result
-        when RetryQueuedResult, RubyReactor::Failure, RubyReactor::AsyncResult
+        when RetryQueuedResult, RubyReactor::Failure, RubyReactor::AsyncResult, RubyReactor::InterruptResult
           # Step was requeued, failed, or handed off to async - return the result
           @result = result
         when RubyReactor::Success
@@ -129,20 +142,16 @@ module RubyReactor
     end
 
     def handle_interrupt(interrupt_result)
-      storage = RubyReactor::Configuration.instance.storage_adapter
-      reactor_class_name = @reactor_class.name
-
-      # Serialize context
-      serialized_context = ContextSerializer.serialize(@context)
-      storage.store_context(@context.context_id, serialized_context, reactor_class_name)
+      save_context
 
       # Store correlation ID mapping if present
       return unless interrupt_result.correlation_id
 
+      storage = RubyReactor::Configuration.instance.storage_adapter
       storage.store_correlation_id(
         interrupt_result.correlation_id,
         @context.context_id,
-        reactor_class_name
+        @reactor_class.name
       )
     end
   end

@@ -108,9 +108,18 @@ module RubyReactor
         raise Error::ValidationError, "Cannot resume: context does not have a current step (was it interrupted?)"
       end
 
-      # Validate step_name if provided
+      # Check if step_name is valid (current step OR ready step)
       if step_name && step_name.to_s != @context.current_step.to_s
-        raise Error::ValidationError, "Cannot resume: expected step '#{@context.current_step}' but got '#{step_name}'"
+        # Build graph to check if step is ready
+        graph_manager = Executor::GraphManager.new(self.class, DependencyGraph.new, @context)
+        graph_manager.build_and_validate!
+        graph_manager.mark_completed_steps_from_context
+        ready_steps = graph_manager.dependency_graph.ready_steps.map(&:name).map(&:to_s)
+
+        unless ready_steps.include?(step_name.to_s)
+          raise Error::ValidationError,
+                "Cannot resume: expected step '#{@context.current_step}' or ready steps #{ready_steps} but got '#{step_name}'"
+        end
       end
 
       # Validate payload if the step has validation
@@ -132,7 +141,8 @@ module RubyReactor
         end
       end
 
-      @context.set_result(@context.current_step, payload)
+      target_step = step_name || @context.current_step
+      @context.set_result(target_step, payload)
 
       # Resume execution
       executor = Executor.new(self.class, {}, @context)
