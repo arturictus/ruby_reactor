@@ -86,7 +86,7 @@ module RubyReactor
 
     def save_context
       storage = RubyReactor::Configuration.instance.storage_adapter
-      reactor_class_name = @reactor_class.name
+      reactor_class_name = @reactor_class.name || "AnonymousReactor-#{@reactor_class.object_id}"
 
       # Serialize context
       serialized_context = ContextSerializer.serialize(@context)

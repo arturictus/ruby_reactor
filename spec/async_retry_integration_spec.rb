@@ -76,16 +76,20 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
 
     it "requeues jobs for async step retries instead of executing inline" do
       # Create a reactor with an async step that will fail
-      reactor_class = Class.new(RubyReactor::Reactor) do
-        step :failing_async_step do
-          async true
-          retries max_attempts: 3, backoff: :fixed, base_delay: 1
+      unless defined?(FailingAsyncRetryReactor)
+        FailingAsyncRetryReactor = Class.new(RubyReactor::Reactor) do
+          step :failing_async_step do
+            async true
+            retries max_attempts: 3, backoff: :fixed, base_delay: 1
 
-          run do |_args, _context|
-            RubyReactor::Failure("Step always fails")
+            run do |_args, _context|
+              RubyReactor::Failure("Step always fails")
+            end
           end
         end
       end
+
+      reactor_class = FailingAsyncRetryReactor
 
       reactor = reactor_class.new
 

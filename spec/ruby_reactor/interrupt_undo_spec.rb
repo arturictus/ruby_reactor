@@ -124,7 +124,8 @@ RSpec.describe "Interrupt Compensation and Undo" do
             payload: { status: "ok" },
             step_name: :wrong_step
           )
-        end.to raise_error(RubyReactor::Error::ValidationError, /expected step 'wait_for_input' but got 'wrong_step'/)
+        end.to raise_error(RubyReactor::Error::ValidationError,
+                           /expected step 'wait_for_input' or ready steps .* but got 'wrong_step'/)
       end
     end
   end
