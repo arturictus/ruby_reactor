@@ -119,7 +119,8 @@ You can cancel a paused reactor if the operation is no longer needed.
 # Undo: Runs defined compensations for completed steps in reverse order, then deletes execution.
 ReportReactor.undo("uuid-123")
 
-# Cancel: Stops execution immediately and deletes stored state without running compensations.
+# Cancel: Stops execution immediately and marks the reactor as cancelled with the provided reason.
+# The context is preserved for inspection, but resumption is disabled.
 ReportReactor.cancel("uuid-123", reason: "User cancelled")
 ```
 

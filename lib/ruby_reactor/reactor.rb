@@ -49,14 +49,8 @@ module RubyReactor
     end
 
     def self.cancel(id:, reason:)
-      _ = reason
-      reactor_class_name = name
-
-      # Clean up storage
-      configuration.storage_adapter.delete_context(id, reactor_class_name)
-
-      # We might want to remove correlation IDs too, but we don't always know them here easily
-      # unless we rehydrate the context. For now, we rely on TTL or separate cleanup.
+      reactor = find(id)
+      reactor.cancel(reason)
     end
 
     def self.undo(id)
@@ -108,6 +102,11 @@ module RubyReactor
         raise Error::ValidationError, "Cannot resume: context does not have a current step (was it interrupted?)"
       end
 
+      if @context.cancelled
+        raise Error::ValidationError,
+              "Cannot resume: reactor has been cancelled (Reason: #{@context.cancellation_reason})"
+      end
+
       validate_continue_step!(step_name)
 
       if (failure = validate_continue_payload(payload))
@@ -137,6 +136,13 @@ module RubyReactor
     def undo
       executor = Executor.new(self.class, {}, @context)
       executor.undo_all
+      executor.save_context
+    end
+
+    def cancel(reason)
+      @context.cancelled = true
+      @context.cancellation_reason = reason
+      save_context
     end
 
     def validate!
@@ -209,6 +215,13 @@ module RubyReactor
       failure.instance_variable_set(:@type, :input_validation)
       def failure.invalid_payload? = true
       failure
+    end
+
+    def save_context
+      storage = configuration.storage_adapter
+      reactor_class_name = self.class.name || "AnonymousReactor-#{self.class.object_id}"
+      serialized_context = ContextSerializer.serialize(@context)
+      storage.store_context(@context.context_id, serialized_context, reactor_class_name)
     end
   end
 end

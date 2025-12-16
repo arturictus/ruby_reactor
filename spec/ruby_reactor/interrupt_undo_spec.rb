@@ -34,7 +34,10 @@ RSpec.describe "Interrupt Compensation and Undo" do
         expect(reactor_class.trace).to include(:prepare_undo)
 
         stored = RubyReactor::Configuration.instance.storage_adapter.retrieve_context(execution_id, reactor_class.name)
-        expect(stored).to be_nil
+        expect(stored).not_to be_nil
+        context = RubyReactor::Context.deserialize_from_retry(stored)
+        # Check against string keys because deserialization might result in strings for hash values
+        expect(context.execution_trace).to include(hash_including(type: "undo", step: "prepare"))
       end
 
       it "resumes successfully on valid payload" do
@@ -80,7 +83,7 @@ RSpec.describe "Interrupt Compensation and Undo" do
       expect(reactor_class.trace).to include(:prepare_undo)
 
       stored = RubyReactor::Configuration.instance.storage_adapter.retrieve_context(execution_id, reactor_class.name)
-      expect(stored).to be_nil
+      expect(stored).not_to be_nil
     end
   end
 
@@ -88,13 +91,26 @@ RSpec.describe "Interrupt Compensation and Undo" do
     let(:execution) { reactor_class.run }
     let(:execution_id) { execution.execution_id }
 
-    it "deletes execution WITHOUT compensation" do
+    it "cancels execution WITHOUT compensation but preserves context with reason" do
       reactor_class.cancel(id: execution_id, reason: "Manual cancel")
 
       stored = RubyReactor::Configuration.instance.storage_adapter.retrieve_context(execution_id, reactor_class.name)
-      expect(stored).to be_nil
+      expect(stored).not_to be_nil
+
+      context = RubyReactor::Context.deserialize_from_retry(stored)
+      expect(context.cancelled).to be true
+      expect(context.cancellation_reason).to eq("Manual cancel")
 
       expect(reactor_class.trace).not_to include(:prepare_undo)
+    end
+
+    it "prevents continue after cancellation" do
+      reactor_class.cancel(id: execution_id, reason: "Manual cancel")
+
+      expect do
+        reactor_class.continue(id: execution_id, payload: {}, step_name: :wait_for_input)
+      end.to raise_error(RubyReactor::Error::ValidationError,
+                         /Cannot resume: reactor has been cancelled \(Reason: Manual cancel\)/)
     end
 
     context "with Explicit Step Validation" do
