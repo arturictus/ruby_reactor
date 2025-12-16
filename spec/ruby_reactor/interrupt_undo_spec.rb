@@ -28,7 +28,7 @@ RSpec.describe "Interrupt Compensation and Undo" do
       it "automatically undos and cancels on invalid payload" do
         # Action & Assertion
         expect do
-          reactor_class.continue(id: execution_id, payload: { status: "invalid" })
+          reactor_class.continue(id: execution_id, payload: { status: "invalid" }, step_name: :wait_for_input)
         end.to raise_error(RubyReactor::Error::InputValidationError)
 
         expect(reactor_class.trace).to include(:prepare_undo)
@@ -38,7 +38,7 @@ RSpec.describe "Interrupt Compensation and Undo" do
       end
 
       it "resumes successfully on valid payload" do
-        result = reactor_class.continue(id: execution_id, payload: { status: "ok" })
+        result = reactor_class.continue(id: execution_id, payload: { status: "ok" }, step_name: :wait_for_input)
 
         expect(result).to be_a(RubyReactor::Success)
         expect(reactor_class.trace).to include(:process_run)
@@ -50,7 +50,7 @@ RSpec.describe "Interrupt Compensation and Undo" do
       it "returns invalid_payload result WITHOUT undo" do
         reactor = reactor_class.find(execution_id)
 
-        result = reactor.continue(payload: { status: "invalid" })
+        result = reactor.continue(payload: { status: "invalid" }, step_name: :wait_for_input)
 
         expect(result).to be_a(RubyReactor::Failure)
         expect(result.invalid_payload?).to be true

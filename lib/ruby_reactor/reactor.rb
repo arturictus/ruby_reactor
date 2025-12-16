@@ -26,7 +26,7 @@ module RubyReactor
       find(context_id)
     end
 
-    def self.continue(id:, payload:, step_name: nil, idempotency_key: nil)
+    def self.continue(id:, payload:, step_name:, idempotency_key: nil)
       reactor = find(id)
       result = reactor.continue(payload: payload, step_name: step_name, idempotency_key: idempotency_key)
 
@@ -41,7 +41,7 @@ module RubyReactor
       result
     end
 
-    def self.continue_by_correlation_id(correlation_id:, payload:, step_name: nil, idempotency_key: nil)
+    def self.continue_by_correlation_id(correlation_id:, payload:, step_name:, idempotency_key: nil)
       reactor = find_by_correlation_id(correlation_id)
       # We delegate to the class-level continue method to ensure auto-compensation logic applies
       # by using the context ID found by find_by_correlation_id
@@ -101,7 +101,7 @@ module RubyReactor
       end
     end
 
-    def continue(payload:, step_name: nil, idempotency_key: nil)
+    def continue(payload:, step_name:, idempotency_key: nil)
       _ = idempotency_key
 
       unless @context.current_step
@@ -109,7 +109,7 @@ module RubyReactor
       end
 
       # Check if step_name is valid (current step OR ready step)
-      if step_name && step_name.to_s != @context.current_step.to_s
+      if step_name.to_s != @context.current_step.to_s
         # Build graph to check if step is ready
         graph_manager = Executor::GraphManager.new(self.class, DependencyGraph.new, @context)
         graph_manager.build_and_validate!
@@ -141,7 +141,7 @@ module RubyReactor
         end
       end
 
-      target_step = step_name || @context.current_step
+      target_step = step_name
       @context.set_result(target_step, payload)
 
       # Resume execution

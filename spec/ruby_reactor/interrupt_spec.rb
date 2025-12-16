@@ -32,7 +32,7 @@ RSpec.describe "RubyReactor Interrupt Feature", type: :integration do
 
       # 4. Resume execution via continue
       payload = { status: "approved", approver: "admin" }
-      result = TestInterruptReactor.continue(id: context_id, payload: payload)
+      result = TestInterruptReactor.continue(id: context_id, payload: payload, step_name: :wait_for_approval)
 
       # 5. Verify completion
       expect(result).to be_a(RubyReactor::Success)
@@ -48,7 +48,8 @@ RSpec.describe "RubyReactor Interrupt Feature", type: :integration do
       payload = { status: "rejected", approver: "system" }
       result = TestInterruptReactor.continue_by_correlation_id(
         correlation_id: "approval-prepared-456",
-        payload: payload
+        payload: payload,
+        step_name: :wait_for_approval
       )
 
       # 3. Verify completion
@@ -63,7 +64,7 @@ RSpec.describe "RubyReactor Interrupt Feature", type: :integration do
       payload = { status: "approved" }
 
       expect do
-        TestInterruptReactor.continue(id: execution.execution_id, payload: payload)
+        TestInterruptReactor.continue(id: execution.execution_id, payload: payload, step_name: :wait_for_approval)
       end.to raise_error(RubyReactor::Error::InputValidationError)
     end
   end
