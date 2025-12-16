@@ -46,6 +46,22 @@ module RubyReactor
       def expire(key, seconds)
         raise NotImplementedError
       end
+
+      def store_correlation_id(correlation_id, context_id, reactor_class_name)
+        raise NotImplementedError
+      end
+
+      def retrieve_context_id_by_correlation_id(correlation_id, reactor_class_name)
+        raise NotImplementedError
+      end
+
+      def delete_correlation_id(correlation_id, reactor_class_name)
+        raise NotImplementedError
+      end
+
+      def delete_context(context_id, reactor_class_name)
+        raise NotImplementedError
+      end
     end
   end
 end

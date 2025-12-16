@@ -172,6 +172,10 @@ module RubyReactor
         @conditions.all? { |condition| condition.call(context) } &&
           @guards.all? { |guard| guard.call(context) }
       end
+
+      def interrupt?
+        false
+      end
     end
   end
 end

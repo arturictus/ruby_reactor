@@ -9,6 +9,7 @@ A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor impleme
 - **Map & Parallel Execution**: Iterate over collections in parallel with the `map` step, distributing work across multiple workers.
 - **Retries**: Configurable retry logic for failed steps, with exponential backoff.
 - **Compensation**: Automatic rollback of completed steps when a failure occurs.
+- **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
 
 ## Installation
@@ -196,6 +197,42 @@ def create(params)
    
    # do something with user
 end
+```
+
+### Interrupts (Pause & Resume)
+
+Pause execution to wait for external events like webhooks or user approvals.
+
+```ruby
+class ApprovalReactor < RubyReactor::Reactor
+  step :submit_request do
+    run { |args| RequestService.submit(args) }
+  end
+
+  interrupt :wait_for_manager do
+    wait_for :submit_request
+    # Resume using this ID
+    correlation_id { |ctx| "req-#{ctx.result(:submit_request)[:id]}" }
+  end
+
+  step :process_decision do
+    argument :decision, result(:wait_for_manager)
+    run do |args| 
+      args[:decision] == 'approved' ? Success() : Failure("Rejected")
+    end
+  end
+end
+
+# Usage:
+# 1. Start execution
+execution = ApprovalReactor.run(params) # => Returns Paused status
+
+# 2. Later, resume it via correlation ID
+ApprovalReactor.continue_by_correlation_id(
+  correlation_id: "req-123",
+  payload: "approved",
+  step_name: :wait_for_manager
+)
 ```
 
 ### Map & Parallel Execution
@@ -540,6 +577,9 @@ Master the `map` feature for processing collections. Learn about parallel execut
 ### [Retry Configuration](documentation/retry_configuration.md)
 Configure robust retry policies for your steps. This guide details the available backoff strategies (exponential, linear, fixed), how to configure retries at the reactor or step level, and how async retries work without blocking workers.
 
+### [Interrupts](documentation/interrupts.md)
+Learn how to pause and resume reactors to handle long-running processes, manual approvals, and asynchronous callbacks. Patterns for correlation IDs, timeouts, and payload validation.
+
 ### Examples
 - [Order Processing](documentation/examples/order_processing.md) - Complete order processing workflow example
 - [Payment Processing](documentation/examples/payment_processing.md) - Payment handling with compensation
@@ -548,12 +588,19 @@ Configure robust retry policies for your steps. This guide details the available
 ## Future improvements
 
 - [X] Global id to serialize ActiveRecord classes
-- [ ] Middlewares
-- [ ] Descriptive errors
+- [X] Descriptive errors
 - [X] `map` step to iterate over arrays in parallel
 - [X] `compose` special step to execute reactors as step
+- [X] `interrupt` to pause and resume reactors
+- [ ] Middlewares
 - [ ] Async ruby to parallelize same level steps
 - [ ] Dedicated interface to inspect reactor results and errors
+- [ ] Multiple storage adapters
+  - [X] Redis
+  - [ ] ActiveRecord
+- [ ] Multiple Async adapters
+  - [X] Sidekiq
+  - [ ] ActiveJob
 
 ## Development
 

@@ -44,6 +44,10 @@ module RubyReactor
       graph_manager.build_and_validate!
 
       @result = @step_executor.execute_all_steps
+
+      handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
+
+      @result
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
     end
@@ -51,13 +55,21 @@ module RubyReactor
     def resume_execution
       prepare_for_resume
 
-      if @context.current_step
-        execute_current_step_and_continue
-      else
-        execute_remaining_steps
-      end
+      @result = if @context.current_step
+                  execute_current_step_and_continue
+                else
+                  execute_remaining_steps
+                end
+
+      handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
+
+      @result
     rescue StandardError => e
       handle_resume_error(e)
+    end
+
+    def undo_all
+      @compensation_manager.rollback_completed_steps
     end
 
     def undo_stack
@@ -70,6 +82,15 @@ module RubyReactor
 
     def execution_trace
       @context.execution_trace
+    end
+
+    def save_context
+      storage = RubyReactor::Configuration.instance.storage_adapter
+      reactor_class_name = @reactor_class.name || "AnonymousReactor-#{@reactor_class.object_id}"
+
+      # Serialize context
+      serialized_context = ContextSerializer.serialize(@context)
+      storage.store_context(@context.context_id, serialized_context, reactor_class_name)
     end
 
     private
@@ -93,7 +114,7 @@ module RubyReactor
         @result = @step_executor.execute_all_steps
       else
         case result
-        when RetryQueuedResult, RubyReactor::Failure, RubyReactor::AsyncResult
+        when RetryQueuedResult, RubyReactor::Failure, RubyReactor::AsyncResult, RubyReactor::InterruptResult
           # Step was requeued, failed, or handed off to async - return the result
           @result = result
         when RubyReactor::Success
@@ -118,6 +139,20 @@ module RubyReactor
                   @result_handler.handle_execution_error(error)
                 end
       @result
+    end
+
+    def handle_interrupt(interrupt_result)
+      save_context
+
+      # Store correlation ID mapping if present
+      return unless interrupt_result.correlation_id
+
+      storage = RubyReactor::Configuration.instance.storage_adapter
+      storage.store_correlation_id(
+        interrupt_result.correlation_id,
+        @context.context_id,
+        @reactor_class.name
+      )
     end
   end
 end

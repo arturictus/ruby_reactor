@@ -36,6 +36,9 @@ module RubyReactor
             # If a step returns Failure, we need to stop execution and return it
             return result if result.is_a?(RubyReactor::Failure)
 
+            # If a step returns InterruptResult, we need to stop execution and return it
+            return result if result.is_a?(RubyReactor::InterruptResult)
+
             # If result is nil, it means async was executed inline (test mode), continue
             next if result.nil?
           end
@@ -49,7 +52,9 @@ module RubyReactor
         # If we're already in inline async execution mode (inside Worker),
         # treat async steps as sync to avoid infinite recursion
 
-        if step_config.async? && !@context.inline_async_execution
+        if step_config.interrupt?
+          handle_interrupt_step(step_config)
+        elsif step_config.async? && !@context.inline_async_execution
           handle_async_step(step_config)
         else
           execute_step_with_retry(step_config)
@@ -77,8 +82,10 @@ module RubyReactor
         # Update retry context
         @context.retry_context = other_executor.context.retry_context
 
-        # Clear current_step since we've completed it
-        @context.current_step = nil
+        # Update current_step:
+        # If the other executor has a current_step, it means it paused/interrupted there. We should adopt it.
+        # If it's nil, it means it completed successfully, so we clear our current_step (which was the async step).
+        @context.current_step = other_executor.context.current_step
 
         # Update our dependency graph to reflect completed steps
         other_executor.context.intermediate_results.each_key do |step_name|
@@ -91,7 +98,8 @@ module RubyReactor
         # Merge any undo stack items
         other_executor.undo_stack.each do |item|
           # Avoid duplicates by checking if this step is already in the undo stack
-          unless @compensation_manager.undo_stack.any? { |existing| existing[:step].name == item[:step].name }
+          # Use string comparison for step names to avoid symbol/string mismatch issues
+          unless @compensation_manager.undo_stack.any? { |existing| existing[:step].name.to_s == item[:step].name.to_s }
             @compensation_manager.add_to_undo_stack(item)
           end
         end
@@ -246,6 +254,28 @@ module RubyReactor
         merge_executor_state(result)
 
         result.result
+      end
+
+      def handle_interrupt_step(step_config)
+        # Check if we have a result for this step (resuming)
+        if @context.intermediate_results.key?(step_config.name)
+          # We are resuming
+          result = @context.get_result(step_config.name)
+          return RubyReactor.Success(result)
+        end
+
+        # We are pausing
+        correlation_id = nil
+        correlation_id = step_config.correlation_id_block.call(@context) if step_config.correlation_id_block
+
+        # Store current step as the one we are paused at
+        @context.current_step = step_config.name
+
+        RubyReactor::InterruptResult.new(
+          execution_id: @context.context_id,
+          correlation_id: correlation_id,
+          intermediate_results: @context.intermediate_results
+        )
       end
 
       def configuration

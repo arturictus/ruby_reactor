@@ -37,8 +37,8 @@ module RubyReactor
 
         # Resume execution from the failed step
         executor = Executor.new(context.reactor_class, {}, context)
-        executor.compensation_manager.undo_stack.concat(context.undo_stack)
         executor.resume_execution
+        executor.save_context
 
         # Return the executor (which now has the result stored in it)
         executor

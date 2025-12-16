@@ -18,6 +18,9 @@ module RubyReactor
         include RubyReactor::Dsl::TemplateHelpers
         include RubyReactor::Dsl::ValidationHelpers
 
+        require_relative "interrupt_builder"
+        require_relative "interrupt_step_config"
+
         def inputs
           @inputs ||= {}
         end
@@ -99,6 +102,15 @@ module RubyReactor
         def map(name, reactor_class = nil, &block)
           builder = RubyReactor::Dsl::MapBuilder.new(name, reactor_class, self, &block)
 
+          builder.instance_eval(&block) if block_given?
+
+          step_config = builder.build
+          steps[name] = step_config
+          step_config
+        end
+
+        def interrupt(name, &block)
+          builder = RubyReactor::Dsl::InterruptBuilder.new(name, self)
           builder.instance_eval(&block) if block_given?
 
           step_config = builder.build

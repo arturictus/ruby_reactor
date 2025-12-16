@@ -4,7 +4,8 @@ module RubyReactor
   class Context
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
                   :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack, :test_mode,
-                  :parent_context, :root_context, :composed_contexts, :context_id, :map_operations, :map_metadata
+                  :parent_context, :root_context, :composed_contexts, :context_id, :map_operations, :map_metadata,
+                  :cancelled, :cancellation_reason
 
     def initialize(inputs = {}, reactor_class = nil)
       @context_id = SecureRandom.uuid
@@ -23,6 +24,8 @@ module RubyReactor
       @inline_async_execution = false # Flag to prevent nested async calls
       @undo_stack = [] # Initialize the undo stack
       @test_mode = false
+      @cancelled = false
+      @cancellation_reason = nil
       @parent_context = nil
       @root_context = nil
     end
@@ -37,6 +40,7 @@ module RubyReactor
         value
       end
     end
+    alias input get_input
 
     def get_result(step_name, path = nil)
       value = @intermediate_results[step_name.to_sym] || @intermediate_results[step_name.to_s]
@@ -48,6 +52,7 @@ module RubyReactor
         value
       end
     end
+    alias result get_result
 
     def set_result(step_name, value)
       @intermediate_results[step_name.to_sym] = value
@@ -95,7 +100,9 @@ module RubyReactor
         retry_context: @retry_context.serialize_for_retry,
         execution_trace: ContextSerializer.serialize_value(@execution_trace),
         undo_stack: serialize_undo_stack,
-        test_mode: @test_mode
+        test_mode: @test_mode,
+        cancelled: @cancelled,
+        cancellation_reason: @cancellation_reason
       }
     end
 
@@ -116,11 +123,8 @@ module RubyReactor
       context.execution_trace = ContextSerializer.deserialize_value(data["execution_trace"]) || []
       context.undo_stack = deserialize_undo_stack(data["undo_stack"] || [], context.reactor_class)
       context.test_mode = data["test_mode"] || false
-
-      # Reconstruct parent/root relationships if nested contexts exist in private_data
-      # This is tricky because private_data is just a hash.
-      # We rely on the fact that nested contexts are stored in private_data by ComposeStep
-      # But here we just deserialize the values.
+      context.cancelled = data["cancelled"] || false
+      context.cancellation_reason = data["cancellation_reason"]
 
       context
     end
