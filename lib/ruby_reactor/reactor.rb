@@ -108,37 +108,10 @@ module RubyReactor
         raise Error::ValidationError, "Cannot resume: context does not have a current step (was it interrupted?)"
       end
 
-      # Check if step_name is valid (current step OR ready step)
-      if step_name.to_s != @context.current_step.to_s
-        # Build graph to check if step is ready
-        graph_manager = Executor::GraphManager.new(self.class, DependencyGraph.new, @context)
-        graph_manager.build_and_validate!
-        graph_manager.mark_completed_steps_from_context
-        ready_steps = graph_manager.dependency_graph.ready_steps.map(&:name).map(&:to_s)
+      validate_continue_step!(step_name)
 
-        unless ready_steps.include?(step_name.to_s)
-          raise Error::ValidationError,
-                "Cannot resume: expected step '#{@context.current_step}' or ready steps #{ready_steps} but got '#{step_name}'"
-        end
-      end
-
-      # Validate payload if the step has validation
-      step_config = self.class.steps[@context.current_step]
-      if step_config&.validation_schema
-        validation = step_config.validation_schema.call(payload)
-
-        if validation.failure?
-          failure = RubyReactor::Failure(validation.errors.to_h)
-          # We need a way to mark this failure as a validation failure
-          # For now, we rely on the error object inside Failure or just return Failure
-          # The PRD requires `result.invalid_payload?` to be true.
-          # Since we don't have that method on Failure yet, we might need to enhance Failure
-          # OR wrap it. For now, let's assume Failure wraps the error and we can check it.
-          # We'll use a specific error type to identify it.
-          failure.instance_variable_set(:@type, :input_validation)
-          def failure.invalid_payload? = true
-          return failure
-        end
+      if (failure = validate_continue_payload(payload))
+        return failure
       end
 
       target_step = step_name
@@ -200,6 +173,42 @@ module RubyReactor
       return unless graph.has_cycles?
 
       raise Error::DependencyError, "Dependency graph contains cycles"
+    end
+
+    def validate_continue_step!(step_name)
+      return if step_name.to_s == @context.current_step.to_s
+
+      # Build graph to check if step is ready
+      graph_manager = Executor::GraphManager.new(self.class, DependencyGraph.new, @context)
+      graph_manager.build_and_validate!
+      graph_manager.mark_completed_steps_from_context
+      ready_steps = graph_manager.dependency_graph.ready_steps.map(&:name).map(&:to_s)
+
+      return if ready_steps.include?(step_name.to_s)
+
+      raise Error::ValidationError,
+            "Cannot resume: expected step '#{@context.current_step}' " \
+            "or ready steps #{ready_steps} but got '#{step_name}'"
+    end
+
+    def validate_continue_payload(payload)
+      step_config = self.class.steps[@context.current_step]
+      return unless step_config&.validation_schema
+
+      validation = step_config.validation_schema.call(payload)
+
+      return unless validation.failure?
+
+      failure = RubyReactor::Failure(validation.errors.to_h)
+      # We need a way to mark this failure as a validation failure
+      # For now, we rely on the error object inside Failure or just return Failure
+      # The PRD requires `result.invalid_payload?` to be true.
+      # Since we don't have that method on Failure yet, we might need to enhance Failure
+      # OR wrap it. For now, let's assume Failure wraps the error and we can check it.
+      # We'll use a specific error type to identify it.
+      failure.instance_variable_set(:@type, :input_validation)
+      def failure.invalid_payload? = true
+      failure
     end
   end
 end

@@ -19,12 +19,12 @@ RSpec.describe "Interrupt Compensation and Undo" do
       execution.execution_id
     end
 
-    before do
+    it "starts in an interrupted state" do
       expect(execution).to be_a(RubyReactor::InterruptResult)
       expect(reactor_class.trace).to eq([:prepare_run])
     end
 
-    context "via Reactor.continue (Class method)" do
+    context "when using Reactor.continue (Class method)" do
       it "automatically undos and cancels on invalid payload" do
         # Action & Assertion
         expect do
@@ -46,7 +46,7 @@ RSpec.describe "Interrupt Compensation and Undo" do
       end
     end
 
-    context "via reactor.continue (Instance method)" do
+    context "when using reactor.continue (Instance method)" do
       it "returns invalid_payload result WITHOUT undo" do
         reactor = reactor_class.find(execution_id)
 
@@ -67,11 +67,12 @@ RSpec.describe "Interrupt Compensation and Undo" do
     let(:execution) { reactor_class.run }
     let(:execution_id) { execution.execution_id }
 
-    before do
+    it "starts in an interrupted state" do
       expect(execution).to be_a(RubyReactor::InterruptResult)
     end
 
     it "runs compensations and cancels execution" do
+      execution
       expect(reactor_class.trace).to eq([:prepare_run])
 
       reactor_class.undo(execution_id)
@@ -96,7 +97,7 @@ RSpec.describe "Interrupt Compensation and Undo" do
       expect(reactor_class.trace).not_to include(:prepare_undo)
     end
 
-    context "Explicit Step Validation" do
+    context "with Explicit Step Validation" do
       it "resumes successfully when correct step_name is provided" do
         reactor_class = InterruptUndoTestReactor
         execution = reactor_class.run(user_id: "step_check_valid")
