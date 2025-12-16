@@ -38,6 +38,7 @@ Gem::Specification.new do |spec|
   # Core dependencies
   spec.add_dependency "dry-validation", "~> 1.10"
   spec.add_dependency "redis", "~> 5.0"
+  spec.add_dependency "roda", "~> 3.0"
   spec.add_dependency "sidekiq", "~> 7.0"
   spec.add_dependency "zeitwerk", "~> 2.6"
 

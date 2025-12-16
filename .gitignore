@@ -11,3 +11,5 @@
 .rspec_status
 log
 ui
+# rails demo app
+demo_app/
