@@ -35,7 +35,7 @@ module RubyReactor
         cancel(id: id, reason: "Payload validation failed")
 
         # Raise exception to match expected behavior (strict mode for class method)
-        raise Error::InputValidationError.new(result.error)
+        raise Error::InputValidationError, result.error
       end
 
       result
@@ -124,7 +124,7 @@ module RubyReactor
 
       # Validate payload if the step has validation
       step_config = self.class.steps[@context.current_step]
-      if step_config && step_config.validation_schema
+      if step_config&.validation_schema
         validation = step_config.validation_schema.call(payload)
 
         if validation.failure?

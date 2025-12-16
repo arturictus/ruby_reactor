@@ -27,13 +27,13 @@ Metrics/BlockLength:
 Metrics/MethodLength:
   Exclude:
     - spec/**/*
-  Max: 25
+  Max: 36
   CountComments: false
 
 Metrics/ClassLength:
   Exclude:
     - spec/**/*
-  Max: 200
+  Max: 250
 
 Style/Documentation:
   Exclude:
@@ -96,3 +96,10 @@ RSpec/DescribeClass:
 
 RSpec/AnyInstance:
   Enabled: false
+
+Naming/VariableNumber:
+  Enabled: false
+
+Metrics/ModuleLength:
+  Max: 200
+

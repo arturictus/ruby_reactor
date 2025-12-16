@@ -5,7 +5,6 @@ module RubyReactor
     class Collector
       extend Helpers
 
-      # rubocop:disable Metrics/MethodLength
       def self.perform(arguments)
         arguments = arguments.transform_keys(&:to_sym)
         parent_context_id = arguments[:parent_context_id]
@@ -59,7 +58,6 @@ module RubyReactor
         # Resume execution
         resume_parent_execution(parent_context, step_name, final_result, storage)
       end
-      # rubocop:enable Metrics/MethodLength
     end
   end
 end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class TestInterruptReactor < RubyReactor::Reactor
   input :user_id
 
