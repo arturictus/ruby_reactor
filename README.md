@@ -588,12 +588,19 @@ Learn how to pause and resume reactors to handle long-running processes, manual 
 ## Future improvements
 
 - [X] Global id to serialize ActiveRecord classes
-- [ ] Middlewares
-- [ ] Descriptive errors
+- [X] Descriptive errors
 - [X] `map` step to iterate over arrays in parallel
 - [X] `compose` special step to execute reactors as step
+- [X] `interrupt` to pause and resume reactors
+- [ ] Middlewares
 - [ ] Async ruby to parallelize same level steps
 - [ ] Dedicated interface to inspect reactor results and errors
+- [ ] Multiple storage adapters
+  - [X] Redis
+  - [ ] ActiveRecord
+- [ ] Multiple Async adapters
+  - [X] Sidekiq
+  - [ ] ActiveJob
 
 ## Development
 
