@@ -1,4 +1,5 @@
 require "roda"
+require "ruby_reactor"
 require "json"
 require_relative "api"
 

@@ -141,6 +141,66 @@ module RubyReactor
         @redis.expire(key, seconds)
       end
 
+      # New methods for API
+      def scan_reactors(pattern: "reactor:*:context:*", count: 50)
+        # Use SCAN to find keys matching the pattern
+        # This is expensive if there are many keys, but suitable for Admin UI
+        keys = []
+
+        # We need to collect enough keys to satisfy count, but also limit the scanning
+        # Loop until we have enough keys or cursor creates a full cycle
+        # Note: This is a simplified implementation. Real production implementation
+        # might need a more robust pagination strategy.
+        @redis.scan_each(match: pattern, count: count) do |key|
+          keys << key
+          break if keys.size >= count
+        end
+
+        return [] if keys.empty?
+
+        # Fetch values for all found keys
+        # Use mget-like behavior or pipeline
+        # Redis adapters might differ, so we just iterate for safety or pipeline
+        json_results = @redis.pipelined do |pipeline|
+          keys.each { |key| pipeline.call("JSON.GET", key) }
+        end
+
+        json_results.compact.map do |json|
+          data = JSON.parse(json)
+          {
+            id: data["context_id"],
+            class: data["reactor_class"],
+            status: determine_status(data),
+            created_at: data["started_at"]
+          }
+        end
+      end
+
+      def find_context_by_id(context_id)
+        # We don't know the reactor class, so we search for the ID
+        pattern = "reactor:*:context:#{context_id}"
+        keys = []
+        @redis.scan_each(match: pattern, count: 1) do |key|
+          keys << key
+          break
+        end
+        return nil if keys.empty?
+
+        key = keys.first
+        json = @redis.call("JSON.GET", key)
+        return nil unless json
+
+        JSON.parse(json)
+      end
+
+      def determine_status(data)
+        return "cancelled" if data["cancelled"]
+        return "failed" if data["retry_count"] > 0 && !data["current_step"].nil? # Heuristic
+        return "completed" unless data["current_step"]
+
+        "running"
+      end
+
       private
 
       def context_key(context_id, reactor_class_name)

@@ -62,6 +62,14 @@ module RubyReactor
       def delete_context(context_id, reactor_class_name)
         raise NotImplementedError
       end
+
+      def scan_reactors(pattern: "*", count: 50)
+        raise NotImplementedError
+      end
+
+      def find_context_by_id(context_id)
+        raise NotImplementedError
+      end
     end
   end
 end

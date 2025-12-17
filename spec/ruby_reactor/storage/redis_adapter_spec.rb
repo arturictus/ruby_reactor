@@ -103,4 +103,47 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       expect(result).to eq([{ "value" => 1 }, { "value" => 2 }])
     end
   end
+
+  describe "#scan_reactors" do
+    it "scans and returns reactors" do
+      context_id = "ctx-123"
+      reactor_class = "MyReactor"
+      data = {
+        "context_id" => context_id,
+        "reactor_class" => reactor_class,
+        "started_at" => Time.now.to_s,
+        "current_step" => "step1",
+        "retry_count" => 0
+      }
+      key = "reactor:MyReactor:context:ctx-123"
+
+      redis_client.call("JSON.SET", key, ".", data.to_json)
+
+      result = adapter.scan_reactors(pattern: "reactor:*:context:*", count: 10)
+      expect(result).to be_an(Array)
+      expect(result.first).to include(
+        id: context_id,
+        class: reactor_class,
+        status: "running"
+      )
+    end
+  end
+
+  describe "#find_context_by_id" do
+    it "finds context by id regardless of reactor class" do
+      context_id = "ctx-123"
+      data = { "context_id" => context_id, "foo" => "bar" }
+      key = "reactor:MyReactor:context:ctx-123"
+
+      redis_client.call("JSON.SET", key, ".", data.to_json)
+
+      result = adapter.find_context_by_id(context_id)
+      expect(result).to eq(data)
+    end
+
+    it "returns nil if context not found" do
+      result = adapter.find_context_by_id("non-existent")
+      expect(result).to be_nil
+    end
+  end
 end
