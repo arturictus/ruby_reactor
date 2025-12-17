@@ -11,3 +11,6 @@
 .rspec_status
 log
 ui
+# Ignore key files for decrypting credentials and more.
+/config/*.key
+
