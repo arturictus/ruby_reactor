@@ -9,7 +9,7 @@ namespace :build do
   desc "Build the UI assets"
   task :ui do
     puts "Building UI..."
-    system("cd ui && npm install && npm run build") || abort("UI build failed")
+    system("cd gui && npm install && npm run build") || abort("UI build failed")
 
     # Copy assets to public
     # Vite builds to dist by default. We want it in lib/ruby_reactor/web/public
@@ -17,7 +17,7 @@ namespace :build do
     # Let's copy.
     FileUtils.rm_rf("lib/ruby_reactor/web/public")
     FileUtils.mkdir_p("lib/ruby_reactor/web/public")
-    FileUtils.cp_r("ui/dist/.", "lib/ruby_reactor/web/public/")
+    FileUtils.cp_r("gui/dist/.", "lib/ruby_reactor/web/public/")
     puts "UI built and assets copied to lib/ruby_reactor/web/public"
   end
 end
