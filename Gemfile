@@ -59,7 +59,7 @@ group :development do
   gem "web-console"
 end
 
-gem "ruby_reactor", path: "../ruby_reactor"
+gem "ruby_reactor", path: ".."
 gem "sidekiq"
 # Redis is needed for sidekiq and reactor storage
 gem "redis"
