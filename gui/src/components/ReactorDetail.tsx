@@ -1,12 +1,13 @@
 import useSWR from 'swr';
 import { useParams, Link } from 'react-router-dom';
 import { ChevronLeft, Play, XOctagon, Share2, MoreHorizontal } from 'lucide-react';
+import { apiUrl } from '../lib/utils';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export default function ReactorDetail() {
   const { id } = useParams();
-  const { data: reactor, error, isLoading } = useSWR(id ? `/api/reactors/${id}` : null, fetcher);
+  const { data: reactor, error, isLoading } = useSWR(id ? apiUrl(`/api/reactors/${id}`) : null, fetcher);
 
   if (error) return <div className="p-4 text-red-500 bg-red-500/10 border border-red-500/20 rounded-lg">Failed to load reactor</div>;
   if (isLoading) return <div className="p-4 text-slate-500 animate-pulse">Loading reactor details...</div>;

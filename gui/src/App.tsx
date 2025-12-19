@@ -3,9 +3,11 @@ import { LayoutDashboard, Zap } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import ReactorDetail from './components/ReactorDetail';
 
+const basename = window.RUBY_REACTOR_BASE || '/';
+
 function App() {
   return (
-    <Router>
+    <Router basename={basename}>
       <div className="min-h-screen bg-slate-950 text-slate-50 font-sans selection:bg-indigo-500/30">
         <header className="border-b border-slate-800/60 bg-slate-900/50 backdrop-blur-xl sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">

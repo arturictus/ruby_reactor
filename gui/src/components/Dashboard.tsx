@@ -1,12 +1,12 @@
 import useSWR from 'swr';
 import { Link } from 'react-router-dom';
 import { Activity, Clock, AlertCircle, CheckCircle2, Search, Filter } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, apiUrl } from '../lib/utils';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export default function Dashboard() {
-  const { data: reactors, error, isLoading } = useSWR('/api/reactors', fetcher);
+  const { data: reactors, error, isLoading } = useSWR(apiUrl('/api/reactors'), fetcher);
 
   if (error) return (
     <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 flex items-center gap-2">

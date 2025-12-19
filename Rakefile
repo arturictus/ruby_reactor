@@ -22,8 +22,16 @@ namespace :build do
   end
 end
 
-require "rubocop/rake_task"
+namespace :server do
+  desc "Start the server"
+  task :start do
+    puts "Starting server..."
+    system("rackup -Ilib lib/ruby_reactor/web/config.ru -p 9292") || abort("Server failed to start")
+  end
+end
 
-RuboCop::RakeTask.new
+# require "rubocop/rake_task"
+
+# RuboCop::RakeTask.new
 
 task default: %i[spec rubocop]
