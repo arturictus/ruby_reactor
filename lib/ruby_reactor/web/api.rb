@@ -34,10 +34,14 @@ module RubyReactor
 
                 steps_config = {} unless steps_config.is_a?(Hash)
 
+                # Use DependencyGraph to calculate dependencies effectively
+                graph = RubyReactor::DependencyGraph.new
+                steps_config.each_value { |config| graph.add_step(config) }
+
                 structure = steps_config.map do |name, config|
                   type = if config.respond_to?(:interrupt?) && config.interrupt?
                            "interrupt"
-                         elsif config.respond_to?(:impl) && config.impl.to_s.include?("Map::Execution")
+                         elsif config.respond_to?(:impl) && config.impl.to_s.include?("MapStep")
                            "map"
                          elsif config.async?
                            "async"
@@ -47,17 +51,13 @@ module RubyReactor
                            "step"
                          end
 
-                  # Special handling to detect map or compose if not obvious from impl
-                  # Actually, map uses MapBuilder which sets impl to a new class.
-                  # Let's inspect config class if needed, but for now basic inference.
-
                   # Check for map (StepConfig doesn't key off builder type easily, but map usually has impl related to Map)
-                  type = "map" if config.impl && config.impl.name.to_s.include?("Map::Execution")
+                  type = "map" if config.impl && config.impl.name.to_s.include?("MapStep")
 
                   [name, {
                     name: name,
                     type: type,
-                    depends_on: config.dependencies,
+                    depends_on: graph.dependencies[name], # Use calculated dependencies from graph
                     async: config.async?
                   }]
                 end.to_h

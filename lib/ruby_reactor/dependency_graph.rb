@@ -2,6 +2,8 @@
 
 module RubyReactor
   class DependencyGraph
+    attr_reader :dependencies
+
     def initialize
       @nodes = {}
       @edges = {}
