@@ -63,3 +63,4 @@ gem "ruby_reactor", path: ".."
 gem "sidekiq"
 # Redis is needed for sidekiq and reactor storage
 gem "redis"
+gem "connection_pool", "< 3.0"

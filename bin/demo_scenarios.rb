@@ -66,7 +66,42 @@ else
 end
 
 puts "\n"
-puts "=== 5. Interrupt Demos ==="
+puts "=== 5. Running OrderProcessingReactor (Mock) ==="
+puts "-- Success Scenario --"
+res = OrderProcessingReactor.run(
+  order_id: "ord_1",
+  product_id: "prod_1",
+  quantity: 5,
+  amount: 100
+)
+if res.is_a?(RubyReactor::AsyncResult)
+  puts "Async execution started: #{res.job_id}"
+else
+  puts "Result: #{res.success? ? 'Success' : 'Failure'} - #{res.value}"
+end
+
+puts "-- Failure/Undo Scenario (Fail at check_inventory) --"
+res = OrderProcessingReactor.run(
+  order_id: "ord_2",
+  product_id: "prod_1",
+  quantity: 5,
+  amount: 100,
+  fail_at: :check_inventory
+)
+puts "Result: #{res.success? ? 'Success' : 'Failure'} - #{res.error}"
+puts "\n"
+
+puts "=== 6. Running PaymentWorkflow (Mock) ==="
+puts "-- Success Scenario --"
+res = PaymentWorkflow.run(order_id: "ord_pw_1")
+puts "Result: #{res.success? ? 'Success' : 'Failure'} - #{res.value}"
+
+puts "-- Failure Scenario (Fail at capture_payment) --"
+res = PaymentWorkflow.run(order_id: "ord_pw_2", fail_at: :capture_payment)
+puts "Result: #{res.success? ? 'Success' : 'Failure'} - #{res.error}"
+puts "\n"
+
+puts "=== 7. Interrupt Demos ==="
 puts "These require manual interaction:"
 puts "1. Visit /reactors to start Form Demo."
 puts "2. Use curl for Webhook Demo."
