@@ -40,6 +40,8 @@ module RubyReactor
       input_validator = InputValidator.new(@reactor_class, @context)
       input_validator.validate!
 
+      save_context
+
       graph_manager = GraphManager.new(@reactor_class, @dependency_graph, @context)
       graph_manager.build_and_validate!
 
@@ -50,10 +52,13 @@ module RubyReactor
       @result
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
+    ensure
+      save_context
     end
 
     def resume_execution
       prepare_for_resume
+      save_context
 
       @result = if @context.current_step
                   execute_current_step_and_continue
@@ -66,6 +71,8 @@ module RubyReactor
       @result
     rescue StandardError => e
       handle_resume_error(e)
+    ensure
+      save_context
     end
 
     def undo_all

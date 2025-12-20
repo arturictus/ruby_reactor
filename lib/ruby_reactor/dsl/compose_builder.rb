@@ -10,6 +10,26 @@ module RubyReactor
       def initialize(name, composed_reactor_class = nil, reactor = nil, &block)
         @name = name
         @composed_reactor_class = composed_reactor_class || (block ? Class.new(RubyReactor::Reactor) : nil)
+        if @composed_reactor_class && @composed_reactor_class.name.nil? && reactor
+          step_name_camel = name.to_s.split("_").map(&:capitalize).join
+
+          # Define the class as a constant under the parent reactor to give it a proper name
+          # This ensures it can be serialized and deserialized correctly
+          if reactor.const_defined?(step_name_camel, false)
+            # If it's already defined, we might simply use it, or check if it matches.
+            # For now, we assume it's the correct one or we overwrite it if allowed.
+            # To be safe against re-definition warnings:
+            # reactor.side_load_step_class? No.
+            # Just silencing warning if needed, but let's try direct set first.
+            # Actually, RSpec might perform the definition multiple times if the class is reloaded or if specs share state step?
+            # Ideally we skip if already set? But what if the definition changed?
+            # Since this is "inline", a new anonymous class is created every time `compose` is called.
+            # If we don't overwrite the constant, we use the old one (which matches the old anonymous class).
+            # But the new anonymous class `Class.new` is what we want to use.
+            reactor.send(:remove_const, step_name_camel)
+          end
+          reactor.const_set(step_name_camel, @composed_reactor_class)
+        end
         @reactor = reactor
         @argument_mappings = {}
         @async = false

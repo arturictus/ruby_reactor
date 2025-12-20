@@ -28,41 +28,7 @@ module RubyReactor
               structure = {}
 
               if reactor_class && reactor_class.respond_to?(:steps)
-                puts "Found reactor class: #{reactor_class.name}"
-                steps_config = reactor_class.steps
-                puts "Steps config: #{steps_config.inspect} (#{steps_config.class})"
-
-                steps_config = {} unless steps_config.is_a?(Hash)
-
-                # Use DependencyGraph to calculate dependencies effectively
-                graph = RubyReactor::DependencyGraph.new
-                steps_config.each_value { |config| graph.add_step(config) }
-
-                structure = steps_config.map do |name, config|
-                  type = if config.respond_to?(:interrupt?) && config.interrupt?
-                           "interrupt"
-                         elsif config.respond_to?(:impl) && config.impl.to_s.include?("MapStep")
-                           "map"
-                         elsif config.async?
-                           "async"
-                         elsif config.respond_to?(:params) && config.params&.dig(:composed_reactor)
-                           "compose"
-                         else
-                           "step"
-                         end
-
-                  # Check for map (StepConfig doesn't key off builder type easily, but map usually has impl related to Map)
-                  type = "map" if config.impl && config.impl.name.to_s.include?("MapStep")
-
-                  [name, {
-                    name: name,
-                    type: type,
-                    depends_on: graph.dependencies[name], # Use calculated dependencies from graph
-                    async: config.async?
-                  }]
-                end.to_h
-              else
-                puts "Reactor class #{reactor_class} does not respond to :steps"
+                structure = self.class.build_structure(reactor_class)
               end
 
               {
@@ -92,6 +58,59 @@ module RubyReactor
             end
           end
         end
+      end
+
+      def self.build_structure(reactor_class)
+        return {} unless reactor_class&.respond_to?(:steps)
+
+        steps_config = reactor_class.steps
+        return {} unless steps_config.is_a?(Hash)
+
+        # Use DependencyGraph to calculate dependencies effectively
+        graph = RubyReactor::DependencyGraph.new
+        steps_config.each_value { |config| graph.add_step(config) }
+
+        steps_config.map do |name, config|
+          type = determine_step_type(config)
+
+          step_data = {
+            name: name,
+            type: type,
+            depends_on: graph.dependencies[name],
+            async: config.async?
+          }
+
+          if type == "compose"
+            inner_class = extract_inner_class(config, :composed_reactor_class)
+            step_data[:nested_structure] = build_structure(inner_class) if inner_class
+          elsif type == "map"
+            inner_class = extract_inner_class(config, :mapped_reactor_class)
+            step_data[:nested_structure] = build_structure(inner_class) if inner_class
+          end
+
+          [name, step_data]
+        end.to_h
+      end
+
+      def self.determine_step_type(config)
+        if config.respond_to?(:interrupt?) && config.interrupt?
+          "interrupt"
+        elsif config.arguments&.key?(:composed_reactor_class)
+          "compose"
+        elsif config.arguments&.key?(:mapped_reactor_class)
+          "map"
+        elsif config.async?
+          "async"
+        else
+          "step"
+        end
+      end
+
+      def self.extract_inner_class(config, param_name)
+        val = config.arguments.dig(param_name, :source)
+        val.is_a?(RubyReactor::Template::Value) ? val.value : nil
+      rescue StandardError
+        nil
       end
     end
   end

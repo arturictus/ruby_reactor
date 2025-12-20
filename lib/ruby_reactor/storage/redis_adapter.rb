@@ -153,7 +153,7 @@ module RubyReactor
         # might need a more robust pagination strategy.
         @redis.scan_each(match: pattern, count: count) do |key|
           keys << key
-          break if keys.size >= count
+          break if keys.size >= count * 2 # Fetch more to account for filtering
         end
 
         return [] if keys.empty?
@@ -165,15 +165,19 @@ module RubyReactor
           keys.each { |key| pipeline.call("JSON.GET", key) }
         end
 
-        json_results.compact.map do |json|
+        results = json_results.compact.map do |json|
           data = JSON.parse(json)
+          next if data["parent_context_id"] # Skip nested reactors
+
           {
             id: data["context_id"],
             class: data["reactor_class"],
             status: determine_status(data),
             created_at: data["started_at"]
           }
-        end
+        end.compact
+
+        results.take(count)
       end
 
       def find_context_by_id(context_id)
