@@ -111,7 +111,7 @@ module RubyReactor
     def self.deserialize_from_retry(data)
       context = new
       context.context_id = data["context_id"] if data["context_id"]
-      context.reactor_class = data["reactor_class"] ? Object.const_get(data["reactor_class"]) : nil
+      context.reactor_class = resolve_reactor_class(data["reactor_class"])
       context.inputs = ContextSerializer.deserialize_value(data["inputs"]) || {}
       context.intermediate_results = ContextSerializer.deserialize_value(data["intermediate_results"]) || {}
       context.private_data = ContextSerializer.deserialize_value(data["private_data"]) || {}
@@ -130,6 +130,17 @@ module RubyReactor
       context.parent_context_id = data["parent_context_id"]
 
       context
+    end
+
+    def self.resolve_reactor_class(name)
+      return nil unless name
+
+      begin
+        Object.const_get(name)
+      rescue NameError
+        # Try finding in registry for anonymous classes
+        RubyReactor::Registry.find(name)
+      end
     end
 
     private

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "zeitwerk"
+require_relative "ruby_reactor/registry"
 
 # Load dry-validation if available (for validation features)
 begin

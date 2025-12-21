@@ -10,11 +10,13 @@ module RubyReactor
       def initialize(name, mapped_reactor_class = nil, reactor = nil, &block)
         @name = name
         @mapped_reactor_class = mapped_reactor_class || (block ? Class.new(RubyReactor::Reactor) : nil)
-        if @mapped_reactor_class && @mapped_reactor_class.name.nil?
-          parent_name = reactor&.name || "Anonymous_#{reactor.object_id}"
-          step_name_camel = name.to_s.split("_").map(&:capitalize).join
-          pseudo_name = "#{parent_name}::#{step_name_camel}"
-          @mapped_reactor_class.define_singleton_method(:name) { pseudo_name }
+        if @mapped_reactor_class && @mapped_reactor_class.name.nil? && reactor
+          map_name_camel = name.to_s.split("_").map(&:capitalize).join
+          parent_name = reactor.name # Assuming reactor has a name method or is a class with a name.
+
+          full_name = "#{parent_name}::#{map_name_camel}"
+          @mapped_reactor_class.define_singleton_method(:name) { full_name }
+          RubyReactor::Registry.register(full_name, @mapped_reactor_class)
         end
         @reactor = reactor
         @argument_mappings = {}

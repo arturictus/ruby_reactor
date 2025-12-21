@@ -13,14 +13,13 @@ module RubyReactor
 
       def store_context(context_id, serialized_context, reactor_class_name)
         key = context_key(context_id, reactor_class_name)
-        # Use JSON.SET for efficient storage and retrieval
-        @redis.call("JSON.SET", key, ".", serialized_context)
-        @redis.expire(key, 86_400) # 24h TTL
+        # Use standard SET for compatibility (ReJSON not strictly required for full docs)
+        @redis.set(key, serialized_context, ex: 86_400) # 24h TTL
       end
 
       def retrieve_context(context_id, reactor_class_name)
         key = context_key(context_id, reactor_class_name)
-        json = @redis.call("JSON.GET", key)
+        json = @redis.get(key)
         return nil unless json
 
         JSON.parse(json)
@@ -56,8 +55,7 @@ module RubyReactor
 
       def set_map_counter(map_id, count, reactor_class_name)
         key = map_counter_key(map_id, reactor_class_name)
-        @redis.set(key, count)
-        @redis.expire(key, 86_400)
+        @redis.set(key, count, ex: 86_400)
       end
 
       def initialize_map_operation(map_id, count, parent_reactor_class_name, reactor_class_info:, strict_ordering: true)
@@ -72,13 +70,12 @@ module RubyReactor
           reactor_class_info: reactor_class_info,
           created_at: Time.now.to_i
         }
-        @redis.call("JSON.SET", key, ".", metadata.to_json)
-        @redis.expire(key, 86_400)
+        @redis.set(key, metadata.to_json, ex: 86_400)
       end
 
       def retrieve_map_metadata(map_id, reactor_class_name)
         key = "reactor:#{reactor_class_name}:map:#{map_id}:metadata"
-        json = @redis.call("JSON.GET", key)
+        json = @redis.get(key)
         return nil unless json
 
         JSON.parse(json)
@@ -97,8 +94,7 @@ module RubyReactor
 
       def set_last_queued_index(map_id, index, reactor_class_name)
         key = map_last_queued_index_key(map_id, reactor_class_name)
-        @redis.set(key, index)
-        @redis.expire(key, 86_400)
+        @redis.set(key, index, ex: 86_400)
       end
 
       def increment_last_queued_index(map_id, reactor_class_name)
@@ -158,12 +154,8 @@ module RubyReactor
 
         return [] if keys.empty?
 
-        # Fetch values for all found keys
-        # Use mget-like behavior or pipeline
-        # Redis adapters might differ, so we just iterate for safety or pipeline
-        json_results = @redis.pipelined do |pipeline|
-          keys.each { |key| pipeline.call("JSON.GET", key) }
-        end
+        # Fetch values for all found keys using MGET (effecient standard command)
+        json_results = @redis.mget(*keys)
 
         results = json_results.compact.map do |json|
           data = JSON.parse(json)
@@ -191,7 +183,7 @@ module RubyReactor
         return nil if keys.empty?
 
         key = keys.first
-        json = @redis.call("JSON.GET", key)
+        json = @redis.get(key)
         return nil unless json
 
         JSON.parse(json)
@@ -199,7 +191,7 @@ module RubyReactor
 
       def determine_status(data)
         return "cancelled" if data["cancelled"]
-        return "failed" if data["retry_count"] > 0 && !data["current_step"].nil? # Heuristic
+        return "failed" if data["retry_count"] && data["retry_count"] > 0 && !data["current_step"].nil? # Heuristic
         return "completed" unless data["current_step"]
 
         "running"

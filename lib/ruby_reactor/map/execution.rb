@@ -32,12 +32,26 @@ module RubyReactor
       def self.execute_all_elements(source:, mappings:, reactor_class:, parent_context:, storage_options:)
         source.map.with_index do |element, index|
           element_inputs = build_element_inputs(mappings, parent_context, element)
-          result = reactor_class.run(element_inputs)
+
+          # Manually create and link context to ensure parent_context_id is set
+          child_context = RubyReactor::Context.new(element_inputs, reactor_class)
+          link_contexts(child_context, parent_context)
+
+          executor = RubyReactor::Executor.new(reactor_class, {}, child_context)
+          executor.execute
+          result = executor.result
 
           store_result(result, index, storage_options)
 
           result
         end
+      end
+
+      def self.link_contexts(child_context, parent_context)
+        child_context.parent_context = parent_context
+        child_context.root_context = parent_context.root_context || parent_context
+        child_context.test_mode = parent_context.test_mode
+        child_context.inline_async_execution = parent_context.inline_async_execution
       end
 
       def self.store_result(result, index, options)

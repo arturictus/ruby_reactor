@@ -7,7 +7,11 @@ module RubyReactor
       # Resolves the reactor class from reactor_class_info
       def resolve_reactor_class(info)
         if info["type"] == "class"
-          Object.const_get(info["name"])
+          begin
+            Object.const_get(info["name"])
+          rescue NameError
+            RubyReactor::Registry.find(info["name"])
+          end
         elsif info["type"] == "inline"
           parent_class = Object.const_get(info["parent"])
           step_config = parent_class.steps[info["step"].to_sym]
