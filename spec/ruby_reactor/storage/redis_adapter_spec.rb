@@ -18,7 +18,7 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       adapter.store_context(context_id, data, reactor_class)
 
       # Verify directly in Redis
-      stored_data = redis_client.call("JSON.GET", key)
+      stored_data = redis_client.get(key)
       expect(stored_data).to eq(data)
 
       # Verify TTL (approximate)
@@ -35,7 +35,7 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       data = { "foo" => "bar" }
 
       # Setup
-      redis_client.call("JSON.SET", key, ".", data.to_json)
+      redis_client.set(key, data.to_json)
 
       result = adapter.retrieve_context(context_id, reactor_class)
       expect(result).to eq(data)
@@ -117,7 +117,7 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       }
       key = "reactor:MyReactor:context:ctx-123"
 
-      redis_client.call("JSON.SET", key, ".", data.to_json)
+      redis_client.set(key, data.to_json)
 
       result = adapter.scan_reactors(pattern: "reactor:*:context:*", count: 10)
       expect(result).to be_an(Array)
@@ -135,7 +135,7 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       data = { "context_id" => context_id, "foo" => "bar" }
       key = "reactor:MyReactor:context:ctx-123"
 
-      redis_client.call("JSON.SET", key, ".", data.to_json)
+      redis_client.set(key, data.to_json)
 
       result = adapter.find_context_by_id(context_id)
       expect(result).to eq(data)

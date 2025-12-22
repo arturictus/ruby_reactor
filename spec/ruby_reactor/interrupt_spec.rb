@@ -23,7 +23,7 @@ RSpec.describe "RubyReactor Interrupt Feature", type: :integration do
 
       # 3. Verify state in Redis
       context_id = execution.execution_id
-      stored_context = redis.call("JSON.GET", "reactor:TestInterruptReactor:context:#{context_id}")
+      stored_context = redis.get("reactor:TestInterruptReactor:context:#{context_id}")
       expect(stored_context).not_to be_nil
 
       # Verify correlation ID mapping
