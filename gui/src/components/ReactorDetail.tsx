@@ -89,6 +89,8 @@ export default function ReactorDetail() {
             steps={reactor.steps}
             selectedStep={selectedStep}
             onStepSelect={setSelectedStep}
+            reactorStatus={reactor.status}
+            error={reactor.error}
           />
         </div>
 

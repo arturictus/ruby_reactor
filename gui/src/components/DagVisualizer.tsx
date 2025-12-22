@@ -13,7 +13,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { cn } from '../lib/utils';
-import { Activity, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { Activity, CheckCircle2, AlertCircle, Clock, Ban } from 'lucide-react';
 
 interface DagVisualizerProps {
   structure: Record<string, any>;
@@ -21,6 +21,8 @@ interface DagVisualizerProps {
   currentStep?: string;
   onStepSelect: (stepName: string) => void;
   selectedStep: string | null;
+  reactorStatus?: string;
+  error?: any;
 }
 
 const StepNode = ({ data }: { data: any }) => {
@@ -31,8 +33,8 @@ const StepNode = ({ data }: { data: any }) => {
     pending: "border-slate-700 bg-slate-900 text-slate-500",
     running: "border-indigo-500 bg-indigo-500/10 text-indigo-400 ring-2 ring-indigo-500/20",
     completed: "border-teal-500 bg-teal-500/10 text-teal-400",
-    failed: "border-rose-500 bg-rose-500/10 text-rose-400",
-    cancelled: "border-slate-600 bg-slate-800 text-slate-400"
+    failed: "border-rose-500 bg-rose-500/10 text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.2)]",
+    cancelled: "border-amber-500/50 bg-amber-500/10 text-amber-500"
   };
 
   const StatusIcon = {
@@ -40,7 +42,7 @@ const StepNode = ({ data }: { data: any }) => {
     running: Activity,
     completed: CheckCircle2,
     failed: AlertCircle,
-    cancelled: Clock
+    cancelled: Ban
   }[status as keyof typeof statusColors] || Clock;
 
   return (
@@ -58,7 +60,9 @@ const StepNode = ({ data }: { data: any }) => {
         )} />
         <div>
           <div className="font-medium text-sm">{data.label}</div>
-          <div className="text-[10px] opacity-70 uppercase tracking-wider">{data.type}</div>
+          <div className="text-[10px] opacity-70 uppercase tracking-wider">
+            {status === 'cancelled' ? 'CANCELLED' : data.type}
+          </div>
         </div>
       </div>
 
@@ -76,7 +80,7 @@ const GroupNode = ({ data }: { data: any }) => {
     running: "border-indigo-500",
     completed: "border-teal-500",
     failed: "border-rose-500",
-    cancelled: "border-slate-600"
+    cancelled: "border-amber-500/50"
   };
 
   return (
@@ -134,17 +138,6 @@ const performLayout = (
   const currentLevelNodes: any[] = [];
 
   Object.entries(nodes).forEach(([key, config]: [string, any]) => {
-    // Generate unique ID, but we usually use key. 
-    // If we are nested, keys might clash if not unique across reactor?
-    // Reactor steps are usually unique in the reactor.
-    // But nested reactor steps might clash with parent steps? 
-    // Ideally we should prefix IDs. But structure keys are just step names.
-    // 'onStepSelect' expects step name.
-    // If we change ID, onStepSelect might fail or we need to map back.
-    // For now, let's assume unique names or risk it. 
-    // Actually, distinct reactors usually have distinct step names, but generic ones like 'process' might clash.
-    // Let's use `key` as ID for now as per API.
-
     // Check for nested structure
     let childLayout: LayoutResult | null = null;
     let width = NODE_WIDTH;
@@ -266,11 +259,6 @@ const performLayout = (
         N.childLayout.nodes.forEach((childNode: Node) => {
           childNode.position.x += xOffset;
           childNode.position.y += yOffset;
-
-          // Also, child IDs were "key". If they clash with current level, we have a problem.
-          // But since recursive, they are already added to resultNodes.
-          // WE SHOULD UPDATE THEIR IDs to be unique path if possible, but step names are keys.
-          // For visualization, we keep IDs simple if no conflict.
         });
       }
 
@@ -315,12 +303,10 @@ const performLayout = (
 };
 
 
-export default function DagVisualizer({ structure, steps, onStepSelect, selectedStep }: DagVisualizerProps) {
+export default function DagVisualizer({ structure, steps, onStepSelect, selectedStep, reactorStatus, error }: DagVisualizerProps) {
   const nodeStatus = useMemo(() => {
     const statusMap: Record<string, string> = {};
 
-    // Recursive status population could be done here if needed
-    // For now simple flat helper
     const processLevel = (str: any) => {
       Object.keys(str || {}).forEach(key => {
         statusMap[key] = 'pending';
@@ -331,15 +317,25 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
 
     (steps || []).forEach(step => {
       statusMap[step.step] = 'completed';
-      // Note: steps trace doesn't currently include nested step names fully qualified...
-      // The step name in trace is just the name. 
-      // If unique across reactor, it works.
-      // If nested, context.execution_trace has step names.
-      // We might need to handle uniqueness.
     });
 
+    // Check for failed step
+    if (error && error.step_name) {
+      statusMap[error.step_name] = 'failed';
+    }
+
+    // Check for cancelled/skipped
+    if (reactorStatus === 'failed' || reactorStatus === 'cancelled') {
+      // Any step that is still pending should be marked as cancelled
+      Object.keys(statusMap).forEach(key => {
+        if (statusMap[key] === 'pending') {
+          statusMap[key] = 'cancelled';
+        }
+      });
+    }
+
     return statusMap;
-  }, [structure, steps]);
+  }, [structure, steps, reactorStatus, error]);
 
   const { nodes, edges } = useMemo(() => {
     if (!structure) return { nodes: [], edges: [] };
