@@ -17,7 +17,38 @@ namespace :demo do
 
       result = PaymentWorkflow.call(order_id: order_id, fail_at: fail_at)
 
-      if result.success?
+      if result.is_a?(RubyReactor::AsyncResult)
+        puts "⏳ ASYNC: Workflow started asynchronously."
+        puts "   Execution ID: #{result.execution_id}"
+      elsif result.success?
+        puts "✅ SUCCESS: Workflow completed successfully."
+        puts "   Result: #{result.value.inspect}"
+      else
+        puts "❌ FAILED: Workflow failed as expected."
+        puts "   Error: #{result.message}"
+      end
+    end
+  end
+  desc "Run OrderProcessingReactor with all failure scenarios"
+  task order_processing: [:environment, :flush_redis] do
+    fail_at_scenarios = [nil, :validate_order, :check_inventory, :reserve_inventory, :process_payment]
+
+    fail_at_scenarios.each do |fail_at|
+      puts "\n--- Running OrderProcessingReactor with fail_at: #{fail_at.inspect} ---"
+      order_id = "order_#{SecureRandom.hex(4)}"
+
+      result = OrderProcessingReactor.call(
+        order_id: order_id,
+        fail_at: fail_at,
+        product_id: "prod_1",
+        quantity: 1,
+        amount: 100
+      )
+
+      if result.is_a?(RubyReactor::AsyncResult)
+        puts "⏳ ASYNC: Workflow started asynchronously."
+        puts "   Execution ID: #{result.execution_id}"
+      elsif result.success?
         puts "✅ SUCCESS: Workflow completed successfully."
         puts "   Result: #{result.value.inspect}"
       else
