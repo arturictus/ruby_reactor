@@ -1,5 +1,7 @@
 # bin/demo_scenarios.rb
 
+Redis.new(url: RubyReactor.configuration.storage.redis_url).flushdb
+
 puts "=== 1. Running EtlReactor (ActiveRecord Integration) ==="
 begin
   result = EtlReactor.run
