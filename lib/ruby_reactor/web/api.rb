@@ -34,7 +34,9 @@ module RubyReactor
               {
                 id: data["context_id"],
                 class: data["reactor_class"],
-                status: if data["cancelled"]
+                status: if %w[failed paused completed].include?(data["status"])
+                          data["status"]
+                        elsif data["cancelled"]
                           "cancelled"
                         else
                           (data["current_step"] ? "running" : "completed")
@@ -43,7 +45,8 @@ module RubyReactor
                 inputs: data["inputs"],
                 intermediate_results: data["intermediate_results"],
                 structure: structure,
-                steps: data["execution_trace"] || []
+                steps: data["execution_trace"] || [],
+                error: data["failure_reason"]
               }
             end
 

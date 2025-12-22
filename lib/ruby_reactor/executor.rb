@@ -47,11 +47,15 @@ module RubyReactor
 
       @result = @step_executor.execute_all_steps
 
+      update_context_status(@result)
+
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
 
       @result
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
+      update_context_status(@result)
+      @result
     ensure
       save_context
     end
@@ -66,11 +70,15 @@ module RubyReactor
                   execute_remaining_steps
                 end
 
+      update_context_status(@result)
+
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
 
       @result
     rescue StandardError => e
       handle_resume_error(e)
+      update_context_status(@result)
+      @result
     ensure
       save_context
     end
@@ -101,6 +109,26 @@ module RubyReactor
     end
 
     private
+
+    def update_context_status(result)
+      return unless result
+
+      if result.is_a?(RubyReactor::Success)
+        @context.status = :completed
+      elsif result.is_a?(RubyReactor::Failure)
+        @context.status = :failed
+        @context.failure_reason = {
+          message: result.error.is_a?(Exception) ? result.error.message : result.error.to_s,
+          step_name: result.step_name,
+          inputs: result.inputs,
+          backtrace: result.backtrace,
+          reactor_name: result.reactor_name,
+          step_arguments: result.step_arguments
+        }
+      elsif result.is_a?(RubyReactor::InterruptResult)
+        @context.status = :paused
+      end
+    end
 
     def prepare_for_resume
       # Build dependency graph and mark completed steps

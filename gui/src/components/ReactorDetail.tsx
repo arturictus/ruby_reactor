@@ -1,6 +1,6 @@
 import useSWR, { mutate } from 'swr';
 import { useParams, Link } from 'react-router-dom';
-import { ChevronLeft, Play, XOctagon } from 'lucide-react';
+import { ChevronLeft, Play, XOctagon, AlertCircle } from 'lucide-react';
 import { useState } from 'react';
 import { apiUrl } from '../lib/utils';
 import DagVisualizer from './DagVisualizer';
@@ -39,7 +39,10 @@ export default function ReactorDetail() {
               <span className="px-2 py-0.5 rounded text-xs font-mono bg-slate-800 text-slate-400 border border-slate-700">#{id}</span>
             </div>
             <div className="flex items-center gap-2 mt-1.5">
-              <span className="text-sm text-slate-400">Status: <span className="text-slate-200 font-medium">{reactor.status}</span></span>
+              <span className="text-sm text-slate-400">Status: <span className={`font-medium ${reactor.status === 'failed' ? 'text-red-400' :
+                reactor.status === 'completed' ? 'text-emerald-400' :
+                  'text-slate-200'
+                }`}>{reactor.status}</span></span>
             </div>
           </div>
         </div>
@@ -64,6 +67,21 @@ export default function ReactorDetail() {
         </div>
       </div>
 
+      {reactor.status === 'failed' && reactor.error && (
+        <div className="px-2">
+          <div className="px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+            <div className="space-y-1 overflow-hidden">
+              <h3 className="text-sm font-medium text-red-500">
+                Workflow Failed
+                {reactor.error.step_name && <span className="text-red-400"> at step <span className="font-mono bg-red-500/10 px-1 rounded">{reactor.error.step_name}</span></span>}
+              </h3>
+              <p className="text-xs text-red-400/80 font-mono truncate">{reactor.error.message}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
         <div className="lg:col-span-2 h-full">
           <DagVisualizer
@@ -81,6 +99,7 @@ export default function ReactorDetail() {
             results={reactor.intermediate_results}
             inputs={reactor.inputs}
             trace={reactor.steps}
+            error={reactor.error}
           />
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Terminal, Box, ArrowRight, ArrowRightCircle } from 'lucide-react';
+import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle } from 'lucide-react';
 
 
 interface StepInspectorProps {
@@ -8,11 +8,13 @@ interface StepInspectorProps {
   results: Record<string, any>;
   trace: any[];
   inputs: Record<string, any>;
+  error?: any;
 }
 
-export default function StepInspector({ stepName, structure, results, trace }: StepInspectorProps) {
+export default function StepInspector({ stepName, structure, results, trace, error }: StepInspectorProps) {
   const stepConfig = stepName ? structure[stepName] : null;
   const result = stepName ? results[stepName] : null;
+  const isFailedStep = error && error.step_name === stepName;
 
   // Find relevant trace events
   const stepEvents = useMemo(() => {
@@ -21,7 +23,7 @@ export default function StepInspector({ stepName, structure, results, trace }: S
   }, [stepName, trace]);
 
   const lastEvent = stepEvents[stepEvents.length - 1];
-  const stepArgs = lastEvent?.arguments || {};
+  const stepArgs = lastEvent?.arguments || (isFailedStep ? error.step_arguments : {});
 
   if (!stepName) {
     return (
@@ -53,6 +55,25 @@ export default function StepInspector({ stepName, structure, results, trace }: S
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-8">
+
+        {/* Error Section */}
+        {isFailedStep && (
+          <div>
+            <h3 className="text-sm font-medium text-red-500 mb-3 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4" />
+              Failure Details
+            </h3>
+            <div className="bg-red-500/10 rounded-lg p-4 font-mono text-xs border border-red-500/20 text-red-300 overflow-x-auto space-y-2">
+              <div className="font-bold">{error.message}</div>
+              {error.backtrace && (
+                <div className="pt-2 border-t border-red-500/20 text-red-400/70 whitespace-pre-wrap">
+                  {error.backtrace.slice(0, 5).join('\n')}
+                  {error.backtrace.length > 5 && '\n...'}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Dependencies */}
         {stepConfig?.depends_on?.length > 0 && (
@@ -94,7 +115,7 @@ export default function StepInspector({ stepName, structure, results, trace }: S
             </div>
           ) : (
             <div className="bg-slate-950/50 rounded-lg p-4 font-mono text-xs border border-slate-800/50 text-slate-600 italic">
-              No result (Pending or Failed)
+              {isFailedStep ? <span className="text-red-400">Step Failed</span> : 'No result (Pending or Failed)'}
             </div>
           )}
         </div>
