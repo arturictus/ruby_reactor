@@ -26,6 +26,10 @@ export default function ReactorDetail() {
   if (error) return <div className="p-4 text-red-500 bg-red-500/10 border border-red-500/20 rounded-lg">Failed to load reactor</div>;
   if (isLoading) return <div className="p-4 text-slate-500 animate-pulse">Loading reactor details...</div>;
 
+  if (reactor?.status === 'failed') {
+    console.log('ReactorDetail: reactor is failed. Error:', reactor.error);
+  }
+
   return (
     <div className="space-y-6 h-[calc(100vh-8rem)] flex flex-col">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-6 shrink-0">
@@ -43,6 +47,11 @@ export default function ReactorDetail() {
                 reactor.status === 'completed' ? 'text-emerald-400' :
                   'text-slate-200'
                 }`}>{reactor.status}</span></span>
+              {reactor.retry_count > 0 && (
+                <span className="text-sm text-slate-400 ml-3 pl-3 border-l border-slate-700">
+                  Retries: <span className="font-medium text-amber-400">{reactor.retry_count}</span>
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -91,6 +100,7 @@ export default function ReactorDetail() {
             onStepSelect={setSelectedStep}
             reactorStatus={reactor.status}
             error={reactor.error}
+            results={reactor.intermediate_results}
           />
         </div>
 
@@ -102,6 +112,9 @@ export default function ReactorDetail() {
             inputs={reactor.inputs}
             trace={reactor.steps}
             error={reactor.error}
+            undoStack={reactor.undo_stack}
+            stepAttempts={reactor.step_attempts}
+            onClose={() => setSelectedStep(null)}
           />
         </div>
       </div>

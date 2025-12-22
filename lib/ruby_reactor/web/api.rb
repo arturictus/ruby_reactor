@@ -41,6 +41,9 @@ module RubyReactor
                         else
                           (data["current_step"] ? "running" : "completed")
                         end,
+                retry_count: data["retry_count"] || 0,
+                undo_stack: data["undo_stack"] || [],
+                step_attempts: data.dig("retry_context", "step_attempts") || {},
                 created_at: data["started_at"],
                 inputs: data["inputs"],
                 intermediate_results: data["intermediate_results"],

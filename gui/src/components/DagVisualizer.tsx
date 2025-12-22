@@ -23,6 +23,7 @@ interface DagVisualizerProps {
   selectedStep: string | null;
   reactorStatus?: string;
   error?: any;
+  results?: Record<string, any>;
 }
 
 const StepNode = ({ data }: { data: any }) => {
@@ -303,7 +304,9 @@ const performLayout = (
 };
 
 
-export default function DagVisualizer({ structure, steps, onStepSelect, selectedStep, reactorStatus, error }: DagVisualizerProps) {
+export default function DagVisualizer({ structure, steps, onStepSelect, selectedStep, reactorStatus, error, results }: DagVisualizerProps) {
+  console.log('DagVisualizer Render. Status:', reactorStatus, 'Error type:', typeof error, 'Error:', error);
+
   const nodeStatus = useMemo(() => {
     const statusMap: Record<string, string> = {};
 
@@ -316,12 +319,27 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
     processLevel(structure);
 
     (steps || []).forEach(step => {
-      statusMap[step.step] = 'completed';
+      // Only mark as completed if we have a result for this step
+      if (results && results[step.step]) {
+        statusMap[step.step] = 'completed';
+      } else if (reactorStatus === 'running') {
+        statusMap[step.step] = 'running';
+      }
     });
 
     // Check for failed step
-    if (error && error.step_name) {
-      statusMap[error.step_name] = 'failed';
+    let failedStepName = error?.step_name;
+
+    // Fallback: try to parse from message if not provided
+    if (!failedStepName && error?.message) {
+      const match = error.message.match(/Step '([^']+)' failed/);
+      if (match) {
+        failedStepName = match[1];
+      }
+    }
+
+    if (failedStepName) {
+      statusMap[failedStepName] = 'failed';
     }
 
     // Check for cancelled/skipped
@@ -335,7 +353,7 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
     }
 
     return statusMap;
-  }, [structure, steps, reactorStatus, error]);
+  }, [structure, steps, reactorStatus, error, results]);
 
   const { nodes, edges } = useMemo(() => {
     if (!structure) return { nodes: [], edges: [] };

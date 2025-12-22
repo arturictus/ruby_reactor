@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { vi } from 'vitest'
+// import { vi } from 'vitest'
 
 // Polyfill ResizeObserver
 class ResizeObserver {
@@ -7,4 +7,5 @@ class ResizeObserver {
   unobserve() { }
   disconnect() { }
 }
-global.ResizeObserver = ResizeObserver
+// @ts-ignore
+globalThis.ResizeObserver = ResizeObserver
