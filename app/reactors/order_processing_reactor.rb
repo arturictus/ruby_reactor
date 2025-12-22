@@ -24,7 +24,6 @@ class OrderProcessingReactor < RubyReactor::Reactor
   input :amount do
     required(:amount).filled(:integer, gt?: 0.0)
   end
-  retry_defaults max_attempts: 5, backoff: :fixed, base_delay: 2
 
   step :validate_order do
     argument :order_id, input(:order_id)
@@ -85,6 +84,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
     argument :inventory, result(:check_inventory)
     argument :fail_at, input(:fail_at)
     argument :success_at_retry, input(:success_at_retry)
+    retries max_attempts: 5, backoff: :fixed, base_delay: 0.5
     run do |args, context|
       puts "[EXECUTION] RUN reserve_inventory - product_id: #{args[:inventory][:product_id]}, " \
             "quantity: #{args[:inventory][:requested_quantity]}, " \
@@ -121,6 +121,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
     argument :amount, input(:amount)
     argument :fail_at, input(:fail_at)
     argument :inventory, result(:reserve_inventory)
+    retries max_attempts: 3, backoff: :fixed, base_delay: 0.5
 
     run do |args, _context|
       puts "[EXECUTION] RUN process_payment - order_id: #{args[:order][:id]}, amount: #{args[:amount]}"
