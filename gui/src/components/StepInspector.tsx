@@ -40,14 +40,15 @@ export default function StepInspector({ stepName, structure, results, trace, err
 
   // Calculate combined undo history (executed + pending)
   const combinedUndoHistory = useMemo(() => {
-    // 1. Find executed undos from trace
+    // 1. Find executed undos/compensations from trace
     const executedUndos = trace
-      .filter(e => e.type === 'undo')
+      .filter(e => e.type === 'undo' || e.type === 'compensate')
       .map(e => ({
         step_name: e.step,
         result: e.result,
         status: 'executed' as const,
-        timestamp: e.timestamp?._type === 'Time' ? e.timestamp.value : null
+        timestamp: e.timestamp?._type === 'Time' ? e.timestamp.value : null,
+        type: e.type as 'undo' | 'compensate'
       }));
 
     // 2. Map pending stack items

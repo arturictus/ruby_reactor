@@ -35,8 +35,28 @@ RSpec.describe "Undo Functionality" do
     expect(undo_entries.map { |e| e[:step] }).to eq(%i[step2 step1])
 
     # Each undo entry should contain the result of the undo operation
-    # (Currently it contains the original result.value, we want to fix this)
     expect(undo_entries[0][:result]).to eq("undid result2")
     expect(undo_entries[1][:result]).to eq("undid result1")
+  end
+
+  it "logs compensation results in execution_trace" do
+    reactor_with_compensation = Class.new(RubyReactor::Reactor) do
+      step :step1 do
+        run { Failure("fail step1") }
+        compensate { |_error, _args, _context| Success("compensated step1") }
+      end
+    end
+    stub_const("CompensateTestReactor", reactor_with_compensation)
+
+    reactor = reactor_with_compensation.new
+    reactor.run
+
+    trace = reactor.context.execution_trace
+    compensate_entry = trace.find { |e| e[:type] == :compensate }
+
+    expect(compensate_entry).not_to be_nil
+    expect(compensate_entry[:step]).to eq(:step1)
+    # Currently it logs pre-execution, we want it to log result
+    expect(compensate_entry[:result]).to eq("compensated step1")
   end
 end

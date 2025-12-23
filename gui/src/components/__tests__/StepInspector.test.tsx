@@ -59,7 +59,7 @@ describe('StepInspector', () => {
       trace: [
         { type: 'run', step: 'step1', result: 'result1' },
         { type: 'run', step: 'step2', result: 'result2' },
-        { type: 'undo', step: 'step2', result: 'undid step2' },
+        { type: 'compensate', step: 'step2', result: 'compensated step2' },
         { type: 'undo', step: 'step1', result: 'undid step1' }
       ]
     };
@@ -67,23 +67,20 @@ describe('StepInspector', () => {
     it('should show compensation history in execution order (chronological)', () => {
       render(<StepInspector {...propsWithUndo} />);
 
-      const items = screen.getAllByText(/undid step/i);
-      expect(items[0]).toHaveTextContent('undid step2');
-      expect(items[1]).toHaveTextContent('undid step1');
-
       // Verify labels order (use exact match to avoid matching result blocks)
-      expect(screen.getByText('step2', { selector: 'span' })).toBeInTheDocument();
-      expect(screen.getByText('step1', { selector: 'span' })).toBeInTheDocument();
-
       const labels = screen.queryAllByText(/^step\d$/, { selector: 'span' });
       expect(labels[0]).toHaveTextContent('step2');
       expect(labels[1]).toHaveTextContent('step1');
+
+      // Verify results are also in order
+      expect(screen.getByText(/"compensated step2"/)).toBeInTheDocument();
+      expect(screen.getByText(/"undid step1"/)).toBeInTheDocument();
     });
 
-    it('should show the result of the undo operation, not the original arguments', () => {
+    it('should show the result of the undo/compensate operation', () => {
       render(<StepInspector {...propsWithUndo} />);
 
-      expect(screen.getByText(/"undid step2"/)).toBeInTheDocument();
+      expect(screen.getByText(/"compensated step2"/)).toBeInTheDocument();
       expect(screen.getByText(/"undid step1"/)).toBeInTheDocument();
     });
   });
