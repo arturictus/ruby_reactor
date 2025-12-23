@@ -112,7 +112,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
     compensate do |_reason, args, _context|
       puts "[EXECUTION] COMPENSATE reserve_inventory - product_id: #{args[:inventory][:product_id]}"
-      Success("Compensation failed for reserve_inventory")
+      Success("Compensation executed for reserve_inventory")
     end
   end
 

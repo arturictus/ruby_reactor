@@ -57,4 +57,12 @@ namespace :demo do
       end
     end
   end
+
+  desc "Run ParentReactor"
+  task parent_reactor: [:environment, :flush_redis] do
+    ParentReactor.run(a: 1, b: 2)
+
+    ParentReactor.run(a: 1, b: "a")
+    puts "✅ SUCCESS"
+  end
 end
