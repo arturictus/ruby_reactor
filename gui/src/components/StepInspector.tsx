@@ -27,6 +27,7 @@ export default function StepInspector({ stepName, structure, results, trace, err
   const isFailedStep = (error && error.step_name === stepName) ||
     (error?.message?.includes(`Step '${stepName}' failed`));
   const attempts = stepName ? (stepAttempts[stepName] || 0) : 0;
+  const retries = attempts > 1 ? attempts - 1 : 0;
 
   // Find relevant trace events
   const stepEvents = useMemo(() => {
@@ -151,9 +152,9 @@ export default function StepInspector({ stepName, structure, results, trace, err
               </div>
             </div>
           </div>
-          {attempts > 0 && (
+          {retries > 0 && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/10 border border-amber-500/20 rounded-md">
-              <span className="text-xs font-medium text-amber-500">Retries: {attempts}</span>
+              <span className="text-xs font-medium text-amber-500">Retries: {retries}</span>
             </div>
           )}
         </div>
