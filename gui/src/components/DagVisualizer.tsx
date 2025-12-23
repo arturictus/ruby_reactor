@@ -24,6 +24,7 @@ interface DagVisualizerProps {
   reactorStatus?: string;
   error?: any;
   results?: Record<string, any>;
+  composedContexts?: Record<string, any>;
 }
 
 const StepNode = ({ data }: { data: any }) => {
@@ -89,7 +90,7 @@ const GroupNode = ({ data }: { data: any }) => {
       "px-4 py-8 rounded-xl border-2 border-dashed transition-all relative",
       "bg-slate-900/50 backdrop-blur-sm",
       statusBorderColors[status as keyof typeof statusBorderColors] || statusBorderColors.pending,
-      isSelected && "ring-2 ring-white/20"
+      isSelected && "ring-2 ring-white/20 text-white"
     )} style={{ width: '100%', height: '100%' }}>
       {/* Visual Group Label */}
       <div className="absolute top-0 left-0 bg-slate-800 px-3 py-1 rounded-br-lg text-xs font-bold text-slate-300 border-b border-r border-slate-700">
@@ -126,7 +127,8 @@ interface LayoutResult {
 const performLayout = (
   nodes: Record<string, any>,
   parentId: string | null = null,
-  nodeStatus: Record<string, string>
+  nodeStatus: Record<string, string>,
+  path: string = ""
 ): LayoutResult => {
   if (!nodes || Object.keys(nodes).length === 0) {
     return { nodes: [], edges: [], width: 0, height: 0 };
@@ -139,6 +141,7 @@ const performLayout = (
   const currentLevelNodes: any[] = [];
 
   Object.entries(nodes).forEach(([key, config]: [string, any]) => {
+    const fullId = path ? `${path}.${key}` : key;
     // Check for nested structure
     let childLayout: LayoutResult | null = null;
     let width = NODE_WIDTH;
@@ -146,7 +149,7 @@ const performLayout = (
 
     if (config.nested_structure) {
       // Recurse
-      childLayout = performLayout(config.nested_structure, key, nodeStatus);
+      childLayout = performLayout(config.nested_structure, fullId, nodeStatus, fullId);
       width = childLayout.width + GROUP_PADDING * 2;
       height = childLayout.height + GROUP_PADDING * 2 + 30; // 30 for label header
 
@@ -156,6 +159,7 @@ const performLayout = (
 
     currentLevelNodes.push({
       key,
+      fullId,
       config,
       width,
       height,
@@ -201,8 +205,6 @@ const performLayout = (
   });
 
   // 4. Assign Positions
-  // We need to calculate cumulative height for Y, and center for X
-
   let currentY = 0;
   let maxLayerWidth = 0;
 
@@ -225,12 +227,12 @@ const performLayout = (
       const type = isGroup ? 'group' : 'step';
 
       const node: Node = {
-        id: N.key,
+        id: N.fullId,
         type: type,
         data: {
           label: N.key,
           type: N.config.type,
-          status: nodeStatus[N.key] || 'pending',
+          status: nodeStatus[N.fullId] || 'pending',
           selected: false // handled by parent check
         },
         position: { x: currentX + N.width / 2 - (isGroup ? N.width / 2 : NODE_WIDTH / 2), y: currentY },
@@ -240,16 +242,8 @@ const performLayout = (
         extent: parentId ? 'parent' : undefined,
       };
 
-      // If group, we need to offset its children to be inside the group
+      // If group, we need to offset its children for relative positioning
       if (N.childLayout) {
-        // The layout of children was 0-indexed. We need to center them inside this group node?
-        // ReactFlow relative position means x,y relative to parent top-left.
-        // Current childLayout was centered around 0,0 or similar.
-        // We should probably re-normalize child positions to be positive relative to padding.
-
-        // Let's assume childLayout generated pos where minX might be negative.
-        // We need to shift all children so they fit nicely within (GROUP_PADDING, GROUP_PADDING + header)
-
         const minChildX = Math.min(...N.childLayout.nodes.map((n: Node) => n.position.x));
         const minChildY = Math.min(...N.childLayout.nodes.map((n: Node) => n.position.y));
 
@@ -277,14 +271,16 @@ const performLayout = (
 
   // 5. Generate Edges for current level
   Object.entries(nodes).forEach(([key, config]: [string, any]) => {
+    const fullId = path ? `${path}.${key}` : key;
     if (config.depends_on) {
       config.depends_on.forEach((dep: string) => {
         // Create edge if dep exists in this level
         if (nodes[dep]) {
+          const depFullId = path ? `${path}.${dep}` : dep;
           resultEdges.push({
-            id: `${dep}-${key}`,
-            source: dep,
-            target: key,
+            id: `${depFullId}-${fullId}`,
+            source: depFullId,
+            target: fullId,
             type: 'smoothstep',
             animated: true,
             style: { stroke: '#475569' },
@@ -304,47 +300,59 @@ const performLayout = (
 };
 
 
-export default function DagVisualizer({ structure, steps, onStepSelect, selectedStep, reactorStatus, error, results }: DagVisualizerProps) {
-  console.log('DagVisualizer Render. Status:', reactorStatus, 'Error type:', typeof error, 'Error:', error);
-
+export default function DagVisualizer({ structure, steps, onStepSelect, selectedStep, reactorStatus, error, results, composedContexts }: DagVisualizerProps) {
   const nodeStatus = useMemo(() => {
     const statusMap: Record<string, string> = {};
 
-    const processLevel = (str: any) => {
-      Object.keys(str || {}).forEach(key => {
-        statusMap[key] = 'pending';
-        if (str[key].nested_structure) processLevel(str[key].nested_structure);
+    const resolveStatus = (struct: any, currentResults: any, currentTrace: any[], currentPath: string, contextObj: any) => {
+      Object.keys(struct || {}).forEach(key => {
+        const fullId = currentPath ? `${currentPath}.${key}` : key;
+        statusMap[fullId] = 'pending';
+
+        // Check if this step is completed in THIS context
+        if (currentResults && currentResults[key] !== undefined) {
+          statusMap[fullId] = 'completed';
+        } else if (currentTrace && currentTrace.some((t: any) => t.step === key)) {
+          // If in trace but no result yet, might be running
+          if (reactorStatus === 'running') {
+            statusMap[fullId] = 'running';
+          }
+        }
+
+        // Check for error in THIS context
+        if (contextObj?.failure_reason?.step_name === key) {
+          statusMap[fullId] = 'failed';
+        }
+
+        // Recursively handle nested structures
+        if (struct[key].nested_structure) {
+          // Find the context for this nested structure. It could be in composed_contexts.
+          // The structure of contextObj depends on if it's the root (passed from ReactorDetail as part of reactor)
+          // or a nested context (from composed_contexts).
+          const nestedData = contextObj?.composed_contexts?.[key];
+          const nestedContext = nestedData?.context?.value || nestedData?.context;
+
+          resolveStatus(
+            struct[key].nested_structure,
+            nestedContext?.intermediate_results || {},
+            nestedContext?.execution_trace || [],
+            fullId,
+            nestedContext
+          );
+        }
       });
     };
-    processLevel(structure);
 
-    (steps || []).forEach(step => {
-      // Only mark as completed if we have a result for this step
-      if (results && results[step.step]) {
-        statusMap[step.step] = 'completed';
-      } else if (reactorStatus === 'running') {
-        statusMap[step.step] = 'running';
-      }
+    // Root call
+    resolveStatus(structure, results, steps, "", {
+      intermediate_results: results,
+      execution_trace: steps,
+      composed_contexts: composedContexts,
+      failure_reason: error
     });
 
-    // Check for failed step
-    let failedStepName = error?.step_name;
-
-    // Fallback: try to parse from message if not provided
-    if (!failedStepName && error?.message) {
-      const match = error.message.match(/Step '([^']+)' failed/);
-      if (match) {
-        failedStepName = match[1];
-      }
-    }
-
-    if (failedStepName) {
-      statusMap[failedStepName] = 'failed';
-    }
-
-    // Check for cancelled/skipped
+    // Handle global cancellation/failure states for unreached steps
     if (reactorStatus === 'failed' || reactorStatus === 'cancelled') {
-      // Any step that is still pending should be marked as cancelled
       Object.keys(statusMap).forEach(key => {
         if (statusMap[key] === 'pending') {
           statusMap[key] = 'cancelled';
@@ -353,7 +361,7 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
     }
 
     return statusMap;
-  }, [structure, steps, reactorStatus, error, results]);
+  }, [structure, steps, reactorStatus, error, results, composedContexts]);
 
   const { nodes, edges } = useMemo(() => {
     if (!structure) return { nodes: [], edges: [] };

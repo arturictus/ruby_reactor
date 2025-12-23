@@ -49,6 +49,7 @@ module RubyReactor
                 intermediate_results: data["intermediate_results"],
                 structure: structure,
                 steps: data["execution_trace"] || [],
+                composed_contexts: data["composed_contexts"] || {},
                 error: data["failure_reason"]
               }
             end

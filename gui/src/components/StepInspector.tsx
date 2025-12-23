@@ -18,29 +18,85 @@ interface StepInspectorProps {
   error?: any;
   undoStack?: UndoStackItem[];
   stepAttempts?: Record<string, number>;
+  composedContexts?: Record<string, any>;
   onClose?: () => void;
 }
 
-export default function StepInspector({ stepName, structure, results, trace, error, undoStack = [], stepAttempts = {}, onClose }: StepInspectorProps) {
-  const stepConfig = stepName ? structure[stepName] : null;
-  const result = stepName ? results[stepName] : null;
-  const isFailedStep = (error && error.step_name === stepName) ||
-    (error?.message?.includes(`Step '${stepName}' failed`));
-  const attempts = stepName ? (stepAttempts[stepName] || 0) : 0;
+export default function StepInspector({
+  stepName,
+  structure,
+  results,
+  trace,
+  error,
+  undoStack = [],
+  stepAttempts = {},
+  composedContexts = {},
+  onClose
+}: StepInspectorProps) {
+
+  // Resolve recursive data based on path
+  const resolvedData = useMemo(() => {
+    if (!stepName) return null;
+
+    const parts = stepName.split('.');
+    let currentStructure = structure;
+    let currentResults = results;
+    let currentTrace = trace;
+    let currentAttempts = stepAttempts;
+    let currentContext: any = {
+      composed_contexts: composedContexts,
+      failure_reason: error,
+      intermediate_results: results,
+      execution_trace: trace
+    };
+
+    let stepConfig = null;
+    let result = null;
+    let attempts = 0;
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isLast = i === parts.length - 1;
+
+      stepConfig = currentStructure?.[part];
+
+      if (isLast) {
+        result = currentResults?.[part];
+        attempts = currentAttempts?.[part] || 0;
+        // In the trace, we need the ones from THIS context
+        currentTrace = currentTrace.filter(t => t.step === part);
+      } else {
+        // Navigate deeper
+        const nestedData = currentContext?.composed_contexts?.[part];
+        const nestedContext = nestedData?.context?.value || nestedData?.context;
+
+        currentStructure = stepConfig?.nested_structure;
+        currentResults = nestedContext?.intermediate_results || {};
+        currentTrace = nestedContext?.execution_trace || [];
+        currentAttempts = nestedContext?.retry_context?.step_attempts || {};
+        currentContext = nestedContext;
+      }
+    }
+
+    return { stepConfig, result, attempts, trace: currentTrace, context: currentContext };
+  }, [stepName, structure, results, trace, stepAttempts, composedContexts, error]);
+
+  const stepConfig = resolvedData?.stepConfig;
+  const result = resolvedData?.result;
+  const isFailedStep = (resolvedData?.context?.failure_reason?.step_name === stepName?.split('.').pop());
+  const attempts = resolvedData?.attempts || 0;
   const retries = attempts > 1 ? attempts - 1 : 0;
 
   // Find relevant trace events
-  const stepEvents = useMemo(() => {
-    if (!stepName) return [];
-    return trace.filter(e => e.step === stepName);
-  }, [stepName, trace]);
+  const stepEvents = resolvedData?.trace || [];
 
   const lastEvent = stepEvents[stepEvents.length - 1];
-  const stepArgs = lastEvent?.arguments || (isFailedStep ? error.step_arguments : {});
+  const stepArgs = lastEvent?.arguments || (isFailedStep ? resolvedData?.context?.failure_reason?.step_arguments : {});
 
   // Calculate combined undo history (executed + pending)
   const combinedUndoHistory = useMemo(() => {
-    // 1. Find executed undos/compensations from trace
+    // For now, only show root-level undo history in the overview (when no step is selected)
+    // or maybe scoped undo history? Keep it root-level for simplicity as currently designed.
     const executedUndos = trace
       .filter(e => e.type === 'undo' || e.type === 'compensate')
       .map(e => ({
@@ -51,7 +107,6 @@ export default function StepInspector({ stepName, structure, results, trace, err
         type: e.type as 'undo' | 'compensate'
       }));
 
-    // 2. Map pending stack items
     const pendingUndos = undoStack.map(item => ({
       step_name: item.step_name,
       result: null,
@@ -60,7 +115,6 @@ export default function StepInspector({ stepName, structure, results, trace, err
       type: 'undo' as const
     }));
 
-    // Combined list: executed (as they appear in trace) then pending (stack order)
     return [...executedUndos, ...pendingUndos.reverse()];
   }, [trace, undoStack]);
 
@@ -153,7 +207,7 @@ export default function StepInspector({ stepName, structure, results, trace, err
               <Box className="w-5 h-5 text-indigo-400" />
             </div>
             <div>
-              <h2 className="font-bold text-white text-lg">{stepName}</h2>
+              <h2 className="font-bold text-white text-lg">{stepName?.split('.').pop()}</h2>
               <div className="flex items-center gap-2 text-xs text-slate-500 font-mono mt-0.5">
                 <span className="uppercase tracking-wider text-indigo-400">{stepConfig?.type || 'UNKNOWN'}</span>
                 {stepConfig?.async && <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">ASYNC</span>}
@@ -171,18 +225,18 @@ export default function StepInspector({ stepName, structure, results, trace, err
       <div className="flex-1 overflow-y-auto p-6 space-y-8">
 
         {/* Error Section */}
-        {isFailedStep && (
+        {isFailedStep && resolvedData?.context?.failure_reason && (
           <div>
             <h3 className="text-sm font-medium text-red-500 mb-3 flex items-center gap-2">
               <AlertCircle className="w-4 h-4" />
               Failure Details
             </h3>
             <div className="bg-red-500/10 rounded-lg p-4 font-mono text-xs border border-red-500/20 text-red-300 overflow-x-auto space-y-2">
-              <div className="font-bold">{error.message}</div>
-              {error.backtrace && (
+              <div className="font-bold">{resolvedData.context.failure_reason.message}</div>
+              {resolvedData.context.failure_reason.backtrace && (
                 <div className="pt-2 border-t border-red-500/20 text-red-400/70 whitespace-pre-wrap">
-                  {error.backtrace.slice(0, 5).join('\n')}
-                  {error.backtrace.length > 5 && '\n...'}
+                  {resolvedData.context.failure_reason.backtrace.slice(0, 5).join('\n')}
+                  {resolvedData.context.failure_reason.backtrace.length > 5 && '\n...'}
                 </div>
               )}
             </div>

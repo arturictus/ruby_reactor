@@ -101,6 +101,7 @@ export default function ReactorDetail() {
             reactorStatus={reactor.status}
             error={reactor.error}
             results={reactor.intermediate_results}
+            composedContexts={reactor.composed_contexts}
           />
         </div>
 
@@ -114,6 +115,7 @@ export default function ReactorDetail() {
             error={reactor.error}
             undoStack={reactor.undo_stack}
             stepAttempts={reactor.step_attempts}
+            composedContexts={reactor.composed_contexts}
             onClose={() => setSelectedStep(null)}
           />
         </div>
