@@ -83,5 +83,12 @@ describe('StepInspector', () => {
       expect(screen.getByText(/"compensated step2"/)).toBeInTheDocument();
       expect(screen.getByText(/"undid step1"/)).toBeInTheDocument();
     });
+
+    it('should show COMPENSATE and UNDO labels', () => {
+      render(<StepInspector {...propsWithUndo} />);
+
+      expect(screen.getByText('compensate')).toBeInTheDocument();
+      expect(screen.getByText('undo')).toBeInTheDocument();
+    });
   });
 });

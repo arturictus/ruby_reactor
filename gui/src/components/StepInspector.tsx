@@ -56,7 +56,8 @@ export default function StepInspector({ stepName, structure, results, trace, err
       step_name: item.step_name,
       result: null,
       status: 'pending' as const,
-      timestamp: null
+      timestamp: null,
+      type: 'undo' as const
     }));
 
     // Combined list: executed (as they appear in trace) then pending (stack order)
@@ -103,7 +104,13 @@ export default function StepInspector({ stepName, structure, results, trace, err
                           }`}>
                           {item.step_name}
                         </span>
-                        <span className="text-[10px] uppercase font-mono tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">
+                        <span className="text-[10px] uppercase font-mono tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 flex items-center gap-1.5">
+                          {item.type && (
+                            <span className={`font-bold ${item.type === 'compensate' ? 'text-amber-400' : 'text-indigo-400'}`}>
+                              {item.type}
+                            </span>
+                          )}
+                          <span className="opacity-50">|</span>
                           {item.status}
                         </span>
                       </div>
