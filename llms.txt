@@ -1,0 +1,7 @@
+# Ruby Reactor
+
+A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages Sidekiq for asynchronous execution and Redis for state persistence.
+
+- [Main Documentation](documentation/core_concepts.md)
+- [Full LLM Guide](llms-full.txt): Comprehensive command reference, debugging strategies, and verification workflows.
+- [GitHub Repository](https://github.com/arturictus/ruby_reactor)

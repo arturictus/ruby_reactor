@@ -1,0 +1,66 @@
+# Ruby Reactor: Full LLM Guide
+
+This document provides a comprehensive reference for AI agents working on the Ruby Reactor project. It covers commands for the core gem, the demo application, and the GUI, along with debugging and verification workflows.
+
+## Project Structure
+
+- `lib/`: Core gem logic.
+- `demo_app/`: A Rails application showcasing Ruby Reactor features.
+- `gui/`: A React-based interface for visualizing reactor execution.
+- `documentation/`: Detailed guides on core concepts, DAG, async, etc.
+- `spec/`: RSpec tests for the gem.
+
+## Core Gem Commands (Root Directory)
+
+- `bundle install`: Install dependencies.
+- `rake spec`: Run all gem tests.
+- `bin/console`: Interactive session with the gem loaded.
+- `bundle exec rubocop`: Run linting.
+
+## Demo App Commands (`demo_app/`)
+
+- `bin/setup`: Initial installation and database preparation.
+- `bin/dev`: Start the Rails server.
+- `bin/rails s`: Standard Rails server command.
+- `bin/demo_scenarios.rb`: Script to run various reactor scenarios.
+- `bundle exec rake demo:flush_redis`: Clear the Redis storage.
+- `bundle exec rake demo:payment_workflow`: Run the payment workflow with all failure scenarios.
+- `bundle exec rake demo:order_processing`: Run the order processing reactor with all failure scenarios.
+
+## GUI Commands (`gui/`)
+
+- `npm install`: Install dependencies.
+- `npm run dev`: Start the Vite development server.
+- `npm run build`: Build for production.
+- `npm test`: Run Vitest tests.
+- `npm run lint`: Run ESLint.
+
+## Debugging and Verification
+
+### Debugging Reactors
+- **Check Redis State**: Use `demo:flush_redis` rake task to reset state.
+- **Seed reactors**: Use `demo:order_processing`, `demo:payment_workflow` or similars rake tasks to seed reactors.
+- **Sidekiq Logs**: Monitor Sidekiq output to debug asynchronous step execution.
+- **Fail-at Scenarios**: Use the `fail_at` parameter in demo reactors to simulate errors at specific steps.
+- **Interactive Console**: Use `bin/console` (root) or `bundle exec rails c` (demo_app) to inspect reactor objects and context.
+
+### Verifying Results
+- **Success/Failure Status**: Check the `result.success?` or `result.failure?` flags.
+- **Step Results**: Inspect `result.value` for successful results or `result.error` for failure details.
+- **Intermediate Results**: Check `result.intermediate_results` for data from individual steps (useful for async reactors).
+- **GUI Visualization**: Use the GUI at `http://localhost:3000/ruby_reactor` (when mounted in demo_app) to visually inspect the DAG and step statuses.
+
+### Automated Verification
+- Run `rake spec` in the root directory to ensure no regressions in the core library.
+- Run `npm test` in the `gui/` directory to verify UI components.
+- Run `bin/demo_scenarios.rb` to verify integration across multiple reactor types.
+
+### Debugging and refreshing reactors and inspecting GUI Using demo_app
+1. **Kill rails server if running**: Find rails process and kill it.
+2. **Run redis server**: Use docker to run redis server if is not running.
+3. **Run the reactor we are using for test feature in development**: Use demo_app `demo:order_processing` or `demo:payment_workflow` rake task to reset state.
+4. **Run sidekiq**: Use `bundle exec sidekiq` in `demo_app` directory to start Sidekiq and review logs.
+5. **Build GUI**: Use `rake build:ui` to build the GUI.
+6. **Start Rails server**: In `demo_app` directory run `bin/rails s` to start the Rails server.
+7. **Navigate to GUI**: Open `http://localhost:3000/ruby_reactor` in your browser to access the GUI.
+8. **Run tests**: bundle exec rspec, all tests should pass.
