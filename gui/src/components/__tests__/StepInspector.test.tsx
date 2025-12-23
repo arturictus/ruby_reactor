@@ -107,11 +107,26 @@ describe('StepInspector', () => {
         context: {
           value: {
             intermediate_results: {
-              inner_step: 'inner_result_value'
+              inner_step: 'inner_result_value',
+              deep_reactor: 'deep_done'
             },
             execution_trace: [
               { step: 'inner_step', type: 'run', arguments: { val: 456 } }
-            ]
+            ],
+            composed_contexts: {
+              deep_reactor: {
+                context: {
+                  value: {
+                    intermediate_results: {
+                      deep_step: 'deep_result_value'
+                    },
+                    execution_trace: [
+                      { step: 'deep_step', type: 'run', arguments: { deep_val: 789 } }
+                    ]
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -137,6 +152,35 @@ describe('StepInspector', () => {
 
       // Should show resolved arguments from nested trace
       expect(screen.getByText(/456/)).toBeInTheDocument();
+    });
+
+    it('correctly resolves and displays results for a deeply nested step', () => {
+      render(
+        <StepInspector
+          stepName="sub_reactor.deep_reactor.deep_step"
+          structure={{
+            sub_reactor: {
+              type: 'compose',
+              nested_structure: {
+                deep_reactor: {
+                  type: 'compose',
+                  nested_structure: {
+                    deep_step: { type: 'step' }
+                  }
+                }
+              }
+            }
+          }}
+          results={{}}
+          inputs={{}}
+          trace={[]}
+          composedContexts={mockComposedContexts}
+        />
+      );
+
+      expect(screen.getByText('deep_step')).toBeInTheDocument();
+      expect(screen.getByText(/"deep_result_value"/)).toBeInTheDocument();
+      expect(screen.getByText(/789/)).toBeInTheDocument();
     });
 
     it('identifies failures in nested contexts', () => {

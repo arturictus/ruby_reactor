@@ -304,31 +304,35 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
   const nodeStatus = useMemo(() => {
     const statusMap: Record<string, string> = {};
 
-    const resolveStatus = (struct: any, currentResults: any, currentTrace: any[], currentPath: string, contextObj: any) => {
+    const resolveStatus = (struct: any, currentResults: any, currentTrace: any[], currentPath: string, contextObj: any, currentStatus?: string) => {
       Object.keys(struct || {}).forEach(key => {
         const fullId = currentPath ? `${currentPath}.${key}` : key;
+        const stepStatus = contextObj?.status || currentStatus || reactorStatus;
+
         statusMap[fullId] = 'pending';
 
-        // Check if this step is completed in THIS context
+        // 1. Check if this step is completed in THIS context
         if (currentResults && currentResults[key] !== undefined) {
           statusMap[fullId] = 'completed';
         } else if (currentTrace && currentTrace.some((t: any) => t.step === key)) {
           // If in trace but no result yet, might be running
-          if (reactorStatus === 'running') {
+          if (stepStatus === 'running') {
             statusMap[fullId] = 'running';
           }
         }
 
-        // Check for error in THIS context
+        // 2. Check for error in THIS context
         if (contextObj?.failure_reason?.step_name === key) {
           statusMap[fullId] = 'failed';
         }
 
-        // Recursively handle nested structures
+        // 3. Handle global cancellation/failure states for unreached steps at this level
+        if (statusMap[fullId] === 'pending' && (stepStatus === 'failed' || stepStatus === 'cancelled')) {
+          statusMap[fullId] = 'cancelled';
+        }
+
+        // 4. Recursively handle nested structures
         if (struct[key].nested_structure) {
-          // Find the context for this nested structure. It could be in composed_contexts.
-          // The structure of contextObj depends on if it's the root (passed from ReactorDetail as part of reactor)
-          // or a nested context (from composed_contexts).
           const nestedData = contextObj?.composed_contexts?.[key];
           const nestedContext = nestedData?.context?.value || nestedData?.context;
 
@@ -337,7 +341,8 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
             nestedContext?.intermediate_results || {},
             nestedContext?.execution_trace || [],
             fullId,
-            nestedContext
+            nestedContext,
+            nestedContext?.status
           );
         }
       });
@@ -348,7 +353,8 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
       intermediate_results: results,
       execution_trace: steps,
       composed_contexts: composedContexts,
-      failure_reason: error
+      failure_reason: error,
+      status: reactorStatus
     });
 
     // Handle global cancellation/failure states for unreached steps

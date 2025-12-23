@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import DagVisualizer from '../DagVisualizer.tsx';
-import { ReactFlow } from '@xyflow/react';
 
 // Mock ReactFlow to inspect nodes
 vi.mock('@xyflow/react', async () => {
@@ -31,21 +30,42 @@ describe('DagVisualizer', () => {
       type: 'compose',
       depends_on: ['step1'],
       nested_structure: {
-        inner_step: { type: 'step', depends_on: [] }
+        inner_step: { type: 'step', depends_on: [] },
+        deep_reactor: {
+          type: 'compose',
+          nested_structure: {
+            deep_step: { type: 'step' }
+          }
+        }
       }
     }
   };
 
   const mockResults = {
-    step1: 'done'
+    step1: 'done',
+    sub_reactor: 'sub_done'
   };
 
   const mockComposedContexts = {
     sub_reactor: {
       context: {
         value: {
+          status: 'completed',
           intermediate_results: {
-            inner_step: 'inner_done'
+            inner_step: 'inner_done',
+            deep_reactor: 'deep_done'
+          },
+          composed_contexts: {
+            deep_reactor: {
+              context: {
+                value: {
+                  status: 'completed',
+                  intermediate_results: {
+                    deep_step: 'deep_value'
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -68,28 +88,30 @@ describe('DagVisualizer', () => {
 
     // Nested nodes should have path-based IDs
     expect(screen.queryByTestId('node-sub_reactor.inner_step')).toBeInTheDocument();
+    expect(screen.queryByTestId('node-sub_reactor.deep_reactor.deep_step')).toBeInTheDocument();
   });
 
-  it('correctly resolves status for nested nodes using composedContexts', () => {
+  it('correctly resolves status for deeply nested nodes using composedContexts', () => {
     const { getByTestId } = render(
       <DagVisualizer
         structure={mockStructure}
         steps={[]}
         results={mockResults}
         composedContexts={mockComposedContexts}
-        reactorStatus="completed"
+        reactorStatus="running"
         onStepSelect={() => { }}
         selectedStep={null}
       />
     );
 
-    // step1 is completed
-    const node1 = getByTestId('node-step1');
-    expect(node1.getAttribute('data-status')).toBe('completed');
+    // root step1 is completed
+    expect(getByTestId('node-step1').getAttribute('data-status')).toBe('completed');
 
-    // inner_step is completed (found in nested context)
-    const innerNode = getByTestId('node-sub_reactor.inner_step');
-    expect(innerNode.getAttribute('data-status')).toBe('completed');
+    // inner_step in sub_reactor is completed
+    expect(getByTestId('node-sub_reactor.inner_step').getAttribute('data-status')).toBe('completed');
+
+    // deep_step in deep_reactor is completed
+    expect(getByTestId('node-sub_reactor.deep_reactor.deep_step').getAttribute('data-status')).toBe('completed');
   });
 
   it('marks unreached steps as cancelled if reactor failed', () => {
@@ -114,5 +136,5 @@ describe('DagVisualizer', () => {
   });
 });
 
-// Need to import screen from testing-library/react if using it
-import { screen } from '@testing-library/react';
+
+// End of file

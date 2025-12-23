@@ -39,46 +39,51 @@ export default function StepInspector({
     if (!stepName) return null;
 
     const parts = stepName.split('.');
-    let currentStructure = structure;
-    let currentResults = results;
-    let currentTrace = trace;
-    let currentAttempts = stepAttempts;
-    let currentContext: any = {
+
+    const resolve = (pathParts: string[], struct: any, context: any): any => {
+      const part = pathParts[0];
+      const isLast = pathParts.length === 1;
+      const stepConfig = struct?.[part];
+
+      if (isLast) {
+        const results = context?.intermediate_results || {};
+        const trace = context?.execution_trace || [];
+        const attempts = context?.retry_context?.step_attempts || {};
+
+        return {
+          stepConfig,
+          result: results[part],
+          attempts: attempts[part] || 0,
+          trace: trace.filter((t: any) => t.step === part),
+          context: context
+        };
+      } else {
+        const nestedData = context?.composed_contexts?.[part];
+        const nestedContext = nestedData?.context?.value || nestedData?.context;
+
+        return resolve(
+          pathParts.slice(1),
+          stepConfig?.nested_structure,
+          nestedContext
+        );
+      }
+    };
+
+    // Initial context mock for root
+    const rootContext = {
       composed_contexts: composedContexts,
       failure_reason: error,
       intermediate_results: results,
-      execution_trace: trace
+      execution_trace: trace,
+      retry_context: { step_attempts: stepAttempts }
     };
 
-    let stepConfig = null;
-    let result = null;
-    let attempts = 0;
-
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      const isLast = i === parts.length - 1;
-
-      stepConfig = currentStructure?.[part];
-
-      if (isLast) {
-        result = currentResults?.[part];
-        attempts = currentAttempts?.[part] || 0;
-        // In the trace, we need the ones from THIS context
-        currentTrace = currentTrace.filter(t => t.step === part);
-      } else {
-        // Navigate deeper
-        const nestedData = currentContext?.composed_contexts?.[part];
-        const nestedContext = nestedData?.context?.value || nestedData?.context;
-
-        currentStructure = stepConfig?.nested_structure;
-        currentResults = nestedContext?.intermediate_results || {};
-        currentTrace = nestedContext?.execution_trace || [];
-        currentAttempts = nestedContext?.retry_context?.step_attempts || {};
-        currentContext = nestedContext;
-      }
+    try {
+      return resolve(parts, structure, rootContext);
+    } catch (e) {
+      console.error("Error resolving step data:", e);
+      return null;
     }
-
-    return { stepConfig, result, attempts, trace: currentTrace, context: currentContext };
   }, [stepName, structure, results, trace, stepAttempts, composedContexts, error]);
 
   const stepConfig = resolvedData?.stepConfig;
