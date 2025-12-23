@@ -58,8 +58,8 @@ export default function StepInspector({ stepName, structure, results, trace, err
       timestamp: null
     }));
 
-    // Combined list: executed (latest first) then pending (stack order)
-    return [...executedUndos.reverse(), ...pendingUndos.reverse()];
+    // Combined list: executed (as they appear in trace) then pending (stack order)
+    return [...executedUndos, ...pendingUndos.reverse()];
   }, [trace, undoStack]);
 
   if (!stepName) {

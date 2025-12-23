@@ -66,16 +66,31 @@ module RubyReactor
       end
 
       def undo_step(step_config, result, arguments)
-        @context.execution_trace << { type: :undo, step: step_config.name, timestamp: Time.now, result: result.value,
+        undo_result = if step_config.undo_block
+                        step_config.undo_block.call(result.value, arguments, @context)
+                      elsif step_config.has_impl?
+                        step_config.impl.undo(result.value, arguments, @context)
+                      else
+                        RubyReactor.Success()
+                      end
+
+        # Ensure we have a value to log (if it's a Success/Failure object, get the value or error)
+        logged_result = if undo_result.respond_to?(:value)
+                          undo_result.value
+                        elsif undo_result.respond_to?(:error)
+                          undo_result.error
+                        else
+                          undo_result
+                        end
+
+        @context.execution_trace << { type: :undo, step: step_config.name, timestamp: Time.now, result: logged_result,
                                       arguments: arguments }
-        if step_config.undo_block
-          step_config.undo_block.call(result.value, arguments, @context)
-        elsif step_config.has_impl?
-          step_config.impl.undo(result.value, arguments, @context)
-        end
-      rescue StandardError
+        undo_result
+      rescue StandardError => e
         # Log undo failure but don't halt the rollback process
-        # In a real implementation, this would use a logger
+        @context.execution_trace << { type: :undo_failure, step: step_config.name, timestamp: Time.now,
+                                      error: e.message }
+        RubyReactor.Failure(e)
       end
     end
   end
