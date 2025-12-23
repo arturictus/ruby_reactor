@@ -52,6 +52,10 @@ module RubyReactor
         # If we're already in inline async execution mode (inside Worker),
         # treat async steps as sync to avoid infinite recursion
 
+        if @dependency_graph.completed.include?(step_config.name)
+          return RubyReactor.Success(@context.get_result(step_config.name))
+        end
+
         if step_config.interrupt?
           handle_interrupt_step(step_config)
         elsif step_config.async? && !@context.inline_async_execution

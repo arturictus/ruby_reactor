@@ -44,6 +44,7 @@ module RubyReactor
 
       graph_manager = GraphManager.new(@reactor_class, @dependency_graph, @context)
       graph_manager.build_and_validate!
+      graph_manager.mark_completed_steps_from_context
 
       @result = @step_executor.execute_all_steps
 
@@ -140,6 +141,9 @@ module RubyReactor
     def execute_current_step_and_continue
       step_config = @reactor_class.steps[@context.current_step]
       return RubyReactor::Failure("Step '#{@context.current_step}' not found in reactor") unless step_config
+
+      # If current step is already in intermediate_results, skip directly to execute_all_steps
+      return @step_executor.execute_all_steps if @context.intermediate_results.key?(@context.current_step.to_sym)
 
       # Use execute_step (not execute_step_with_retry) so that async steps can be handled properly in inline mode
       result = @step_executor.execute_step(step_config)

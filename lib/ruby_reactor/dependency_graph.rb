@@ -2,7 +2,7 @@
 
 module RubyReactor
   class DependencyGraph
-    attr_reader :dependencies
+    attr_reader :dependencies, :completed
 
     def initialize
       @nodes = {}
