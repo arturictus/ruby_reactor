@@ -40,11 +40,11 @@ module RubyReactor
   end
 
   class Failure
-    attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments
+    attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments, :exception_class
 
     # rubocop:disable Metrics/ParameterLists
     def initialize(error, retryable: nil, step_name: nil, inputs: {}, backtrace: nil, redact_inputs: [],
-                   reactor_name: nil, step_arguments: {})
+                   reactor_name: nil, step_arguments: {}, exception_class: nil)
       # rubocop:enable Metrics/ParameterLists
       @error = error
       @retryable = if retryable.nil?
@@ -58,6 +58,7 @@ module RubyReactor
       @step_arguments = step_arguments
       @backtrace = backtrace || (error.respond_to?(:backtrace) ? error.backtrace : caller)
       @redact_inputs = redact_inputs
+      @exception_class = exception_class || (error.is_a?(Exception) ? error.class.name : nil)
     end
 
     def success?

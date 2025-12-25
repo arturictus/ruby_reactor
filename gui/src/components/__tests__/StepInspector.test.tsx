@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import StepInspector from '../StepInspector.tsx';
 
@@ -281,6 +281,78 @@ describe('StepInspector', () => {
       expect(screen.getByText('pending_step')).toBeInTheDocument();
       // Verify it's marked as pending
       expect(screen.getAllByText('pending').length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Failure Information', () => {
+    const failedProps = {
+      ...defaultProps,
+      stepName: 'failed_step',
+      composedContexts: {
+        failed_step: {
+          context: {
+            value: {
+              status: 'failed',
+              failure_reason: {
+                message: 'Something went wrong',
+                step_name: 'failed_step',
+                exception_class: 'CustomError',
+                backtrace: [
+                  'line 1',
+                  'line 2',
+                  'line 3',
+                  'line 4',
+                  'line 5',
+                  'line 6',
+                  'line 7'
+                ]
+              },
+              intermediate_results: {},
+              execution_trace: []
+            }
+          }
+        }
+      },
+      error: {
+        message: 'Something went wrong',
+        step_name: 'failed_step',
+        exception_class: 'CustomError',
+        backtrace: [
+          'line 1',
+          'line 2',
+          'line 3',
+          'line 4',
+          'line 5',
+          'line 6',
+          'line 7'
+        ]
+      }
+    };
+
+    it('should display the exception class', () => {
+      render(<StepInspector {...failedProps} />);
+      expect(screen.getByText('CustomError')).toBeInTheDocument();
+    });
+
+    it('should truncate the backtrace to 5 lines by default', () => {
+      render(<StepInspector {...failedProps} />);
+
+      const backtraceText = screen.getByText(/line 1/);
+      expect(backtraceText.textContent).toContain('line 5');
+      expect(backtraceText.textContent).not.toContain('line 6');
+
+      expect(screen.getByText(/Show More/)).toBeInTheDocument();
+    });
+
+    it('should expand the backtrace when clicking Show More', () => {
+      render(<StepInspector {...failedProps} />);
+
+      const showMoreButton = screen.getByText(/Show More/);
+      fireEvent.click(showMoreButton);
+
+      const backtraceText = screen.getByText(/line 1/);
+      expect(backtraceText.textContent).toContain('line 7');
+      expect(screen.getByText(/Show Less/)).toBeInTheDocument();
     });
   });
 });

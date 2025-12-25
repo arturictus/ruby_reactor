@@ -47,11 +47,8 @@ module RubyReactor
       graph_manager.mark_completed_steps_from_context
 
       @result = @step_executor.execute_all_steps
-
       update_context_status(@result)
-
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
-
       @result
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
@@ -124,7 +121,8 @@ module RubyReactor
           inputs: result.inputs,
           backtrace: result.backtrace,
           reactor_name: result.reactor_name,
-          step_arguments: result.step_arguments
+          step_arguments: result.step_arguments,
+          exception_class: result.exception_class
         }
       elsif result.is_a?(RubyReactor::InterruptResult)
         @context.status = :paused

@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, History, ChevronLeft, CheckCircle } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, History, ChevronLeft, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
 
 
 
@@ -33,6 +33,7 @@ export default function StepInspector({
   composedContexts = {},
   onClose
 }: StepInspectorProps) {
+  const [showFullBacktrace, setShowFullBacktrace] = useState(false);
 
   // Resolve recursive data based on path
   const resolvedData = useMemo(() => {
@@ -284,11 +285,39 @@ export default function StepInspector({
               Failure Details
             </h3>
             <div className="bg-red-500/10 rounded-lg p-4 font-mono text-xs border border-red-500/20 text-red-300 overflow-x-auto space-y-2">
-              <div className="font-bold">{resolvedData.context.failure_reason.message}</div>
+              <div className="flex flex-col gap-1">
+                {resolvedData.context.failure_reason.exception_class && (
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-red-400 opacity-70">
+                    {resolvedData.context.failure_reason.exception_class}
+                  </span>
+                )}
+                <div className="font-bold text-sm leading-relaxed">{resolvedData.context.failure_reason.message}</div>
+              </div>
+
               {resolvedData.context.failure_reason.backtrace && (
-                <div className="pt-2 border-t border-red-500/20 text-red-400/70 whitespace-pre-wrap">
-                  {resolvedData.context.failure_reason.backtrace.slice(0, 5).join('\n')}
-                  {resolvedData.context.failure_reason.backtrace.length > 5 && '\n...'}
+                <div className="pt-3 mt-3 border-t border-red-500/10">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-red-400/50">Stack Trace</span>
+                    <button
+                      onClick={() => setShowFullBacktrace(!showFullBacktrace)}
+                      className="flex items-center gap-1 text-[10px] font-bold text-red-400/70 hover:text-red-400 transition-colors uppercase tracking-wider"
+                    >
+                      {showFullBacktrace ? (
+                        <><ChevronUp className="w-3 h-3" /> Show Less</>
+                      ) : (
+                        <><ChevronDown className="w-3 h-3" /> Show More ({resolvedData.context.failure_reason.backtrace.length} lines)</>
+                      )}
+                    </button>
+                  </div>
+                  <div className="text-red-400/70 whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto custom-scrollbar">
+                    {showFullBacktrace
+                      ? resolvedData.context.failure_reason.backtrace.join('\n')
+                      : resolvedData.context.failure_reason.backtrace.slice(0, 5).join('\n')
+                    }
+                    {!showFullBacktrace && resolvedData.context.failure_reason.backtrace.length > 5 && (
+                      <div className="mt-1 text-red-400/30 italic">... and {resolvedData.context.failure_reason.backtrace.length - 5} more lines</div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

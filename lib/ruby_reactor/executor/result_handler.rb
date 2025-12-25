@@ -26,10 +26,12 @@ module RubyReactor
           @compensation_manager.handle_step_failure(step_config, result.original_error, resolved_arguments)
           # Use the MaxRetriesExhaustedFailure error message for the final error
           raise Error::StepFailureError.new(result.error, step: step_config.name, context: @context,
+                                                          original_error: result.original_error,
                                                           step_arguments: resolved_arguments)
         when RubyReactor::Failure
           failure_result = @compensation_manager.handle_step_failure(step_config, result.error, resolved_arguments)
           raise Error::StepFailureError.new(failure_result.error, step: step_config.name, context: @context,
+                                                                  original_error: result.error.is_a?(Exception) ? result.error : nil,
                                                                   step_arguments: resolved_arguments)
         else
           # Treat non-Success/Failure results as success with that value
@@ -50,16 +52,20 @@ module RubyReactor
           # But we need to rollback all completed steps
           @compensation_manager.rollback_completed_steps
 
-          redact_inputs = error.context.reactor_class.inputs.select { |_, config| config[:redact] }.keys
+          redact_inputs = []
+          if error.context&.reactor_class
+            redact_inputs = error.context.reactor_class.inputs.select { |_, config| config[:redact] }.keys
+          end
 
-          RubyReactor::Failure(
+          RubyReactor.Failure(
             error.message,
             step_name: error.step,
             inputs: error.context.inputs,
             redact_inputs: redact_inputs,
             backtrace: error.backtrace,
             reactor_name: error.context.reactor_class.name,
-            step_arguments: error.step_arguments
+            step_arguments: error.step_arguments,
+            exception_class: error.original_error&.class&.name
           )
         when Error::InputValidationError
           # Preserve validation errors as-is for proper error handling
@@ -67,10 +73,10 @@ module RubyReactor
         when Error::Base
           # Other errors need rollback
           @compensation_manager.rollback_completed_steps
-          RubyReactor.Failure("Execution error: #{error.message}")
+          RubyReactor.Failure("Execution error: #{error.message}", exception_class: error.class.name)
         else
           # Unknown errors - don't rollback as they may not be reactor-related
-          RubyReactor.Failure("Execution failed: #{error.message}")
+          RubyReactor.Failure("Execution failed: #{error.message}", exception_class: error.class.name)
         end
       end
 
