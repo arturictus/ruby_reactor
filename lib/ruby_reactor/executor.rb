@@ -170,13 +170,7 @@ module RubyReactor
     end
 
     def handle_resume_error(error)
-      # Only handle errors that haven't already triggered compensation
-      # StepFailureError means compensation already happened, just convert to Failure
-      @result = if error.is_a?(Error::StepFailureError)
-                  RubyReactor.Failure(error.message)
-                else
-                  @result_handler.handle_execution_error(error)
-                end
+      @result = @result_handler.handle_execution_error(error)
       @result
     end
 
