@@ -29,12 +29,28 @@ module RubyReactor
         handle_execution_result(result)
       end
 
-      def self.compensate(_reason, _arguments, _context)
-        # TODO: Implement proper compensation for composed reactors
-        # This requires tracking the execution state of the composed reactor
-        # and being able to trigger compensation on its completed steps.
-        # For now, we assume the composed reactor handles its own compensation
-        # or that compensation is not needed for composed steps.
+      def self.compensate(reason, arguments, context)
+        step_name = context.current_step
+        composed_data = context.composed_contexts[step_name]
+        return RubyReactor.Success() unless composed_data && composed_data[:context]
+
+        child_context = composed_data[:context]
+        executor = RubyReactor::Executor.new(arguments[:composed_reactor_class], {}, child_context)
+        executor.undo_all
+        executor.save_context
+
+        RubyReactor.Success()
+      end
+
+      def self.undo(_result, arguments, context)
+        step_name = context.current_step
+        composed_data = context.composed_contexts[step_name]
+        return RubyReactor.Success() unless composed_data && composed_data[:context]
+
+        child_context = composed_data[:context]
+        executor = RubyReactor::Executor.new(arguments[:composed_reactor_class], {}, child_context)
+        executor.undo_all
+        executor.save_context
 
         RubyReactor.Success()
       end

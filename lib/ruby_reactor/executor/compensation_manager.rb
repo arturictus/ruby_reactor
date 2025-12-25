@@ -40,7 +40,9 @@ module RubyReactor
 
       def rollback_completed_steps
         undo_stack.reverse_each do |step_info|
-          result = undo_step(step_info[:step], step_info[:result], step_info[:arguments])
+          result = @context.with_step(step_info[:step].name) do
+            undo_step(step_info[:step], step_info[:result], step_info[:arguments])
+          end
           @undo_trace << { type: :undo, step: step_info[:step].name, result: result,
                            arguments: step_info[:arguments] }
         end
