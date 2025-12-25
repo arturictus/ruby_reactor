@@ -98,30 +98,64 @@ export default function StepInspector({
   const lastEvent = stepEvents[stepEvents.length - 1];
   const stepArgs = lastEvent?.arguments || (isFailedStep ? resolvedData?.context?.failure_reason?.step_arguments : {});
 
-  // Calculate combined undo history (executed + pending)
-  const combinedUndoHistory = useMemo(() => {
-    // For now, only show root-level undo history in the overview (when no step is selected)
-    // or maybe scoped undo history? Keep it root-level for simplicity as currently designed.
-    const executedUndos = trace
-      .filter(e => e.type === 'undo' || e.type === 'compensate')
-      .map(e => ({
-        step_name: e.step,
-        result: e.result,
-        status: 'executed' as const,
-        timestamp: e.timestamp?._type === 'Time' ? e.timestamp.value : null,
-        type: e.type as 'undo' | 'compensate'
+  // Calculate combined undo history (executed + pending) recursively
+  const groupedUndoHistory = useMemo(() => {
+    interface UndoItem {
+      step_name: string;
+      result: any;
+      status: 'executed' | 'pending';
+      timestamp: string | null;
+      type: 'undo' | 'compensate';
+    }
+
+    interface ReactorUndoGroup {
+      reactorName: string;
+      items: UndoItem[];
+    }
+
+    const groups: ReactorUndoGroup[] = [];
+
+    const collectUndos = (currentTrace: any[], currentUndoStack: any[], currentComposedContexts: any, reactorName: string) => {
+      const executedUndos: UndoItem[] = currentTrace
+        .filter(e => e.type === 'undo' || e.type === 'compensate')
+        .map(e => ({
+          step_name: e.step,
+          result: e.result,
+          status: 'executed' as const,
+          timestamp: e.timestamp?._type === 'Time' ? e.timestamp.value : null,
+          type: e.type as 'undo' | 'compensate'
+        }));
+
+      const pendingUndos: UndoItem[] = (currentUndoStack || []).map(item => ({
+        step_name: item.step_name,
+        result: null,
+        status: 'pending' as const,
+        timestamp: null,
+        type: 'undo' as const
       }));
 
-    const pendingUndos = undoStack.map(item => ({
-      step_name: item.step_name,
-      result: null,
-      status: 'pending' as const,
-      timestamp: null,
-      type: 'undo' as const
-    }));
+      const items = [...executedUndos, ...pendingUndos.reverse()];
+      if (items.length > 0) {
+        groups.push({ reactorName, items });
+      }
 
-    return [...executedUndos, ...pendingUndos.reverse()];
-  }, [trace, undoStack]);
+      // Check for undos in composed contexts
+      Object.entries(currentComposedContexts || {}).forEach(([name, data]: [string, any]) => {
+        const nestedContext = data?.context?.value || data?.context;
+        if (nestedContext) {
+          collectUndos(
+            nestedContext.execution_trace || [],
+            nestedContext.undo_stack || [],
+            nestedContext.composed_contexts || {},
+            name
+          );
+        }
+      });
+    };
+
+    collectUndos(trace, undoStack, composedContexts, 'Root Reactor');
+    return groups;
+  }, [trace, undoStack, composedContexts]);
 
   if (!stepName) {
     return (
@@ -139,45 +173,58 @@ export default function StepInspector({
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-8">
-          {combinedUndoHistory.length > 0 ? (
+          {groupedUndoHistory.length > 0 ? (
             <div>
               <h3 className="text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">
                 <RotateCcw className="w-4 h-4" />
                 Compensation History
               </h3>
-              <div className="space-y-2">
-                {combinedUndoHistory.map((item, idx) => (
-                  <div key={idx} className={`rounded-lg p-3 border flex items-start gap-3 ${item.status === 'executed'
-                    ? 'bg-slate-950/50 border-slate-800'
-                    : 'bg-slate-900/30 border-slate-800/50 border-dashed opacity-75'
-                    }`}>
-                    <div className={`p-1.5 rounded mt-0.5 ${item.status === 'executed'
-                      ? 'bg-emerald-500/10 text-emerald-400'
-                      : 'bg-slate-700/50 text-slate-500'
-                      }`}>
-                      {item.status === 'executed' ? <CheckCircle className="w-3 h-3" /> : <Box className="w-3 h-3" />}
+              <div className="space-y-6">
+                {groupedUndoHistory.map((group, groupIdx) => (
+                  <div key={groupIdx} className="space-y-3">
+                    <div className="flex items-center gap-2 px-2">
+                      <div className="h-px flex-1 bg-slate-800"></div>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 bg-slate-900/50 px-2 py-0.5 rounded border border-slate-800">
+                        {group.reactorName}
+                      </span>
+                      <div className="h-px flex-1 bg-slate-800"></div>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={`font-medium text-sm ${item.status === 'executed' ? 'text-slate-300' : 'text-slate-500'
+                    <div className="space-y-2">
+                      {group.items.map((item, idx) => (
+                        <div key={idx} className={`rounded-lg p-3 border flex items-start gap-3 ${item.status === 'executed'
+                          ? 'bg-slate-950/50 border-slate-800'
+                          : 'bg-slate-900/30 border-slate-800/50 border-dashed opacity-75'
                           }`}>
-                          {item.step_name}
-                        </span>
-                        <span className="text-[10px] uppercase font-mono tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 flex items-center gap-1.5">
-                          {item.type && (
-                            <span className={`font-bold ${item.type === 'compensate' ? 'text-amber-400' : 'text-indigo-400'}`}>
-                              {item.type}
-                            </span>
-                          )}
-                          <span className="opacity-50">|</span>
-                          {item.status}
-                        </span>
-                      </div>
-                      {item.status === 'executed' && item.result && (
-                        <div className="mt-2 bg-black/30 rounded border border-white/5 p-2 font-mono text-xs text-slate-400 overflow-x-auto">
-                          {JSON.stringify(item.result, null, 2)}
+                          <div className={`p-1.5 rounded mt-0.5 ${item.status === 'executed'
+                            ? 'bg-emerald-500/10 text-emerald-400'
+                            : 'bg-slate-700/50 text-slate-500'
+                            }`}>
+                            {item.status === 'executed' ? <CheckCircle className="w-3 h-3" /> : <Box className="w-3 h-3" />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={`font-medium text-sm ${item.status === 'executed' ? 'text-slate-300' : 'text-slate-500'
+                                }`}>
+                                {item.step_name}
+                              </span>
+                              <span className="text-[10px] uppercase font-mono tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 flex items-center gap-1.5">
+                                {item.type && (
+                                  <span className={`font-bold ${item.type === 'compensate' ? 'text-amber-400' : 'text-indigo-400'}`}>
+                                    {item.type}
+                                  </span>
+                                )}
+                                <span className="opacity-50">|</span>
+                                {item.status}
+                              </span>
+                            </div>
+                            {item.status === 'executed' && item.result && (
+                              <div className="mt-2 bg-black/30 rounded border border-white/5 p-2 font-mono text-xs text-slate-400 overflow-x-auto">
+                                {JSON.stringify(item.result, null, 2)}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      )}
+                      ))}
                     </div>
                   </div>
                 ))}

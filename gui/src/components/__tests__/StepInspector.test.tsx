@@ -211,4 +211,76 @@ describe('StepInspector', () => {
       expect(screen.getByText('Nested failure')).toBeInTheDocument();
     });
   });
+
+  describe('Recursive Compensation History', () => {
+    const mockComposedContexts = {
+      math_operation: {
+        context: {
+          value: {
+            execution_trace: [
+              { type: 'compensate', step: 'do_something', result: 'comp_val' },
+              { type: 'undo', step: 'multiply', result: 'undo_val' }
+            ],
+            undo_stack: [
+              { step_name: 'pending_step' }
+            ]
+          }
+        }
+      },
+      child_reactor: {
+        context: {
+          value: {
+            execution_trace: [
+              { type: 'undo', step: 'wait_for', result: 'child_undo' }
+            ]
+          }
+        }
+      }
+    };
+
+    const props = {
+      ...defaultProps,
+      stepName: null, // Global View
+      trace: [
+        { type: 'compensate', step: 'math_operation', result: 'math_res' },
+        { type: 'undo', step: 'child_reactor', result: 'child_res' }
+      ],
+      composedContexts: mockComposedContexts
+    };
+
+    it('should display grouped blocks for each reactor', () => {
+      render(<StepInspector {...props} />);
+
+      expect(screen.getByText('Root Reactor')).toBeInTheDocument();
+      // math_operation and child_reactor appear twice (header and step)
+      expect(screen.getAllByText('math_operation').length).toBe(2);
+      expect(screen.getAllByText('child_reactor').length).toBe(2);
+    });
+
+    it('should recursively collect executed undo and compensate events', () => {
+      render(<StepInspector {...props} />);
+
+      // Root level (found twice as discussed)
+      expect(screen.getAllByText('math_operation').length).toBe(2);
+      expect(screen.getAllByText('child_reactor').length).toBe(2);
+
+      // Nested math_operation level
+      expect(screen.getByText('do_something')).toBeInTheDocument();
+      expect(screen.getByText('multiply')).toBeInTheDocument();
+      expect(screen.getByText(/"comp_val"/)).toBeInTheDocument();
+      expect(screen.getByText(/"undo_val"/)).toBeInTheDocument();
+
+      // Nested child_reactor level
+      expect(screen.getByText('wait_for')).toBeInTheDocument();
+      expect(screen.getByText(/"child_undo"/)).toBeInTheDocument();
+    });
+
+    it('should recursively collect pending items from undo_stack', () => {
+      render(<StepInspector {...props} />);
+
+      expect(screen.getByText('pending_step')).toBeInTheDocument();
+      // Verify it's marked as pending
+      expect(screen.getAllByText('pending').length).toBeGreaterThan(0);
+    });
+  });
 });
