@@ -63,6 +63,42 @@ namespace :demo do
     ParentReactor.run(a: 1, b: 2)
 
     ParentReactor.run(a: 1, b: "a")
+
+    def run_reactor(a, b, fail_at_reactor = nil, fail_at_step = nil)
+      puts "\n>>> Running ParentReactor(a: #{a}, b: #{b}, fail_at_reactor: #{fail_at_reactor.inspect}, fail_at_step: #{fail_at_step.inspect})"
+      result = ParentReactor.run(
+        a: a, 
+        b: b, 
+        fail_at_reactor: fail_at_reactor, 
+        fail_at_step: fail_at_step
+      )
+      
+      if result.success?
+        puts "SUCCESS: #{result.value}"
+      else
+        # In case error method is not available, we use inspect or access internal error if possible
+        err_msg = result.respond_to?(:error) ? result.error : result.inspect
+        puts "FAILURE: #{err_msg}"
+      end
+    end
+
+    # 1. Success case
+    run_reactor(10, 5)
+
+    # 2. Failure in child_reactor.add
+    run_reactor(10, 5, :child_reactor, :add)
+
+    # 3. Failure in child_reactor.wait_for
+    run_reactor(10, 5, :child_reactor, :wait_for)
+
+    # 4. Failure in math_operation.multiply
+    run_reactor(10, 5, :math_operation, :multiply)
+
+    # 5. Failure in math_operation.do_something
+    run_reactor(10, 5, :math_operation, :do_something)
+
+    # 6. Failure in parent_reactor.format_result
+    run_reactor(10, 5, :parent_reactor, :format_result)
     puts "✅ SUCCESS"
   end
 end
