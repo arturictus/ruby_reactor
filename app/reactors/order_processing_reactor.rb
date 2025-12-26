@@ -25,13 +25,17 @@ class OrderProcessingReactor < RubyReactor::Reactor
     required(:amount).filled(:integer, gt?: 0.0)
   end
 
+  class ValidationError < StandardError; end
+  class InventoryError < StandardError; end
+  class PaymentError < StandardError; end
+
   step :validate_order do
     argument :order_id, input(:order_id)
     argument :fail_at, input(:fail_at)
     run do |args, _context|
       puts "[EXECUTION] RUN validate_order - order_id: #{args[:order_id]}"
       if args[:fail_at]&.to_sym == :validate_order
-        Failure("Failure triggered for validate_order")
+        raise ValidationError, "Failure triggered for validate_order"
       else
         Success({ id: args[:order_id], amount: 100.0, currency: "USD" })
       end
@@ -60,7 +64,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
       if args[:fail_at]&.to_sym == :check_inventory &&
           (args[:success_at_retry].nil? ||
           context.retry_context.attempts_for_step(:check_inventory) < args[:success_at_retry])
-        Failure("Failure triggered for check_inventory")
+        raise InventoryError, "Failure triggered for check_inventory"
       else
         # Simulate inventory check
         Success({ product_id: args[:product_id], available: true, requested_quantity: args[:quantity] })
@@ -126,7 +130,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
     run do |args, _context|
       puts "[EXECUTION] RUN process_payment - order_id: #{args[:order][:id]}, amount: #{args[:amount]}"
       if args[:fail_at]&.to_sym == :process_payment
-        Failure("Failure triggered for process_payment")
+        raise PaymentError, "Failure triggered for process_payment"
       else
         # Simulate payment processing
         Success({ order_id: args[:order][:id], status: "paid", amount: args[:amount] })
