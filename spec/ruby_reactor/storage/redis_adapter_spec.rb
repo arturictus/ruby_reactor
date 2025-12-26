@@ -113,7 +113,8 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
         "reactor_class" => reactor_class,
         "started_at" => Time.now.to_s,
         "current_step" => "step1",
-        "retry_count" => 0
+        "retry_count" => 0,
+        "failure_reason" => { "step_name" => "step1", "exception_class" => "RuntimeError" }
       }
       key = "reactor:MyReactor:context:ctx-123"
 
@@ -124,7 +125,8 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       expect(result.first).to include(
         id: context_id,
         class: reactor_class,
-        status: "running"
+        status: "running",
+        failure: { "step_name" => "step1", "exception_class" => "RuntimeError" }
       )
     end
   end

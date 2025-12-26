@@ -165,7 +165,8 @@ module RubyReactor
             id: data["context_id"],
             class: data["reactor_class"],
             status: determine_status(data),
-            created_at: data["started_at"]
+            created_at: data["started_at"],
+            failure: data["failure_reason"]
           }
         end.compact
 

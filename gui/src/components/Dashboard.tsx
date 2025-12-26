@@ -78,6 +78,7 @@ export default function Dashboard() {
                   <th className="px-6 py-4 font-medium">Reactor ID</th>
                   <th className="px-6 py-4 font-medium">Class Name</th>
                   <th className="px-6 py-4 font-medium">Status</th>
+                  <th className="px-6 py-4 font-medium">Failure</th>
                   <th className="px-6 py-4 font-medium">Started</th>
                   <th className="px-6 py-4 text-right font-medium">Actions</th>
                 </tr>
@@ -95,6 +96,14 @@ export default function Dashboard() {
                     <td className="px-6 py-4">
                       <StatusBadge status={reactor.status} />
                     </td>
+                    <td className="px-6 py-4 text-slate-400 font-mono text-xs">
+                      {reactor.status === 'failed' && reactor.failure && (
+                        <div className="flex flex-col">
+                          <span className="text-rose-400 font-medium">{reactor.failure.step_name}</span>
+                          <span className="text-slate-500 text-[10px] leading-tight opacity-70">{reactor.failure.exception_class}</span>
+                        </div>
+                      )}
+                    </td>
                     <td className="px-6 py-4 text-slate-500 tabular-nums">
                       {new Date(reactor.created_at).toLocaleString()}
                     </td>
@@ -111,7 +120,7 @@ export default function Dashboard() {
                 ))}
                 {filteredReactors?.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-24 text-center">
+                    <td colSpan={6} className="px-6 py-24 text-center">
                       <div className="flex flex-col items-center gap-3 text-slate-500">
                         <div className="p-4 bg-slate-900 rounded-full border border-slate-800">
                           <Activity className="w-6 h-6 text-slate-600" />
