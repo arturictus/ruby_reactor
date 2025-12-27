@@ -336,13 +336,19 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
           const nestedData = contextObj?.composed_contexts?.[key];
           const nestedContext = nestedData?.context?.value || nestedData?.context;
 
+          // For map steps, if we don't have a specific context but the step itself is completed/failed/cancelled,
+          // we should propagate that status to nested steps.
+          const inheritedStatus = (struct[key].type === 'map' && (!nestedContext || statusMap[fullId] === 'completed'))
+            ? statusMap[fullId]
+            : nestedContext?.status;
+
           resolveStatus(
             struct[key].nested_structure,
             nestedContext?.intermediate_results || {},
             nestedContext?.execution_trace || [],
             fullId,
             nestedContext,
-            nestedContext?.status
+            inheritedStatus
           );
         }
       });

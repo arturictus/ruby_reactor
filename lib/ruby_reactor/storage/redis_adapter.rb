@@ -191,12 +191,23 @@ module RubyReactor
       end
 
       def determine_status(data)
-        return data["status"] if data["status"] && %w[failed paused completed].include?(data["status"])
+        return data["status"] if data["status"] && %w[failed paused completed running].include?(data["status"])
         return "cancelled" if data["cancelled"]
         return "failed" if data["retry_count"] && data["retry_count"] > 0 && !data["current_step"].nil? # Heuristic
         return "completed" unless data["current_step"]
 
         "running"
+      end
+
+      def store_map_element_context_id(map_id, context_id, reactor_class_name)
+        key = map_element_contexts_key(map_id, reactor_class_name)
+        @redis.rpush(key, context_id)
+        @redis.expire(key, 86_400)
+      end
+
+      def retrieve_map_element_context_ids(map_id, reactor_class_name)
+        key = map_element_contexts_key(map_id, reactor_class_name)
+        @redis.lrange(key, 0, -1)
       end
 
       private
@@ -219,6 +230,10 @@ module RubyReactor
 
       def correlation_id_key(correlation_id, reactor_class_name)
         "reactor:#{reactor_class_name}:correlation:#{correlation_id}"
+      end
+
+      def map_element_contexts_key(map_id, reactor_class_name)
+        "reactor:#{reactor_class_name}:map:#{map_id}:element_contexts"
       end
     end
   end

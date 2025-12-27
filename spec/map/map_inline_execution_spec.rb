@@ -178,4 +178,27 @@ RSpec.describe "Map Inline Execution" do
       expect(result.value[:filter_evens]).to eq([18])
     end
   end
+
+  context "composed contexts" do
+    it "stores child context references in composed_contexts for map step" do
+      # Let's use Executor directly for testing to inspect context
+      context = RubyReactor::Context.new({ numbers: [1, 2] }, inline_map_reactor_class)
+      executor = RubyReactor::Executor.new(inline_map_reactor_class, {}, context)
+      executor.execute
+
+      expect(context.composed_contexts).to have_key(:doubled_numbers)
+      composed_data = context.composed_contexts[:doubled_numbers]
+      expect(composed_data[:type]).to eq(:map_ref)
+      expect(composed_data[:map_id]).to eq("#{context.context_id}:doubled_numbers")
+
+      # Verify that the child context IDs are in Redis (via our storage adapter)
+      storage = RubyReactor.configuration.storage_adapter
+      context_ids = storage.retrieve_map_element_context_ids(composed_data[:map_id], context.reactor_class.name)
+      expect(context_ids.length).to eq(2)
+
+      # Verify at least one child context exists and has results
+      child_data = storage.find_context_by_id(context_ids.last)
+      expect(child_data["intermediate_results"]).to have_key("double")
+    end
+  end
 end

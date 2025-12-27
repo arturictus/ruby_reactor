@@ -111,7 +111,9 @@ module RubyReactor
     def update_context_status(result)
       return unless result
 
-      if result.is_a?(RubyReactor::Success)
+      if result.is_a?(RubyReactor::AsyncResult)
+        @context.status = :running
+      elsif result.is_a?(RubyReactor::Success)
         @context.status = :completed
       elsif result.is_a?(RubyReactor::Failure)
         @context.status = :failed

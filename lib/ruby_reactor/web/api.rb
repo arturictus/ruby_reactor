@@ -34,7 +34,7 @@ module RubyReactor
               {
                 id: data["context_id"],
                 class: data["reactor_class"],
-                status: if %w[failed paused completed].include?(data["status"])
+                status: if %w[failed paused completed running].include?(data["status"])
                           data["status"]
                         elsif data["cancelled"]
                           "cancelled"
@@ -49,7 +49,10 @@ module RubyReactor
                 intermediate_results: data["intermediate_results"],
                 structure: structure,
                 steps: data["execution_trace"] || [],
-                composed_contexts: data["composed_contexts"] || {},
+                composed_contexts: self.class.hydrate_composed_contexts(
+                  data["composed_contexts"] || {},
+                  data["reactor_class"]
+                ),
                 error: data["failure_reason"]
               }
             end
@@ -118,6 +121,38 @@ module RubyReactor
         val.is_a?(RubyReactor::Template::Value) ? val.value : nil
       rescue StandardError
         nil
+      end
+
+      def self.hydrate_composed_contexts(composed_contexts, reactor_class_name)
+        return {} unless composed_contexts.is_a?(Hash)
+
+        composed_contexts.each_with_object({}) do |(key, value), acc|
+          acc[key] = if ["map_ref", :map_ref].include?(value["type"])
+                       hydrate_map_ref(value, reactor_class_name)
+                     else
+                       value
+                     end
+        end
+      end
+
+      def self.hydrate_map_ref(ref_data, reactor_class_name)
+        storage = RubyReactor.configuration.storage_adapter
+        map_id = ref_data["map_id"]
+        context_ids = storage.retrieve_map_element_context_ids(map_id, reactor_class_name)
+
+        return ref_data if context_ids.empty?
+
+        # Get the last context as representative
+        last_context_id = context_ids.last
+        child_data = storage.find_context_by_id(last_context_id)
+
+        return ref_data unless child_data
+
+        {
+          "name" => ref_data["name"],
+          "type" => "map_element",
+          "context" => child_data
+        }
       end
     end
   end

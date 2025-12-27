@@ -88,6 +88,17 @@ module RubyReactor
 
           link_contexts(child_context, context)
 
+          map_id = "#{context.context_id}:#{context.current_step}"
+          storage = RubyReactor.configuration.storage_adapter
+          storage.store_map_element_context_id(map_id, child_context.context_id, context.reactor_class.name)
+
+          # Store reference in composed_contexts so the UI knows where to find elements
+          context.composed_contexts[context.current_step] = {
+            name: context.current_step,
+            type: :map_ref,
+            map_id: map_id
+          }
+
           executor = RubyReactor::Executor.new(arguments[:mapped_reactor_class], {}, child_context)
           executor.execute
           executor.result
@@ -150,6 +161,13 @@ module RubyReactor
                      queue_single_worker(map_id: map_id, arguments: arguments, context: context,
                                          reactor_class_info: reactor_class_info, step_name: step_name)
                    end
+
+          # Store reference in composed_contexts so the UI knows where to find elements
+          context.composed_contexts[step_name.to_s] = {
+            name: step_name.to_s,
+            type: :map_ref,
+            map_id: map_id
+          }
 
           RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: context.intermediate_results)
         end
