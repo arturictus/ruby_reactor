@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require "zeitwerk"
+require "pathname"
 require_relative "ruby_reactor/registry"
+require_relative "ruby_reactor/utils/code_extractor"
 
 # Load dry-validation if available (for validation features)
 begin
@@ -40,11 +42,13 @@ module RubyReactor
   end
 
   class Failure
-    attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments, :exception_class
+    attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments, :exception_class,
+                :file_path, :line_number, :code_snippet
 
     # rubocop:disable Metrics/ParameterLists
     def initialize(error, retryable: nil, step_name: nil, inputs: {}, backtrace: nil, redact_inputs: [],
-                   reactor_name: nil, step_arguments: {}, exception_class: nil)
+                   reactor_name: nil, step_arguments: {}, exception_class: nil,
+                   file_path: nil, line_number: nil, code_snippet: nil)
       # rubocop:enable Metrics/ParameterLists
       @error = error
       @retryable = if retryable.nil?
@@ -56,9 +60,13 @@ module RubyReactor
       @reactor_name = reactor_name
       @inputs = inputs
       @step_arguments = step_arguments
-      @backtrace = backtrace || (error.respond_to?(:backtrace) ? error.backtrace : caller)
+      raw_backtrace = backtrace || (error.respond_to?(:backtrace) ? error.backtrace : caller)
+      @backtrace = filter_backtrace(raw_backtrace)
       @redact_inputs = redact_inputs
       @exception_class = exception_class || (error.is_a?(Exception) ? error.class.name : nil)
+      @file_path = file_path
+      @line_number = line_number
+      @code_snippet = code_snippet
     end
 
     def success?
@@ -82,6 +90,18 @@ module RubyReactor
 
       msg << header
 
+      msg << "Location: #{file_path}:#{line_number}" if file_path && line_number
+
+      if code_snippet && !code_snippet.empty?
+        msg << "Code Snippet:"
+        msg << "```"
+        code_snippet.each do |line|
+          prefix = line[:target] ? ">" : " "
+          msg << "#{prefix} #{line[:line_number].to_s.rjust(4)}  #{line[:content]}"
+        end
+        msg << "```"
+      end
+
       if inputs && !inputs.empty?
         msg << "Inputs:"
         inputs.each do |key, value|
@@ -104,7 +124,7 @@ module RubyReactor
 
       if backtrace
         msg << "Backtrace:"
-        msg << backtrace.take(5).map { |line| "  #{line}" }.join("\n")
+        msg << backtrace.take(10).map { |line| "  #{line}" }.join("\n")
       end
 
       msg.join("\n")
@@ -115,6 +135,29 @@ module RubyReactor
     end
 
     private
+
+    def filter_backtrace(backtrace)
+      return backtrace if ENV["RUBY_REACTOR_DEBUG"] == "true"
+      return backtrace if backtrace.nil? || backtrace.empty?
+
+      root_path = RubyReactor.root.to_s
+      filtered = []
+      filtered << backtrace.first
+
+      internal_block = false
+      backtrace[1..-1]&.each do |line|
+        if line.start_with?(root_path)
+          unless internal_block
+            filtered << "... [ruby-reactor-internals-redacted-trace]"
+            internal_block = true
+          end
+        else
+          filtered << line
+          internal_block = false
+        end
+      end
+      filtered
+    end
 
     def error_message
       @error.respond_to?(:message) ? @error.message : @error.to_s
@@ -159,5 +202,9 @@ module RubyReactor
 
   def self.configuration
     Configuration.instance
+  end
+
+  def self.root
+    Pathname.new(File.expand_path("..", __dir__))
   end
 end

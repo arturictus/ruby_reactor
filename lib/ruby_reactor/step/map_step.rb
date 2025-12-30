@@ -145,7 +145,7 @@ module RubyReactor
         def run_async(arguments, context, step_name)
           map_id = "#{context.context_id}:#{step_name}"
           context.map_operations[step_name.to_s] = map_id
-          prepare_async_execution(context, map_id, arguments[:source].count)
+          prepare_async_execution(context, map_id, arguments[:source].size)
 
           reactor_class_info = build_reactor_class_info(arguments[:mapped_reactor_class], context, step_name)
 
@@ -192,11 +192,11 @@ module RubyReactor
           # rubocop:enable Metrics/ParameterLists
           storage = RubyReactor.configuration.storage_adapter
           storage.initialize_map_operation(
-            map_id, arguments[:source].count, context.reactor_class.name,
+            map_id, arguments[:source].size, context.reactor_class.name,
             strict_ordering: arguments[:strict_ordering], reactor_class_info: reactor_class_info
           )
 
-          limit ||= arguments[:source].count
+          limit ||= arguments[:source].size
           first_job_id = nil
           arguments[:source].each_with_index do |element, index|
             break if index >= limit

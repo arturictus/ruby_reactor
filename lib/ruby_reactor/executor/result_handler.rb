@@ -22,17 +22,39 @@ module RubyReactor
           @dependency_graph.complete_step(step_config.name)
         when RubyReactor::MaxRetriesExhaustedFailure
           # For MaxRetriesExhaustedFailure, use the original error to avoid double-wrapping the message
-          # The error message from MaxRetriesExhaustedFailure already includes "failed after N attempts"
           @compensation_manager.handle_step_failure(step_config, result.original_error, resolved_arguments)
-          # Use the MaxRetriesExhaustedFailure error message for the final error
-          raise Error::StepFailureError.new(result.error, step: step_config.name, context: @context,
-                                                          original_error: result.original_error,
-                                                          step_arguments: resolved_arguments)
+
+          # Ensure original_error is an Exception, otherwise nil
+          orig_err = result.original_error.is_a?(Exception) ? result.original_error : nil
+
+          error = Error::StepFailureError.new(result.error, step: step_config.name, context: @context,
+                                                            original_error: orig_err,
+                                                            step_arguments: resolved_arguments)
+          # Preserve backtrace from the result if available
+          if result.respond_to?(:backtrace) && result.backtrace
+            error.set_backtrace(result.backtrace)
+          elsif orig_err
+            error.set_backtrace(orig_err.backtrace)
+          end
+
+          raise error
         when RubyReactor::Failure
           failure_result = @compensation_manager.handle_step_failure(step_config, result.error, resolved_arguments)
-          raise Error::StepFailureError.new(failure_result.error, step: step_config.name, context: @context,
-                                                                  original_error: result.error.is_a?(Exception) ? result.error : nil,
-                                                                  step_arguments: resolved_arguments)
+
+          orig_err = result.error.is_a?(Exception) ? result.error : nil
+
+          error = Error::StepFailureError.new(failure_result.error, step: step_config.name, context: @context,
+                                                                    original_error: orig_err,
+                                                                    step_arguments: resolved_arguments)
+
+          # Preserve backtrace from the result if available
+          if result.respond_to?(:backtrace) && result.backtrace
+            error.set_backtrace(result.backtrace)
+          elsif orig_err
+            error.set_backtrace(orig_err.backtrace)
+          end
+
+          raise error
         else
           # Treat non-Success/Failure results as success with that value
           validate_step_output(step_config, result, resolved_arguments)
@@ -57,15 +79,26 @@ module RubyReactor
             redact_inputs = error.context.reactor_class.inputs.select { |_, config| config[:redact] }.keys
           end
 
+          original_error = error.original_error
+          exception_class = original_error&.class&.name
+          backtrace = original_error&.backtrace || error.backtrace
+
+          # Extract file and line from backtrace
+          file_path, line_number = extract_location(backtrace)
+          code_snippet = RubyReactor::Utils::CodeExtractor.extract(file_path, line_number) if file_path
+
           RubyReactor.Failure(
             error.message,
             step_name: error.step,
             inputs: error.context.inputs,
             redact_inputs: redact_inputs,
-            backtrace: error.backtrace,
+            backtrace: backtrace,
             reactor_name: error.context.reactor_class.name,
             step_arguments: error.step_arguments,
-            exception_class: error.original_error&.class&.name
+            exception_class: exception_class,
+            file_path: file_path,
+            line_number: line_number,
+            code_snippet: code_snippet
           )
         when Error::InputValidationError
           # Preserve validation errors as-is for proper error handling
@@ -103,6 +136,21 @@ module RubyReactor
           context: @context,
           step_arguments: resolved_arguments
         )
+      end
+
+      def extract_location(backtrace)
+        return [nil, nil] unless backtrace && !backtrace.empty?
+
+        # Filter out internal reactor frames if needed, or just take the first one
+        # For now, let's take the first line of the backtrace which should be the error source
+        # But we might want to skip our own internal frames if we want to point to user code
+        # Let's start with the top frame, assuming backtrace is already correct (from original error)
+
+        first_line = backtrace.first
+        match = first_line.match(/^(.+?):(\d+)(?::in `.*')?$/)
+        return [nil, nil] unless match
+
+        [match[1], match[2].to_i]
       end
     end
   end

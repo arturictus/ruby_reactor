@@ -124,7 +124,10 @@ module RubyReactor
           backtrace: result.backtrace,
           reactor_name: result.reactor_name,
           step_arguments: result.step_arguments,
-          exception_class: result.exception_class
+          exception_class: result.exception_class,
+          file_path: result.file_path,
+          line_number: result.line_number,
+          code_snippet: result.code_snippet
         }
       elsif result.is_a?(RubyReactor::InterruptResult)
         @context.status = :paused
