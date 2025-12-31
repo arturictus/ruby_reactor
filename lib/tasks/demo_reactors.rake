@@ -123,7 +123,7 @@ namespace :demo do
     # Ensure some products exist for AR map
     Product.find_or_create_by!(name: "Product A")
     Product.find_or_create_by!(name: "Product B")
-    ar_query = Product.all
+    ar_query = Product.all.to_a
 
     common_params = {
       inline_list: inline_list,
