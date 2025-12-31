@@ -70,6 +70,20 @@ module RubyReactor
       def handle_execution_error(error)
         case error
         when Error::StepFailureError
+          current_context = error.context || @context
+          # Set the current step to the failed step so the UI knows which step failed
+          current_context.current_step = error.step
+
+          # If this is a map element execution, store the failed context ID for quick lookup
+          if current_context.map_metadata && current_context.map_metadata[:map_id]
+            storage = RubyReactor.configuration.storage_adapter
+            storage.store_map_failed_context_id(
+              current_context.map_metadata[:map_id],
+              current_context.context_id,
+              current_context.map_metadata[:parent_reactor_class_name]
+            )
+          end
+
           # Step failure has already been handled (compensation and rollback for the failed step)
           # But we need to rollback all completed steps
           @compensation_manager.rollback_completed_steps

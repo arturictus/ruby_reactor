@@ -210,6 +210,22 @@ module RubyReactor
         @redis.lrange(key, 0, -1)
       end
 
+      def retrieve_map_element_context_id(map_id, reactor_class_name, index: -1)
+        key = map_element_contexts_key(map_id, reactor_class_name)
+        @redis.lindex(key, index)
+      end
+
+      def store_map_failed_context_id(map_id, context_id, reactor_class_name)
+        key = map_failed_context_key(map_id, reactor_class_name)
+        # Only store the first failure (nx: true)
+        @redis.set(key, context_id, nx: true, ex: 86_400)
+      end
+
+      def retrieve_map_failed_context_id(map_id, reactor_class_name)
+        key = map_failed_context_key(map_id, reactor_class_name)
+        @redis.get(key)
+      end
+
       private
 
       def context_key(context_id, reactor_class_name)
@@ -234,6 +250,10 @@ module RubyReactor
 
       def map_element_contexts_key(map_id, reactor_class_name)
         "reactor:#{reactor_class_name}:map:#{map_id}:element_contexts"
+      end
+
+      def map_failed_context_key(map_id, reactor_class_name)
+        "reactor:#{reactor_class_name}:map:#{map_id}:failed_context_id"
       end
     end
   end

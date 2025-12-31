@@ -92,11 +92,19 @@ module RubyReactor
           storage = RubyReactor.configuration.storage_adapter
           storage.store_map_element_context_id(map_id, child_context.context_id, context.reactor_class.name)
 
+          # Set map metadata for failure handling
+          child_context.map_metadata = {
+            map_id: map_id,
+            parent_reactor_class_name: context.reactor_class.name,
+            index: nil # Inline map execution doesn't track index in metadata currently, but could
+          }
+
           # Store reference in composed_contexts so the UI knows where to find elements
           context.composed_contexts[context.current_step] = {
             name: context.current_step,
             type: :map_ref,
-            map_id: map_id
+            map_id: map_id,
+            element_reactor_class: arguments[:mapped_reactor_class].name
           }
 
           executor = RubyReactor::Executor.new(arguments[:mapped_reactor_class], {}, child_context)
@@ -166,7 +174,8 @@ module RubyReactor
           context.composed_contexts[step_name.to_s] = {
             name: step_name.to_s,
             type: :map_ref,
-            map_id: map_id
+            map_id: map_id,
+            element_reactor_class: arguments[:mapped_reactor_class].name
           }
 
           RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: context.intermediate_results)

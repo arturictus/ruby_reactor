@@ -138,20 +138,36 @@ module RubyReactor
       def self.hydrate_map_ref(ref_data, reactor_class_name)
         storage = RubyReactor.configuration.storage_adapter
         map_id = ref_data["map_id"]
-        context_ids = storage.retrieve_map_element_context_ids(map_id, reactor_class_name)
 
-        return ref_data if context_ids.empty?
+        # Use the specific element reactor class if available, otherwise fallback to parent
+        target_reactor_class = ref_data["element_reactor_class"] || reactor_class_name
 
-        # Get the last context as representative
-        last_context_id = context_ids.last
-        child_data = storage.find_context_by_id(last_context_id)
+        # 1. Check for specific failure (O(1))
+        # Stored by ResultHandler when a map element fails
+        failed_context_id = storage.retrieve_map_failed_context_id(map_id, reactor_class_name)
 
-        return ref_data unless child_data
+        target_context_id = nil
+
+        target_context_id = if failed_context_id
+                              failed_context_id
+                            else
+                              # 2. Fallback to representative sample (last element) (O(1))
+                              # If no failure, the last element gives a good idea of progress/completion
+                              target_id = storage.retrieve_map_element_context_id(map_id, reactor_class_name, index: -1)
+                              target_id
+                            end
+
+        return ref_data unless target_context_id
+
+        # Retrieve the actual context data for the target ID
+        representative_data = storage.retrieve_context(target_context_id, target_reactor_class)
+
+        return ref_data unless representative_data
 
         {
           "name" => ref_data["name"],
           "type" => "map_element",
-          "context" => child_data
+          "context" => representative_data
         }
       end
     end

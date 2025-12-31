@@ -135,8 +135,9 @@ RSpec.describe "Map Async Retry Behavior" do
       storage = RubyReactor.configuration.storage_adapter
       context_data = storage.retrieve_context(context_id, AsyncRetryMapReactorV2.name)
 
-      expect(context_data["intermediate_results"]["processed"]["_type"]).to eq("Failure")
-      expect(context_data["intermediate_results"]["processed"]["error"]).to include("failed after 5 attempts")
+      # When an async map fails (without fail_fast: false), the reactor context itself should be marked as failed
+      expect(context_data["status"]).to eq("failed")
+      expect(context_data["failure_reason"]["message"]).to include("failed after 5 attempts")
 
       # Get map_id from child_contexts in the stored context data
       # context_data["composed_contexts"] or similar?

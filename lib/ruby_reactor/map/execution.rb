@@ -37,6 +37,19 @@ module RubyReactor
           child_context = RubyReactor::Context.new(element_inputs, reactor_class)
           link_contexts(child_context, parent_context)
 
+          # Ensure we store the element context linkage
+          storage_options[:storage].store_map_element_context_id(
+            storage_options[:map_id], child_context.context_id, storage_options[:parent_reactor_class_name]
+          )
+
+          # Set map metadata for failure handling
+          metadata = {
+            map_id: storage_options[:map_id],
+            parent_reactor_class_name: storage_options[:parent_reactor_class_name],
+            index: index
+          }
+          child_context.map_metadata = metadata
+
           executor = RubyReactor::Executor.new(reactor_class, {}, child_context)
           executor.execute
           result = executor.result

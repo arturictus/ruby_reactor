@@ -53,7 +53,8 @@ RSpec.describe "Failure Reporting" do
       step_error = RubyReactor::Error::StepFailureError.new(
         "wrapped message",
         step: "my_step",
-        context: double("Context", inputs: {}, reactor_class: reactor_class),
+        context: double("Context", inputs: {}, reactor_class: reactor_class, :current_step= => nil, map_metadata: nil,
+                                   context_id: "123"),
         original_error: original_error
       )
 
