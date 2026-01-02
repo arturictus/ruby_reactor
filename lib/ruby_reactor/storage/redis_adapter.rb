@@ -140,35 +140,26 @@ module RubyReactor
       # New methods for API
       def scan_reactors(pattern: "reactor:*:context:*", count: 50)
         # Use SCAN to find keys matching the pattern
-        # This is expensive if there are many keys, but suitable for Admin UI
-        keys = []
+        results = []
+        batch_keys = []
 
-        # We need to collect enough keys to satisfy count, but also limit the scanning
-        # Loop until we have enough keys or cursor creates a full cycle
-        # Note: This is a simplified implementation. Real production implementation
-        # might need a more robust pagination strategy.
-        @redis.scan_each(match: pattern, count: count) do |key|
-          keys << key
-          break if keys.size >= count * 2 # Fetch more to account for filtering
+        # scan_each yields keys. We buffer them to use MGET efficiently.
+        # We request a batch size from Redis (count: 100) to reduce roundtrips.
+        @redis.scan_each(match: pattern, count: 100) do |key|
+          batch_keys << key
+
+          # specific batch size for MGET processing
+          if batch_keys.size >= 50
+            results.concat(fetch_and_filter_reactors(batch_keys))
+            batch_keys = []
+
+            # Stop if we have enough results
+            return results.take(count) if results.size >= count
+          end
         end
 
-        return [] if keys.empty?
-
-        # Fetch values for all found keys using MGET (effecient standard command)
-        json_results = @redis.mget(*keys)
-
-        results = json_results.compact.map do |json|
-          data = JSON.parse(json)
-          next if data["parent_context_id"] # Skip nested reactors
-
-          {
-            id: data["context_id"],
-            class: data["reactor_class"],
-            status: determine_status(data),
-            created_at: data["started_at"],
-            failure: data["failure_reason"]
-          }
-        end.compact
+        # Process remaining keys
+        results.concat(fetch_and_filter_reactors(batch_keys)) if batch_keys.any?
 
         results.take(count)
       end
@@ -227,6 +218,25 @@ module RubyReactor
       end
 
       private
+
+      def fetch_and_filter_reactors(keys)
+        return [] if keys.empty?
+
+        json_results = @redis.mget(*keys)
+
+        json_results.compact.map do |json|
+          data = JSON.parse(json)
+          next if data["parent_context_id"] # Skip nested reactors
+
+          {
+            id: data["context_id"],
+            class: data["reactor_class"],
+            status: determine_status(data),
+            created_at: data["started_at"],
+            failure: data["failure_reason"]
+          }
+        end.compact
+      end
 
       def context_key(context_id, reactor_class_name)
         "reactor:#{reactor_class_name}:context:#{context_id}"
