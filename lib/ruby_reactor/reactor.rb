@@ -30,7 +30,7 @@ module RubyReactor
       reactor = find(id)
       result = reactor.continue(payload: payload, step_name: step_name, idempotency_key: idempotency_key)
 
-      if result.is_a?(RubyReactor::Failure) && result.invalid_payload?
+      if result.is_a?(RubyReactor::Failure) && result.respond_to?(:invalid_payload?) && result.invalid_payload?
         undo(id)
         cancel(id: id, reason: "Payload validation failed")
 

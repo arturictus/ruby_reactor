@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, History, ChevronLeft, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, History, ChevronLeft, CheckCircle, ChevronDown, ChevronUp, Play } from 'lucide-react';
+import { apiUrl } from '../lib/utils';
 
 
 
@@ -20,6 +21,9 @@ interface StepInspectorProps {
   stepAttempts?: Record<string, number>;
   composedContexts?: Record<string, any>;
   onClose?: () => void;
+  reactorId?: string;
+  reactorStatus?: string;
+  onAction?: () => void;
 }
 
 export default function StepInspector({
@@ -31,9 +35,60 @@ export default function StepInspector({
   undoStack = [],
   stepAttempts = {},
   composedContexts = {},
-  onClose
+  onClose,
+  reactorId,
+  reactorStatus,
+  onAction
 }: StepInspectorProps) {
   const [showFullBacktrace, setShowFullBacktrace] = useState(false);
+  const [resumePayload, setResumePayload] = useState('');
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const [isResuming, setIsResuming] = useState(false);
+
+  const handleResume = async () => {
+    if (!reactorId || !stepName) return;
+
+    setIsResuming(true);
+    setResumeError(null);
+
+    try {
+      // Validate JSON
+      let payload = {};
+      if (resumePayload.trim()) {
+        try {
+          payload = JSON.parse(resumePayload);
+        } catch (e) {
+          setResumeError("Invalid JSON payload");
+          setIsResuming(false);
+          return;
+        }
+      }
+
+      const response = await fetch(apiUrl(`/api/reactors/${reactorId}/continue`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payload: payload,
+          step_name: stepName.split('.').pop()
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setResumeError(data.error || "Failed to resume");
+      } else {
+        setResumePayload('');
+        if (onAction) onAction();
+        if (onClose) onClose();
+      }
+    } catch (e) {
+      console.error("Failed to resume", e);
+      setResumeError("An unexpected error occurred");
+    } finally {
+      setIsResuming(false);
+    }
+  };
 
   // Resolve recursive data based on path
   const resolvedData = useMemo(() => {
@@ -276,6 +331,46 @@ export default function StepInspector({
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-8">
+
+        {/* Resume Action */}
+        {reactorStatus === 'paused' && stepConfig?.type === 'interrupt' && (
+          <div className="bg-emerald-500/5 rounded-lg border border-emerald-500/20 p-4">
+            <h3 className="text-sm font-medium text-emerald-400 mb-2 flex items-center gap-2">
+              <Play className="w-4 h-4" />
+              Resume Execution
+            </h3>
+            <p className="text-xs text-slate-400 mb-3">
+              This step is an interrupt point. You can provide a payload and resume execution from here.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-mono text-slate-500 mb-1.5 block">Payload (JSON)</label>
+                <textarea
+                  value={resumePayload}
+                  onChange={(e) => setResumePayload(e.target.value)}
+                  placeholder='{"key": "value"}'
+                  className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm font-mono text-slate-200 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 font-mono placeholder-slate-700"
+                />
+              </div>
+
+              {resumeError && (
+                <div className="text-xs text-red-400 flex items-center gap-1.5 bg-red-500/10 p-2 rounded border border-red-500/20">
+                  <AlertCircle className="w-3 h-3" />
+                  {resumeError}
+                </div>
+              )}
+
+              <button
+                onClick={handleResume}
+                disabled={isResuming}
+                className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium shadow-lg shadow-emerald-500/20 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isResuming ? 'Resuming...' : 'Resume Reactor'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Error Section */}
         {isFailedStep && resolvedData?.context?.failure_reason && (

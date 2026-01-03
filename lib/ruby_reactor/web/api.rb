@@ -41,6 +41,7 @@ module RubyReactor
                         else
                           (data["current_step"] ? "running" : "completed")
                         end,
+                current_step: data["current_step"],
                 retry_count: data["retry_count"] || 0,
                 undo_stack: data["undo_stack"] || [],
                 step_attempts: data.dig("retry_context", "step_attempts") || {},
@@ -65,6 +66,36 @@ module RubyReactor
             # POST /api/reactors/:id/cancel
             r.post "cancel" do
               { success: true, message: "Cancelled" }
+            end
+
+            # POST /api/reactors/:id/continue
+            r.post "continue" do
+              data = RubyReactor::Configuration.instance.storage_adapter.find_context_by_id(reactor_id)
+              return { error: "Reactor not found" } unless data
+
+              reactor_class = Object.const_get(data["reactor_class"])
+
+              params = JSON.parse(r.body.read)
+              payload = params["payload"]
+              step_name = params["step_name"]
+
+              begin
+                result = reactor_class.continue(
+                  id: reactor_id,
+                  payload: payload,
+                  step_name: step_name
+                )
+
+                if result.is_a?(RubyReactor::Failure)
+                  response.status = 422
+                  { error: result.error }
+                else
+                  { success: true, message: "Reactor resumed" }
+                end
+              rescue StandardError => e
+                response.status = 422
+                { error: e.message }
+              end
             end
           end
         end

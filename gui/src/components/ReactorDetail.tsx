@@ -8,6 +8,7 @@ import StepInspector from './StepInspector';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
+
 export default function ReactorDetail() {
   const { id } = useParams();
   const { data: reactor, error, isLoading } = useSWR(id ? apiUrl(`/api/reactors/${id}`) : null, fetcher, { refreshInterval: 1000 });
@@ -23,6 +24,8 @@ export default function ReactorDetail() {
     }
   };
 
+
+
   if (error) return <div className="p-4 text-red-500 bg-red-500/10 border border-red-500/20 rounded-lg">Failed to load reactor</div>;
   if (isLoading) return <div className="p-4 text-slate-500 animate-pulse">Loading reactor details...</div>;
 
@@ -31,7 +34,7 @@ export default function ReactorDetail() {
   }
 
   return (
-    <div className="space-y-6 h-[calc(100vh-8rem)] flex flex-col">
+    <div className="space-y-6 h-[calc(100vh-8rem)] flex flex-col relative">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-6 shrink-0">
         <div className="flex items-center gap-4">
           <Link to="/" className="p-2 hover:bg-white/5 rounded-full text-slate-400 hover:text-white transition-colors">
@@ -45,7 +48,8 @@ export default function ReactorDetail() {
             <div className="flex items-center gap-2 mt-1.5">
               <span className="text-sm text-slate-400">Status: <span className={`font-medium ${reactor.status === 'failed' ? 'text-red-400' :
                 reactor.status === 'completed' ? 'text-emerald-400' :
-                  'text-slate-200'
+                  reactor.status === 'paused' ? 'text-amber-400' :
+                    'text-slate-200'
                 }`}>{reactor.status}</span></span>
               {reactor.retry_count > 0 && (
                 <span className="text-sm text-slate-400 ml-3 pl-3 border-l border-slate-700">
@@ -57,6 +61,7 @@ export default function ReactorDetail() {
         </div>
 
         <div className="flex items-center gap-2 ml-auto">
+
           <button
             onClick={() => handleAction('retry')}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow-lg shadow-indigo-500/20 text-sm font-medium transition-all hover:-translate-y-0.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
@@ -68,7 +73,7 @@ export default function ReactorDetail() {
           <button
             onClick={() => handleAction('cancel')}
             className="flex items-center gap-2 px-4 py-2 bg-slate-900 border border-slate-700 text-slate-300 rounded-lg hover:bg-slate-800 hover:text-white text-sm font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={reactor.status !== 'running'}
+            disabled={reactor.status !== 'running' && reactor.status !== 'paused'}
           >
             <XOctagon className="w-4 h-4" />
             Cancel
@@ -117,9 +122,14 @@ export default function ReactorDetail() {
             stepAttempts={reactor.step_attempts}
             composedContexts={reactor.composed_contexts}
             onClose={() => setSelectedStep(null)}
+            reactorId={id}
+            reactorStatus={reactor.status}
+            onAction={() => mutate(apiUrl(`/api/reactors/${id}`))}
           />
         </div>
       </div>
+
+
     </div>
   );
 }
