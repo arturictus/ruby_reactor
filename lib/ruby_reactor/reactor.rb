@@ -31,10 +31,8 @@ module RubyReactor
       result = reactor.continue(payload: payload, step_name: step_name, idempotency_key: idempotency_key)
 
       if result.is_a?(RubyReactor::Failure) && result.respond_to?(:invalid_payload?) && result.invalid_payload?
-        undo(id)
-        cancel(id: id, reason: "Payload validation failed")
-
         # Raise exception to match expected behavior (strict mode for class method)
+        # We do NOT cancel the reactor, allowing the user to retry with valid payload
         raise Error::InputValidationError, result.error
       end
 
