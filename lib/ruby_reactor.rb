@@ -48,7 +48,7 @@ module RubyReactor
     # rubocop:disable Metrics/ParameterLists
     def initialize(error, retryable: nil, step_name: nil, inputs: {}, backtrace: nil, redact_inputs: [],
                    reactor_name: nil, step_arguments: {}, exception_class: nil,
-                   file_path: nil, line_number: nil, code_snippet: nil)
+                   file_path: nil, line_number: nil, code_snippet: nil, invalid_payload: false)
       # rubocop:enable Metrics/ParameterLists
       @error = error
       @retryable = if retryable.nil?
@@ -67,6 +67,7 @@ module RubyReactor
       @file_path = file_path
       @line_number = line_number
       @code_snippet = code_snippet
+      @invalid_payload = invalid_payload
     end
 
     def success?
@@ -79,6 +80,10 @@ module RubyReactor
 
     def retryable?
       @retryable
+    end
+
+    def invalid_payload?
+      @invalid_payload
     end
 
     def message

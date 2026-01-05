@@ -105,9 +105,21 @@ module RubyReactor
       def store_correlation_id(correlation_id, context_id, reactor_class_name)
         key = correlation_id_key(correlation_id, reactor_class_name)
         # Store mapping correlation_id -> context_id
-        success = @redis.set(key, context_id, nx: true, ex: 86_400) # 24h TTL, fail if exists
+        # Try to set if not exists
+        success = @redis.set(key, context_id, nx: true, ex: 86_400) # 24h TTL
 
-        raise Error::ValidationError, "Correlation ID '#{correlation_id}' already exists" unless success
+        return if success
+
+        # If it exists, check if it's the same context_id
+        existing_context_id = @redis.get(key)
+
+        if existing_context_id == context_id
+          # Refresh TTL
+          @redis.expire(key, 86_400)
+          return
+        end
+
+        raise Error::ValidationError, "Correlation ID '#{correlation_id}' already exists"
       end
 
       def retrieve_context_id_by_correlation_id(correlation_id, reactor_class_name)

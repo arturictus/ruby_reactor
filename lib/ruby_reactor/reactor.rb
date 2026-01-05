@@ -107,7 +107,7 @@ module RubyReactor
 
       validate_continue_step!(step_name)
 
-      if (failure = validate_continue_payload(payload))
+      if (failure = validate_continue_payload(payload, step_name))
         return failure
       end
 
@@ -126,9 +126,7 @@ module RubyReactor
     rescue Error::InputValidationError => e
       # This might catch other validations, but here we specifically want payload validation.
       # The block above handles payload validation explicitly.
-      failure = RubyReactor::Failure(e.message)
-      def failure.invalid_payload? = true
-      failure
+      RubyReactor::Failure(e.message, invalid_payload: true)
     end
 
     def undo
@@ -195,8 +193,8 @@ module RubyReactor
             "or ready steps #{ready_steps} but got '#{step_name}'"
     end
 
-    def validate_continue_payload(payload)
-      step_config = self.class.steps[@context.current_step]
+    def validate_continue_payload(payload, step_name)
+      step_config = self.class.steps[step_name]
       return unless step_config&.validation_schema
 
       validation = step_config.validation_schema.call(payload)
