@@ -28,6 +28,7 @@ class FormInterruptReactorReproduction < RubyReactor::Reactor
 
   interrupt :wait_for_approval do
     wait_for :prepare_application
+    max_attempts 2
 
     correlation_id do |context|
       "#{context.result(:prepare_application)[:application_id]}_approval"

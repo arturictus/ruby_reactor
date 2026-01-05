@@ -8,6 +8,11 @@ module RubyReactor
         @correlation_id_block = nil
         @timeout_config = nil
         @validation_schema = nil
+        @max_attempts = 1
+      end
+
+      def max_attempts(count)
+        @max_attempts = count
       end
 
       def correlation_id(&block)
@@ -29,6 +34,7 @@ module RubyReactor
           correlation_id_block: @correlation_id_block,
           timeout_config: @timeout_config,
           validation_schema: @validation_schema,
+          max_attempts: @max_attempts,
           dependencies: @dependencies,
           async: false, # Interrupts are effectively boundaries, not async jobs themselves (until resumed)
           conditions: @conditions,

@@ -138,6 +138,7 @@ module RubyReactor
     def cancel(reason)
       @context.cancelled = true
       @context.cancellation_reason = reason
+      @context.status = "cancelled"
       save_context
     end
 
@@ -200,6 +201,23 @@ module RubyReactor
       validation = step_config.validation_schema.call(payload)
 
       return unless validation.failure?
+
+      # Track attempts
+      step_key = step_name.to_sym
+      @context.private_data[:interrupt_attempts] ||= {}
+      @context.private_data[:interrupt_attempts][step_key] ||= 0
+      @context.private_data[:interrupt_attempts][step_key] += 1
+
+      save_context # Persist the attempt count
+
+      current_attempts = @context.private_data[:interrupt_attempts][step_key]
+      max_attempts = step_config.max_attempts
+
+      if max_attempts != :infinity && current_attempts >= max_attempts
+        # Max attempts reached - Fail and Compensate
+        undo
+        cancel("Max attempts reached for step '#{step_name}'")
+      end
 
       failure = RubyReactor::Failure(validation.errors.to_h)
       # We need a way to mark this failure as a validation failure
