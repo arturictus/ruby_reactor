@@ -21,7 +21,7 @@ RSpec.describe "Retry Re-execution Regression" do
 
     step :step3 do
       retries max_attempts: 3, backoff: :fixed, base_delay: 0.01
-      run do |args, _context|
+      run do |_args, _context|
         $step_counts[:step3] += 1
         if $step_counts[:step3] < 3
           RubyReactor.Failure("retry_me")

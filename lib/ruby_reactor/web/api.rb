@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "roda"
 
 module RubyReactor
@@ -27,9 +29,7 @@ module RubyReactor
               reactor_class = data["reactor_class"] ? Object.const_get(data["reactor_class"]) : nil
               structure = {}
 
-              if reactor_class && reactor_class.respond_to?(:steps)
-                structure = self.class.build_structure(reactor_class)
-              end
+              structure = self.class.build_structure(reactor_class) if reactor_class.respond_to?(:steps)
 
               {
                 id: data["context_id"],
@@ -102,7 +102,7 @@ module RubyReactor
       end
 
       def self.build_structure(reactor_class)
-        return {} unless reactor_class&.respond_to?(:steps)
+        return {} unless reactor_class.respond_to?(:steps)
 
         steps_config = reactor_class.steps
         return {} unless steps_config.is_a?(Hash)
@@ -111,7 +111,7 @@ module RubyReactor
         graph = RubyReactor::DependencyGraph.new
         steps_config.each_value { |config| graph.add_step(config) }
 
-        steps_config.map do |name, config|
+        steps_config.to_h do |name, config|
           type = determine_step_type(config)
 
           step_data = {
@@ -130,7 +130,7 @@ module RubyReactor
           end
 
           [name, step_data]
-        end.to_h
+        end
       end
 
       def self.determine_step_type(config)
@@ -157,12 +157,12 @@ module RubyReactor
       def self.hydrate_composed_contexts(composed_contexts, reactor_class_name)
         return {} unless composed_contexts.is_a?(Hash)
 
-        composed_contexts.each_with_object({}) do |(key, value), acc|
-          acc[key] = if ["map_ref", :map_ref].include?(value["type"])
-                       hydrate_map_ref(value, reactor_class_name)
-                     else
-                       value
-                     end
+        composed_contexts.transform_values do |value|
+          if ["map_ref", :map_ref].include?(value["type"])
+            hydrate_map_ref(value, reactor_class_name)
+          else
+            value
+          end
         end
       end
 
@@ -176,8 +176,6 @@ module RubyReactor
         # 1. Check for specific failure (O(1))
         # Stored by ResultHandler when a map element fails
         failed_context_id = storage.retrieve_map_failed_context_id(map_id, reactor_class_name)
-
-        target_context_id = nil
 
         target_context_id = if failed_context_id
                               failed_context_id

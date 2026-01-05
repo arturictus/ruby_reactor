@@ -10,22 +10,19 @@ module RubyReactor
         total_lines = lines.size
         target_index = line_number - 1
 
-        return nil if target_index < 0 || target_index >= total_lines
+        return nil if target_index.negative? || target_index >= total_lines
 
         start_index = [0, target_index - radius].max
         end_index = [total_lines - 1, target_index + radius].min
 
-        snippet = []
-        (start_index..end_index).each do |i|
-          snippet << {
+        (start_index..end_index).map do |i|
+          {
             line_number: i + 1,
             content: lines[i].chomp,
             target: i == target_index
           }
         end
-
-        snippet
-      rescue StandardError => e
+      rescue StandardError
         # Fail gracefully if file reading fails
         nil
       end

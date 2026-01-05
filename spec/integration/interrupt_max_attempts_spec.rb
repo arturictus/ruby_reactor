@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "spec_helper"
 
 RSpec.describe "Interrupt validation with max_attempts" do
@@ -6,7 +8,7 @@ RSpec.describe "Interrupt validation with max_attempts" do
 
   it "fails and compensates after exceeding max_attempts" do
     reactor_instance = reactor_class.new
-    execution_result = reactor_instance.run(user_name: user_name)
+    reactor_instance.run(user_name: user_name)
     reactor_id = reactor_instance.context.context_id
 
     # wait_for_approval has max_attempts 2
@@ -41,7 +43,7 @@ RSpec.describe "Interrupt validation with max_attempts" do
 
   it "succeeds if valid payload provided within max_attempts" do
     reactor_instance = reactor_class.new
-    execution_result = reactor_instance.run(user_name: user_name)
+    reactor_instance.run(user_name: user_name)
     reactor_id = reactor_instance.context.context_id
 
     # Satisfy the other interrupt first

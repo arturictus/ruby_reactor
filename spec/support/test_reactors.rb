@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class ApiTestReactor < RubyReactor::Reactor
   step :step1 do
     run do |input, _context|

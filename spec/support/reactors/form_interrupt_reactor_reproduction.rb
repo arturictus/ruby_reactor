@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class FormInterruptReactorReproduction < RubyReactor::Reactor
   input :user_name
   input :fail_at, optional: true do

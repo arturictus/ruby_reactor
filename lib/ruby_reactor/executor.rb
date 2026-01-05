@@ -111,11 +111,12 @@ module RubyReactor
     def update_context_status(result)
       return unless result
 
-      if result.is_a?(RubyReactor::AsyncResult)
+      case result
+      when RubyReactor::AsyncResult
         @context.status = :running
-      elsif result.is_a?(RubyReactor::Success)
+      when RubyReactor::Success
         @context.status = :completed
-      elsif result.is_a?(RubyReactor::Failure)
+      when RubyReactor::Failure
         @context.status = :failed
         @context.failure_reason = {
           message: result.error.is_a?(Exception) ? result.error.message : result.error.to_s,
@@ -129,7 +130,7 @@ module RubyReactor
           line_number: result.line_number,
           code_snippet: result.code_snippet
         }
-      elsif result.is_a?(RubyReactor::InterruptResult)
+      when RubyReactor::InterruptResult
         @context.status = :paused
       end
     end

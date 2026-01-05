@@ -150,7 +150,7 @@ module RubyReactor
       filtered << backtrace.first
 
       internal_block = false
-      backtrace[1..-1]&.each do |line|
+      backtrace[1..]&.each do |line|
         if line.start_with?(root_path)
           unless internal_block
             filtered << "... [ruby-reactor-internals-redacted-trace]"

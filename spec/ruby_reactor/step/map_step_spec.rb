@@ -18,8 +18,7 @@ RSpec.describe RubyReactor::Step::MapStep do
   let(:async_router) { instance_double(RubyReactor::AsyncRouter) }
 
   before do
-    allow(RubyReactor.configuration).to receive(:storage_adapter).and_return(storage_adapter)
-    allow(RubyReactor.configuration).to receive(:async_router).and_return(async_router)
+    allow(RubyReactor.configuration).to receive_messages(storage_adapter: storage_adapter, async_router: async_router)
     allow(storage_adapter).to receive(:store_context)
     allow(storage_adapter).to receive(:set_map_counter)
     allow(storage_adapter).to receive(:initialize_map_operation)

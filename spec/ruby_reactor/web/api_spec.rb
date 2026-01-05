@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "spec_helper"
 require "ruby_reactor/web/api"
 
@@ -8,7 +10,7 @@ RSpec.describe RubyReactor::Web::API, type: :request do
     context "when reactor fails" do
       it "returns status 'failed' and error details" do
         # 1. Execute reactor to failure using public API
-        result = reactor_class.run(should_fail: true)
+        reactor_class.run(should_fail: true)
 
         # When run returns a Failure, it wraps the Result object.
         # But for the API test we need the context ID regardless of success/failure.

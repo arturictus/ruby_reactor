@@ -29,7 +29,7 @@ module RubyReactor
         handle_execution_result(result)
       end
 
-      def self.compensate(reason, arguments, context)
+      def self.compensate(_reason, arguments, context)
         step_name = context.current_step
         composed_data = context.composed_contexts[step_name]
         return RubyReactor.Success() unless composed_data && composed_data[:context]
