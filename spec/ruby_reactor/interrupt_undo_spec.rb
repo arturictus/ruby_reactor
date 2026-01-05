@@ -25,19 +25,19 @@ RSpec.describe "Interrupt Compensation and Undo" do
     end
 
     context "when using Reactor.continue (Class method)" do
-      it "automatically undos and cancels on invalid payload" do
+      it "raises InputValidationError on invalid payload WITHOUT undo (when attempts remain)" do
         # Action & Assertion
         expect do
           reactor_class.continue(id: execution_id, payload: { status: "invalid" }, step_name: :wait_for_input)
         end.to raise_error(RubyReactor::Error::InputValidationError)
 
-        expect(reactor_class.trace).to include(:prepare_undo)
+        expect(reactor_class.trace).not_to include(:prepare_undo)
 
         stored = RubyReactor::Configuration.instance.storage_adapter.retrieve_context(execution_id, reactor_class.name)
         expect(stored).not_to be_nil
         context = RubyReactor::Context.deserialize_from_retry(stored)
-        # Check against string keys because deserialization might result in strings for hash values
-        expect(context.execution_trace).to include(hash_including(type: "undo", step: "prepare"))
+        # Verify attempt count increased
+        expect(context.private_data[:interrupt_attempts][:wait_for_input]).to eq(1)
       end
 
       it "resumes successfully on valid payload" do
