@@ -194,7 +194,7 @@ module RubyReactor
     end
 
     def validate_continue_payload(payload, step_name)
-      step_config = self.class.steps[step_name]
+      step_config = self.class.steps[step_name.to_sym]
       return unless step_config&.validation_schema
 
       validation = step_config.validation_schema.call(payload)

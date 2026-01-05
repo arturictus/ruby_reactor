@@ -87,4 +87,45 @@ RSpec.describe "Interrupt validation logic" do
     expect(stored_context.status).to eq("completed")
     expect(stored_context.result(:finalize_application)[:status]).to eq("complete")
   end
+
+  it "handles partial resume followed by validation failure, then success" do
+    # 1. Start the reactor
+    reactor_instance = reactor_class.new
+    execution_result = reactor_instance.run(user_name: user_name)
+    expect(execution_result).to be_a(RubyReactor::InterruptResult)
+    reactor_id = reactor_instance.context.context_id
+
+    # 2. Supply valid payload for `wait_for_user_input`
+    # Expected: State still paused (waiting for approval)
+    valid_user_payload = { bio: "I am a tester" }
+    continue_result = reactor_class.continue(id: reactor_id, step_name: :wait_for_user_input,
+                                             payload: valid_user_payload)
+    expect(continue_result).to be_a(RubyReactor::InterruptResult)
+
+    stored_context = reactor_class.find(reactor_id).context
+    expect(stored_context.status).to eq("paused")
+
+    # 3. Supply invalid payload for `wait_for_approval`
+    # Expected: Error raised, state still paused
+    invalid_payload = { something: "else" }
+    begin
+      reactor_class.continue(id: reactor_id, step_name: "wait_for_approval", payload: invalid_payload)
+      raise "Should have raised an error"
+    rescue RubyReactor::Error::InputValidationError => e
+      expect(e.message).to include("Input validation failed")
+    end
+
+    stored_context = reactor_class.find(reactor_id).context
+    expect(stored_context.status).to eq("paused")
+
+    # 4. Supply valid payload for `wait_for_approval`
+    # Expected: Success, reactor completes
+    valid_approval_payload = { user: "admin", approved: true }
+    final_result = reactor_class.continue(id: reactor_id, step_name: :wait_for_approval,
+                                          payload: valid_approval_payload)
+    expect(final_result).to be_a(RubyReactor::Success)
+
+    stored_context = reactor_class.find(reactor_id).context
+    expect(stored_context.status).to eq("completed")
+  end
 end
