@@ -216,7 +216,27 @@ module RubyReactor
       if max_attempts != :infinity && current_attempts >= max_attempts
         # Max attempts reached - Fail and Compensate
         undo
-        cancel("Max attempts reached for step '#{step_name}'")
+
+        # Instead of cancelling, we mark as failed so it shows up as failed in UI
+        @context.status = "failed"
+        @context.failure_reason = {
+          message: "Validation failed after #{max_attempts} attempts",
+          step_name: step_name,
+          errors: validation.errors.to_h,
+          payload: payload,
+          step_arguments: payload,
+          attempts: current_attempts,
+          validation_errors: validation.errors.to_h
+        }
+
+        save_context
+
+        return RubyReactor::Failure(
+          "Validation failed after #{max_attempts} attempts",
+          step_name: step_name,
+          step_arguments: payload,
+          validation_errors: validation.errors.to_h
+        )
       end
 
       failure = RubyReactor::Failure(validation.errors.to_h)

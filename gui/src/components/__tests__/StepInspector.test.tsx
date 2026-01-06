@@ -355,4 +355,54 @@ describe('StepInspector', () => {
       expect(screen.getByText(/Show Less/)).toBeInTheDocument();
     });
   });
+
+  describe('Validation Errors', () => {
+    const validationErrorProps = {
+      ...defaultProps,
+      stepName: 'validation_step',
+      composedContexts: {
+        validation_step: {
+          context: {
+            value: {
+              status: 'failed',
+              failure_reason: {
+                message: 'Validation failed',
+                step_name: 'validation_step',
+                validation_errors: {
+                  field1: ['Error 1', 'Error 2'],
+                  field2: 'Single Error'
+                }
+              },
+              intermediate_results: {},
+              execution_trace: []
+            }
+          }
+        }
+      },
+      error: {
+        message: 'Validation failed',
+        step_name: 'validation_step',
+        validation_errors: {
+          field1: ['Error 1', 'Error 2'],
+          field2: 'Single Error'
+        }
+      }
+    };
+
+    it('should display validation errors section', () => {
+      render(<StepInspector {...validationErrorProps} />);
+      expect(screen.getByText('Validation Errors')).toBeInTheDocument();
+    });
+
+    it('should display field names and error messages', () => {
+      render(<StepInspector {...validationErrorProps} />);
+
+      expect(screen.getByText('field1:')).toBeInTheDocument();
+      expect(screen.getByText('- Error 1')).toBeInTheDocument();
+      expect(screen.getByText('- Error 2')).toBeInTheDocument();
+
+      expect(screen.getByText('field2:')).toBeInTheDocument();
+      expect(screen.getByText('- Single Error')).toBeInTheDocument();
+    });
+  });
 });

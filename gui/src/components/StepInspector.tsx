@@ -389,6 +389,28 @@ export default function StepInspector({
                 <div className="font-bold text-sm leading-relaxed">{resolvedData.context.failure_reason.message}</div>
               </div>
 
+              {resolvedData.context.failure_reason.validation_errors && (
+                <div className="pt-3 mt-3 border-t border-red-500/10">
+                  <span className="text-[10px] uppercase font-bold tracking-widest text-red-400/50 mb-2 block">Validation Errors</span>
+                  <div className="space-y-2 bg-red-950/20 rounded p-2">
+                    {Object.entries(resolvedData.context.failure_reason.validation_errors).map(([field, messages]: [string, any]) => (
+                      <div key={field} className="flex flex-col">
+                        <span className="font-bold text-red-400 text-xs">{field}:</span>
+                        <div className="pl-2">
+                          {Array.isArray(messages) ? (
+                            messages.map((msg: string, i: number) => (
+                              <div key={i} className="text-red-300/90">- {msg}</div>
+                            ))
+                          ) : (
+                            <div className="text-red-300/90">- {String(messages)}</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {resolvedData.context.failure_reason.backtrace && (
                 <div className="pt-3 mt-3 border-t border-red-500/10">
                   <div className="flex items-center justify-between mb-2">

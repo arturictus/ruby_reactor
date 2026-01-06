@@ -38,8 +38,21 @@ RSpec.describe "Interrupt validation with max_attempts" do
     end
 
     context = reactor_class.find(reactor_id).context
-    expect(context.status).to eq("cancelled")
-    expect(context.cancellation_reason).to include("Max attempts reached")
+    context = reactor_class.find(reactor_id).context
+    expect(context.status).to eq("failed")
+
+    failure_data = context.failure_reason
+    expect(failure_data).to be_a(Hash)
+    expect(failure_data[:message]).to include("Validation failed after 2 attempts")
+    expect(failure_data[:step_name].to_s).to eq("wait_for_approval")
+    expect(failure_data[:attempts]).to eq(2)
+    # Payload is now in step_arguments
+    expect(failure_data[:step_arguments] || failure_data[:payload]).to eq({ invalid: true })
+
+    # Validation errors
+    expect(failure_data[:validation_errors]).not_to be_empty
+    expect(failure_data[:validation_errors]).to include(:user, :approved)
+
     expect(context.undo_stack).to be_empty # Should have been drained
   end
 

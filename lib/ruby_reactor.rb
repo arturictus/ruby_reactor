@@ -43,12 +43,12 @@ module RubyReactor
 
   class Failure
     attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments, :exception_class,
-                :file_path, :line_number, :code_snippet
+                :file_path, :line_number, :code_snippet, :validation_errors
 
     # rubocop:disable Metrics/ParameterLists
     def initialize(error, retryable: nil, step_name: nil, inputs: {}, backtrace: nil, redact_inputs: [],
                    reactor_name: nil, step_arguments: {}, exception_class: nil,
-                   file_path: nil, line_number: nil, code_snippet: nil, invalid_payload: false)
+                   file_path: nil, line_number: nil, code_snippet: nil, invalid_payload: false, validation_errors: nil)
       # rubocop:enable Metrics/ParameterLists
       @error = error
       @retryable = if retryable.nil?
@@ -68,6 +68,7 @@ module RubyReactor
       @line_number = line_number
       @code_snippet = code_snippet
       @invalid_payload = invalid_payload
+      @validation_errors = validation_errors
     end
 
     def success?

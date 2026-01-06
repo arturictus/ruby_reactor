@@ -128,7 +128,8 @@ module RubyReactor
           exception_class: result.exception_class,
           file_path: result.file_path,
           line_number: result.line_number,
-          code_snippet: result.code_snippet
+          code_snippet: result.code_snippet,
+          validation_errors: result.validation_errors
         }
       when RubyReactor::InterruptResult
         @context.status = :paused
