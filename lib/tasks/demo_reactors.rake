@@ -188,41 +188,41 @@ namespace :demo do
     # 1. Success (pauses at interrupt)
     run_interrupt_reactor("FormInterruptReactor [Success]", FormInterruptReactor, { user_name: "Alice" })
 
-    # 2. Fail at async_step_before
+    # # 2. Fail at async_step_before
     run_interrupt_reactor("FormInterruptReactor [Fail: async_step_before]", FormInterruptReactor, { user_name: "Alice", fail_at: :async_step_before })
 
-    # 3. Fail at prepare_application
+    # # 3. Fail at prepare_application
     run_interrupt_reactor("FormInterruptReactor [Fail: prepare_application]", FormInterruptReactor, { user_name: "Alice", fail_at: :prepare_application })
 
-    # 4. Fail at finalize_application (will pause first)
+    # # 4. Fail at finalize_application (will pause first)
     run_interrupt_reactor("FormInterruptReactor [Fail: finalize_application]", FormInterruptReactor, { user_name: "Alice", fail_at: :finalize_application })
 
-    # 5. Fail at async_step_after (will pause first)
+    # # 5. Fail at async_step_after (will pause first)
     run_interrupt_reactor("FormInterruptReactor [Fail: async_step_after]", FormInterruptReactor, { user_name: "Alice", fail_at: :async_step_after })
 
-    # 6. Validation Error
+    # # 6. Validation Error
     run_interrupt_reactor("FormInterruptReactor [Validation Error]", FormInterruptReactor, {})
 
 
     # WebhookInterruptReactor Scenarios
     puts "\n=== WebhookInterruptReactor Scenarios ==="
 
-    # 1. Success (pauses at interrupt)
+    # # 1. Success (pauses at interrupt)
     run_interrupt_reactor("WebhookInterruptReactor [Success]", WebhookInterruptReactor, { provider_id: "stripe" })
 
-    # 2. Fail at async_step_before
+    # # 2. Fail at async_step_before
     run_interrupt_reactor("WebhookInterruptReactor [Fail: async_step_before]", WebhookInterruptReactor, { provider_id: "stripe", fail_at: :async_step_before })
 
-    # 3. Fail at initiate_request
+    # # 3. Fail at initiate_request
     run_interrupt_reactor("WebhookInterruptReactor [Fail: initiate_request]", WebhookInterruptReactor, { provider_id: "stripe", fail_at: :initiate_request })
 
-    # 4. Fail at process_response (will pause first)
+    # # 4. Fail at process_response (will pause first)
     run_interrupt_reactor("WebhookInterruptReactor [Fail: process_response]", WebhookInterruptReactor, { provider_id: "stripe", fail_at: :process_response })
 
-    # 5. Fail at async_step_after (will pause first)
+    # # 5. Fail at async_step_after (will pause first)
     run_interrupt_reactor("WebhookInterruptReactor [Fail: async_step_after]", WebhookInterruptReactor, { provider_id: "stripe", fail_at: :async_step_after })
 
-    # 6. Validation Error
+    # # 6. Validation Error
     run_interrupt_reactor("WebhookInterruptReactor [Validation Error]", WebhookInterruptReactor, {})
 
     puts "\n✅ INTERRUPT DEMO COMPLETE"

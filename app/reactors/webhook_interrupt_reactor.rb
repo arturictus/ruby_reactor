@@ -40,6 +40,9 @@ class WebhookInterruptReactor < RubyReactor::Reactor
     correlation_id do |context|
       context.result(:initiate_request)
     end
+    validate do
+      required(:status).filled(:string)
+    end
   end
 
   step :process_response do
@@ -49,7 +52,7 @@ class WebhookInterruptReactor < RubyReactor::Reactor
     run do |args, _|
       if args[:fail_at] == :process_response
         raise "Failure triggered for process_response"
-      elsif args[:webhook_data][:status] == "approved"
+      elsif args[:webhook_data]["status"] == "approved"
         Success("Request successfully approved via webhook")
       else
         Failure("Request rejected via webhook")

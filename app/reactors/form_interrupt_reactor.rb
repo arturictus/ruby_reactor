@@ -36,13 +36,18 @@ class FormInterruptReactor < RubyReactor::Reactor
 
   interrupt :wait_for_user_input do
     wait_for :prepare_application
+
+    max_attempts :infinity
     
     # We pause here. The user will be redirected to a form to enter additional info.
     # The form submission will resume this reactor using the reactor_id (default resumption, no correlation_id needed explicitly if using reactor_id)
     # But for demo, let's say we use application_id as correlation key
-    # {"key": "value"}
+    # {"bio": "bio"}
     correlation_id do |context|
       context.result(:prepare_application)[:application_id]
+    end
+    validate do
+      required(:bio).filled(:string)
     end
   end
 
@@ -56,6 +61,8 @@ class FormInterruptReactor < RubyReactor::Reactor
     correlation_id do |context|
       "#{context.result(:prepare_application)[:application_id]}_approval"
     end
+
+    max_attempts 2
 
     validate do
       required(:user).filled(:string)
