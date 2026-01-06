@@ -6,7 +6,7 @@ require "spec_helper"
 RSpec.describe "Failure Reporting" do
   let(:context) { RubyReactor::Context.new }
   let(:compensation_manager) { instance_double(RubyReactor::Executor::CompensationManager, rollback_completed_steps: nil) }
-  let(:dependency_graph) { double(RubyReactor::DependencyGraph, depends_on: []) }
+  let(:dependency_graph) { instance_double(RubyReactor::DependencyGraph) }
   # Mock ReactorClass properly
   let(:reactor_class_double) { class_double(RubyReactor::Reactor, name: "TestReactor") }
   # Mock Executor to avoid full initialization if not needed, or pass correct args
