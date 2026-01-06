@@ -24,9 +24,11 @@ RSpec.describe "Interrupt validation with max_attempts" do
     expect(context.status).to eq("paused")
 
     # Attempt 2: Invalid (Limit reached)
-    # The current implementation plan says: perform undo, call cancel, return Failure (which raises InputValidationError in class method but we might want to change that expectation or catch it)
+    # The current implementation plan says: perform undo, call cancel, return Failure
+    # (which raises InputValidationError in class method but we might want to change that expectation or catch it)
     # If the class method raises InputValidationError, it might hide the fact that the reactor is now cancelled.
-    # We need to check if Reactor.continue logic will differentiate between "validation failure, retry allowed" and "validation failure, reactor dead".
+    # We need to check if Reactor.continue logic will differentiate between "validation failure, retry allowed"
+    # and "validation failure, reactor dead".
     # For now, let's assume it raises Exception but we check status afterwards.
 
     begin
@@ -53,6 +55,7 @@ RSpec.describe "Interrupt validation with max_attempts" do
     begin
       reactor_class.continue(id: reactor_id, step_name: :wait_for_approval, payload: { invalid: true })
     rescue RubyReactor::Error::InputValidationError
+      # Expected
     end
 
     # Attempt 2: Valid

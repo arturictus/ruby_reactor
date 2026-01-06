@@ -4,12 +4,34 @@ require "spec_helper"
 
 RSpec.describe "Enhanced Error Reporting" do
   let(:context) do
-    RubyReactor::Context.new({}, double("ReactorClass", name: "TestReactor", inputs: {}, return_step: nil))
+    # Use constant if available or string if needed but constant preferred for verified doubles
+    reactor_double = class_double(RubyReactor::Reactor, name: "TestReactor", inputs: {}, return_step: nil)
+    RubyReactor::Context.new({}, reactor_double)
+  end
+
+  let(:step_failure) do
+    original_error = StandardError.new("Original Error").tap do |e|
+      e.set_backtrace(["/path/to/file.rb:11:in `foo'", "/path/to/file.rb:20:in `bar'"])
+    end
+
+    RubyReactor::Error::StepFailureError.new(
+      "Step failed",
+      step: :test_step,
+      context: context,
+      original_error: original_error,
+      step_arguments: {}
+    )
   end
 
   let(:compensation_manager) { instance_double(RubyReactor::Executor::CompensationManager) }
   let(:dependency_graph) { instance_double(RubyReactor::DependencyGraph) }
-  let(:result_handler) { RubyReactor::Executor::ResultHandler.new(context: context, compensation_manager: compensation_manager, dependency_graph: dependency_graph) }
+  let(:result_handler) do
+    RubyReactor::Executor::ResultHandler.new(
+      context: context,
+      compensation_manager: compensation_manager,
+      dependency_graph: dependency_graph
+    )
+  end
 
   before do
     allow(compensation_manager).to receive(:rollback_completed_steps)
@@ -18,20 +40,19 @@ RSpec.describe "Enhanced Error Reporting" do
                                                                                { line_number: 10, content: "def foo",
                                                                                  target: false },
                                                                                { line_number: 11,
-                                                                                 content: "  raise 'error'", target: true },
+                                                                                 content: "  raise 'error'",
+                                                                                 target: true },
                                                                                { line_number: 12, content: "end",
                                                                                  target: false }
                                                                              ])
   end
 
   describe "ResultHandler#handle_execution_error" do
-    let(:original_error) do
-      StandardError.new("Original Error").tap do |e|
+    let(:step_failure) do
+      original_error = StandardError.new("Original Error").tap do |e|
         e.set_backtrace(["/path/to/file.rb:11:in `foo'", "/path/to/file.rb:20:in `bar'"])
       end
-    end
 
-    let(:step_failure) do
       RubyReactor::Error::StepFailureError.new(
         "Step failed",
         step: :test_step,

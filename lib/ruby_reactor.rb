@@ -87,59 +87,68 @@ module RubyReactor
     end
 
     def message
-      msg = []
+      msg = [build_header]
+      msg << "Location: #{file_path}:#{line_number}" if file_path && line_number
+
+      append_code_snippet(msg)
+      append_inputs(msg)
+      append_step_arguments(msg)
+      append_backtrace(msg)
+
+      msg.join("\n")
+    end
+
+    private
+
+    def build_header
       header = "Error"
       header += " in reactor '#{reactor_name}'" if reactor_name
       header += " step '#{step_name}'" if step_name
       header += ": #{error_message}"
+      header
+    end
 
-      msg << header
+    def append_code_snippet(msg)
+      return unless code_snippet && !code_snippet.empty?
 
-      msg << "Location: #{file_path}:#{line_number}" if file_path && line_number
-
-      if code_snippet && !code_snippet.empty?
-        msg << "Code Snippet:"
-        msg << "```"
-        code_snippet.each do |line|
-          prefix = line[:target] ? ">" : " "
-          msg << "#{prefix} #{line[:line_number].to_s.rjust(4)}  #{line[:content]}"
-        end
-        msg << "```"
+      msg << "Code Snippet:"
+      msg << "```"
+      code_snippet.each do |line|
+        prefix = line[:target] ? ">" : " "
+        msg << "#{prefix} #{line[:line_number].to_s.rjust(4)}  #{line[:content]}"
       end
+      msg << "```"
+    end
 
-      if inputs && !inputs.empty?
-        msg << "Inputs:"
-        inputs.each do |key, value|
-          val = @redact_inputs.include?(key) ? "[REDACTED]" : value.inspect
-          msg << "  #{key}: #{val}"
-        end
+    def append_inputs(msg)
+      return unless inputs && !inputs.empty?
+
+      msg << "Inputs:"
+      inputs.each do |key, value|
+        val = @redact_inputs.include?(key) ? "[REDACTED]" : value.inspect
+        msg << "  #{key}: #{val}"
       end
+    end
 
-      if step_arguments && !step_arguments.empty?
-        msg << "Step Arguments:"
-        step_arguments.each do |key, value|
-          # We might want to redact step arguments too if they come from redacted inputs
-          # For now, let's assume if the input key matches a redacted input key, it should be redacted
-          # But step arguments have different names.
-          # We can't easily track redaction for step arguments without more metadata.
-          # For now, let's just display them.
-          msg << "  #{key}: #{value.inspect}"
-        end
+    def append_step_arguments(msg)
+      return unless step_arguments && !step_arguments.empty?
+
+      msg << "Step Arguments:"
+      step_arguments.each do |key, value|
+        msg << "  #{key}: #{value.inspect}"
       end
+    end
 
-      if backtrace
-        msg << "Backtrace:"
-        msg << backtrace.take(10).map { |line| "  #{line}" }.join("\n")
-      end
+    def append_backtrace(msg)
+      return unless backtrace
 
-      msg.join("\n")
+      msg << "Backtrace:"
+      msg << backtrace.take(10).map { |line| "  #{line}" }.join("\n")
     end
 
     def to_s
       message
     end
-
-    private
 
     def filter_backtrace(backtrace)
       return backtrace if ENV["RUBY_REACTOR_DEBUG"] == "true"

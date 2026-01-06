@@ -2,11 +2,16 @@
 
 require "spec_helper"
 
+# rubocop:disable RSpec/MultipleMemoizedHelpers
 RSpec.describe "Failure Reporting" do
   let(:context) { RubyReactor::Context.new }
-  let(:compensation_manager) { double("CompensationManager", rollback_completed_steps: nil) }
-  let(:dependency_graph) { double("DependencyGraph", depends_on: []) }
-  let(:executor) { RubyReactor::Executor.new(double("ReactorClass"), {}, context) }
+  let(:compensation_manager) { instance_double(RubyReactor::Executor::CompensationManager, rollback_completed_steps: nil) }
+  let(:dependency_graph) { double(RubyReactor::DependencyGraph, depends_on: []) }
+  # Mock ReactorClass properly
+  let(:reactor_class_double) { class_double(RubyReactor::Reactor, name: "TestReactor") }
+  # Mock Executor to avoid full initialization if not needed, or pass correct args
+  # But Executor.new needs real class or good mock.
+  let(:executor) { RubyReactor::Executor.new(reactor_class_double, {}, context) }
   let(:result_handler) do
     RubyReactor::Executor::ResultHandler.new(
       context: context,
@@ -49,12 +54,21 @@ RSpec.describe "Failure Reporting" do
   describe "ResultHandler#handle_execution_error" do
     it "extracts exception_class from StepFailureError" do
       original_error = RuntimeError.new("step failed")
-      reactor_class = double("ReactorClass", name: "MyReactor", inputs: {})
+      reactor_class = class_double(RubyReactor::Reactor, name: "MyReactor", inputs: {})
+      # Mock context with necessary methods
+      context_double = instance_double(
+        RubyReactor::Context,
+        inputs: {},
+        reactor_class: reactor_class,
+        :current_step= => nil,
+        map_metadata: nil,
+        context_id: "123"
+      )
+
       step_error = RubyReactor::Error::StepFailureError.new(
         "wrapped message",
         step: "my_step",
-        context: double("Context", inputs: {}, reactor_class: reactor_class, :current_step= => nil, map_metadata: nil,
-                                   context_id: "123"),
+        context: context_double,
         original_error: original_error
       )
 
@@ -74,3 +88,5 @@ RSpec.describe "Failure Reporting" do
     end
   end
 end
+
+# rubocop:enable RSpec/MultipleMemoizedHelpers

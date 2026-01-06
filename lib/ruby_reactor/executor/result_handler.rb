@@ -15,105 +15,20 @@ module RubyReactor
       def handle_step_result(step_config, result, resolved_arguments)
         case result
         when RubyReactor::Success
-          validate_step_output(step_config, result.value, resolved_arguments)
-          @step_results[step_config.name] = result
-          @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments, result: result })
-          @context.set_result(step_config.name, result.value)
-          @dependency_graph.complete_step(step_config.name)
+          handle_success(step_config, result, resolved_arguments)
         when RubyReactor::MaxRetriesExhaustedFailure
-          # For MaxRetriesExhaustedFailure, use the original error to avoid double-wrapping the message
-          @compensation_manager.handle_step_failure(step_config, result.original_error, resolved_arguments)
-
-          # Ensure original_error is an Exception, otherwise nil
-          orig_err = result.original_error.is_a?(Exception) ? result.original_error : nil
-
-          error = Error::StepFailureError.new(result.error, step: step_config.name, context: @context,
-                                                            original_error: orig_err,
-                                                            step_arguments: resolved_arguments)
-          # Preserve backtrace from the result if available
-          if result.respond_to?(:backtrace) && result.backtrace
-            error.set_backtrace(result.backtrace)
-          elsif orig_err
-            error.set_backtrace(orig_err.backtrace)
-          end
-
-          raise error
+          handle_retries_exhausted(step_config, result, resolved_arguments)
         when RubyReactor::Failure
-          failure_result = @compensation_manager.handle_step_failure(step_config, result.error, resolved_arguments)
-
-          orig_err = result.error.is_a?(Exception) ? result.error : nil
-
-          error = Error::StepFailureError.new(failure_result.error, step: step_config.name, context: @context,
-                                                                    original_error: orig_err,
-                                                                    step_arguments: resolved_arguments)
-
-          # Preserve backtrace from the result if available
-          if result.respond_to?(:backtrace) && result.backtrace
-            error.set_backtrace(result.backtrace)
-          elsif orig_err
-            error.set_backtrace(orig_err.backtrace)
-          end
-
-          raise error
+          handle_failure(step_config, result, resolved_arguments)
         else
-          # Treat non-Success/Failure results as success with that value
-          validate_step_output(step_config, result, resolved_arguments)
-          success_result = RubyReactor.Success(result)
-          @step_results[step_config.name] = success_result
-          @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments,
-                                                    result: success_result })
-          @context.set_result(step_config.name, result)
-          @dependency_graph.complete_step(step_config.name)
+          handle_unknown_result(step_config, result, resolved_arguments)
         end
       end
 
       def handle_execution_error(error)
         case error
         when Error::StepFailureError
-          current_context = error.context || @context
-          # Set the current step to the failed step so the UI knows which step failed
-          current_context.current_step = error.step
-
-          # If this is a map element execution, store the failed context ID for quick lookup
-          if current_context.map_metadata && current_context.map_metadata[:map_id]
-            storage = RubyReactor.configuration.storage_adapter
-            storage.store_map_failed_context_id(
-              current_context.map_metadata[:map_id],
-              current_context.context_id,
-              current_context.map_metadata[:parent_reactor_class_name]
-            )
-          end
-
-          # Step failure has already been handled (compensation and rollback for the failed step)
-          # But we need to rollback all completed steps
-          @compensation_manager.rollback_completed_steps
-
-          redact_inputs = []
-          if error.context&.reactor_class
-            redact_inputs = error.context.reactor_class.inputs.select { |_, config| config[:redact] }.keys
-          end
-
-          original_error = error.original_error
-          exception_class = original_error&.class&.name
-          backtrace = original_error&.backtrace || error.backtrace
-
-          # Extract file and line from backtrace
-          file_path, line_number = extract_location(backtrace)
-          code_snippet = RubyReactor::Utils::CodeExtractor.extract(file_path, line_number) if file_path
-
-          RubyReactor.Failure(
-            error.message,
-            step_name: error.step,
-            inputs: error.context.inputs,
-            redact_inputs: redact_inputs,
-            backtrace: backtrace,
-            reactor_name: error.context.reactor_class.name,
-            step_arguments: error.step_arguments,
-            exception_class: exception_class,
-            file_path: file_path,
-            line_number: line_number,
-            code_snippet: code_snippet
-          )
+          handle_step_failure_error(error)
         when Error::InputValidationError
           # Preserve validation errors as-is for proper error handling
           RubyReactor.Failure(error)
@@ -137,6 +52,101 @@ module RubyReactor
       end
 
       private
+
+      def handle_success(step_config, result, resolved_arguments)
+        validate_step_output(step_config, result.value, resolved_arguments)
+        @step_results[step_config.name] = result
+        @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments, result: result })
+        @context.set_result(step_config.name, result.value)
+        @dependency_graph.complete_step(step_config.name)
+      end
+
+      def handle_retries_exhausted(step_config, result, resolved_arguments)
+        @compensation_manager.handle_step_failure(step_config, result.original_error, resolved_arguments)
+        orig_err = result.original_error.is_a?(Exception) ? result.original_error : nil
+        error = Error::StepFailureError.new(result.error, step: step_config.name, context: @context,
+                                                          original_error: orig_err,
+                                                          step_arguments: resolved_arguments)
+        if result.respond_to?(:backtrace) && result.backtrace
+          error.set_backtrace(result.backtrace)
+        elsif orig_err
+          error.set_backtrace(orig_err.backtrace)
+        end
+        raise error
+      end
+
+      def handle_failure(step_config, result, resolved_arguments)
+        failure_result = @compensation_manager.handle_step_failure(step_config, result.error, resolved_arguments)
+        orig_err = result.error.is_a?(Exception) ? result.error : nil
+        error = Error::StepFailureError.new(failure_result.error, step: step_config.name, context: @context,
+                                                                  original_error: orig_err,
+                                                                  step_arguments: resolved_arguments)
+        if result.respond_to?(:backtrace) && result.backtrace
+          error.set_backtrace(result.backtrace)
+        elsif orig_err
+          error.set_backtrace(orig_err.backtrace)
+        end
+        raise error
+      end
+
+      def handle_unknown_result(step_config, result, resolved_arguments)
+        validate_step_output(step_config, result, resolved_arguments)
+        success_result = RubyReactor.Success(result)
+        @step_results[step_config.name] = success_result
+        @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments,
+                                                  result: success_result })
+        @context.set_result(step_config.name, result)
+        @dependency_graph.complete_step(step_config.name)
+      end
+
+      def handle_step_failure_error(error)
+        current_context = error.context || @context
+        current_context.current_step = error.step
+
+        store_failed_map_context(current_context) if current_context.map_metadata
+
+        @compensation_manager.rollback_completed_steps
+
+        redact_inputs = []
+        if error.context&.reactor_class
+          redact_inputs = error.context.reactor_class.inputs.select { |_, config| config[:redact] }.keys
+        end
+
+        create_failure_from_error(error, redact_inputs)
+      end
+
+      def store_failed_map_context(context)
+        return unless context.map_metadata && context.map_metadata[:map_id]
+
+        storage = RubyReactor.configuration.storage_adapter
+        storage.store_map_failed_context_id(
+          context.map_metadata[:map_id],
+          context.context_id,
+          context.map_metadata[:parent_reactor_class_name]
+        )
+      end
+
+      def create_failure_from_error(error, redact_inputs)
+        original_error = error.original_error
+        exception_class = original_error&.class&.name
+        backtrace = original_error&.backtrace || error.backtrace
+        file_path, line_number = extract_location(backtrace)
+        code_snippet = RubyReactor::Utils::CodeExtractor.extract(file_path, line_number) if file_path
+
+        RubyReactor.Failure(
+          error.message,
+          step_name: error.step,
+          inputs: error.context.inputs,
+          redact_inputs: redact_inputs,
+          backtrace: backtrace,
+          reactor_name: error.context.reactor_class.name,
+          step_arguments: error.step_arguments,
+          exception_class: exception_class,
+          file_path: file_path,
+          line_number: line_number,
+          code_snippet: code_snippet
+        )
+      end
 
       def validate_step_output(step_config, value, resolved_arguments = {})
         return unless step_config.output_validator

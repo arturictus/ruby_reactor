@@ -41,14 +41,16 @@ RSpec.describe "Context Serialization Persistence" do
     # If step_name comes in as string "some_step" from generic API input?
     step_name_str = "some_step"
 
-    puts "Accessing with string: #{restored.private_data[:interrupt_attempts][step_name_str]}"
-    puts "Accessing with symbol: #{restored.private_data[:interrupt_attempts][:some_step]}"
+    # Accessing with string should fail if keys are symbols,
+    # unless IndifferentAccess is used (which it isn't here by default)
+    expect(restored.private_data[:interrupt_attempts][step_name_str]).to be_nil
+    expect(restored.private_data[:interrupt_attempts][:some_step]).to eq(1)
 
     # If we write with string?
     context.private_data[:interrupt_attempts]["some_step"] = 2
     serialized_2 = RubyReactor::ContextSerializer.serialize(context)
     restored_2 = RubyReactor::ContextSerializer.deserialize(serialized_2)
 
-    puts "Round 2 keys: #{restored_2.private_data[:interrupt_attempts].keys}"
+    expect(restored_2.private_data[:interrupt_attempts].keys).to include(:some_step)
   end
 end

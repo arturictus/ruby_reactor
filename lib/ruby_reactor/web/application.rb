@@ -9,7 +9,9 @@ module RubyReactor
   module Web
     class Application < Roda
       plugin :static, ["/assets"], root: File.expand_path("public", __dir__)
+      # rubocop:disable Naming/MethodParameterName
       def serve_index(r)
+        # rubocop:enable Naming/MethodParameterName
         content = File.read(File.expand_path("public/index.html", __dir__))
         # Inject the base path for React Router
         # request.script_name contains the mount path (e.g. "/ruby_reactor")

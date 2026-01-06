@@ -68,7 +68,8 @@ RSpec.describe "Interrupt validation logic" do
 
     # 3. Supply valid payload for `wait_for_user_input`
     # This is another interrupt step. Resuming it should work.
-    # But it should NOT cause `wait_for_approval` to be skipped or the reactor to finish if `wait_for_approval` is still needed.
+    # But it should NOT cause `wait_for_approval` to be skipped or the reactor to finish
+    # if `wait_for_approval` is still needed.
 
     valid_user_payload = { bio: "I am a tester" }
     continue_result = reactor_class.continue(id: reactor_id, step_name: :wait_for_user_input,

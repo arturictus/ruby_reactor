@@ -69,8 +69,13 @@ module RubyReactor
                           compensate_result
                         end
 
-        @context.execution_trace << { type: :compensate, step: step_config.name, timestamp: Time.now, result: logged_result,
-                                      arguments: arguments }
+        @context.execution_trace << {
+          type: :compensate,
+          step: step_config.name,
+          timestamp: Time.now,
+          result: logged_result,
+          arguments: arguments
+        }
         @undo_trace << { type: :compensation, step: step_config.name, error: error, arguments: arguments }
         compensate_result
       end

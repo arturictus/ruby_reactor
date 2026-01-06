@@ -179,7 +179,7 @@ RSpec.describe "Map Inline Execution" do
     end
   end
 
-  context "composed contexts" do
+  context "when inspecting composed contexts" do
     it "stores child context references in composed_contexts for map step" do
       # Let's use Executor directly for testing to inspect context
       context = RubyReactor::Context.new({ numbers: [1, 2] }, inline_map_reactor_class)

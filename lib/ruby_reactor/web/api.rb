@@ -4,6 +4,7 @@ require "roda"
 
 module RubyReactor
   module Web
+    # rubocop:disable Metrics/BlockLength
     class API < Roda
       plugin :json
       plugin :all_verbs
@@ -200,5 +201,6 @@ module RubyReactor
         }
       end
     end
+    # rubocop:enable Metrics/BlockLength
   end
 end
