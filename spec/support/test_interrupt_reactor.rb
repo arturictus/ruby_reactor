@@ -12,6 +12,7 @@ class TestInterruptReactor < RubyReactor::Reactor
 
   interrupt :wait_for_approval do
     wait_for :prepare
+    max_attempts 2
 
     correlation_id do |context|
       "approval-#{context.result(:prepare)}"
