@@ -40,20 +40,27 @@ module RubyReactor
       input_validator = InputValidator.new(@reactor_class, @context)
       input_validator.validate!
 
+      save_context
+
       graph_manager = GraphManager.new(@reactor_class, @dependency_graph, @context)
       graph_manager.build_and_validate!
+      graph_manager.mark_completed_steps_from_context
 
       @result = @step_executor.execute_all_steps
-
+      update_context_status(@result)
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
-
       @result
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
+      update_context_status(@result)
+      @result
+    ensure
+      save_context
     end
 
     def resume_execution
       prepare_for_resume
+      save_context
 
       @result = if @context.current_step
                   execute_current_step_and_continue
@@ -61,11 +68,17 @@ module RubyReactor
                   execute_remaining_steps
                 end
 
+      update_context_status(@result)
+
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
 
       @result
     rescue StandardError => e
       handle_resume_error(e)
+      update_context_status(@result)
+      @result
+    ensure
+      save_context
     end
 
     def undo_all
@@ -95,6 +108,34 @@ module RubyReactor
 
     private
 
+    def update_context_status(result)
+      return unless result
+
+      case result
+      when RubyReactor::AsyncResult
+        @context.status = :running
+      when RubyReactor::Success
+        @context.status = :completed
+      when RubyReactor::Failure
+        @context.status = :failed
+        @context.failure_reason = {
+          message: result.error.is_a?(Exception) ? result.error.message : result.error.to_s,
+          step_name: result.step_name,
+          inputs: result.inputs,
+          backtrace: result.backtrace,
+          reactor_name: result.reactor_name,
+          step_arguments: result.step_arguments,
+          exception_class: result.exception_class,
+          file_path: result.file_path,
+          line_number: result.line_number,
+          code_snippet: result.code_snippet,
+          validation_errors: result.validation_errors
+        }
+      when RubyReactor::InterruptResult
+        @context.status = :paused
+      end
+    end
+
     def prepare_for_resume
       # Build dependency graph and mark completed steps
       graph_manager = GraphManager.new(@reactor_class, @dependency_graph, @context)
@@ -105,6 +146,9 @@ module RubyReactor
     def execute_current_step_and_continue
       step_config = @reactor_class.steps[@context.current_step]
       return RubyReactor::Failure("Step '#{@context.current_step}' not found in reactor") unless step_config
+
+      # If current step is already in intermediate_results, skip directly to execute_all_steps
+      return @step_executor.execute_all_steps if @context.intermediate_results.key?(@context.current_step.to_sym)
 
       # Use execute_step (not execute_step_with_retry) so that async steps can be handled properly in inline mode
       result = @step_executor.execute_step(step_config)
@@ -131,13 +175,7 @@ module RubyReactor
     end
 
     def handle_resume_error(error)
-      # Only handle errors that haven't already triggered compensation
-      # StepFailureError means compensation already happened, just convert to Failure
-      @result = if error.is_a?(Error::StepFailureError)
-                  RubyReactor.Failure(error.message)
-                else
-                  @result_handler.handle_execution_error(error)
-                end
+      @result = @result_handler.handle_execution_error(error)
       @result
     end
 

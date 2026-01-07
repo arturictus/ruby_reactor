@@ -10,6 +10,14 @@ module RubyReactor
       def initialize(name, composed_reactor_class = nil, reactor = nil, &block)
         @name = name
         @composed_reactor_class = composed_reactor_class || (block ? Class.new(RubyReactor::Reactor) : nil)
+        if @composed_reactor_class && @composed_reactor_class.name.nil? && reactor
+          step_name_camel = name.to_s.split("_").map(&:capitalize).join
+          parent_name = reactor.name
+
+          full_name = "#{parent_name}::#{step_name_camel}"
+          @composed_reactor_class.define_singleton_method(:name) { full_name }
+          RubyReactor::Registry.register(full_name, @composed_reactor_class)
+        end
         @reactor = reactor
         @argument_mappings = {}
         @async = false

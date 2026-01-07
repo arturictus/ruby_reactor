@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 require "zeitwerk"
+require "pathname"
+require_relative "ruby_reactor/registry"
+require_relative "ruby_reactor/utils/code_extractor"
 
 # Load dry-validation if available (for validation features)
 begin
@@ -17,6 +20,7 @@ rescue LoadError
 end
 
 loader = Zeitwerk::Loader.for_gem
+loader.inflector.inflect("api" => "API")
 loader.setup
 
 module RubyReactor
@@ -38,11 +42,13 @@ module RubyReactor
   end
 
   class Failure
-    attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments
+    attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments, :exception_class,
+                :file_path, :line_number, :code_snippet, :validation_errors
 
     # rubocop:disable Metrics/ParameterLists
     def initialize(error, retryable: nil, step_name: nil, inputs: {}, backtrace: nil, redact_inputs: [],
-                   reactor_name: nil, step_arguments: {})
+                   reactor_name: nil, step_arguments: {}, exception_class: nil,
+                   file_path: nil, line_number: nil, code_snippet: nil, invalid_payload: false, validation_errors: nil)
       # rubocop:enable Metrics/ParameterLists
       @error = error
       @retryable = if retryable.nil?
@@ -54,8 +60,15 @@ module RubyReactor
       @reactor_name = reactor_name
       @inputs = inputs
       @step_arguments = step_arguments
-      @backtrace = backtrace || (error.respond_to?(:backtrace) ? error.backtrace : caller)
+      raw_backtrace = backtrace || (error.respond_to?(:backtrace) ? error.backtrace : caller)
+      @backtrace = filter_backtrace(raw_backtrace)
       @redact_inputs = redact_inputs
+      @exception_class = exception_class || (error.is_a?(Exception) ? error.class.name : nil)
+      @file_path = file_path
+      @line_number = line_number
+      @code_snippet = code_snippet
+      @invalid_payload = invalid_payload
+      @validation_errors = validation_errors
     end
 
     def success?
@@ -70,48 +83,96 @@ module RubyReactor
       @retryable
     end
 
+    def invalid_payload?
+      @invalid_payload
+    end
+
     def message
-      msg = []
+      msg = [build_header]
+      msg << "Location: #{file_path}:#{line_number}" if file_path && line_number
+
+      append_code_snippet(msg)
+      append_inputs(msg)
+      append_step_arguments(msg)
+      append_backtrace(msg)
+
+      msg.join("\n")
+    end
+
+    private
+
+    def build_header
       header = "Error"
       header += " in reactor '#{reactor_name}'" if reactor_name
       header += " step '#{step_name}'" if step_name
       header += ": #{error_message}"
+      header
+    end
 
-      msg << header
+    def append_code_snippet(msg)
+      return unless code_snippet && !code_snippet.empty?
 
-      if inputs && !inputs.empty?
-        msg << "Inputs:"
-        inputs.each do |key, value|
-          val = @redact_inputs.include?(key) ? "[REDACTED]" : value.inspect
-          msg << "  #{key}: #{val}"
-        end
+      msg << "Code Snippet:"
+      msg << "```"
+      code_snippet.each do |line|
+        prefix = line[:target] ? ">" : " "
+        msg << "#{prefix} #{line[:line_number].to_s.rjust(4)}  #{line[:content]}"
       end
+      msg << "```"
+    end
 
-      if step_arguments && !step_arguments.empty?
-        msg << "Step Arguments:"
-        step_arguments.each do |key, value|
-          # We might want to redact step arguments too if they come from redacted inputs
-          # For now, let's assume if the input key matches a redacted input key, it should be redacted
-          # But step arguments have different names.
-          # We can't easily track redaction for step arguments without more metadata.
-          # For now, let's just display them.
-          msg << "  #{key}: #{value.inspect}"
-        end
+    def append_inputs(msg)
+      return unless inputs && !inputs.empty?
+
+      msg << "Inputs:"
+      inputs.each do |key, value|
+        val = @redact_inputs.include?(key) ? "[REDACTED]" : value.inspect
+        msg << "  #{key}: #{val}"
       end
+    end
 
-      if backtrace
-        msg << "Backtrace:"
-        msg << backtrace.take(5).map { |line| "  #{line}" }.join("\n")
+    def append_step_arguments(msg)
+      return unless step_arguments && !step_arguments.empty?
+
+      msg << "Step Arguments:"
+      step_arguments.each do |key, value|
+        msg << "  #{key}: #{value.inspect}"
       end
+    end
 
-      msg.join("\n")
+    def append_backtrace(msg)
+      return unless backtrace
+
+      msg << "Backtrace:"
+      msg << backtrace.take(10).map { |line| "  #{line}" }.join("\n")
     end
 
     def to_s
       message
     end
 
-    private
+    def filter_backtrace(backtrace)
+      return backtrace if ENV["RUBY_REACTOR_DEBUG"] == "true"
+      return backtrace if backtrace.nil? || backtrace.empty?
+
+      root_path = RubyReactor.root.to_s
+      filtered = []
+      filtered << backtrace.first
+
+      internal_block = false
+      backtrace[1..]&.each do |line|
+        if line.start_with?(root_path)
+          unless internal_block
+            filtered << "... [ruby-reactor-internals-redacted-trace]"
+            internal_block = true
+          end
+        else
+          filtered << line
+          internal_block = false
+        end
+      end
+      filtered
+    end
 
     def error_message
       @error.respond_to?(:message) ? @error.message : @error.to_s
@@ -156,5 +217,9 @@ module RubyReactor
 
   def self.configuration
     Configuration.instance
+  end
+
+  def self.root
+    Pathname.new(File.expand_path("..", __dir__))
   end
 end

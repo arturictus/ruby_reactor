@@ -8,6 +8,7 @@ gemspec
 gem "rake", "~> 13.0"
 
 gem "debug", "~> 1.8"
+gem "rack-test"
 gem "rspec", "~> 3.0"
 gem "rspec-sidekiq", "~> 5.2"
 

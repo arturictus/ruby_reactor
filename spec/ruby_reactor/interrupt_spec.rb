@@ -23,7 +23,7 @@ RSpec.describe "RubyReactor Interrupt Feature", type: :integration do
 
       # 3. Verify state in Redis
       context_id = execution.execution_id
-      stored_context = redis.call("JSON.GET", "reactor:TestInterruptReactor:context:#{context_id}")
+      stored_context = redis.get("reactor:TestInterruptReactor:context:#{context_id}")
       expect(stored_context).not_to be_nil
 
       # Verify correlation ID mapping
@@ -57,15 +57,28 @@ RSpec.describe "RubyReactor Interrupt Feature", type: :integration do
       expect(result.value[:finalize]).to eq("finalized-rejected-by-system")
     end
 
-    it "validates payload on resume" do
+    it "validates payload on resume and fails after max attempts" do
       execution = TestInterruptReactor.run(user_id: "789")
 
       # Invalid payload (missing approver)
       payload = { status: "approved" }
 
+      # Attempt 1: Should raise validation error (retryable)
       expect do
         TestInterruptReactor.continue(id: execution.execution_id, payload: payload, step_name: :wait_for_approval)
       end.to raise_error(RubyReactor::Error::InputValidationError)
+
+      # Attempt 2: Should fail the reactor (max attempts reached)
+      result = TestInterruptReactor.continue(id: execution.execution_id, payload: payload,
+                                             step_name: :wait_for_approval)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.message).to include("Validation failed after 2 attempts")
+
+      # Verify reactor status
+      context = TestInterruptReactor.find(execution.execution_id).context
+      expect(context.status).to eq("failed")
+      expect(context.failure_reason[:validation_errors]).to include(:approver)
     end
   end
 end

@@ -20,6 +20,7 @@ class InterruptUndoTestReactor < RubyReactor::Reactor
 
   interrupt :wait_for_input do
     wait_for :prepare
+    max_attempts(5)
 
     validate do
       required(:status).filled(:string, eql?: "ok")

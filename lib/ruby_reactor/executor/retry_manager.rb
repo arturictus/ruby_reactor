@@ -34,6 +34,7 @@ module RubyReactor
       end
 
       def requeue_job_for_step_retry(step_config, error, reactor_class)
+        @context.current_step = step_config.name
         delay = calculate_backoff_delay(step_config, error, reactor_class)
 
         # Serialize context and requeue the job

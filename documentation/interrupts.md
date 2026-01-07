@@ -35,6 +35,11 @@ class ReportReactor < RubyReactor::Reactor
       required(:status).filled(:string)
       required(:url).filled(:string)
     end
+
+    # Optional: limit validation attempts (default: 1)
+    # If exhausted, the reactor is cancelled and compensated.
+    # Use :infinity for unlimited attempts.
+    max_attempts 3
   end
 
   step :process_report do
@@ -54,6 +59,7 @@ end
 *   **`correlation_id`**: A block that returns a unique string to identify this execution. This allows you to resume the reactor using a business key (e.g., order ID) instead of the internal execution UUID.
 *   **`timeout`**: Set a time limit for the interrupt.
 *   **`validate`**: A `dry-validation` schema block to validate the payload provided when resuming.
+*   **`max_attempts`**: Limit the number of times `continue` can be called with an invalid payload before the reactor is automatically cancelled and compensated. Defaults to 1. Set to `:infinity` for unlimited retries.
 
 ## Runtime Behavior
 

@@ -88,6 +88,25 @@ module RubyReactor
 
           link_contexts(child_context, context)
 
+          map_id = "#{context.context_id}:#{context.current_step}"
+          storage = RubyReactor.configuration.storage_adapter
+          storage.store_map_element_context_id(map_id, child_context.context_id, context.reactor_class.name)
+
+          # Set map metadata for failure handling
+          child_context.map_metadata = {
+            map_id: map_id,
+            parent_reactor_class_name: context.reactor_class.name,
+            index: nil # Inline map execution doesn't track index in metadata currently, but could
+          }
+
+          # Store reference in composed_contexts so the UI knows where to find elements
+          context.composed_contexts[context.current_step] = {
+            name: context.current_step,
+            type: :map_ref,
+            map_id: map_id,
+            element_reactor_class: arguments[:mapped_reactor_class].name
+          }
+
           executor = RubyReactor::Executor.new(arguments[:mapped_reactor_class], {}, child_context)
           executor.execute
           executor.result
@@ -134,7 +153,7 @@ module RubyReactor
         def run_async(arguments, context, step_name)
           map_id = "#{context.context_id}:#{step_name}"
           context.map_operations[step_name.to_s] = map_id
-          prepare_async_execution(context, map_id, arguments[:source].count)
+          prepare_async_execution(context, map_id, arguments[:source].size)
 
           reactor_class_info = build_reactor_class_info(arguments[:mapped_reactor_class], context, step_name)
 
@@ -150,6 +169,14 @@ module RubyReactor
                      queue_single_worker(map_id: map_id, arguments: arguments, context: context,
                                          reactor_class_info: reactor_class_info, step_name: step_name)
                    end
+
+          # Store reference in composed_contexts so the UI knows where to find elements
+          context.composed_contexts[step_name.to_s] = {
+            name: step_name.to_s,
+            type: :map_ref,
+            map_id: map_id,
+            element_reactor_class: arguments[:mapped_reactor_class].name
+          }
 
           RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: context.intermediate_results)
         end
@@ -174,11 +201,11 @@ module RubyReactor
           # rubocop:enable Metrics/ParameterLists
           storage = RubyReactor.configuration.storage_adapter
           storage.initialize_map_operation(
-            map_id, arguments[:source].count, context.reactor_class.name,
+            map_id, arguments[:source].size, context.reactor_class.name,
             strict_ordering: arguments[:strict_ordering], reactor_class_info: reactor_class_info
           )
 
-          limit ||= arguments[:source].count
+          limit ||= arguments[:source].size
           first_job_id = nil
           arguments[:source].each_with_index do |element, index|
             break if index >= limit

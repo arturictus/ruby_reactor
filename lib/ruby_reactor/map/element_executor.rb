@@ -34,9 +34,12 @@ module RubyReactor
 
           # Create context
           context = Context.new(inputs, reactor_class)
+          context.parent_context_id = parent_context_id
           context.map_metadata = arguments
         end
+
         storage = RubyReactor.configuration.storage_adapter
+        storage.store_map_element_context_id(map_id, context.context_id, parent_reactor_class_name)
 
         # Execute
         executor = Executor.new(reactor_class, {}, context)

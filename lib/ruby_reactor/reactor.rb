@@ -30,11 +30,9 @@ module RubyReactor
       reactor = find(id)
       result = reactor.continue(payload: payload, step_name: step_name, idempotency_key: idempotency_key)
 
-      if result.is_a?(RubyReactor::Failure) && result.invalid_payload?
-        undo(id)
-        cancel(id: id, reason: "Payload validation failed")
-
+      if result.is_a?(RubyReactor::Failure) && result.respond_to?(:invalid_payload?) && result.invalid_payload?
         # Raise exception to match expected behavior (strict mode for class method)
+        # We do NOT cancel the reactor, allowing the user to retry with valid payload
         raise Error::InputValidationError, result.error
       end
 
@@ -109,7 +107,7 @@ module RubyReactor
 
       validate_continue_step!(step_name)
 
-      if (failure = validate_continue_payload(payload))
+      if (failure = validate_continue_payload(payload, step_name))
         return failure
       end
 
@@ -128,9 +126,7 @@ module RubyReactor
     rescue Error::InputValidationError => e
       # This might catch other validations, but here we specifically want payload validation.
       # The block above handles payload validation explicitly.
-      failure = RubyReactor::Failure(e.message)
-      def failure.invalid_payload? = true
-      failure
+      RubyReactor::Failure(e.message, invalid_payload: true)
     end
 
     def undo
@@ -142,6 +138,7 @@ module RubyReactor
     def cancel(reason)
       @context.cancelled = true
       @context.cancellation_reason = reason
+      @context.status = "cancelled"
       save_context
     end
 
@@ -197,13 +194,50 @@ module RubyReactor
             "or ready steps #{ready_steps} but got '#{step_name}'"
     end
 
-    def validate_continue_payload(payload)
-      step_config = self.class.steps[@context.current_step]
+    def validate_continue_payload(payload, step_name)
+      step_config = self.class.steps[step_name.to_sym]
       return unless step_config&.validation_schema
 
       validation = step_config.validation_schema.call(payload)
 
       return unless validation.failure?
+
+      # Track attempts
+      step_key = step_name.to_sym
+      @context.private_data[:interrupt_attempts] ||= {}
+      @context.private_data[:interrupt_attempts][step_key] ||= 0
+      @context.private_data[:interrupt_attempts][step_key] += 1
+
+      save_context # Persist the attempt count
+
+      current_attempts = @context.private_data[:interrupt_attempts][step_key]
+      max_attempts = step_config.max_attempts
+
+      if max_attempts != :infinity && current_attempts >= max_attempts
+        # Max attempts reached - Fail and Compensate
+        undo
+
+        # Instead of cancelling, we mark as failed so it shows up as failed in UI
+        @context.status = "failed"
+        @context.failure_reason = {
+          message: "Validation failed after #{max_attempts} attempts",
+          step_name: step_name,
+          errors: validation.errors.to_h,
+          payload: payload,
+          step_arguments: payload,
+          attempts: current_attempts,
+          validation_errors: validation.errors.to_h
+        }
+
+        save_context
+
+        return RubyReactor::Failure(
+          "Validation failed after #{max_attempts} attempts",
+          step_name: step_name,
+          step_arguments: payload,
+          validation_errors: validation.errors.to_h
+        )
+      end
 
       failure = RubyReactor::Failure(validation.errors.to_h)
       # We need a way to mark this failure as a validation failure

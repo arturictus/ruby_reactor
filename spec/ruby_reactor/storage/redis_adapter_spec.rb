@@ -18,7 +18,7 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       adapter.store_context(context_id, data, reactor_class)
 
       # Verify directly in Redis
-      stored_data = redis_client.call("JSON.GET", key)
+      stored_data = redis_client.get(key)
       expect(stored_data).to eq(data)
 
       # Verify TTL (approximate)
@@ -35,7 +35,7 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       data = { "foo" => "bar" }
 
       # Setup
-      redis_client.call("JSON.SET", key, ".", data.to_json)
+      redis_client.set(key, data.to_json)
 
       result = adapter.retrieve_context(context_id, reactor_class)
       expect(result).to eq(data)
@@ -101,6 +101,51 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
 
       result = adapter.retrieve_map_results(map_id, reactor_class, strict_ordering: false)
       expect(result).to eq([{ "value" => 1 }, { "value" => 2 }])
+    end
+  end
+
+  describe "#scan_reactors" do
+    it "scans and returns reactors" do
+      context_id = "ctx-123"
+      reactor_class = "MyReactor"
+      data = {
+        "context_id" => context_id,
+        "reactor_class" => reactor_class,
+        "started_at" => Time.now.to_s,
+        "current_step" => "step1",
+        "retry_count" => 0,
+        "failure_reason" => { "step_name" => "step1", "exception_class" => "RuntimeError" }
+      }
+      key = "reactor:MyReactor:context:ctx-123"
+
+      redis_client.set(key, data.to_json)
+
+      result = adapter.scan_reactors(pattern: "reactor:*:context:*", count: 10)
+      expect(result).to be_an(Array)
+      expect(result.first).to include(
+        id: context_id,
+        class: reactor_class,
+        status: "running",
+        failure: { "step_name" => "step1", "exception_class" => "RuntimeError" }
+      )
+    end
+  end
+
+  describe "#find_context_by_id" do
+    it "finds context by id regardless of reactor class" do
+      context_id = "ctx-123"
+      data = { "context_id" => context_id, "foo" => "bar" }
+      key = "reactor:MyReactor:context:ctx-123"
+
+      redis_client.set(key, data.to_json)
+
+      result = adapter.find_context_by_id(context_id)
+      expect(result).to eq(data)
+    end
+
+    it "returns nil if context not found" do
+      result = adapter.find_context_by_id("non-existent")
+      expect(result).to be_nil
     end
   end
 end

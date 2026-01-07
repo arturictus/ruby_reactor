@@ -5,7 +5,7 @@ module RubyReactor
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
                   :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack, :test_mode,
                   :parent_context, :root_context, :composed_contexts, :context_id, :map_operations, :map_metadata,
-                  :cancelled, :cancellation_reason
+                  :cancelled, :cancellation_reason, :parent_context_id, :status, :failure_reason
 
     def initialize(inputs = {}, reactor_class = nil)
       @context_id = SecureRandom.uuid
@@ -26,7 +26,10 @@ module RubyReactor
       @test_mode = false
       @cancelled = false
       @cancellation_reason = nil
+      @status = "pending"
+      @failure_reason = nil
       @parent_context = nil
+      @parent_context_id = nil
       @root_context = nil
     end
 
@@ -78,7 +81,9 @@ module RubyReactor
         retry_context: @retry_context,
         reactor_class: @reactor_class,
         execution_trace: @execution_trace,
-        test_mode: @test_mode
+        test_mode: @test_mode,
+        status: @status,
+        failure_reason: @failure_reason
       }
     end
 
@@ -102,14 +107,17 @@ module RubyReactor
         undo_stack: serialize_undo_stack,
         test_mode: @test_mode,
         cancelled: @cancelled,
-        cancellation_reason: @cancellation_reason
+        cancellation_reason: @cancellation_reason,
+        status: @status,
+        failure_reason: ContextSerializer.serialize_value(@failure_reason),
+        parent_context_id: @parent_context&.context_id || @parent_context_id
       }
     end
 
     def self.deserialize_from_retry(data)
       context = new
       context.context_id = data["context_id"] if data["context_id"]
-      context.reactor_class = data["reactor_class"] ? Object.const_get(data["reactor_class"]) : nil
+      context.reactor_class = resolve_reactor_class(data["reactor_class"])
       context.inputs = ContextSerializer.deserialize_value(data["inputs"]) || {}
       context.intermediate_results = ContextSerializer.deserialize_value(data["intermediate_results"]) || {}
       context.private_data = ContextSerializer.deserialize_value(data["private_data"]) || {}
@@ -125,8 +133,22 @@ module RubyReactor
       context.test_mode = data["test_mode"] || false
       context.cancelled = data["cancelled"] || false
       context.cancellation_reason = data["cancellation_reason"]
+      context.status = data["status"] || "pending"
+      context.failure_reason = ContextSerializer.deserialize_value(data["failure_reason"])
+      context.parent_context_id = data["parent_context_id"]
 
       context
+    end
+
+    def self.resolve_reactor_class(name)
+      return nil unless name
+
+      begin
+        Object.const_get(name)
+      rescue NameError
+        # Try finding in registry for anonymous classes
+        RubyReactor::Registry.find(name)
+      end
     end
 
     private

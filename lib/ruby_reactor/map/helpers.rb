@@ -7,7 +7,11 @@ module RubyReactor
       # Resolves the reactor class from reactor_class_info
       def resolve_reactor_class(info)
         if info["type"] == "class"
-          Object.const_get(info["name"])
+          begin
+            Object.const_get(info["name"])
+          rescue NameError
+            RubyReactor::Registry.find(info["name"])
+          end
         elsif info["type"] == "inline"
           parent_class = Object.const_get(info["parent"])
           step_config = parent_class.steps[info["step"].to_sym]
@@ -49,12 +53,46 @@ module RubyReactor
 
       # Resumes parent reactor execution after map completion
       def resume_parent_execution(parent_context, step_name, final_result, storage)
-        value = final_result.success? ? final_result.value : final_result
-        parent_context.set_result(step_name.to_sym, value)
-        parent_context.current_step = nil
-
         executor = RubyReactor::Executor.new(parent_context.reactor_class, {}, parent_context)
-        executor.resume_execution
+
+        if final_result.failure?
+          step_name_sym = step_name.to_sym
+          parent_context.current_step = step_name_sym
+
+          error = RubyReactor::Error::StepFailureError.new(
+            final_result.error,
+            step: step_name_sym,
+            context: parent_context,
+            original_error: final_result.error.is_a?(Exception) ? final_result.error : nil
+          )
+
+          # Pass backtrace if available
+          if final_result.respond_to?(:backtrace) && final_result.backtrace
+            error.set_backtrace(final_result.backtrace)
+          elsif final_result.error.respond_to?(:backtrace)
+            error.set_backtrace(final_result.error.backtrace)
+          end
+
+          failure_response = executor.result_handler.handle_execution_error(error)
+          # Manually update context status since we're not running executor loop
+          executor.send(:update_context_status, failure_response)
+        else
+          parent_context.set_result(step_name.to_sym, final_result.value)
+
+          # Manually update execution trace to reflect completion
+          # This is necessary because resume_execution continues from the NEXT step
+          # and the async step (which returned AsyncResult) needs to be marked as done with actual value
+          parent_context.execution_trace << {
+            type: :result,
+            step: step_name_sym,
+            timestamp: Time.now,
+            value: final_result.value,
+            status: :success
+          }
+
+          parent_context.current_step = nil
+          executor.resume_execution
+        end
 
         storage.store_context(
           parent_context.context_id,
