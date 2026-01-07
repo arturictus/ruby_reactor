@@ -163,7 +163,6 @@ namespace :demo do
   end
 
   desc "Interrupt reactors"
-
   task interrupt: [:environment, :flush_redis] do
     def run_interrupt_reactor(name, reactor_class, params)
       puts "\n>>> Running #{name} (#{params.inspect})"
@@ -226,5 +225,10 @@ namespace :demo do
     run_interrupt_reactor("WebhookInterruptReactor [Validation Error]", WebhookInterruptReactor, {})
 
     puts "\n✅ INTERRUPT DEMO COMPLETE"
+  end
+ 
+  desc "All demo reactors"
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt] do
+    puts "excuting all reactors"
   end
 end
