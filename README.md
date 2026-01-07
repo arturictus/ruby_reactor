@@ -2,6 +2,8 @@
 
 A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq** for asynchronous execution and **Redis** for state persistence.
 
+![Payment workflow reactor](documentation/images/payment_workflow.png)
+
 ## Features
 
 - **DAG-based Execution**: Steps are executed based on their dependencies, allowing for parallel execution of independent steps.
@@ -47,6 +49,25 @@ RubyReactor.configure do |config|
   config.logger = Logger.new($stdout)
 end
 ```
+
+## Web Dashboard
+
+RubyReactor comes with a built-in web dashboard to inspect reactor executions, view logs, and retry failed steps.
+
+### Rails Installation
+
+Mount the dashboard engine in your `config/routes.rb`:
+
+```ruby
+Rails.application.routes.draw do
+  # ... other routes
+  mount RubyReactor::Web::Application => '/ruby_reactor'
+end
+```
+
+![RubyReactor Dashboard Screenshot](documentation/images/failed_order_processing.png)
+
+You can secure the dashboard using standard Rails authentication methods (e.g., `authenticate` block with Devise).
 
 ## Usage
 
@@ -594,13 +615,14 @@ Learn how to pause and resume reactors to handle long-running processes, manual 
 - [X] `interrupt` to pause and resume reactors
 - [ ] Middlewares
 - [ ] Async ruby to parallelize same level steps
-- [ ] Dedicated interface to inspect reactor results and errors
+- [x] Web dashboard to inspect reactor results and errors
 - [ ] Multiple storage adapters
   - [X] Redis
   - [ ] ActiveRecord
 - [ ] Multiple Async adapters
   - [X] Sidekiq
   - [ ] ActiveJob
+- [ ] OpenTelemetry support
 
 ## Development
 
