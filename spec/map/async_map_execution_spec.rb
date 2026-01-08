@@ -48,7 +48,15 @@ RSpec.describe "Async Map Execution" do
     context = storage.retrieve_context(context_id, MapTestReactors::AsyncMapReactor.name)
 
     expect(context).not_to be_nil
-    expect(context["intermediate_results"]["doubled_numbers"]).to eq([2, 4, 6])
+    expect(context).not_to be_nil
+
+    result_data = context["intermediate_results"]["doubled_numbers"]
+    expect(result_data).to be_a(Hash)
+    expect(result_data["_type"]).to eq("Map::ResultEnumerator")
+
+    # Verify contents by deserializing
+    enumerator = RubyReactor::ContextSerializer.deserialize_value(result_data)
+    expect(enumerator.map(&:value)).to eq([2, 4, 6])
 
     # Verify that children have parent_context_id
     map_id = "#{context_id}:doubled_numbers"

@@ -25,6 +25,11 @@ module RubyReactor
           context = ContextSerializer.deserialize(serialized_context)
           context.map_metadata = arguments
           reactor_class = context.reactor_class
+
+          # Ensure inputs are present (fallback to serialized_inputs if missing from context)
+          if context.inputs.empty? && serialized_inputs
+            context.inputs = ContextSerializer.deserialize_value(serialized_inputs)
+          end
         else
           # Deserialize inputs
           inputs = ContextSerializer.deserialize_value(serialized_inputs)
@@ -53,11 +58,9 @@ module RubyReactor
         result = executor.result
 
         if result.is_a?(RetryQueuedResult)
-          queue_next_batch(arguments) if batch_size
+          trigger_next_batch_if_needed(arguments, index, batch_size)
           return
         end
-
-        # Store result
 
         # Store result
 
@@ -73,7 +76,10 @@ module RubyReactor
         # Decrement counter
         new_count = storage.decrement_map_counter(map_id, parent_reactor_class_name)
 
-        queue_next_batch(arguments) if batch_size
+        # Trigger next batch if it's the last element of the current batch
+        trigger_next_batch_if_needed(arguments, index, batch_size)
+
+        return unless new_count.zero?
 
         return unless new_count.zero?
 
@@ -88,23 +94,6 @@ module RubyReactor
         )
       end
 
-      def self.queue_next_batch(arguments)
-        storage = RubyReactor.configuration.storage_adapter
-        map_id = arguments[:map_id]
-        reactor_class_name = arguments[:parent_reactor_class_name]
-
-        next_index = storage.increment_last_queued_index(map_id, reactor_class_name)
-        total_count = storage.retrieve_map_metadata(map_id, reactor_class_name)["count"]
-
-        return unless next_index < total_count
-
-        parent_context = load_parent_context(arguments, reactor_class_name, storage)
-        element = resolve_next_element(arguments, parent_context, next_index)
-        serialized_inputs = build_serialized_inputs(arguments, parent_context, element)
-
-        queue_element_job(arguments, map_id, next_index, serialized_inputs, reactor_class_name)
-      end
-
       def self.load_parent_context(arguments, reactor_class_name, storage)
         parent_context_data = storage.retrieve_context(arguments[:parent_context_id], reactor_class_name)
         parent_reactor_class = Object.const_get(reactor_class_name)
@@ -116,42 +105,27 @@ module RubyReactor
         parent_context
       end
 
-      def self.resolve_next_element(arguments, parent_context, next_index)
-        parent_reactor_class = parent_context.reactor_class
-        step_config = parent_reactor_class.steps[arguments[:step_name].to_sym]
+      # Legacy helpers resolved_next_element, build_serialized_inputs, queue_element_job
+      # are REMOVED as they are no longer used for self-queuing.
 
-        source_template = step_config.arguments[:source][:source]
-        source = source_template.resolve(parent_context)
-        source[next_index]
+      # Basic helper to build inputs for the CURRENT element (still needed for perform)
+      # Wait, perform uses `serialized_inputs` passed to it.
+      # We don't need `build_element_inputs` here?
+      # `perform` uses `params[:serialized_inputs]`.
+      # So we can remove input building helpers too?
+      # Let's check if they are used elsewhere.
+      # `resolve_reactor_class` is used in `perform`.
+      # `build_element_inputs` is likely in Helpers or mixed in?
+
+      def self.trigger_next_batch_if_needed(arguments, index, batch_size)
+        return unless batch_size && ((index + 1) % batch_size).zero?
+
+        # Trigger Dispatcher for next batch
+        arguments[:continuation] = true
+        RubyReactor::Map::Dispatcher.perform(arguments)
       end
 
-      def self.build_serialized_inputs(arguments, parent_context, element)
-        parent_reactor_class = parent_context.reactor_class
-        step_config = parent_reactor_class.steps[arguments[:step_name].to_sym]
-
-        mappings_template = step_config.arguments[:argument_mappings][:source]
-        mappings = mappings_template.resolve(parent_context) || {}
-
-        mapped_inputs = build_element_inputs(mappings, parent_context, element)
-        ContextSerializer.serialize_value(mapped_inputs)
-      end
-
-      def self.queue_element_job(arguments, map_id, next_index, serialized_inputs, reactor_class_name)
-        RubyReactor.configuration.async_router.perform_map_element_async(
-          map_id: map_id,
-          element_id: "#{map_id}:#{next_index}",
-          index: next_index,
-          serialized_inputs: serialized_inputs,
-          reactor_class_info: arguments[:reactor_class_info],
-          strict_ordering: arguments[:strict_ordering],
-          parent_context_id: arguments[:parent_context_id],
-          parent_reactor_class_name: reactor_class_name,
-          step_name: arguments[:step_name],
-          batch_size: arguments[:batch_size]
-        )
-      end
-      private_class_method :queue_next_batch, :load_parent_context,
-                           :resolve_next_element, :build_serialized_inputs, :queue_element_job
+      private_class_method :load_parent_context, :trigger_next_batch_if_needed
     end
   end
 end

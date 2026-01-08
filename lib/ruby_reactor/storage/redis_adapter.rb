@@ -230,6 +230,51 @@ module RubyReactor
         @redis.get(key)
       end
 
+      def set_map_offset(map_id, offset, reactor_class_name)
+        key = map_offset_key(map_id, reactor_class_name)
+        @redis.set(key, offset, ex: 86_400)
+      end
+
+      def retrieve_map_offset(map_id, reactor_class_name)
+        key = map_offset_key(map_id, reactor_class_name)
+        @redis.get(key)
+      end
+
+      def retrieve_map_results_batch(map_id, reactor_class_name, offset:, limit:, strict_ordering: true)
+        key = map_results_key(map_id, reactor_class_name)
+
+        if strict_ordering
+          # For Hash based results (indexed), we can use HMGET if we know the keys.
+          # Since we use 0-based index keys, we can generate the keys for the batch.
+          fields = (offset...(offset + limit)).map(&:to_s)
+          results = @redis.hmget(key, *fields)
+
+          # HMGET returns nil for missing fields, compact them?
+          # Or should we respect the holes?
+          # Map results are usually dense.
+          results.compact.map { |r| JSON.parse(r) }
+        else
+          # For List based results
+          # LRANGE uses inclusive ending index
+          end_index = offset + limit - 1
+          results = @redis.lrange(key, offset, end_index)
+          results.map { |r| JSON.parse(r) }
+        end
+      end
+
+      def count_map_results(map_id, reactor_class_name)
+        key = map_results_key(map_id, reactor_class_name)
+        type = @redis.type(key)
+
+        if type == "hash"
+          @redis.hlen(key)
+        elsif type == "list"
+          @redis.llen(key)
+        else
+          0
+        end
+      end
+
       private
 
       def fetch_and_filter_reactors(keys)
@@ -265,6 +310,10 @@ module RubyReactor
 
       def map_last_queued_index_key(map_id, reactor_class_name)
         "reactor:#{reactor_class_name}:map:#{map_id}:last_queued_index"
+      end
+
+      def map_offset_key(map_id, reactor_class_name)
+        "reactor:#{reactor_class_name}:map:#{map_id}:offset"
       end
 
       def correlation_id_key(correlation_id, reactor_class_name)

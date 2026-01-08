@@ -15,15 +15,26 @@ RSpec.describe RubyReactor::Step::MapStep do
   end
 
   let(:storage_adapter) { instance_double(RubyReactor::Storage::RedisAdapter) }
-  let(:async_router) { instance_double(RubyReactor::AsyncRouter) }
+  let(:async_router) { double("AsyncRouter") }
 
   before do
     allow(RubyReactor.configuration).to receive_messages(storage_adapter: storage_adapter, async_router: async_router)
+    allow(async_router).to receive(:perform_map_element_async)
     allow(storage_adapter).to receive(:store_context)
     allow(storage_adapter).to receive(:set_map_counter)
     allow(storage_adapter).to receive(:initialize_map_operation)
     allow(storage_adapter).to receive(:set_last_queued_index)
+    allow(storage_adapter).to receive(:retrieve_context).and_return({})
+    allow(storage_adapter).to receive(:set_map_offset)
+    allow(storage_adapter).to receive(:retrieve_map_offset).and_return(0)
     allow(context).to receive(:serialize_for_retry).and_return({})
+
+    # Mock fallback lookup of steps in Dispatcher
+    steps_mock = { test_step: double(arguments: { argument_mappings: {}, source: { source: [] } }) }
+    allow(context.reactor_class).to receive(:steps).and_return(steps_mock)
+
+    # Mock load_parent_context_from_storage to return our mocked context
+    allow(RubyReactor::Map::Dispatcher).to receive(:load_parent_context_from_storage).and_return(context)
   end
 
   describe ".run_async" do
@@ -55,6 +66,8 @@ RSpec.describe RubyReactor::Step::MapStep do
         # rubocop:disable RSpec/VerifiedDoubleReference
         instance_double("CustomEnumerable", size: 5).tap do |d|
           allow(d).to receive(:each_with_index)
+          allow(d).to receive(:drop).and_return(d)
+          allow(d).to receive(:take).and_return([])
         end
         # rubocop:enable RSpec/VerifiedDoubleReference
       end
@@ -76,6 +89,8 @@ RSpec.describe RubyReactor::Step::MapStep do
         instance_double("ActiveRecord::Relation", size: 10).tap do |d|
           allow(d).to receive(:each_with_index)
           allow(d).to receive(:count) # Allow it so we can spy on it
+          allow(d).to receive(:drop).and_return(d)
+          allow(d).to receive(:take).and_return([])
         end
         # rubocop:enable RSpec/VerifiedDoubleReference
       end

@@ -68,6 +68,14 @@ module RubyReactor
           { "_type" => "Template::Value", "value" => serialize_value(value.instance_variable_get(:@value)) }
         when RubyReactor::Template::Result
           { "_type" => "Template::Result", "step_name" => value.step_name.to_s, "path" => value.path }
+        when RubyReactor::Map::ResultEnumerator
+          {
+            "_type" => "Map::ResultEnumerator",
+            "map_id" => value.map_id,
+            "reactor_class_name" => value.reactor_class_name,
+            "strict_ordering" => value.strict_ordering,
+            "batch_size" => value.batch_size
+          }
         when Hash
           value.transform_keys(&:to_s).transform_values { |v| serialize_value(v) }
         when Array
@@ -115,6 +123,13 @@ module RubyReactor
               RubyReactor::Template::Value.new(deserialize_value(value["value"]))
             when "Template::Result"
               RubyReactor::Template::Result.new(value["step_name"], value["path"])
+            when "Map::ResultEnumerator"
+              RubyReactor::Map::ResultEnumerator.new(
+                value["map_id"],
+                value["reactor_class_name"],
+                strict_ordering: value["strict_ordering"],
+                batch_size: value["batch_size"]
+              )
             else
               value
             end

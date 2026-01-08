@@ -28,6 +28,9 @@ module RubyReactor
           inputs = {}
 
           mappings.each do |mapped_input_name, source|
+            # Handle serialized template objects (Hashes from Sidekiq)
+            source = ContextSerializer.deserialize_value(source) if source.is_a?(Hash) && source["_type"]
+
             value = if source.is_a?(RubyReactor::Template::Element)
                       # Handle element reference
                       # For now assuming element() refers to the current map's element
@@ -157,14 +160,28 @@ module RubyReactor
 
           reactor_class_info = build_reactor_class_info(arguments[:mapped_reactor_class], context, step_name)
 
+          # Initialize map operation metadata
+          storage = RubyReactor.configuration.storage_adapter
+          storage.initialize_map_operation(
+            map_id, arguments[:source].size, context.reactor_class.name,
+            strict_ordering: arguments[:strict_ordering], reactor_class_info: reactor_class_info
+          )
+
           job_id = if arguments[:batch_size]
-                     storage = RubyReactor.configuration.storage_adapter
-                     storage.set_last_queued_index(map_id, arguments[:batch_size] - 1, context.reactor_class.name)
-                     queue_fan_out(
-                       map_id: map_id, arguments: arguments, context: context,
-                       reactor_class_info: reactor_class_info, step_name: step_name,
-                       limit: arguments[:batch_size]
+                     # Use new Dispatcher with Backpressure
+                     RubyReactor::Map::Dispatcher.perform(
+                       map_id: map_id,
+                       parent_context_id: context.context_id,
+                       parent_reactor_class_name: context.reactor_class.name,
+                       source: arguments[:source],
+                       batch_size: arguments[:batch_size],
+                       step_name: step_name,
+                       argument_mappings: arguments[:argument_mappings],
+                       strict_ordering: arguments[:strict_ordering],
+                       mapped_reactor_class: arguments[:mapped_reactor_class]
                      )
+                     queue_collector(map_id, context, step_name, arguments[:strict_ordering])
+                     "map:#{map_id}"
                    else
                      queue_single_worker(map_id: map_id, arguments: arguments, context: context,
                                          reactor_class_info: reactor_class_info, step_name: step_name)
