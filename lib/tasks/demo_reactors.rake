@@ -228,7 +228,58 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl] do
     puts "excuting all reactors"
   end
+
+  desc "User ETL reactor"
+  task etl: [:environment, :flush_redis] do
+    def run_etl_scenario(name, data)
+      puts "\n=== Running Scenario: #{name} ==="
+      puts "Starting ETL process with #{data.length} records..."
+      
+      result = UserEtlReactor.call(
+        source_file: "users_export_2024.csv",
+        csv_data: data,
+        output_destinations: [:database, :search_index]
+      )
+
+      if result.is_a?(RubyReactor::AsyncResult)
+        puts "⏳ ASYNC: ETL started successfully."
+        puts "   Execution ID: #{result.execution_id}"
+        puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
+      elsif result.success?
+        puts "✅ SUCCESS: ETL completed synchronously."
+        puts "   Result: #{result.value.inspect}"
+      else
+        puts "❌ FAILED: ETL failed."
+        err_msg = result.respond_to?(:error) ? result.error : result.inspect
+        puts "   Error: #{err_msg}"
+      end
+    end
+
+    # Scenario 1: Clean Data (Success)
+    clean_data = [
+      { "id" => "1", "name" => "Alice Smith", "email" => "verified@example.com", "phone" => "555-0101", "age" => "30" },
+      { "id" => "2", "name" => "Bob Jones", "email" => "unverified@example.com", "phone" => "555-0102", "age" => "25" }
+    ]
+    run_etl_scenario("Clean Data", clean_data)
+
+    # Scenario 2: Data needing cleaning (Success)
+    # Phone numbers will be normalized, emails downcased
+    dirty_data = [
+      { "id" => "3", "name" => "  Charlie  ", "email" => "  Verified@Example.com ", "phone" => "(555) 010-3", "age" => "40" },
+      { "id" => "4", "name" => "Dave", "email" => "unverified@example.com", "phone" => "555.0104", "age" => "35" }
+    ]
+    run_etl_scenario("Data Cleaning", dirty_data)
+
+    # Scenario 3: Invalid Data (Failure)
+    invalid_data = [
+      { "id" => "5", "name" => "Eve", "email" => "verified@example.com", "phone" => "555-0105", "age" => "28" },
+      { "id" => "6", "name" => "F", "email" => "invalid_email", "phone" => "123", "age" => "150" } # Invalid
+    ]
+    run_etl_scenario("Invalid Data", invalid_data)
+  end
+
+
 end
