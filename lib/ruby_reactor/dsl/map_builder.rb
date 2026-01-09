@@ -32,8 +32,12 @@ module RubyReactor
         @argument_mappings[mapped_input_name] = source
       end
 
-      def source(enumerable)
-        @source_enumerable = enumerable
+      def source(enumerable = nil, &block)
+        @source_enumerable = if block
+                               RubyReactor::Template::DynamicSource.new(@argument_mappings, &block)
+                             else
+                               enumerable
+                             end
       end
 
       def async(async = true, batch_size: nil)

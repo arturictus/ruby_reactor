@@ -65,7 +65,7 @@ module RubyReactor
         # Store result
 
         if result.success?
-          storage.store_map_result(map_id, index, result.value, parent_reactor_class_name,
+          storage.store_map_result(map_id, index, ContextSerializer.serialize_value(result.value), parent_reactor_class_name,
                                    strict_ordering: strict_ordering)
         else
           # Store error

@@ -39,4 +39,40 @@ RSpec.describe RubyReactor::Map::ResultEnumerator do
       expect(enumerator.to_a).to be_empty
     end
   end
+
+  describe "#successes" do
+    it "filters only successful results" do
+      batch = ["success1", { "_error" => "failed1" }, "success2"]
+
+      expect(storage).to receive(:retrieve_map_results_batch)
+        .with(map_id, reactor_class_name, offset: 0, limit: 2, strict_ordering: true)
+        .and_return(batch.first(2))
+      expect(storage).to receive(:retrieve_map_results_batch)
+        .with(map_id, reactor_class_name, offset: 2, limit: 2, strict_ordering: true)
+        .and_return([batch.last])
+
+      successes = enumerator.successes.to_a
+      expect(successes.size).to eq(2)
+      expect(successes.all? { |r| r.is_a?(RubyReactor::Success) }).to be true
+      expect(successes.map(&:value)).to eq(%w[success1 success2])
+    end
+  end
+
+  describe "#failures" do
+    it "filters only failed results" do
+      batch = ["success1", { "_error" => "failed1" }, { "_error" => "failed2" }]
+
+      expect(storage).to receive(:retrieve_map_results_batch)
+        .with(map_id, reactor_class_name, offset: 0, limit: 2, strict_ordering: true)
+        .and_return(batch.first(2))
+      expect(storage).to receive(:retrieve_map_results_batch)
+        .with(map_id, reactor_class_name, offset: 2, limit: 2, strict_ordering: true)
+        .and_return([batch.last])
+
+      failures = enumerator.failures.to_a
+      expect(failures.size).to eq(2)
+      expect(failures.all? { |r| r.is_a?(RubyReactor::Failure) }).to be true
+      expect(failures.map(&:error)).to eq(%w[failed1 failed2])
+    end
+  end
 end

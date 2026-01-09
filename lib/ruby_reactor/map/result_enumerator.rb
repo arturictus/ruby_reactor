@@ -36,7 +36,7 @@ module RubyReactor
             if result.is_a?(Hash) && result.key?("_error")
               yield RubyReactor::Failure.new(result["_error"])
             else
-              yield RubyReactor::Success.new(result)
+              yield RubyReactor::Success.new(ContextSerializer.deserialize_value(result))
             end
           end
 
@@ -47,6 +47,14 @@ module RubyReactor
           # For 'collect', we assume map is DONE so results are static.
           break if results.size < @batch_size
         end
+      end
+
+      def successes
+        lazy.select { |result| result.is_a?(RubyReactor::Success) }
+      end
+
+      def failures
+        lazy.select { |result| result.is_a?(RubyReactor::Failure) }
       end
     end
   end

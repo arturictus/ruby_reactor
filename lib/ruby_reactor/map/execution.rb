@@ -70,7 +70,7 @@ module RubyReactor
       def self.store_result(result, index, options)
         value = result.success? ? result.value : { _error: result.error }
         options[:storage].store_map_result(
-          options[:map_id], index, value, options[:parent_reactor_class_name],
+          options[:map_id], index, ContextSerializer.serialize_value(value), options[:parent_reactor_class_name],
           strict_ordering: options[:strict_ordering]
         )
       end
