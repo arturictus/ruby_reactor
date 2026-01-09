@@ -14,3 +14,4 @@ ui
 # Ignore key files for decrypting credentials and more.
 /config/*.key
 
+storage/*.sqlite3

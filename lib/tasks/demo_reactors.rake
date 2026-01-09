@@ -281,5 +281,12 @@ namespace :demo do
     run_etl_scenario("Invalid Data", invalid_data)
   end
 
+  desc "Active Record reactor"
+  task ar: [:environment, :flush_redis] do
+    (100..300).each do |n|
+      Product.find_or_create_by(name: "Product #{n}", stock: n >= 150 ? 1 : 0)
+    end
 
+    ArMapReactor.run(filter: {stock: 1})
+  end
 end
