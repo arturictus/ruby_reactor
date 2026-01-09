@@ -25,6 +25,8 @@ RSpec.describe RubyReactor::Step::MapStep do
     allow(storage_adapter).to receive(:initialize_map_operation)
     allow(storage_adapter).to receive(:set_last_queued_index)
     allow(storage_adapter).to receive(:set_map_offset)
+    allow(storage_adapter).to receive(:set_map_offset_if_not_exists)
+    allow(storage_adapter).to receive(:increment_map_offset).and_return(0)
     allow(storage_adapter).to receive_messages(retrieve_context: {}, retrieve_map_offset: 0)
     allow(context).to receive(:serialize_for_retry).and_return({})
 
