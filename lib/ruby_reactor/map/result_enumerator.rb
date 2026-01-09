@@ -50,11 +50,11 @@ module RubyReactor
       end
 
       def successes
-        lazy.select { |result| result.is_a?(RubyReactor::Success) }
+        lazy.select { |result| result.is_a?(RubyReactor::Success) }.map(&:value)
       end
 
       def failures
-        lazy.select { |result| result.is_a?(RubyReactor::Failure) }
+        lazy.select { |result| result.is_a?(RubyReactor::Failure) }.map(&:error)
       end
     end
   end

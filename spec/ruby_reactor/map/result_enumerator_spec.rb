@@ -53,8 +53,7 @@ RSpec.describe RubyReactor::Map::ResultEnumerator do
 
       successes = enumerator.successes.to_a
       expect(successes.size).to eq(2)
-      expect(successes.all? { |r| r.is_a?(RubyReactor::Success) }).to be true
-      expect(successes.map(&:value)).to eq(%w[success1 success2])
+      expect(successes).to eq(%w[success1 success2])
     end
   end
 
@@ -71,8 +70,7 @@ RSpec.describe RubyReactor::Map::ResultEnumerator do
 
       failures = enumerator.failures.to_a
       expect(failures.size).to eq(2)
-      expect(failures.all? { |r| r.is_a?(RubyReactor::Failure) }).to be true
-      expect(failures.map(&:error)).to eq(%w[failed1 failed2])
+      expect(failures).to eq(%w[failed1 failed2])
     end
   end
 end

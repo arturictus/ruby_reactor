@@ -168,14 +168,24 @@ step :analyze_results do
     col = args[:results]
     
     # Iterate over successful results
-    col.successes.each do |result|
-      # result.value contains the return value of the map element
-      puts "Success: #{result.value}"
+    col.successes.each do |value|
+      # 'value' is the direct return value of the map element
+      puts "Success: #{value}"
     end
 
     # Iterate over failures
-    col.failures.each do |result|
-      puts "Error: #{result.error}"
+    col.failures.each do |error|
+      # 'error' is the failure object/message itself
+      puts "Error: #{error}"
+    end
+
+    # Note: Iterating the collection directly yields wrapped objects
+    col.each do |result|
+      if result.is_a?(RubyReactor::Success)
+        puts "Wrapped Value: #{result.value}"
+      else
+        puts "Wrapped Error: #{result.error}"
+      end
     end
 
     Success({
