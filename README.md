@@ -281,6 +281,42 @@ class DataProcessingReactor < RubyReactor::Reactor
 end
 ```
 
+By using `async true` with `batch_size`, the system applies **Back Pressure** to efficiently manage resources. [Read more about Back Pressure & Resource Management](documentation/data_pipelines.md#back-pressure--resource-management).
+
+#### Map with Dynamic Source (ActiveRecord)
+
+You can use a block for `source` to dynamically fetch data, such as from ActiveRecord queries. The result is wrapped in a `ResultEnumerator` for easy access to successes and failures.
+
+```ruby
+map :archive_old_users do
+  argument :days, input(:days)
+
+  # Dynamic source using ActiveRecord
+  source do |args|
+    User.where("last_login_at < ?", args[:days].days.ago)
+  end
+  
+  argument :user, element(:archive_old_users)
+  async true, batch_size: 100
+
+  step :archive do
+    argument :user, input(:user)
+    run { |args| args[:user].archive! }
+  end
+  
+  returns :archive
+end
+
+step :summary do
+  argument :results, result(:archive_old_users)
+  run do |args|
+    puts "Archived: #{args[:results].successes.count}"
+    puts "Failed: #{args[:results].failures.count}"
+    Success()
+  end
+end
+```
+
 ### Input Validation
 
 RubyReactor integrates with dry-validation for input validation:
