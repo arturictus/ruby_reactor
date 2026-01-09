@@ -17,7 +17,7 @@ module RubyReactor
         @storage = RubyReactor.configuration.storage_adapter
       end
 
-      def each(&block)
+      def each
         return enum_for(:each) unless block_given?
 
         offset = 0

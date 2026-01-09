@@ -18,11 +18,11 @@ RSpec.describe RubyReactor::Map::ResultEnumerator do
       batch1 = %w[result1 result2]
       batch2 = ["result3"]
 
-      expect(storage).to receive(:retrieve_map_results_batch)
+      allow(storage).to receive(:retrieve_map_results_batch)
         .with(map_id, reactor_class_name, offset: 0, limit: 2, strict_ordering: true)
         .and_return(batch1)
 
-      expect(storage).to receive(:retrieve_map_results_batch)
+      allow(storage).to receive(:retrieve_map_results_batch)
         .with(map_id, reactor_class_name, offset: 2, limit: 2, strict_ordering: true)
         .and_return(batch2)
 
@@ -32,7 +32,7 @@ RSpec.describe RubyReactor::Map::ResultEnumerator do
     end
 
     it "stops when results are empty" do
-      expect(storage).to receive(:retrieve_map_results_batch)
+      allow(storage).to receive(:retrieve_map_results_batch)
         .with(map_id, reactor_class_name, offset: 0, limit: 2, strict_ordering: true)
         .and_return([])
 
@@ -44,10 +44,10 @@ RSpec.describe RubyReactor::Map::ResultEnumerator do
     it "filters only successful results" do
       batch = ["success1", { "_error" => "failed1" }, "success2"]
 
-      expect(storage).to receive(:retrieve_map_results_batch)
+      allow(storage).to receive(:retrieve_map_results_batch)
         .with(map_id, reactor_class_name, offset: 0, limit: 2, strict_ordering: true)
         .and_return(batch.first(2))
-      expect(storage).to receive(:retrieve_map_results_batch)
+      allow(storage).to receive(:retrieve_map_results_batch)
         .with(map_id, reactor_class_name, offset: 2, limit: 2, strict_ordering: true)
         .and_return([batch.last])
 
@@ -62,10 +62,10 @@ RSpec.describe RubyReactor::Map::ResultEnumerator do
     it "filters only failed results" do
       batch = ["success1", { "_error" => "failed1" }, { "_error" => "failed2" }]
 
-      expect(storage).to receive(:retrieve_map_results_batch)
+      allow(storage).to receive(:retrieve_map_results_batch)
         .with(map_id, reactor_class_name, offset: 0, limit: 2, strict_ordering: true)
         .and_return(batch.first(2))
-      expect(storage).to receive(:retrieve_map_results_batch)
+      allow(storage).to receive(:retrieve_map_results_batch)
         .with(map_id, reactor_class_name, offset: 2, limit: 2, strict_ordering: true)
         .and_return([batch.last])
 
