@@ -54,9 +54,9 @@ module RubyReactor
       # Resumes parent reactor execution after map completion
       def resume_parent_execution(parent_context, step_name, final_result, storage)
         executor = RubyReactor::Executor.new(parent_context.reactor_class, {}, parent_context)
+        step_name_sym = step_name.to_sym
 
         if final_result.failure?
-          step_name_sym = step_name.to_sym
           parent_context.current_step = step_name_sym
 
           error = RubyReactor::Error::StepFailureError.new(
@@ -77,7 +77,7 @@ module RubyReactor
           # Manually update context status since we're not running executor loop
           executor.send(:update_context_status, failure_response)
         else
-          parent_context.set_result(step_name.to_sym, final_result.value)
+          parent_context.set_result(step_name_sym, final_result.value)
 
           # Manually update execution trace to reflect completion
           # This is necessary because resume_execution continues from the NEXT step

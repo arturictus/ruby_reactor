@@ -19,13 +19,16 @@ module RubyReactor
         parent_context = RubyReactor::Context.deserialize_from_retry(parent_context_data)
 
         # Check if all tasks are completed
-        map_offset = storage.retrieve_map_offset(map_id, parent_reactor_class_name).to_i
+        metadata = storage.retrieve_map_metadata(map_id, parent_reactor_class_name)
+        total_count = metadata ? metadata["count"].to_i : 0
+
         results_count = storage.count_map_results(map_id, parent_reactor_class_name)
 
         # Not done yet, requeue or wait?
         # Actually Collector currently assumes we only call it when we expect completion or check progress
-        # If triggered by last element, it should matches.
-        return if results_count < map_offset
+        # Since map_offset tracks dispatching progress and might exceed count due to batching reservation,
+        # we must strictly check against the total count of elements.
+        return if results_count < total_count
 
         # Retrieve results lazily
         results = RubyReactor::Map::ResultEnumerator.new(

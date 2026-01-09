@@ -123,8 +123,9 @@ module RubyReactor
         return unless batch_size && ((index + 1) % batch_size).zero?
 
         # Trigger Dispatcher for next batch
-        arguments[:continuation] = true
-        RubyReactor::Map::Dispatcher.perform(arguments)
+        next_batch_args = arguments.dup
+        next_batch_args[:continuation] = true
+        RubyReactor::Map::Dispatcher.perform(next_batch_args)
       end
 
       private_class_method :load_parent_context, :trigger_next_batch_if_needed

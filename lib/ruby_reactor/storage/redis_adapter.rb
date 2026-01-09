@@ -235,9 +235,19 @@ module RubyReactor
         @redis.set(key, offset, ex: 86_400)
       end
 
+      def set_map_offset_if_not_exists(map_id, offset, reactor_class_name)
+        key = map_offset_key(map_id, reactor_class_name)
+        @redis.set(key, offset, nx: true, ex: 86_400)
+      end
+
       def retrieve_map_offset(map_id, reactor_class_name)
         key = map_offset_key(map_id, reactor_class_name)
         @redis.get(key)
+      end
+
+      def increment_map_offset(map_id, increment, reactor_class_name)
+        key = map_offset_key(map_id, reactor_class_name)
+        @redis.incrby(key, increment)
       end
 
       def retrieve_map_results_batch(map_id, reactor_class_name, offset:, limit:, strict_ordering: true)

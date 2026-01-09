@@ -195,7 +195,11 @@ module RubyReactor
             element_reactor_class: arguments[:mapped_reactor_class].name
           }
 
-          RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: context.intermediate_results)
+          RubyReactor::AsyncResult.new(
+            job_id: job_id,
+            intermediate_results: context.intermediate_results,
+            execution_id: context.context_id
+          )
         end
 
         def prepare_async_execution(context, map_id, count)

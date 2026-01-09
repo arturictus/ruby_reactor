@@ -35,8 +35,8 @@ module RubyReactor
         map_id = arguments[:map_id]
         reactor_class_name = arguments[:parent_reactor_class_name]
 
-        # Reset or set initial offset
-        storage.set_map_offset(map_id, 0, reactor_class_name)
+        # Reset or set initial offset. Use NX to act as a mutex/guard against duplicate initialization.
+        storage.set_map_offset_if_not_exists(map_id, 0, reactor_class_name)
       end
 
       def self.resolve_source(arguments, context)
@@ -65,7 +65,9 @@ module RubyReactor
         reactor_class_name = arguments[:parent_reactor_class_name]
         batch_size = arguments[:batch_size] || source.size # Default to all if no batch_size (async=true only)
 
-        current_offset = storage.retrieve_map_offset(map_id, reactor_class_name).to_i
+        # Atomically reserve a batch
+        new_offset = storage.increment_map_offset(map_id, batch_size, reactor_class_name)
+        current_offset = new_offset - batch_size
 
         # Slicing the source
         # If Array: simple slice
@@ -97,10 +99,6 @@ module RubyReactor
           absolute_index = current_offset + i
           queue_element_job(element, absolute_index, queue_options)
         end
-
-        # Update Offset
-        new_offset = current_offset + batch_elements.size
-        storage.set_map_offset(map_id, new_offset, reactor_class_name)
 
         # Store total count if known/updated (useful for progress tracking)
         # (Optional refinement)

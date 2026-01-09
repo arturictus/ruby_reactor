@@ -8,8 +8,8 @@ RSpec.describe RubyReactor::Map::Dispatcher do
 
   before do
     allow(RubyReactor.configuration).to receive_messages(storage_adapter: storage, async_router: async_router)
-    allow(storage).to receive(:set_map_offset)
-    allow(storage).to receive(:retrieve_map_offset).and_return(0)
+    allow(storage).to receive(:set_map_offset_if_not_exists)
+    allow(storage).to receive(:increment_map_offset).and_return(2) # First batch end offset
     allow(async_router).to receive(:perform_map_element_async)
   end
 
@@ -48,8 +48,8 @@ RSpec.describe RubyReactor::Map::Dispatcher do
 
       # Expect 2 jobs queued (batch_size: 2)
       expect(async_router).to have_received(:perform_map_element_async).twice
-      # Expect offset to be updated to 2
-      expect(storage).to have_received(:set_map_offset).with("map_123", 2, "TestReactor")
+      # Expect offset to be incremented
+      expect(storage).to have_received(:increment_map_offset).with("map_123", 2, "TestReactor")
     end
 
     context "when continuation is true" do
