@@ -82,5 +82,28 @@ RSpec.describe RubyReactor::Map::Dispatcher do
         expect(async_router).to have_received(:perform_map_element_async).twice
       end
     end
+
+    context "when source responds to offset and limit (e.g. ActiveRecord::Relation)" do
+      let(:relation) { instance_double("ActiveRecord::Relation") }
+      let(:paginated_relation) { [1, 2] }
+      let(:arguments) { super().merge(source: relation) }
+
+      before do
+        allow(relation).to receive(:offset).and_return(relation)
+        allow(relation).to receive(:limit).and_return(relation)
+        allow(relation).to receive(:to_a).and_return(paginated_relation)
+      end
+
+      it "uses offset and limit for efficiency" do
+        described_class.perform(arguments)
+
+        # Verify optimization is used
+        expect(relation).to have_received(:offset).with(0) # First batch starts at 0
+        expect(relation).to have_received(:limit).with(2)  # batch size
+        expect(relation).to have_received(:to_a)
+
+        expect(async_router).to have_received(:perform_map_element_async).twice
+      end
+    end
   end
 end

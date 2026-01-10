@@ -69,17 +69,13 @@ module RubyReactor
         new_offset = storage.increment_map_offset(map_id, batch_size, reactor_class_name)
         current_offset = new_offset - batch_size
 
-        # Slicing the source
-        # If Array: simple slice
-        # If AR Relation: simple offset/limit (if we supported it, but we restricted to Array, so strictly Array)
-
-        # However, for massive arrays, we might rely on the Redis List strategy mentioned in design.
-        # For Phase 1, we'll assume source is an Array or we fetch from the Redis source list if optimized.
-
         batch_elements = if source.is_a?(Array)
                            source.slice(current_offset, batch_size) || []
+                         elsif source.respond_to?(:offset) && source.respond_to?(:limit)
+                           # Optimized for ActiveRecord and similar query builders
+                           source.offset(current_offset).limit(batch_size).to_a
                          else
-                           # Fallback for strict Enumerable
+                           # Fallback for generic Enumerable
                            # This is inefficient for huge sets if not Array, but compliant
                            source.drop(current_offset).take(batch_size)
                          end
@@ -99,22 +95,6 @@ module RubyReactor
           absolute_index = current_offset + i
           queue_element_job(element, absolute_index, queue_options)
         end
-
-        # Store total count if known/updated (useful for progress tracking)
-        # (Optional refinement)
-
-        # Check if we are done?
-        # Actually, Dispatcher is passive in "Backpressure" mode.
-        # But for the *initial* dispatch, we just push the first batch.
-        # Subsequent batches are triggered by workers?
-        # Ah, the design said "Self-Driving Mechanism".
-        # For now, let's just queue the batch. The trigger logic will come in 'ElementExecutor' or via a 'Scheduler'.
-
-        # NOTE: Design update needed?
-        # If we use strict backpressure, we stop here.
-        # If we want to simple-batch (original design), we might loop here?
-        # The approved design says "Iterative Dispatch".
-        # Workers trigger next dispatch.
       end
 
       def self.queue_element_job(element, index, options)
