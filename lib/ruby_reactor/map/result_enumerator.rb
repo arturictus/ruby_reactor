@@ -20,33 +20,67 @@ module RubyReactor
       def each
         return enum_for(:each) unless block_given?
 
-        offset = 0
-        loop do
-          results = @storage.retrieve_map_results_batch(
-            @map_id,
-            @reactor_class_name,
-            offset: offset,
-            limit: @batch_size,
-            strict_ordering: @strict_ordering
-          )
-
-          break if results.empty?
-
-          results.each do |result|
-            if result.is_a?(Hash) && result.key?("_error")
-              yield RubyReactor::Failure.new(result["_error"])
-            else
-              yield RubyReactor::Success.new(ContextSerializer.deserialize_value(result))
-            end
+        if @strict_ordering
+          count.times do |i|
+            yield self[i]
           end
+        else
+          offset = 0
+          loop do
+            results = @storage.retrieve_map_results_batch(
+              @map_id,
+              @reactor_class_name,
+              offset: offset,
+              limit: @batch_size,
+              strict_ordering: @strict_ordering
+            )
 
-          offset += results.size
+            break if results.empty?
 
-          # Optimization: if we got less than batch_size, we are likely done (if data is static)
-          # But in async maps, results might be filling up?
-          # For 'collect', we assume map is DONE so results are static.
-          break if results.size < @batch_size
+            results.each { |result| yield wrap_result(result) }
+
+            offset += results.size
+            break if results.size < @batch_size
+          end
         end
+      end
+
+      def count
+        @count ||= @storage.count_map_results(@map_id, @reactor_class_name)
+      end
+      alias size count
+      alias length count
+
+      def empty?
+        count.zero?
+      end
+
+      def any?
+        !empty?
+      end
+
+      def [](index)
+        return nil if index < 0 || index >= count
+
+        results = @storage.retrieve_map_results_batch(
+          @map_id,
+          @reactor_class_name,
+          offset: index,
+          limit: 1,
+          strict_ordering: @strict_ordering
+        )
+
+        return nil if results.empty?
+
+        wrap_result(results.first)
+      end
+
+      def first
+        self[0]
+      end
+
+      def last
+        self[count - 1]
       end
 
       def successes
@@ -55,6 +89,16 @@ module RubyReactor
 
       def failures
         lazy.select { |result| result.is_a?(RubyReactor::Failure) }.map(&:error)
+      end
+
+      private
+
+      def wrap_result(result)
+        if result.is_a?(Hash) && result.key?("_error")
+          RubyReactor::Failure.new(result["_error"])
+        else
+          RubyReactor::Success.new(ContextSerializer.deserialize_value(result))
+        end
       end
     end
   end
