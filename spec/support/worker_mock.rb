@@ -49,7 +49,7 @@ module Support
     # rubocop:disable Metrics/ParameterLists
     def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                        strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
-                                       batch_size: nil, serialized_context: nil)
+                                       batch_size: nil, serialized_context: nil, fail_fast: nil)
       warn "[WORKER_MOCK] perform_map_element_async CALLED"
       job_id = RubyReactor::SidekiqWorkers::MapElementWorker.perform_async(
         {
@@ -63,7 +63,8 @@ module Support
           "parent_reactor_class_name" => parent_reactor_class_name,
           "step_name" => step_name,
           "batch_size" => batch_size,
-          "serialized_context" => serialized_context
+          "serialized_context" => serialized_context,
+          "fail_fast" => fail_fast
         }
       )
       RubyReactor::AsyncResult.new(job_id: job_id)
@@ -108,7 +109,7 @@ module Support
 
     # rubocop:disable Metrics/ParameterLists
     def self.perform_map_execution_async(map_id:, serialized_inputs:, reactor_class_info:, strict_ordering:,
-                                         parent_context_id:, parent_reactor_class_name:, step_name:)
+                                         parent_context_id:, parent_reactor_class_name:, step_name:, fail_fast: nil)
       warn "[WORKER_MOCK] perform_map_execution_async CALLED"
       job_id = RubyReactor::SidekiqWorkers::MapExecutionWorker.perform_async(
         {
@@ -118,7 +119,8 @@ module Support
           "strict_ordering" => strict_ordering,
           "parent_context_id" => parent_context_id,
           "parent_reactor_class_name" => parent_reactor_class_name,
-          "step_name" => step_name
+          "step_name" => step_name,
+          "fail_fast" => fail_fast
         }
       )
       RubyReactor::AsyncResult.new(job_id: job_id)

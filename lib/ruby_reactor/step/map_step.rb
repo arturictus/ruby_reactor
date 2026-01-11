@@ -136,8 +136,11 @@ module RubyReactor
             RubyReactor::Success(results)
           else
             # New behavior: extract successful values only
-            successes = results.select(&:success?).map(&:value)
-            RubyReactor::Success(successes)
+            # New behavior: extract successful values only IF fail_fast is true behavior implies only values
+            # However, if fail_fast is false, we want to return results as is, or if logic dictates otherwise.
+            # wait, if fail_fast=false, we expect Result objects so we can check if success/failure.
+            # If we return only successes, we hide failures.
+            RubyReactor::Success(results)
           end
         end
 
@@ -199,7 +202,8 @@ module RubyReactor
               step_name: step_name,
               argument_mappings: arguments[:argument_mappings],
               strict_ordering: arguments[:strict_ordering],
-              mapped_reactor_class: arguments[:mapped_reactor_class]
+              mapped_reactor_class: arguments[:mapped_reactor_class],
+              fail_fast: arguments[:fail_fast]
             )
             queue_collector(map_id, context, step_name, arguments[:strict_ordering])
             "map:#{map_id}"
@@ -280,7 +284,7 @@ module RubyReactor
             map_id: map_id, serialized_inputs: serialized_inputs,
             reactor_class_info: reactor_class_info, strict_ordering: arguments[:strict_ordering],
             parent_context_id: context.context_id, parent_reactor_class_name: context.reactor_class.name,
-            step_name: step_name.to_s
+            step_name: step_name.to_s, fail_fast: arguments[:fail_fast]
           )
         end
       end

@@ -21,7 +21,8 @@ module RubyReactor
           storage_options: {
             map_id: arguments[:map_id], storage: storage,
             parent_reactor_class_name: arguments[:parent_reactor_class_name],
-            strict_ordering: arguments[:strict_ordering]
+            strict_ordering: arguments[:strict_ordering],
+            fail_fast: arguments[:fail_fast]
           }
         )
 
@@ -31,6 +32,12 @@ module RubyReactor
 
       def self.execute_all_elements(source:, mappings:, reactor_class:, parent_context:, storage_options:)
         source.map.with_index do |element, index|
+          if storage_options[:fail_fast]
+            failed_context_id = storage_options[:storage].retrieve_map_failed_context_id(
+              storage_options[:map_id], storage_options[:parent_reactor_class_name]
+            )
+            next if failed_context_id
+          end
           element_inputs = build_element_inputs(mappings, parent_context, element)
 
           # Manually create and link context to ensure parent_context_id is set
@@ -56,8 +63,14 @@ module RubyReactor
 
           store_result(result, index, storage_options)
 
+          if result.failure? && storage_options[:fail_fast]
+            storage_options[:storage].store_map_failed_context_id(
+              storage_options[:map_id], child_context.context_id, storage_options[:parent_reactor_class_name]
+            )
+          end
+
           result
-        end
+        end.compact
       end
 
       def self.link_contexts(child_context, parent_context)

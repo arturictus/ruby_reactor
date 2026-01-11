@@ -74,19 +74,31 @@ RSpec.describe "Map fail_fast Option" do
       end
     end
 
-    it "processes all elements and returns only successful values by default" do
+    it "processes all elements and returns all results (successes and failures)" do
       result = FailFastFalseReactor.run(items: %w[hello error world])
 
       expect(result).to be_a(RubyReactor::Success)
-      # Default behavior: only successful values are returned
-      expect(result.value[:processed]).to eq(%w[HELLO WORLD])
+      # New behavior: returns all Result objects so errors aren't swallowed silently
+      results = result.value[:processed]
+      expect(results.length).to eq(3)
+      expect(results[0]).to be_a(RubyReactor::Success)
+      expect(results[0].value).to eq("HELLO")
+      expect(results[1]).to be_a(RubyReactor::Failure)
+      expect(results[1].error).to include("Failed: error")
+      expect(results[2]).to be_a(RubyReactor::Success)
+      expect(results[2].value).to eq("WORLD")
     end
 
     it "processes all items successfully when no errors" do
       result = FailFastFalseReactor.run(items: %w[hello world])
 
       expect(result).to be_a(RubyReactor::Success)
-      expect(result.value[:processed]).to eq(%w[HELLO WORLD])
+      expect(result).to be_a(RubyReactor::Success)
+      # When all succeed, we get an array of Success objects (implied by Result wrapper logic in map_step)
+      # Wait, inline map with fail_fast: false returns [Result, Result].
+      # We need to unwrap them if we want to check values easily, or just check the objects.
+      results = result.value[:processed]
+      expect(results.map(&:value)).to eq(%w[HELLO WORLD])
     end
   end
 

@@ -63,6 +63,13 @@ module RubyReactor
       def self.dispatch_batch(source, arguments, parent_context, storage)
         map_id = arguments[:map_id]
         reactor_class_name = arguments[:parent_reactor_class_name]
+
+        # Fail Fast Check
+        if arguments[:fail_fast]
+          failed_context_id = storage.retrieve_map_failed_context_id(map_id, reactor_class_name)
+          return if failed_context_id
+        end
+
         batch_size = arguments[:batch_size] || source.size # Default to all if no batch_size (async=true only)
 
         # Atomically reserve a batch
@@ -135,7 +142,8 @@ module RubyReactor
           parent_context_id: context.context_id,
           parent_reactor_class_name: context.reactor_class.name,
           step_name: options[:step_name].to_s,
-          batch_size: arguments[:batch_size] # Passed to worker so it knows to trigger next batch?
+          batch_size: arguments[:batch_size], # Passed to worker so it knows to trigger next batch?
+          fail_fast: arguments[:fail_fast]
         )
       end
 

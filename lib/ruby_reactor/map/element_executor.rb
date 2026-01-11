@@ -46,6 +46,27 @@ module RubyReactor
         storage = RubyReactor.configuration.storage_adapter
         storage.store_map_element_context_id(map_id, context.context_id, parent_reactor_class_name)
 
+        # Fail Fast Check
+        if arguments[:fail_fast]
+          failed_context_id = storage.retrieve_map_failed_context_id(map_id, parent_reactor_class_name)
+          if failed_context_id
+            # Decrement counter as we are skipping execution
+            new_count = storage.decrement_map_counter(map_id, parent_reactor_class_name)
+            return unless new_count.zero?
+
+            # Trigger collection if we are the last one (skipped or otherwise)
+            RubyReactor.configuration.async_router.perform_map_collection_async(
+              parent_context_id: parent_context_id,
+              map_id: map_id,
+              parent_reactor_class_name: parent_reactor_class_name,
+              step_name: step_name,
+              strict_ordering: strict_ordering,
+              timeout: 3600
+            )
+            return
+          end
+        end
+
         # Execute
         executor = Executor.new(reactor_class, {}, context)
 
@@ -70,9 +91,16 @@ module RubyReactor
                                    parent_reactor_class_name,
                                    strict_ordering: strict_ordering)
         else
+          # Trigger Compensation Logic
+          executor.undo_all
+
           # Store error
           storage.store_map_result(map_id, index, { _error: result.error }, parent_reactor_class_name,
                                    strict_ordering: strict_ordering)
+
+          if arguments[:fail_fast]
+            storage.store_map_failed_context_id(map_id, context.context_id, parent_reactor_class_name)
+          end
         end
 
         # Decrement counter
