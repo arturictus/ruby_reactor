@@ -111,8 +111,6 @@ module RubyReactor
 
         return unless new_count.zero?
 
-        return unless new_count.zero?
-
         # Trigger collection
         RubyReactor.configuration.async_router.perform_map_collection_async(
           parent_context_id: parent_context_id,

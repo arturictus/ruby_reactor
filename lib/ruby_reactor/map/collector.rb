@@ -28,6 +28,24 @@ module RubyReactor
         # Actually Collector currently assumes we only call it when we expect completion or check progress
         # Since map_offset tracks dispatching progress and might exceed count due to batching reservation,
         # we must strictly check against the total count of elements.
+        # Check for fail_fast failure FIRST
+        failed_context_id = storage.retrieve_map_failed_context_id(map_id, parent_reactor_class_name)
+        if failed_context_id
+          # Resolve the class of the mapped reactor to retrieve its context
+          reactor_class = resolve_reactor_class(metadata["reactor_class_info"])
+
+          failed_context_data = storage.retrieve_context(failed_context_id, reactor_class.name)
+
+          if failed_context_data
+            failed_context = RubyReactor::Context.deserialize_from_retry(failed_context_data)
+
+            # Resume parent execution (which marks step as failed)
+            resume_parent_execution(parent_context, step_name, RubyReactor::Failure(failed_context.failure_reason),
+                                    storage)
+            return
+          end
+        end
+
         return if results_count < total_count
 
         # Retrieve results lazily

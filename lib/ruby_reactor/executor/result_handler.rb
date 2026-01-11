@@ -117,6 +117,7 @@ module RubyReactor
 
       def store_failed_map_context(context)
         return unless context.map_metadata && context.map_metadata[:map_id]
+        return unless context.map_metadata[:fail_fast]
 
         storage = RubyReactor.configuration.storage_adapter
         storage.store_map_failed_context_id(
