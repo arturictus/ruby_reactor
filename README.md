@@ -1,4 +1,15 @@
+[![Gem Version](https://badge.fury.io/rb/ruby_reactor.svg)](https://badge.fury.io/rb/ruby_reactor)
+[![Build Status](https://github.com/arturictus/ruby_reactor/actions/workflows/main.yml/badge.svg)](https://github.com/arturictus/ruby_reactor/actions)  <!-- if you have CI -->
+[![Ruby Style Guide](https://img.shields.io/badge/code_style-rubocop-brightgreen.svg)](https://github.com/rubocop/rubocop)
+[![Downloads](https://img.shields.io/gem/dt/ruby_reactor.svg)](https://rubygems.org/gems/ruby_reactor)
+
 # RubyReactor
+
+## Why Ruby Reactor?
+
+Building complex business transactions often results in spaghetti code or brittle "god classes." Ruby Reactor solves this by implementing the **Saga Pattern** in a lightweight, developer-friendly package. It lets you define workflows as clear, dependency-driven steps without the boilerplate of heavy enterprise frameworks.
+
+The key value is **Reliability**: if any part of your workflow fails, Ruby Reactor automatically triggers compensation logic to undo previous steps, ensuring your system never ends up in a corrupted half-state. Whether you're coordinating microservices or monolith modules, you get atomic-like consistency with background processing built-in.
 
 A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq** for asynchronous execution and **Redis** for state persistence.
 
@@ -13,6 +24,49 @@ A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor impleme
 - **Compensation**: Automatic rollback of completed steps when a failure occurs.
 - **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
+
+## Comparison
+
+| Feature                  | Ruby Reactor | dry-transaction | Trailblazer | Custom Sidekiq Jobs |
+|--------------------------|--------------|-----------------|-------------|---------------------|
+| DAG/Parallel execution   | Yes          | No              | Limited     | Manual              |
+| Auto compensation/undo   | Yes          | No              | Manual      | Manual              |
+| Interrupts (pause/resume)| Yes          | No              | No          | Manual              |
+| Built-in web dashboard   | Yes          | No              | No          | No                  |
+| Async with Sidekiq       | Yes          | No              | Limited     | Yes                 |
+
+## Real-World Use Cases
+
+- **E-commerce Checkout**: Orchestrate inventory reservation, payment authorization, and shipping label generation. If payment fails, automatically release inventory and cancel the shipping request.
+- **Data Import Pipelines**: Ingest optional massive CSVs using `map` steps to validate and upsert records in parallel. If data validation fails for a chunk, fail fast or collect errors while letting valid chunks succeed.
+- **Subscription Billing**: Coordinate Stripe charges, invoice email generation, and internal entitlement updates. Use interrupts to pause the workflow when 3rd-party APIs are required to continue the workflow or when specific customer approval is needed.
+
+## Table of Contents
+- [Features](#features)
+- [Comparison](#comparison)
+- [Real-World Use Cases](#real-world-use-cases)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Quick Start](#quick-start)
+- [Web Dashboard](#web-dashboard)
+  - [Rails Installation](#rails-installation)
+- [Usage](#usage)
+  - [Basic Example: User Registration](#basic-example-user-registration)
+  - [Async Execution](#async-execution)
+    - [Full Reactor Async](#full-reactor-async)
+    - [Step-Level Async](#step-level-async)
+  - [Interrupts (Pause & Resume)](#interrupts-pause--resume)
+  - [Map & Parallel Execution](#map--parallel-execution)
+    - [Map with Dynamic Source (ActiveRecord)](#map-with-dynamic-source-activerecord)
+  - [Input Validation](#input-validation)
+  - [Complex Workflows with Dependencies](#complex-workflows-with-dependencies)
+  - [Error Handling and Compensation](#error-handling-and-compensation)
+  - [Using Pre-defined Schemas](#using-pre-defined-schemas)
+- [Documentation](#documentation)
+- [Future improvements](#future-improvements)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Code of Conduct](#code-of-conduct)
 
 ## Installation
 
@@ -48,6 +102,21 @@ RubyReactor.configure do |config|
   # Logger configuration
   config.logger = Logger.new($stdout)
 end
+```
+
+
+## Quick Start
+
+```ruby
+class HelloReactor < RubyReactor::Reactor
+  step :greet do
+    run { Success("Hello from Ruby Reactor!") }
+  end
+  returns :greet
+end
+
+result = HelloReactor.run
+puts result.value  # => "Hello from Ruby Reactor!"
 ```
 
 ## Web Dashboard
