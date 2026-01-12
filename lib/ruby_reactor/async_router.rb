@@ -19,7 +19,7 @@ module RubyReactor
     # rubocop:disable Metrics/ParameterLists
     def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                        strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
-                                       batch_size: nil, serialized_context: nil)
+                                       batch_size: nil, serialized_context: nil, fail_fast: nil)
       RubyReactor::SidekiqWorkers::MapElementWorker.perform_async(
         {
           "map_id" => map_id,
@@ -32,7 +32,8 @@ module RubyReactor
           "parent_reactor_class_name" => parent_reactor_class_name,
           "step_name" => step_name,
           "batch_size" => batch_size,
-          "serialized_context" => serialized_context
+          "serialized_context" => serialized_context,
+          "fail_fast" => fail_fast
         }
       )
     end
@@ -75,9 +76,8 @@ module RubyReactor
     end
     # rubocop:enable Metrics/ParameterLists
 
-    # rubocop:disable Metrics/ParameterLists
     def self.perform_map_execution_async(map_id:, serialized_inputs:, reactor_class_info:, strict_ordering:,
-                                         parent_context_id:, parent_reactor_class_name:, step_name:)
+                                         parent_context_id:, parent_reactor_class_name:, step_name:, fail_fast: nil)
       RubyReactor::SidekiqWorkers::MapExecutionWorker.perform_async(
         {
           "map_id" => map_id,
@@ -86,10 +86,10 @@ module RubyReactor
           "strict_ordering" => strict_ordering,
           "parent_context_id" => parent_context_id,
           "parent_reactor_class_name" => parent_reactor_class_name,
-          "step_name" => step_name
+          "step_name" => step_name,
+          "fail_fast" => fail_fast
         }
       )
     end
-    # rubocop:enable Metrics/ParameterLists
   end
 end

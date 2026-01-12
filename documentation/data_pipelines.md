@@ -43,53 +43,35 @@ class UserTransformationReactor < RubyReactor::Reactor
 end
 ```
 
-## Async Execution
+## Dynamic Sources & ActiveRecord
 
-For long-running or resource-intensive tasks, you can offload processing to background jobs using Sidekiq.
-
-To enable async execution, simply add the `async true` directive to your map definition.
+The `map` step supports a dynamic `source` block, which is particularly useful when working with ActiveRecord or when the collection depends on input arguments. Instead of passing a static collection, you can define a block that returns an Enumerable or an `ActiveRecord::Relation`.
 
 ```ruby
-map :process_orders do
-  source input(:orders)
-  argument :order, element(:process_orders)
-  
-  # Enable async execution via Sidekiq
-  async true
+map :process_products do
+  argument :filter, input(:filter)
 
-  step :charge_card do
-    argument :order, input(:order)
-    run { PaymentService.charge(args[:order]) }
+  # Dynamic source block
+  source do |args|
+    # This block executes at runtime
+    threshold = args[:filter][:stock]
+    Product.where("stock >= ?", threshold)
   end
 
-  returns :charge_card
+  argument :product, element(:process_products)
+  async true, batch_size: 100
+
+  step :process do
+    # ...
+  end
+  
+  returns :process
 end
 ```
 
-### Execution Flow
+When an `ActiveRecord::Relation` is returned, RubyReactor efficiently batches the query using database-level `OFFSET` and `LIMIT` based on the configured `batch_size`, preventing memory bloat by not loading all records at once.
 
-```mermaid
-sequenceDiagram
-    participant Reactor
-    participant Redis
-    participant Sidekiq
-    participant Worker
-
-    Reactor->>Redis: Store Context
-    Reactor->>Sidekiq: Enqueue MapElementWorkers
-    Note over Reactor: Returns AsyncResult immediately
-    
-    loop For each element
-        Sidekiq->>Worker: Process Element
-        Worker->>Redis: Update Element Result
-    end
-
-    Worker->>Sidekiq: Enqueue MapCollectorWorker (when done)
-    Sidekiq->>Worker: Run Collector
-    Worker->>Redis: Store Final Result
-```
-
-## Batch Processing
+## Batch Processing Mechanism
 
 When processing large datasets asynchronously, you can control the parallelism using `batch_size`. This limits how many Sidekiq jobs are enqueued simultaneously, preventing system overload.
 
@@ -107,10 +89,42 @@ map :bulk_import do
 end
 ```
 
-**How it works:**
-1. The system initially enqueues `batch_size` jobs.
-2. As each job completes, it triggers the next job in the queue.
-3. This maintains a steady stream of processing without flooding the queue.
+### Back Pressure & Resource Management
+
+When `async true` is used with a `batch_size`, RubyReactor implements an intelligent **back pressure** mechanism. Instead of flooding Redis and Sidekiq with millions of jobs immediately (which is the standard behavior for many background job systems), the system processes data in controlled chunks.
+
+This approach provides critical benefits for stability and scalability:
+
+1.  **Memory Efficiency**: By using `ActiveRecord` batching (`LIMIT` / `OFFSET`), only the current batch of records is loaded into memory. This allows processing datasets larger than available RAM.
+2.  **Redis Protection**: Prevents "Queue Explosion". Only a small number of job arguments are stored in Redis at any time, preventing OOM errors in your Redis instance.
+3.  **Database Stability**: Database load is distributed over time rather than spiking all at once.
+
+**Visualizing the Flow:**
+
+```mermaid
+graph TD
+    Start[Start Map] -->|Batch Size: N| BatchManager
+    
+    subgraph "Back Pressure Loop"
+        BatchManager[Batch Manager] -->|Fetch N Items| DB[(Database)]
+        DB --> Records
+        Records -->|Enqueue N Jobs| Sidekiq
+        
+        Sidekiq --> W1[Worker 1]
+        Sidekiq --> W2[Worker 2]
+        
+        W1 -.->|Complete| Check{Batch Done?}
+        W2 -.->|Complete| Check
+        
+        Check -->|No| Wait[Wait]
+        Check -->|Yes| Next[Trigger Next Batch]
+        Next --> BatchManager
+    end
+    
+    BatchManager -->|No More Items| Finish[Aggregator]
+```
+
+This ensures that the system works at the speed of your workers, not the speed of the enqueueing process, maintaining a constant and manageable resource footprint regardless of dataset size.
 
 ## Error Handling
 
@@ -128,9 +142,9 @@ map :strict_processing do
 end
 ```
 
-### Collecting Partial Results
+### Collecting Results (Successes & Failures)
 
-If you want to process all elements regardless of failures, set `fail_fast false`. You can then use a `collect` block to handle successes and failures separately.
+If you want to process all elements regardless of failures, set `fail_fast false`. The map step returns a `ResultEnumerator` that allows you to easily separate successful executions from failures.
 
 ```ruby
 map :resilient_processing do
@@ -145,18 +159,39 @@ map :resilient_processing do
   end
 
   returns :risky_operation
+end
 
-  # Aggregate results
-  collect do |results|
-    # results is an array of Result objects (Success or Failure)
-    successful = results.select(&:success?).map(&:value)
-    failed = results.select(&:failure?).map(&:error)
+step :analyze_results do
+  argument :results, result(:resilient_processing)
+  
+  run do |args|
+    col = args[:results]
+    
+    # Iterate over successful results
+    col.successes.each do |value|
+      # 'value' is the direct return value of the map element
+      puts "Success: #{value}"
+    end
 
-    {
-      processed: successful,
-      errors: failed,
-      success_rate: successful.length.to_f / results.length
-    }
+    # Iterate over failures
+    col.failures.each do |error|
+      # 'error' is the failure object/message itself
+      puts "Error: #{error}"
+    end
+
+    # Note: Iterating the collection directly yields wrapped objects
+    col.each do |result|
+      if result.is_a?(RubyReactor::Success)
+        puts "Wrapped Value: #{result.value}"
+      else
+        puts "Wrapped Error: #{result.error}"
+      end
+    end
+
+    Success({
+      success_count: col.successes.count,
+      failure_count: col.failures.count
+    })
   end
 end
 ```
@@ -192,33 +227,4 @@ end
 - **Async Mode**: Retries are handled by requeuing the Sidekiq job with a delay. This is non-blocking and efficient.
 - **Sync Mode**: Retries happen immediately within the execution thread (blocking).
 
-## Visualization
 
-### Async Batch Execution
-
-```mermaid
-graph TD
-    Start[Start Map] --> Init[Initialize Batch]
-    Init --> Q1["Queue Initial Batch<br/>(Size N)"]
-    
-    subgraph Workers
-        W1[Worker 1]
-        W2[Worker 2]
-        W3[Worker ...]
-    end
-    
-    Q1 --> W1
-    Q1 --> W2
-    
-    W1 -->|Complete| Next1{More Items?}
-    W2 -->|Complete| Next2{More Items?}
-    
-    Next1 -->|Yes| Q2[Queue Next Item]
-    Next2 -->|Yes| Q2
-    
-    Q2 --> W3
-    
-    Next1 -->|No| Check{All Done?}
-    Check -->|Yes| Collect[Run Collector]
-    Collect --> Finish[Final Result]
-```

@@ -74,19 +74,31 @@ RSpec.describe "Map fail_fast Option" do
       end
     end
 
-    it "processes all elements and returns only successful values by default" do
+    it "processes all elements and returns all results (successes and failures)" do
       result = FailFastFalseReactor.run(items: %w[hello error world])
 
       expect(result).to be_a(RubyReactor::Success)
-      # Default behavior: only successful values are returned
-      expect(result.value[:processed]).to eq(%w[HELLO WORLD])
+      # New behavior: returns all Result objects so errors aren't swallowed silently
+      results = result.value[:processed]
+      expect(results.length).to eq(3)
+      expect(results[0]).to be_a(RubyReactor::Success)
+      expect(results[0].value).to eq("HELLO")
+      expect(results[1]).to be_a(RubyReactor::Failure)
+      expect(results[1].error).to include("Failed: error")
+      expect(results[2]).to be_a(RubyReactor::Success)
+      expect(results[2].value).to eq("WORLD")
     end
 
     it "processes all items successfully when no errors" do
       result = FailFastFalseReactor.run(items: %w[hello world])
 
       expect(result).to be_a(RubyReactor::Success)
-      expect(result.value[:processed]).to eq(%w[HELLO WORLD])
+      expect(result).to be_a(RubyReactor::Success)
+      # When all succeed, we get an array of Success objects (implied by Result wrapper logic in map_step)
+      # Wait, inline map with fail_fast: false returns [Result, Result].
+      # We need to unwrap them if we want to check values easily, or just check the objects.
+      results = result.value[:processed]
+      expect(results.map(&:value)).to eq(%w[HELLO WORLD])
     end
   end
 
@@ -300,6 +312,82 @@ RSpec.describe "Map fail_fast Option" do
       expect(collected[:invalid_records][0][:error]).to include("Missing name")
       expect(collected[:invalid_records][0][:error]).to include("Invalid email")
       expect(collected[:invalid_records][1][:error]).to include("Age out of range")
+    end
+  end
+
+  # ============================================================================
+  # Test reproduction of Async Map Fail Fast Hang
+  # ============================================================================
+
+  describe "Reproduction of Async Map Fail Fast Hang" do
+    class AsyncFailFastReactor < RubyReactor::Reactor
+      input :items
+      input :fail_item
+
+      map :processed do
+        source input(:items)
+        argument :item, element(:processed)
+        argument :fail_item, input(:fail_item)
+
+        # Default fail_fast is true
+        async true, batch_size: 2
+
+        step :process do
+          argument :val, input(:item)
+          argument :fail_val, input(:fail_item)
+
+          run do |args|
+            if args[:val] == args[:fail_val]
+              RubyReactor::Failure("Simulated failure for #{args[:val]}")
+            else
+              RubyReactor::Success(args[:val] * 2)
+            end
+          end
+        end
+
+        # No returns needed, map returns result of last step (or collection)
+      end
+    end
+
+    it "fails the reactor when an item fails in async map with fail_fast: true" do
+      # Manually create context and SAVE IT
+      context = RubyReactor::Context.new(
+        { items: [1, 2, 3, 4, 5], fail_item: 3 },
+        AsyncFailFastReactor
+      )
+
+      # Save context manually to ensure it exists for Reactor.find
+      storage = RubyReactor.configuration.storage_adapter
+      serialized_ctx = RubyReactor::ContextSerializer.serialize(context)
+      storage.store_context(context.context_id, serialized_ctx, AsyncFailFastReactor.name)
+
+      # Trigger execution via async router
+      # This mimics Reactor#run for async reactors (but we do it manually to ensure context persistence and ID availability)
+      RubyReactor.configuration.async_router.perform_async(serialized_ctx)
+
+      # Drain Sidekiq jobs
+      # We need to drain multiple times/types because:
+      # 1. MapExecutionWorker acts as the "Manager" dispatching batches
+      # 2. MapElementWorker executes the individual elements
+      # 3. MapCollectorWorker waits for results
+
+      # Initial dispatch
+      RubyReactor::SidekiqWorkers::MapExecutionWorker.drain
+
+      # Process elements (Batches)
+      RubyReactor::SidekiqWorkers::MapElementWorker.drain
+
+      # Collector
+      RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+
+      # Reload reactor from storage to check status
+      stored_reactor = AsyncFailFastReactor.find(context.context_id)
+
+      # If bug exists, status will be 'running' because Collector is waiting for all 5 results,
+      # but only 1-4 might have run (3 failed), and 5 was skipped due to fail_fast check in Execution.
+
+      expect(stored_reactor.context.status).to eq("failed")
+      expect(stored_reactor.context.failure_reason[:message]).to include("Simulated failure for 3")
     end
   end
 end

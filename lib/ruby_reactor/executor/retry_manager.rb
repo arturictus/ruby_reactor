@@ -39,7 +39,17 @@ module RubyReactor
 
         # Serialize context and requeue the job
         # Use root context if available to ensure we serialize the full tree
-        context_to_serialize = @context.root_context || @context
+        # BUT for map elements (which have map_metadata), we must serialize the element context itself
+
+        context_to_serialize = if @context.map_metadata
+                                 @context
+                               else
+                                 @context.root_context || @context
+                               end
+
+        puts "SERIALIZING CONTEXT: #{context_to_serialize.reactor_class.name}"
+        puts "INPUTS KEYS: #{context_to_serialize.inputs.keys}" if context_to_serialize.respond_to?(:inputs)
+
         reactor_class_name = context_to_serialize.reactor_class.name
 
         serialized_context = ContextSerializer.serialize(context_to_serialize)

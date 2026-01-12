@@ -217,7 +217,16 @@ RSpec.describe "Map Async Retry Behavior" do
       storage = RubyReactor.configuration.storage_adapter
       context = storage.retrieve_context(context_id, AsyncBatchRetryMapReactorV2.name)
 
-      expect(context["intermediate_results"]["processed"]).to eq(%w[HELLO WORLD FOO BAR])
+      result_data = context["intermediate_results"]["processed"]
+      expect(result_data).to be_a(Hash)
+      expect(result_data["_type"]).to eq("Map::ResultEnumerator")
+
+      enumerator = RubyReactor::ContextSerializer.deserialize_value(result_data)
+      puts "ENUMERATOR: #{enumerator.class}"
+      puts "ENUMERATOR DETAILS: #{enumerator.inspect}"
+      results_array = enumerator.to_a
+      puts "RESULTS ARRAY: #{results_array.inspect}"
+      expect(results_array.map(&:value)).to eq(%w[HELLO WORLD FOO BAR])
     end
 
     it "respects batch_size during retries" do
@@ -295,8 +304,8 @@ RSpec.describe "Map Async Retry Behavior" do
 
           {
             successful: successes,
-            failed_count: failures.length,
-            total: results.length
+            failed_count: failures.count,
+            total: results.count
           }
         end
       end

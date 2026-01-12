@@ -37,7 +37,7 @@ RSpec.describe "Interrupt validation with max_attempts" do
       # Expected
     end
 
-    context = reactor_class.find(reactor_id).context
+    reactor_class.find(reactor_id).context
     context = reactor_class.find(reactor_id).context
     expect(context.status).to eq("failed")
 
