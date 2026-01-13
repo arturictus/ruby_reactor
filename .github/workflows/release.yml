@@ -22,7 +22,7 @@ jobs:
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: ruby # uses latest stable
+          ruby-version: 3.3 # pinned to 3.3 to support unicode-emoji < 4.0 requirement
           bundler-cache: true
 
       - name: Run tests
