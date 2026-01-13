@@ -5,15 +5,15 @@
 
 # RubyReactor
 
+A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq** for asynchronous execution and **Redis** for state persistence.
+
+![Payment workflow reactor](documentation/images/payment_workflow.png)
+
 ## Why Ruby Reactor?
 
 Building complex business transactions often results in spaghetti code or brittle "god classes." Ruby Reactor solves this by implementing the **Saga Pattern** in a lightweight, developer-friendly package. It lets you define workflows as clear, dependency-driven steps without the boilerplate of heavy enterprise frameworks.
 
 The key value is **Reliability**: if any part of your workflow fails, Ruby Reactor automatically triggers compensation logic to undo previous steps, ensuring your system never ends up in a corrupted half-state. Whether you're coordinating microservices or monolith modules, you get atomic-like consistency with background processing built-in.
-
-A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq** for asynchronous execution and **Redis** for state persistence.
-
-![Payment workflow reactor](documentation/images/payment_workflow.png)
 
 ## Features
 
