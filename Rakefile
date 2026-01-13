@@ -30,8 +30,8 @@ namespace :server do
   end
 end
 
-# require "rubocop/rake_task"
+require "rubocop/rake_task"
 
-# RuboCop::RakeTask.new
+RuboCop::RakeTask.new
 
 task default: %i[spec rubocop]
