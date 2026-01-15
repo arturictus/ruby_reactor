@@ -4,6 +4,9 @@ require "zeitwerk"
 require "pathname"
 require_relative "ruby_reactor/registry"
 require_relative "ruby_reactor/utils/code_extractor"
+require_relative "ruby_reactor/dsl/lockable" # Add this
+require_relative "ruby_reactor/lock"
+require_relative "ruby_reactor/semaphore"
 
 # Load dry-validation if available (for validation features)
 begin

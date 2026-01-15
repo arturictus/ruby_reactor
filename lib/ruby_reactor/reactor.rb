@@ -4,6 +4,7 @@ module RubyReactor
   # rubocop:disable Metrics/ClassLength
   class Reactor
     include RubyReactor::Dsl::Reactor
+    include RubyReactor::Dsl::Lockable
 
     attr_reader :context, :result, :undo_trace, :execution_trace
 
