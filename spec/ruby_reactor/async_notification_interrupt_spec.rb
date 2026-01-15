@@ -71,8 +71,8 @@ RSpec.describe "Async Notification Interrupt Reactor" do
 
   context "with manual async execution" do
     before do
-      # Use real AsyncRouter to test actual Sidekiq queuing
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
+      # Use real SidekiqAdapter to test actual Sidekiq queuing
+      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
     end
 
     it "returns AsyncResult initially, then pauses at interrupt after worker runs" do

@@ -127,5 +127,9 @@ module Support
     end
     # rubocop:enable Metrics/ParameterLists
     # rubocop:enable Lint/UnusedMethodArgument
+
+    def self.inline!
+      yield
+    end
   end
 end

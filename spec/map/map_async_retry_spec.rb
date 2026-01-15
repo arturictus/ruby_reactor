@@ -104,7 +104,7 @@ RSpec.describe "Map Async Retry Behavior" do
       # No, `MapCollectorWorker` calls `Map::Collector.collect`.
       # `Map::Collector` stores the result in `intermediate_results` or calls `resume_execution`.
 
-      # If we want to check the final result of the reactor, we might need to look at how `AsyncRouter` handles
+      # If we want to check the final result of the reactor, we might need to look at how `SidekiqAdapter` handles
       # the final result?
       # Usually, the final result is returned to the caller if sync, but here it's async.
       # The caller (us) only has the initial AsyncResult.

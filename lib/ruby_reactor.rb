@@ -20,7 +20,7 @@ rescue LoadError
 end
 
 loader = Zeitwerk::Loader.for_gem
-loader.inflector.inflect("api" => "API")
+loader.inflector.inflect("api" => "API", "rspec" => "RSpec")
 loader.setup
 
 module RubyReactor

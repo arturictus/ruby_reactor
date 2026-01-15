@@ -29,7 +29,7 @@ RSpec.describe "Map Infinite Loop Prevention" do
   it "processes all items exactly once without looping" do
     # Configure to use real Sidekiq execution (inline)
     original_router = RubyReactor.configuration.async_router
-    RubyReactor.configure { |c| c.async_router = RubyReactor::AsyncRouter }
+    RubyReactor.configure { |c| c.async_router = RubyReactor::SidekiqAdapter }
     Sidekiq::Testing.inline!
 
     begin

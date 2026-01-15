@@ -31,7 +31,7 @@ module RubyReactor
           handle_step_failure_error(error)
         when Error::InputValidationError
           # Preserve validation errors as-is for proper error handling
-          RubyReactor.Failure(error)
+          RubyReactor.Failure(error, validation_errors: error.field_errors)
         when Error::Base
           # Other errors need rollback
           @compensation_manager.rollback_completed_steps

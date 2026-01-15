@@ -15,7 +15,7 @@ RSpec.describe RubyReactor::Step::MapStep do
   end
 
   let(:storage_adapter) { instance_double(RubyReactor::Storage::RedisAdapter) }
-  let(:async_router) { class_double(RubyReactor::AsyncRouter) }
+  let(:async_router) { class_double(RubyReactor::SidekiqAdapter) }
 
   before do
     allow(RubyReactor.configuration).to receive_messages(storage_adapter: storage_adapter, async_router: async_router)

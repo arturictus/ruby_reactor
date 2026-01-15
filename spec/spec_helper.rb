@@ -46,8 +46,12 @@ RSpec.configure do |config|
     Sidekiq::Worker.clear_all
 
     # Flush Redis
-    redis = Redis.new(url: "redis://localhost:6780")
-    redis.flushdb
+    begin
+      redis = Redis.new(url: "redis://localhost:6780")
+      redis.flushdb
+    rescue Redis::CannotConnectError, Errno::ECONNREFUSED
+      # Ignore if Redis is not available
+    end
   end
 
   config.after do

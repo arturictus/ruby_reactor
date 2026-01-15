@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module RubyReactor
-  class AsyncRouter
+  class SidekiqAdapter
     def self.perform_async(serialized_context, reactor_class_name = nil, intermediate_results: {})
       job_id = SidekiqWorkers::Worker.perform_async(serialized_context, reactor_class_name)
       context = ContextSerializer.deserialize(serialized_context)
@@ -90,6 +90,14 @@ module RubyReactor
           "fail_fast" => fail_fast
         }
       )
+    end
+
+    def self.inline!(&block)
+      if defined?(Sidekiq::Testing)
+        Sidekiq::Testing.inline!(&block)
+      else
+        yield
+      end
     end
   end
 end

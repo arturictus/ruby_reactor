@@ -270,7 +270,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
     end
 
     before do
-      allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
+      allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
       Sidekiq::Testing.fake!
     end
 
