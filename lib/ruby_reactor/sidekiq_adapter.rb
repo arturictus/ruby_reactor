@@ -68,6 +68,23 @@ module RubyReactor
     def self.perform_map_element_in(delay, map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                     strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
                                     batch_size: nil, serialized_context: nil)
+      if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
+        params = {
+          "map_id" => map_id,
+          "element_id" => element_id,
+          "index" => index,
+          "serialized_inputs" => serialized_inputs,
+          "reactor_class_info" => reactor_class_info,
+          "strict_ordering" => strict_ordering,
+          "parent_context_id" => parent_context_id,
+          "parent_reactor_class_name" => parent_reactor_class_name,
+          "step_name" => step_name,
+          "batch_size" => batch_size,
+          "serialized_context" => serialized_context
+        }
+        return RubyReactor::SidekiqWorkers::MapElementWorker.new.perform(params)
+      end
+
       RubyReactor::SidekiqWorkers::MapElementWorker.perform_in(
         delay,
         {
@@ -145,18 +162,6 @@ module RubyReactor
         }
       )
       RubyReactor::AsyncResult.new(job_id: job_id)
-    end
-
-    def self.inline?
-      defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
-    end
-
-    def self.inline!(&block)
-      if defined?(Sidekiq::Testing)
-        Sidekiq::Testing.inline!(&block)
-      else
-        yield
-      end
     end
   end
 end

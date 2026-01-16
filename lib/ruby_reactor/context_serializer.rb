@@ -37,6 +37,8 @@ module RubyReactor
           { "_type" => "Failure", "error" => serialize_value(value.error), "retryable" => value.retryable }
         when RubyReactor::Context
           { "_type" => "Context", "value" => value.serialize_for_retry }
+        when Symbol
+          { "_type" => "Symbol", "value" => value.to_s }
         when Time
           { "_type" => "Time", "value" => value.iso8601 }
         when BigDecimal
@@ -97,6 +99,8 @@ module RubyReactor
               RubyReactor::Failure(deserialize_value(value["error"]), retryable: value["retryable"])
             when "Context"
               Context.deserialize_from_retry(value["value"])
+            when "Symbol"
+              value["value"].to_sym
             when "Time"
               Time.iso8601(value["value"])
             when "BigDecimal"
@@ -130,15 +134,41 @@ module RubyReactor
                 strict_ordering: value["strict_ordering"],
                 batch_size: value["batch_size"]
               )
+            when "Symbol"
+              value["value"].to_sym
+            when "Time"
+              Time.iso8601(value["value"])
             else
-              value
+              # Unknown type wrapper, return as is (but deserialize values)
+              value.transform_values { |v| deserialize_value(v) }
             end
           else
-            # Regular hash - symbolize all keys recursively
+            # Regular Hash
             value.transform_keys(&:to_sym).transform_values { |v| deserialize_value(v) }
           end
         when Array
           value.map { |v| deserialize_value(v) }
+        else
+          value
+        end
+      end
+
+      # Simplifies data for public API usage (removes wrappers, flattens types)
+      def simplify_for_api(value)
+        case value
+        when Hash
+          value.each_with_object({}) do |(k, v), hash|
+            hash[k.to_s] = simplify_for_api(v)
+          end
+        when Array
+          value.map { |v| simplify_for_api(v) }
+        when Success, Failure
+          simplify_for_api(value.to_h)
+        when Context
+          # Specifically for Context, we want its to_h representation
+          simplify_for_api(value.to_h)
+        when Symbol
+          value.to_s
         else
           value
         end

@@ -33,6 +33,14 @@ module RubyReactor
       @root_context = nil
     end
 
+    def finished?
+      %w[completed failed cancelled].include?(@status.to_s)
+    end
+
+    def failed?
+      @status.to_s == "failed"
+    end
+
     def get_input(name, path = nil)
       value = @inputs[name.to_sym] || @inputs[name.to_s]
       return nil if value.nil?

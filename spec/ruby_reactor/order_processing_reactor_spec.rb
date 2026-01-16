@@ -59,7 +59,7 @@ RSpec.describe RubyReactor::OrderProcessingReactor do
                              fail_at: :reserve_inventory, success_at_retry: 2)
         expect(result).to be_a(RubyReactor::Success)
         expect(result.value[:reserve_inventory]).to eq({ product_id: "prod_456", status: "reserved", quantity: 2 })
-        expect(reactor.context.retry_context.step_attempts["reserve_inventory"]).to eq(2)
+        expect(reactor.context.retry_context.attempts_for_step("reserve_inventory")).to eq(2)
       end
     end
 

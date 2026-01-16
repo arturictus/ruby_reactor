@@ -13,7 +13,7 @@ module RubyReactor
       end
 
       def execute_all_steps
-        until @dependency_graph.all_completed?
+        until @dependency_graph.all_completed? || @context.finished?
           ready_steps = @dependency_graph.ready_steps
 
           if ready_steps.empty?
@@ -58,11 +58,70 @@ module RubyReactor
 
         if step_config.interrupt?
           handle_interrupt_step(step_config)
-        elsif step_config.async? && !(@context.inline_async_execution || configuration.async_router.inline?)
-          handle_async_step(step_config)
+        elsif step_config.async? && !@context.inline_async_execution
+          result = handle_async_step(step_config)
+          if result.is_a?(RubyReactor::AsyncResult)
+            result
+          else
+            # Inline execution detected.
+            # Refresh context from storage to get the results from the worker
+            refresh_context_from_storage
+            return result if result.is_a?(RubyReactor::Failure)
+            return reconstruct_failure(@context.failure_reason) if @context.failed?
+
+            nil # Continue to next step in execute_all_steps
+          end
         else
           execute_step_with_retry(step_config)
         end
+      end
+
+      private
+
+      def refresh_context_from_storage
+        storage = configuration.storage_adapter
+        reactor_class_name = @reactor_class.name
+        serialized = storage.retrieve_context(@context.context_id, reactor_class_name)
+        return unless serialized
+
+        reloaded_context = Context.deserialize_from_retry(serialized)
+
+        # Update local context state
+        @context.status = reloaded_context.status
+        @context.failure_reason = reloaded_context.failure_reason
+        @context.cancelled = reloaded_context.cancelled
+        @context.cancellation_reason = reloaded_context.cancellation_reason
+        @context.intermediate_results.merge!(reloaded_context.intermediate_results)
+        @context.execution_trace = reloaded_context.execution_trace
+        @context.private_data.merge!(reloaded_context.private_data)
+        @context.retry_context = reloaded_context.retry_context
+        @context.composed_contexts.merge!(reloaded_context.composed_contexts)
+        @context.map_operations.merge!(reloaded_context.map_operations)
+        @context.map_metadata = reloaded_context.map_metadata
+
+        # Also need to mark step as completed in dependency graph
+        reloaded_context.intermediate_results.each_key do |step_name|
+          @dependency_graph.complete_step(step_name.to_sym)
+        end
+      end
+
+      def reconstruct_failure(data)
+        return nil unless data.is_a?(Hash)
+
+        RubyReactor::Failure.new(
+          data[:message] || data["message"],
+          step_name: data[:step_name] || data["step_name"],
+          inputs: data[:inputs] || data["inputs"],
+          redact_inputs: data[:redact_inputs] || data["redact_inputs"] || [],
+          backtrace: data[:backtrace] || data["backtrace"],
+          reactor_name: data[:reactor_name] || data["reactor_name"],
+          step_arguments: data[:step_arguments] || data["step_arguments"],
+          exception_class: data[:exception_class] || data["exception_class"],
+          file_path: data[:file_path] || data["file_path"],
+          line_number: data[:line_number] || data["line_number"],
+          code_snippet: data[:code_snippet] || data["code_snippet"],
+          validation_errors: data[:validation_errors] || data["validation_errors"]
+        )
       end
 
       def execute_step_with_retry(step_config)
@@ -155,24 +214,11 @@ module RubyReactor
 
         serialized_context = ContextSerializer.serialize(context_to_serialize)
 
-        result = configuration.async_router.perform_async(
+        configuration.async_router.perform_async(
           serialized_context,
           reactor_class_name,
           intermediate_results: @context.intermediate_results
         )
-
-        # Handle different result types from async router
-        case result
-        when RubyReactor::AsyncResult
-          # Production behavior: return async result to caller
-          result
-        else
-          # Unexpected result type, treat as error
-          raise Error::ValidationError.new(
-            "Unexpected result type from async router: #{result.class}",
-            context: @context
-          )
-        end
       end
 
       def handle_interrupt_step(step_config)

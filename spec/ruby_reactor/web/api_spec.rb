@@ -71,8 +71,8 @@ RSpec.describe RubyReactor::Web::API, type: :request do
         expect(json["composed_contexts"]).not_to be_empty
         expect(json["composed_contexts"]).to have_key("sub_reactor")
 
-        # Serialized Context has a "value" wrapper
-        sub_context = json["composed_contexts"]["sub_reactor"]["context"]["value"]
+        # Composed Context is now returned cleaned and flat
+        sub_context = json["composed_contexts"]["sub_reactor"]["context"]
         expect(sub_context).not_to be_nil
         expect(sub_context["intermediate_results"]).to have_key("inner_step")
         expect(sub_context["intermediate_results"]["inner_step"]).to eq(11)

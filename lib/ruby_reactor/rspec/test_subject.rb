@@ -57,8 +57,8 @@ module RubyReactor
         end
 
         @run_result = nil
-        if @process_jobs
-          RubyReactor.configuration.async_router.inline! do
+        if @process_jobs && defined?(Sidekiq::Testing)
+          Sidekiq::Testing.inline! do
             @run_result = execution_class.run(@inputs)
           end
         else

@@ -39,6 +39,10 @@ module RubyReactor
     def failure?
       false
     end
+
+    def to_h
+      { success: true, value: @value }
+    end
   end
 
   class Failure
@@ -149,6 +153,24 @@ module RubyReactor
 
     def to_s
       message
+    end
+
+    def to_h
+      {
+        success: false,
+        error: error_message,
+        step_name: @step_name,
+        inputs: @inputs,
+        redact_inputs: @redact_inputs,
+        reactor_name: @reactor_name,
+        step_arguments: @step_arguments,
+        exception_class: @exception_class,
+        file_path: @file_path,
+        line_number: @line_number,
+        code_snippet: @code_snippet,
+        validation_errors: @validation_errors,
+        backtrace: @backtrace
+      }
     end
 
     def filter_backtrace(backtrace)

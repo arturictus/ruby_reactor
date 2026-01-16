@@ -78,8 +78,8 @@ module RubyReactor
         serialized_context = ContextSerializer.serialize(context)
         result = configuration.async_router.perform_async(serialized_context)
 
-        if configuration.async_router.inline?
-          # Reload state from storage
+        unless result.is_a?(RubyReactor::AsyncResult)
+          # Reload state from storage (inline execution detected)
           reloaded = self.class.find(context.context_id)
           @context = reloaded.context
           # Synchronize shadow variables from the reloaded context
