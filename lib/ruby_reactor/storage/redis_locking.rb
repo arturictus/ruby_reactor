@@ -71,7 +71,12 @@ module RubyReactor
 
       def semaphore_acquire(key, timeout: 0)
         # BLPOP returns [key, element] or nil (if timeout)
-        result = @redis.blpop(key, timeout: timeout)
+        # If timeout is 0, we use lpop to make it non-blocking
+        result = if timeout.to_f > 0
+                   @redis.blpop(key, timeout: timeout)
+                 else
+                   @redis.lpop(key)
+                 end
         !result.nil?
       end
 

@@ -53,6 +53,8 @@ module RubyReactor
       update_context_status(@result)
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
       @result
+    rescue RubyReactor::Lock::AcquisitionError, RubyReactor::Semaphore::AcquisitionError => e
+      raise e
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
       update_context_status(@result)
@@ -78,6 +80,8 @@ module RubyReactor
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
 
       @result
+    rescue RubyReactor::Lock::AcquisitionError, RubyReactor::Semaphore::AcquisitionError => e
+      raise e
     rescue StandardError => e
       handle_resume_error(e)
       update_context_status(@result)
@@ -114,15 +118,18 @@ module RubyReactor
     private
 
     def acquire_locks
-      return unless @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
+      acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
+      acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+    end
 
+    def acquire_exclusive_lock
       config = @reactor_class.lock_config
       key = config[:key_proc].call(@context.inputs)
       ttl = config[:ttl]
       wait = config[:wait]
 
-      # Use execution ID as owner to allow re-entrancy within same execution context
-      owner = @context.context_id
+      # Use root context ID as owner to allow re-entrancy across nested reactors
+      owner = (@context.root_context || @context).context_id
 
       lock = RubyReactor::Lock.new(key, owner: owner, ttl: ttl, wait: wait)
 
@@ -131,6 +138,22 @@ module RubyReactor
       rescue RubyReactor::Lock::AcquisitionError => e
         # If we can't acquire the lock, we raise the error.
         # Async workers (Sidekiq) should catch this and reschedule/snooze the job.
+        raise e
+      end
+    end
+
+    def acquire_semaphore
+      config = @reactor_class.semaphore_config
+      key = config[:key_proc].call(@context.inputs)
+      limit = config[:limit]
+      wait = config[:wait]
+
+      semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: wait)
+
+      begin
+        semaphore.acquire
+      rescue RubyReactor::Semaphore::AcquisitionError => e
+        # Same as lock acquisition failure
         raise e
       end
     end

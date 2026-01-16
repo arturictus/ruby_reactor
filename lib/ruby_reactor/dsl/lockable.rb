@@ -8,7 +8,7 @@ module RubyReactor
       end
 
       module ClassMethods
-        attr_reader :lock_config
+        attr_reader :lock_config, :semaphore_config
 
         # Configure locking for this reactor
         # @param ttl [Integer] Time to live in seconds (default: 60)
@@ -22,10 +22,16 @@ module RubyReactor
           }
         end
 
-        # Helper method for semaphores (future extension)
+        # Configure semaphore for this reactor
+        # @param limit [Integer] Maximum concurrent executions
+        # @param wait [Integer] Time to wait for a token in seconds (default: 0)
+        # @yield [inputs] Block that returns the semaphore key string
         def with_semaphore(limit:, wait: 0, &block)
-          # TODO: Implement semaphore config separation if needed
-          # For now, we focus on exclusive locks as per immediate plan.
+          @semaphore_config = {
+            limit: limit,
+            wait: wait,
+            key_proc: block
+          }
         end
       end
     end
