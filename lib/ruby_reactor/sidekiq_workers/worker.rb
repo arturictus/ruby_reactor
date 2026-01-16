@@ -39,9 +39,7 @@ module RubyReactor
         executor = Executor.new(context.reactor_class, {}, context)
         executor.resume_execution
         executor.save_context
-
-        # Return the executor (which now has the result stored in it)
-        executor
+        executor.result
       end
 
       private

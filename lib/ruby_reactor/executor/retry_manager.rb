@@ -116,7 +116,7 @@ module RubyReactor
                    @context.root_context&.reactor_class&.async? ||
                    @context.inline_async_execution
 
-        if is_async && !@context.test_mode
+        if is_async && !(@context.test_mode || configuration.async_router.inline?)
           handle_async_retry(step_config, reactor_class, result)
         else
           handle_sync_retry(step_config, reactor_class, result)
@@ -124,7 +124,10 @@ module RubyReactor
       end
 
       def handle_async_retry(step_config, reactor_class, result)
-        requeue_job_for_step_retry(step_config, result.error, reactor_class)
+        requeue_result = requeue_job_for_step_retry(step_config, result.error, reactor_class)
+
+        return requeue_result if configuration.async_router.inline?
+
         RetryQueuedResult.new(
           step_config.name,
           @context.retry_context.attempts_for_step(step_config.name),
@@ -134,7 +137,7 @@ module RubyReactor
 
       def handle_sync_retry(step_config, reactor_class, result)
         delay = calculate_backoff_delay(step_config, result.error, reactor_class)
-        sleep(delay)
+        sleep(delay) unless configuration.async_router.inline?
         nil # continue loop
       end
 

@@ -28,7 +28,7 @@ RSpec.describe "Async Notification Interrupt Reactor" do
 
     execution = reactor_class.run
 
-    # In default test env (WorkerMock), run returns the result directly because it executes inline
+    # SidekiqAdapter now returns InterruptResult when inline! is active
     expect(execution).to be_a(RubyReactor::InterruptResult)
     execution_id = execution.execution_id
 
@@ -50,7 +50,7 @@ RSpec.describe "Async Notification Interrupt Reactor" do
       payload: { status: "approved" }
     )
 
-    # In default test env (WorkerMock), continue runs the async step inline and returns the result (Success)
+    # SidekiqAdapter now returns Success when inline! is active
     expect(result).to be_a(RubyReactor::Success)
 
     # Inline execution should have completed 'process_approval'

@@ -214,6 +214,10 @@ RSpec.describe RubyReactor::OrderProcessingReactor do
   end
 
   context "when executing asynchronously" do
+    around do |example|
+      Sidekiq::Testing.inline! { example.run }
+    end
+
     it_behaves_like "order processing reactor step execution"
   end
   # Additional tests for other steps would go here...

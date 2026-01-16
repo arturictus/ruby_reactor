@@ -46,8 +46,6 @@ RSpec.describe "Map Async Retry Behavior" do
     end
 
     it "retries failed elements in async mode" do
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(Support::WorkerMock)
-
       reactor = AsyncRetryMapReactorV2.new
       result = reactor.run(items: %w[hello world], fail_until_attempt: 3)
 
@@ -67,8 +65,6 @@ RSpec.describe "Map Async Retry Behavior" do
     end
 
     it "fails after max retries in async mode" do
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(Support::WorkerMock)
-
       reactor = AsyncRetryMapReactorV2.new
       result = reactor.run(items: %w[hello world], fail_until_attempt: 10)
 
@@ -201,8 +197,6 @@ RSpec.describe "Map Async Retry Behavior" do
     end
 
     it "retries failed elements with batch_size" do
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(Support::WorkerMock)
-
       reactor = AsyncBatchRetryMapReactorV2.new
       result = reactor.run(items: %w[hello world foo bar], fail_until_attempt: 3)
 
@@ -230,8 +224,6 @@ RSpec.describe "Map Async Retry Behavior" do
     end
 
     it "respects batch_size during retries" do
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(Support::WorkerMock)
-
       reactor = AsyncBatchRetryMapReactorV2.new
       result = reactor.run(items: %w[a b c d e], fail_until_attempt: 2)
 
@@ -312,8 +304,6 @@ RSpec.describe "Map Async Retry Behavior" do
     end
 
     it "retries all failing elements in async mode and collects results" do
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(Support::WorkerMock)
-
       reactor = AsyncFailFastFalseRetryReactorV2.new
       result = reactor.run(
         items: %w[hello world foo bar],
@@ -339,8 +329,6 @@ RSpec.describe "Map Async Retry Behavior" do
     end
 
     it "collects partial successes when some async retries are exhausted" do
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(Support::WorkerMock)
-
       reactor = AsyncFailFastFalseRetryReactorV2.new
       result = reactor.run(
         items: %w[hello world foo bar],

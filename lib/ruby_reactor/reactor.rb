@@ -72,8 +72,23 @@ module RubyReactor
       if self.class.async?
         # For async reactors, enqueue the job and return immediately
         context = Context.new(inputs, self.class)
+        @context = context
+        save_context
+
         serialized_context = ContextSerializer.serialize(context)
-        configuration.async_router.perform_async(serialized_context)
+        result = configuration.async_router.perform_async(serialized_context)
+
+        if configuration.async_router.inline?
+          # Reload state from storage
+          reloaded = self.class.find(context.context_id)
+          @context = reloaded.context
+          # Synchronize shadow variables from the reloaded context
+          @execution_trace = @context.execution_trace
+          # NOTE: undo_trace is not persisted in context, but execution_trace contains undo entries
+          @undo_trace = @execution_trace.select { |e| e[:type] == :undo }
+        end
+
+        result
       else
         # For sync reactors (potentially with async steps), execute normally
         context = @context.is_a?(Context) ? @context : nil

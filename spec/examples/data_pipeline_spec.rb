@@ -31,6 +31,10 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
   # ============================================================================
 
   describe "Complete ETL Pipeline" do
+    around do |example|
+      Sidekiq::Testing.inline! { example.run }
+    end
+
     let(:sample_users) do
       [
         { "id" => "1", "email" => "alice@example.com", "name" => "Alice Smith", "phone" => "+1-555-0100",

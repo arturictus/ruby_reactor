@@ -26,7 +26,7 @@ end
 RubyReactor.configure do |config|
   config.storage.adapter = :redis
   config.storage.redis_url = "redis://localhost:6780"
-  config.async_router = Support::WorkerMock
+  config.async_router = RubyReactor::SidekiqAdapter
 end
 
 RSpec.configure do |config|

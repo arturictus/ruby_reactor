@@ -7,11 +7,12 @@ module RubyReactor
 
       attr_reader :reactor_instance, :run_result
 
-      def initialize(reactor_class:, inputs:, context: {}, async: nil)
+      def initialize(reactor_class:, inputs:, context: {}, async: nil, process_jobs: true)
         @reactor_class = reactor_class
         @inputs = inputs
         @context_data = context
         @async = async
+        @process_jobs = process_jobs
         @interceptors = []
         @executed = false
       end
@@ -56,7 +57,11 @@ module RubyReactor
         end
 
         @run_result = nil
-        RubyReactor.configuration.async_router.inline! do
+        if @process_jobs
+          RubyReactor.configuration.async_router.inline! do
+            @run_result = execution_class.run(@inputs)
+          end
+        else
           @run_result = execution_class.run(@inputs)
         end
 
@@ -162,9 +167,11 @@ module RubyReactor
       private
 
       def prepare_execution_class
-        return @reactor_class if @interceptors.empty?
+        # Even if no interceptors, we might need to subclass to override async steps
+        return @reactor_class if @interceptors.empty? && @async != false
 
         interceptors = @interceptors
+        force_sync = @async == false
 
         Class.new(@reactor_class) do
           # 1. Copy configuration from parent
@@ -178,7 +185,19 @@ module RubyReactor
           # 2. Add Name Handling
           define_singleton_method(:name) { superclass.name }
 
-          # 3. Apply Interceptors
+          # 3. Apply Force Sync (Disable async on all steps)
+          if force_sync
+            @steps.each do |name, config|
+              next unless config.async?
+
+              # Clone and modify
+              new_config = config.clone
+              new_config.instance_variable_set(:@async, false)
+              @steps[name] = new_config
+            end
+          end
+
+          # 4. Apply Interceptors
           interceptors.each do |interceptor|
             next unless interceptor[:type] == :failure
 
@@ -191,11 +210,6 @@ module RubyReactor
             end
 
             # Create a new StepConfig with failure logic
-            # We can't easily clone StepConfig because it's immutable-ish helper.
-            # But we can modify the instance variables of the cloned config?
-            # Or creating a new StepConfig from attributes.
-            # Let's try modifying the clone since Ruby allows ivar access.
-
             step_config = step_config_orig.clone
 
             failure_impl = lambda do |input, context|

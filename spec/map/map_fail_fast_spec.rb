@@ -371,6 +371,9 @@ RSpec.describe "Map fail_fast Option" do
       # 2. MapElementWorker executes the individual elements
       # 3. MapCollectorWorker waits for results
 
+      # Main Worker
+      RubyReactor::SidekiqWorkers::Worker.drain
+
       # Initial dispatch
       RubyReactor::SidekiqWorkers::MapExecutionWorker.drain
 

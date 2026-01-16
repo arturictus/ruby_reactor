@@ -36,7 +36,8 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
   class HelpersAsyncStepReactor < RubyReactor::Reactor
     input :value
-    step :add_one, async: true do
+    step :add_one do
+      async true
       run { |inputs| RubyReactor::Success(inputs[:value] + 1) }
     end
   end
@@ -99,6 +100,14 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
         expect(subject).to be_success
       end
+
+      it "enqueues async job but does not execute when process_jobs is false" do
+        subject = test_reactor(HelpersAsyncReactor, inputs: { value: 1 }, process_jobs: false)
+        # Ensure it didn't run (status is likely nil or running, result returns nil for unknown/running)
+        expect(subject.result).to be_nil
+        # Ensure it enqueued (returned AsyncResult)
+        expect(subject.run_result).to be_a(RubyReactor::AsyncResult)
+      end
     end
 
     context "with async steps" do
@@ -153,11 +162,9 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
   describe "matchers" do
     it "verifies step order using .after" do
-      subject = test_reactor(HelpersInterruptReactor, async: false)
-      # Wait then after_wait (actually wait interrupts, so after_wait wont run unless resumed)
-      # We need a reactor with 2 steps.
-      # HelpersTestReactor has 1 step.
-      # Let's add MultiStepReactor
+      subject = test_reactor(HelpersMultiStepReactor)
+      expect(subject).to be_success
+      expect(subject).to have_run_step(:two).after(:one)
     end
   end
 
