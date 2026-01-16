@@ -2,7 +2,7 @@
 
 module RubyReactor
   class Lock
-    class AcquisitionError < Error; end
+    class AcquisitionError < StandardError; end
 
     attr_reader :key, :owner, :ttl, :wait
 

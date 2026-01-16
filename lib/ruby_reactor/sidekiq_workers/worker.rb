@@ -35,11 +35,19 @@ module RubyReactor
         # Mark that we're executing inline to prevent nested async calls
         context.inline_async_execution = true
 
-        # Resume execution from the failed step
-        executor = Executor.new(context.reactor_class, {}, context)
-        executor.resume_execution
-        executor.save_context
-        executor.result
+        begin
+          # Resume execution from the failed step
+          executor = Executor.new(context.reactor_class, {}, context)
+          executor.resume_execution
+          executor.save_context
+
+          # Return the executor (which now has the result stored in it)
+          executor
+        rescue RubyReactor::Lock::AcquisitionError => _e
+          # Snooze execution if lock is busy
+          # We purposefully don't use Sidekiq's native retry to avoid error noise for expected lock contention
+          self.class.perform_in(5, serialized_context, reactor_class_name)
+        end
       end
 
       private

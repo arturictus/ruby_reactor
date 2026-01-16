@@ -2,7 +2,7 @@
 
 module RubyReactor
   class Semaphore
-    class AcquisitionError < Error; end
+    class AcquisitionError < StandardError; end
 
     attr_reader :key, :limit, :wait
 

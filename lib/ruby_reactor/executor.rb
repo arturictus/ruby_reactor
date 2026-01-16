@@ -63,6 +63,7 @@ module RubyReactor
 
     def resume_execution
       @context.status = :running
+      acquire_locks
       prepare_for_resume
       save_context
 
@@ -128,24 +129,8 @@ module RubyReactor
       begin
         lock.acquire
       rescue RubyReactor::Lock::AcquisitionError => e
-        # If running in a Sidekiq worker (async), we want to reschedule.
-        # But Executor doesn't know if it's in Sidekiq.
-        # It relies on the caller to handle RescheduleSignal or it raises AcquisitionError.
-
-        # We need a way to know if we should signal reschedule.
-        # Simple heuristic: If the reactor is running in async mode (based on class config?)
-        # But `execute` is called for both sync and async via perform.
-
-        # Actually, if the user invoked `perform_async`, the worker calls `run` -> `Executor.new.execute`.
-        # So we can raise RescheduleSignal if we are "async".
-        # But relying on class.async? is tricky if called synchronously for testing.
-
-        # Better approach: Just raise AcquisitionError here.
-        # The AsyncRouter or SidekiqWorker should catch it and check/decide.
-        # BUT: The user requirement was: "if in async mode: requeues... delayed".
-
-        # Let's standardize: Raise AcquisitionError.
-        # The Sidekiq Worker wrapper will catch this specific error and snooze.
+        # If we can't acquire the lock, we raise the error.
+        # Async workers (Sidekiq) should catch this and reschedule/snooze the job.
         raise e
       end
     end
