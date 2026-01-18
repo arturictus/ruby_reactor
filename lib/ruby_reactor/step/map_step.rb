@@ -137,11 +137,9 @@ module RubyReactor
             # Current behavior: results are already values
             RubyReactor::Success(results)
           else
-            # New behavior: extract successful values only by default
-            # so we don't return Success/Failure objects to the next step
-            # unless a collect block is used to handle them explicitly.
-            successes = results.select(&:success?).map(&:value)
-            RubyReactor::Success(successes)
+            # Default behavior when no collect block and fail_fast is false:
+            # return all results (Success and Failure objects)
+            RubyReactor::Success(results)
           end
         end
 

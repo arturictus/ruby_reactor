@@ -65,6 +65,10 @@ module RubyReactor
     end
     alias result get_result
 
+    def has_result?(step_name)
+      @intermediate_results.key?(step_name.to_sym) || @intermediate_results.key?(step_name.to_s)
+    end
+
     def set_result(step_name, value)
       @intermediate_results[step_name.to_sym] = value
     end

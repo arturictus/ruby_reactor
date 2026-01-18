@@ -59,18 +59,7 @@ module RubyReactor
         if step_config.interrupt?
           handle_interrupt_step(step_config)
         elsif step_config.async? && !@context.inline_async_execution
-          result = handle_async_step(step_config)
-          if result.is_a?(RubyReactor::AsyncResult)
-            result
-          else
-            # Inline execution detected.
-            # Refresh context from storage to get the results from the worker
-            refresh_context_from_storage
-            return result if result.is_a?(RubyReactor::Failure)
-            return reconstruct_failure(@context.failure_reason) if @context.failed?
-
-            nil # Continue to next step in execute_all_steps
-          end
+          handle_async_step(step_config)
         else
           execute_step_with_retry(step_config)
         end

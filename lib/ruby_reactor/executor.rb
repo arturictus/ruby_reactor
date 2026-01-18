@@ -40,6 +40,7 @@ module RubyReactor
       input_validator = InputValidator.new(@reactor_class, @context)
       input_validator.validate!
 
+      @context.status = :running
       save_context
 
       graph_manager = GraphManager.new(@reactor_class, @dependency_graph, @context)
@@ -59,6 +60,7 @@ module RubyReactor
     end
 
     def resume_execution
+      @context.status = :running
       prepare_for_resume
       save_context
 

@@ -20,7 +20,7 @@ RSpec.describe RubyReactor::PaymentWorkflow do
       result = described_class.new.run({})
 
       expect(result).to be_a(RubyReactor::Failure)
-      expect(result.error).to match("order_id")
+      expect(result.error.message).to match("order_id")
     end
   end
 

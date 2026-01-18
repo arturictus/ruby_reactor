@@ -37,12 +37,10 @@ RSpec.describe "Map Infinite Loop Prevention" do
       result = executor.execute
       context_id = executor.context.context_id
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::Success)
 
       # Since we are inline, the jobs executed immediately.
-      # However, the main thread's completion overwrites the status to 'running' after the inline completion
-      # (because Executor#execute returns AsyncResult which sets status to running).
-      # So we skip checking status='completed' here and verify results count and offset instead.
+      # The Executor now correctly detects this completion via the reload mechanism in StepExecutor.
 
       # Verify results count
       # The map results are stored under the MAP context ID, which is derived from parent context + step name

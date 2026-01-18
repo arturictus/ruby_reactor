@@ -67,6 +67,48 @@ module RubyReactor
       if @context.is_a?(Context)
         @execution_trace = @context.execution_trace || []
         @undo_trace = @execution_trace.select { |e| e[:type] == :undo }
+
+        # Reconstruct result from context status
+        case @context.status.to_s
+        when "completed"
+          # Find the result of the last successful step or the return step
+          rs = self.class.respond_to?(:returns) ? self.class.returns : nil
+          val = if rs
+                  @context.intermediate_results[rs.to_sym] ||
+                    @context.intermediate_results[rs.to_s]
+                else
+                  # Last step in trace
+                  last_run = @execution_trace.reverse.find { |e| e[:type] == :run || e["type"] == "run" }
+                  if last_run
+                    step_name = last_run[:step] || last_run["step"]
+                    @context.intermediate_results[step_name.to_sym] ||
+                      @context.intermediate_results[step_name.to_s]
+                  end
+                end
+          @result = Success.new(val)
+        when "failed"
+          reason = @context.failure_reason || {}
+          @result = Failure.new(
+            reason[:message] || reason["message"],
+            step_name: reason[:step_name] || reason["step_name"],
+            inputs: reason[:inputs] || reason["inputs"] || {},
+            backtrace: reason[:backtrace] || reason["backtrace"],
+            reactor_name: reason[:reactor_name] || reason["reactor_name"],
+            step_arguments: reason[:step_arguments] || reason["step_arguments"] || {},
+            exception_class: reason[:exception_class] || reason["exception_class"],
+            file_path: reason[:file_path] || reason["file_path"],
+            line_number: reason[:line_number] || reason["line_number"],
+            code_snippet: reason[:code_snippet] || reason["code_snippet"],
+            validation_errors: reason[:validation_errors] || reason["validation_errors"],
+            retryable: reason[:retryable] || reason["retryable"],
+            invalid_payload: reason[:invalid_payload] || reason["invalid_payload"]
+          )
+        when "paused"
+          @result = InterruptResult.new(
+            execution_id: @context.context_id,
+            intermediate_results: @context.intermediate_results
+          )
+        end
       else
         @undo_trace = []
         @execution_trace = []
@@ -90,39 +132,39 @@ module RubyReactor
         return validation_result
       end
 
-      if self.class.async?
-        # For async reactors, enqueue the job and return immediately
+      if self.class.async? && !@context.inline_async_execution
+        # For async reactors, queue a job for the whole reactor
+        @context.status = :running
         save_context
 
         serialized_context = ContextSerializer.serialize(@context)
-        result = configuration.async_router.perform_async(serialized_context)
+        @result = configuration.async_router.perform_async(serialized_context, self.class.name,
+                                                           intermediate_results: @context.intermediate_results)
 
-        unless result.is_a?(RubyReactor::AsyncResult)
-          # Reload state from storage (inline execution detected)
-          reloaded = self.class.find(context.context_id)
-          @context = reloaded.context
-          # Synchronize shadow variables from the reloaded context
-          @execution_trace = @context.execution_trace
-          # NOTE: undo_trace is not persisted in context, but execution_trace contains undo entries
-          @undo_trace = @execution_trace.select { |e| e[:type] == :undo }
+        # Even if it's an AsyncResult, it might have finished inline (e.g. Sidekiq::Testing.inline!)
+        # Check storage to see if it's already finished or paused (interrupted).
+        begin
+          reloaded = self.class.find(@context.context_id)
+          if reloaded.finished? || reloaded.context.status.to_s == "paused"
+            @context = reloaded.context
+            @result = reloaded.result
+            @execution_trace = reloaded.execution_trace
+            @undo_trace = reloaded.undo_trace
+            return @result
+          end
+        rescue StandardError
+          # Ignore if not found or other errors during reload check
         end
 
-        result
+        @result
       else
         # For sync reactors (potentially with async steps), execute normally
         context = @context.is_a?(Context) ? @context : nil
         executor = Executor.new(self.class, inputs, context)
         @result = executor.execute
-
         @context = executor.context
-
-        # Merge traces
-        @undo_trace = executor.undo_trace
         @execution_trace = executor.execution_trace
-
-        # If execution returned an AsyncResult (from step-level async), return it
-        return @result if @result.is_a?(RubyReactor::AsyncResult)
-
+        @undo_trace = executor.undo_trace
         @result
       end
     end
