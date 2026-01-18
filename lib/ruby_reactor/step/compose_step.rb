@@ -84,7 +84,6 @@ module RubyReactor
         def link_contexts(child_context, parent_context)
           child_context.parent_context = parent_context
           child_context.root_context = parent_context.root_context || parent_context
-          child_context.test_mode = parent_context.test_mode
           child_context.inline_async_execution = parent_context.inline_async_execution
         end
 

@@ -3,7 +3,7 @@
 module RubyReactor
   class Context
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
-                  :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack, :test_mode,
+                  :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack,
                   :parent_context, :root_context, :composed_contexts, :context_id, :map_operations, :map_metadata,
                   :cancelled, :cancellation_reason, :parent_context_id, :status, :failure_reason
 
@@ -23,7 +23,6 @@ module RubyReactor
       @execution_trace = []
       @inline_async_execution = false # Flag to prevent nested async calls
       @undo_stack = [] # Initialize the undo stack
-      @test_mode = false
       @cancelled = false
       @cancellation_reason = nil
       @status = "pending"
@@ -93,7 +92,6 @@ module RubyReactor
         retry_context: @retry_context,
         reactor_class: @reactor_class,
         execution_trace: @execution_trace,
-        test_mode: @test_mode,
         status: @status,
         failure_reason: @failure_reason
       }
@@ -117,7 +115,6 @@ module RubyReactor
         retry_context: @retry_context.serialize_for_retry,
         execution_trace: ContextSerializer.serialize_value(@execution_trace),
         undo_stack: serialize_undo_stack,
-        test_mode: @test_mode,
         cancelled: @cancelled,
         cancellation_reason: @cancellation_reason,
         status: @status,
@@ -142,7 +139,6 @@ module RubyReactor
       context.retry_context = RetryContext.deserialize_from_retry(data["retry_context"] || {})
       context.execution_trace = ContextSerializer.deserialize_value(data["execution_trace"]) || []
       context.undo_stack = deserialize_undo_stack(data["undo_stack"] || [], context.reactor_class)
-      context.test_mode = data["test_mode"] || false
       context.cancelled = data["cancelled"] || false
       context.cancellation_reason = data["cancellation_reason"]
       context.status = data["status"] || "pending"

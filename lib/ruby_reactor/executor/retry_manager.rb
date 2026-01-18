@@ -117,7 +117,7 @@ module RubyReactor
                    @context.inline_async_execution
 
         # Always try async retry if configured
-        if is_async && !@context.test_mode
+        if is_async
           handle_async_retry(step_config, reactor_class, result)
         else
           handle_sync_retry(step_config, reactor_class, result)
