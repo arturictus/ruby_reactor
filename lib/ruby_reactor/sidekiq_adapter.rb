@@ -76,10 +76,12 @@ module RubyReactor
       )
       RubyReactor::AsyncResult.new(job_id: job_id)
     end
-    # rubocop:enable Metrics/ParameterLists
 
+    # rubocop:enable Metrics/ParameterLists
+    # rubocop:disable Metrics/ParameterLists
     def self.perform_map_execution_async(map_id:, serialized_inputs:, reactor_class_info:, strict_ordering:,
                                          parent_context_id:, parent_reactor_class_name:, step_name:, fail_fast: nil)
+      # rubocop:enable Metrics/ParameterLists
       job_id = RubyReactor::SidekiqWorkers::MapExecutionWorker.perform_async(
         {
           "map_id" => map_id,

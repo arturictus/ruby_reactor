@@ -178,7 +178,9 @@ module RubyReactor
         map_id = ref_data[:map_id] || ref_data["map_id"]
 
         # Use the specific element reactor class if available, otherwise fallback to parent
-        target_reactor_class = ref_data[:element_reactor_class] || ref_data["element_reactor_class"] || reactor_class_name
+        target_reactor_class = ref_data[:element_reactor_class] ||
+                               ref_data["element_reactor_class"] ||
+                               reactor_class_name
 
         # 1. Check for specific failure (O(1))
         # Stored by ResultHandler when a map element fails

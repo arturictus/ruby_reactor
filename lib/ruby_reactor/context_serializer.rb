@@ -134,10 +134,7 @@ module RubyReactor
                 strict_ordering: value["strict_ordering"],
                 batch_size: value["batch_size"]
               )
-            when "Symbol"
-              value["value"].to_sym
-            when "Time"
-              Time.iso8601(value["value"])
+
             else
               # Unknown type wrapper, return as is (but deserialize values)
               value.transform_values { |v| deserialize_value(v) }
@@ -162,10 +159,7 @@ module RubyReactor
           end
         when Array
           value.map { |v| simplify_for_api(v) }
-        when Success, Failure
-          simplify_for_api(value.to_h)
-        when Context
-          # Specifically for Context, we want its to_h representation
+        when Success, Failure, Context
           simplify_for_api(value.to_h)
         when Symbol
           value.to_s

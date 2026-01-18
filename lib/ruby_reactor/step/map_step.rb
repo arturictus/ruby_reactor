@@ -123,23 +123,18 @@ module RubyReactor
           child_context.inline_async_execution = parent_context.inline_async_execution
         end
 
-        def process_results(results, collect_block, fail_fast = true)
+        def process_results(results, collect_block, _fail_fast = true)
           if collect_block
             begin
               # Collect block receives Result objects when fail_fast is false, values when true
-              RubyReactor::Success(collect_block.call(results))
+              return RubyReactor::Success(collect_block.call(results))
             rescue StandardError => e
-              RubyReactor::Failure(e)
+              return RubyReactor::Failure(e)
             end
-          elsif fail_fast
-            # Default behavior when no collect block
-            # Current behavior: results are already values
-            RubyReactor::Success(results)
-          else
-            # Default behavior when no collect block and fail_fast is false:
-            # return all results (Success and Failure objects)
-            RubyReactor::Success(results)
           end
+
+          # Simplified: both branches returned Success(results)
+          RubyReactor::Success(results)
         end
 
         def extract_path(value, path)

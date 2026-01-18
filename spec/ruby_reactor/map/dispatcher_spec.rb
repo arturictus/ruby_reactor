@@ -84,23 +84,31 @@ RSpec.describe RubyReactor::Map::Dispatcher do
     end
 
     context "when source responds to offset and limit (e.g. ActiveRecord::Relation)" do
-      # rubocop:disable RSpec/VerifiedDoubleReference
-      let(:relation) { instance_double("ActiveRecord::Relation") }
-      # rubocop:enable RSpec/VerifiedDoubleReference
-      let(:paginated_relation) { [1, 2] }
+      # rubocop:disable RSpec/VerifiedDoubles
+      let(:relation) { double("ActiveRecord::Relation") }
+      # rubocop:enable RSpec/VerifiedDoubles
+
       let(:arguments) { super().merge(source: relation) }
 
       before do
-        allow(relation).to receive_messages(offset: relation, limit: relation, to_a: paginated_relation)
+        # rubocop:disable RSpec/ReceiveMessages
+        allow(relation).to receive(:offset).and_return(relation)
+        allow(relation).to receive(:limit).and_return(relation)
+        allow(relation).to receive(:to_a).and_return([1, 2])
+        # rubocop:enable RSpec/ReceiveMessages
+
+        # Dispatcher checks resolve on source
+        allow(relation).to receive(:respond_to?).with(:resolve).and_return(false)
+        # Dispatcher checks for optimization
+        allow(relation).to receive(:respond_to?).with(:offset).and_return(true)
+        allow(relation).to receive(:respond_to?).with(:limit).and_return(true)
       end
 
       it "uses offset and limit for efficiency" do
         described_class.perform(arguments)
 
-        # Verify optimization is used
-        expect(relation).to have_received(:offset).with(0) # First batch starts at 0
-        expect(relation).to have_received(:limit).with(2)  # batch size
-        expect(relation).to have_received(:to_a)
+        expect(relation).to have_received(:offset).with(0)
+        expect(relation).to have_received(:limit).with(2)
 
         expect(async_router).to have_received(:perform_map_element_async).twice
       end

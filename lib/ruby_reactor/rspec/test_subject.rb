@@ -89,7 +89,6 @@ module RubyReactor
 
         ctx = @reactor_instance.context
         status = ctx.status.to_s
-
         case status
         when "failed"
           reason = ctx.failure_reason || {}
@@ -128,9 +127,6 @@ module RubyReactor
             intermediate_results: ctx.intermediate_results
             # We assume no error if paused normally
           )
-        else
-          # Running or unexecuted
-          nil
         end
       end
 

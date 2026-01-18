@@ -128,7 +128,7 @@ RSpec.describe RubyReactor::RSpec::Helpers do
         expect(result.size).to eq(3)
       end
 
-      it "handles map failures when simulated" do
+      it "handles map failures when simulated", skip: "Not implemented yet" do
         # We need a failing map, or use failing_at
         # failing_at inside map is tricky, let's use a specific failing reactor for map
       end

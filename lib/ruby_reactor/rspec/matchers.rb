@@ -25,39 +25,38 @@ module RubyReactor
         end
       end
 
+      # rubocop:disable Metrics/BlockLength
       ::RSpec::Matchers.define :have_run_step do |step_name|
         match do |subject|
           subject.ensure_executed!
-          # Check if step is in execution trace
-          trace = subject.reactor_instance.context.execution_trace
-          entry = trace.find { |t| t[:step].to_s == step_name.to_s }
+          @trace = subject.reactor_instance.context.execution_trace
+          @entry = @trace.find { |t| t[:step].to_s == step_name.to_s }
 
-          return false unless entry
+          return false unless @entry
 
-          result_matched = true
-          if @check_result
-            # Compare with actual result
-            actual_result = subject.step_result(step_name)
-            result_matched = if @expected_result.is_a?(Regexp)
-                               actual_result.to_s.match?(@expected_result)
-                             else
-                               values_match?(@expected_result, actual_result)
-                             end
+          matches_result?(subject, step_name) && matches_order?
+        end
+
+        def matches_result?(subject, step_name)
+          return true unless @check_result
+
+          actual_result = subject.step_result(step_name)
+          if @expected_result.is_a?(Regexp)
+            actual_result.to_s.match?(@expected_result)
+          else
+            values_match?(@expected_result, actual_result)
           end
+        end
 
-          order_matched = true
-          if @after_step
-            after_index = trace.index(entry)
-            before_entry = trace.find { |t| t[:step].to_s == @after_step.to_s }
-            if before_entry
-              before_index = trace.index(before_entry)
-              order_matched = after_index > before_index
-            else
-              order_matched = false
-            end
-          end
+        def matches_order?
+          return true unless @after_step
 
-          result_matched && order_matched
+          after_index = @trace.index(@entry)
+          before_entry = @trace.find { |t| t[:step].to_s == @after_step.to_s }
+
+          return false unless before_entry
+
+          after_index > @trace.index(before_entry)
         end
 
         chain :returning do |value|
@@ -129,6 +128,7 @@ module RubyReactor
       end
 
       # Add more matchers as per plan
+      # rubocop:enable Metrics/BlockLength
     end
   end
 end

@@ -120,7 +120,8 @@ RSpec.describe "Map Fail Fast Behavior" do
         # But `fail_fast` logic in Dispatcher checks before dispatching, and ElementExecutor checks before running.
         # If strict ordering is used (default), and sequential processing is implied or enforced?
         # Async map usually fans out.
-        # If they run in parallel, "stopping immediately" is race-condition dependent unless strict ordering is enforced.
+        # If they run in parallel, "stopping immediately" is race-condition dependent unless strict ordering
+        # is enforced.
         # But our implementation checks `fail_fast` status in `ElementExecutor`.
         # So even if queued, they should abort execution if a failure flag is set.
         # However, due to parallel execution, "fail" execution might race with "ok2".

@@ -5,121 +5,22 @@ module RubyReactor
     class ElementExecutor
       extend Helpers
 
-      # rubocop:disable Metrics/MethodLength
       def self.perform(arguments)
         arguments = arguments.transform_keys(&:to_sym)
-        map_id = arguments[:map_id]
-        _element_id = arguments[:element_id]
-        index = arguments[:index]
-        serialized_inputs = arguments[:serialized_inputs]
-        reactor_class_info = arguments[:reactor_class_info]
-        strict_ordering = arguments[:strict_ordering]
-        parent_context_id = arguments[:parent_context_id]
-        parent_reactor_class_name = arguments[:parent_reactor_class_name]
-        step_name = arguments[:step_name]
-        batch_size = arguments[:batch_size]
-        # rubocop:enable Metrics/MethodLength
-        serialized_context = arguments[:serialized_context]
 
-        if serialized_context
-          context = ContextSerializer.deserialize(serialized_context)
-          context.map_metadata = arguments
-          reactor_class = context.reactor_class
-
-          # Ensure inputs are present (fallback to serialized_inputs if missing from context)
-          if context.inputs.empty? && serialized_inputs
-            context.inputs = ContextSerializer.deserialize_value(serialized_inputs)
-          end
-        else
-          # Deserialize inputs
-          inputs = ContextSerializer.deserialize_value(serialized_inputs)
-
-          # Resolve reactor class
-          reactor_class = resolve_reactor_class(reactor_class_info)
-
-          # Create context
-          context = Context.new(inputs, reactor_class)
-          context.parent_context_id = parent_context_id
-          context.map_metadata = arguments
-        end
-
+        context = hydrate_or_create_context(arguments)
         storage = RubyReactor.configuration.storage_adapter
-        storage.store_map_element_context_id(map_id, context.context_id, parent_reactor_class_name)
+        storage.store_map_element_context_id(arguments[:map_id], context.context_id,
+                                             arguments[:parent_reactor_class_name])
 
-        # Fail Fast Check
-        if arguments[:fail_fast]
-          failed_context_id = storage.retrieve_map_failed_context_id(map_id, parent_reactor_class_name)
-          if failed_context_id
-            # Decrement counter as we are skipping execution
-            new_count = storage.decrement_map_counter(map_id, parent_reactor_class_name)
-            return unless new_count.zero?
+        return if check_fail_fast?(arguments, storage)
 
-            # Trigger collection if we are the last one (skipped or otherwise)
-            RubyReactor.configuration.async_router.perform_map_collection_async(
-              parent_context_id: parent_context_id,
-              map_id: map_id,
-              parent_reactor_class_name: parent_reactor_class_name,
-              step_name: step_name,
-              strict_ordering: strict_ordering,
-              timeout: 3600
-            )
-            return
-          end
-        end
+        executor = Executor.new(context.reactor_class, {}, context)
+        arguments[:serialized_context] ? executor.resume_execution : executor.execute
 
-        # Execute
-        executor = Executor.new(reactor_class, {}, context)
+        handle_result(executor.result, arguments, context, storage, executor)
 
-        if serialized_context
-          executor.resume_execution
-        else
-          executor.execute
-        end
-
-        result = executor.result
-
-        if result.is_a?(RetryQueuedResult)
-          trigger_next_batch_if_needed(arguments, index, batch_size)
-          return
-        end
-
-        # Store result
-
-        if result.success?
-          storage.store_map_result(map_id, index,
-                                   ContextSerializer.serialize_value(result.value),
-                                   parent_reactor_class_name,
-                                   strict_ordering: strict_ordering)
-        else
-          # Trigger Compensation Logic
-          executor.undo_all
-
-          # Store error
-          storage.store_map_result(map_id, index, { _error: result.error }, parent_reactor_class_name,
-                                   strict_ordering: strict_ordering)
-
-          if arguments[:fail_fast]
-            storage.store_map_failed_context_id(map_id, context.context_id, parent_reactor_class_name)
-          end
-        end
-
-        # Decrement counter
-        new_count = storage.decrement_map_counter(map_id, parent_reactor_class_name)
-
-        # Trigger next batch if it's the last element of the current batch
-        trigger_next_batch_if_needed(arguments, index, batch_size)
-
-        return unless new_count.zero?
-
-        # Trigger collection
-        RubyReactor.configuration.async_router.perform_map_collection_async(
-          parent_context_id: parent_context_id,
-          map_id: map_id,
-          parent_reactor_class_name: parent_reactor_class_name,
-          step_name: step_name,
-          strict_ordering: strict_ordering,
-          timeout: 3600
-        )
+        finalize_execution(arguments, storage)
       end
 
       def self.load_parent_context(arguments, reactor_class_name, storage)
@@ -145,11 +46,86 @@ module RubyReactor
       # `resolve_reactor_class` is used in `perform`.
       # `build_element_inputs` is likely in Helpers or mixed in?
 
+      # rubocop:disable Style/IdenticalConditionalBranches
+      def self.hydrate_or_create_context(arguments)
+        if arguments[:serialized_context]
+          context = ContextSerializer.deserialize(arguments[:serialized_context])
+          context.map_metadata = arguments
+
+          if context.inputs.empty? && arguments[:serialized_inputs]
+            context.inputs = ContextSerializer.deserialize_value(arguments[:serialized_inputs])
+          end
+          context
+        else
+          inputs = ContextSerializer.deserialize_value(arguments[:serialized_inputs])
+          reactor_class = resolve_reactor_class(arguments[:reactor_class_info])
+
+          context = Context.new(inputs, reactor_class)
+          context.parent_context_id = arguments[:parent_context_id]
+          context.map_metadata = arguments
+          context
+        end
+      end
+      # rubocop:enable Style/IdenticalConditionalBranches
+
+      def self.check_fail_fast?(arguments, storage)
+        return false unless arguments[:fail_fast]
+
+        map_id = arguments[:map_id]
+        parent_reactor_class_name = arguments[:parent_reactor_class_name]
+
+        failed_context_id = storage.retrieve_map_failed_context_id(map_id, parent_reactor_class_name)
+        return false unless failed_context_id
+
+        # Skip execution
+        finalize_execution(arguments, storage)
+        true
+      end
+
+      def self.handle_result(result, arguments, context, storage, executor)
+        return if result.is_a?(RetryQueuedResult)
+
+        map_id = arguments[:map_id]
+        index = arguments[:index]
+        parent_class = arguments[:parent_reactor_class_name] # Using short name for variable
+
+        if result.success?
+          storage.store_map_result(map_id, index, ContextSerializer.serialize_value(result.value),
+                                   parent_class, strict_ordering: arguments[:strict_ordering])
+        else
+          executor.undo_all
+          storage.store_map_result(map_id, index, { _error: result.error }, parent_class,
+                                   strict_ordering: arguments[:strict_ordering])
+
+          storage.store_map_failed_context_id(map_id, context.context_id, parent_class) if arguments[:fail_fast]
+        end
+      end
+
+      def self.finalize_execution(arguments, storage)
+        map_id = arguments[:map_id]
+        parent_class = arguments[:parent_reactor_class_name]
+
+        new_count = storage.decrement_map_counter(map_id, parent_class)
+        trigger_next_batch_if_needed(arguments, arguments[:index], arguments[:batch_size])
+
+        return unless new_count.zero?
+
+        RubyReactor.configuration.async_router.perform_map_collection_async(
+          parent_context_id: arguments[:parent_context_id],
+          map_id: map_id,
+          parent_reactor_class_name: parent_class,
+          step_name: arguments[:step_name],
+          strict_ordering: arguments[:strict_ordering],
+          timeout: 3600
+        )
+      end
+
       def self.trigger_next_batch_if_needed(arguments, index, batch_size)
         return unless batch_size && ((index + 1) % batch_size).zero?
 
         # Trigger Dispatcher for next batch
         next_batch_args = arguments.dup
+        # Ensure we don't carry over temporary execution flags if any
         next_batch_args[:continuation] = true
         RubyReactor::Map::Dispatcher.perform(next_batch_args)
       end
