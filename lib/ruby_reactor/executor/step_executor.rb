@@ -67,33 +67,6 @@ module RubyReactor
 
       private
 
-      def refresh_context_from_storage
-        storage = configuration.storage_adapter
-        reactor_class_name = @reactor_class.name
-        serialized = storage.retrieve_context(@context.context_id, reactor_class_name)
-        return unless serialized
-
-        reloaded_context = Context.deserialize_from_retry(serialized)
-
-        # Update local context state
-        @context.status = reloaded_context.status
-        @context.failure_reason = reloaded_context.failure_reason
-        @context.cancelled = reloaded_context.cancelled
-        @context.cancellation_reason = reloaded_context.cancellation_reason
-        @context.intermediate_results.merge!(reloaded_context.intermediate_results)
-        @context.execution_trace = reloaded_context.execution_trace
-        @context.private_data.merge!(reloaded_context.private_data)
-        @context.retry_context = reloaded_context.retry_context
-        @context.composed_contexts.merge!(reloaded_context.composed_contexts)
-        @context.map_operations.merge!(reloaded_context.map_operations)
-        @context.map_metadata = reloaded_context.map_metadata
-
-        # Also need to mark step as completed in dependency graph
-        reloaded_context.intermediate_results.each_key do |step_name|
-          @dependency_graph.complete_step(step_name.to_sym)
-        end
-      end
-
       def reconstruct_failure(data)
         return nil unless data.is_a?(Hash)
 
