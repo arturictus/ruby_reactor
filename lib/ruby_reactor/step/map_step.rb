@@ -57,7 +57,9 @@ module RubyReactor
         private
 
         def should_run_async?(arguments, context)
-          arguments[:async] && !context.inline_async_execution
+          return false if context.inline_async_execution
+
+          arguments[:async]
         end
 
         def run_inline(arguments, context)
@@ -135,12 +137,11 @@ module RubyReactor
             # Current behavior: results are already values
             RubyReactor::Success(results)
           else
-            # New behavior: extract successful values only
-            # New behavior: extract successful values only IF fail_fast is true behavior implies only values
-            # However, if fail_fast is false, we want to return results as is, or if logic dictates otherwise.
-            # wait, if fail_fast=false, we expect Result objects so we can check if success/failure.
-            # If we return only successes, we hide failures.
-            RubyReactor::Success(results)
+            # New behavior: extract successful values only by default
+            # so we don't return Success/Failure objects to the next step
+            # unless a collect block is used to handle them explicitly.
+            successes = results.select(&:success?).map(&:value)
+            RubyReactor::Success(successes)
           end
         end
 

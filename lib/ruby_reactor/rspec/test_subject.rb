@@ -43,8 +43,11 @@ module RubyReactor
 
         # 2. Capture Context ID
         captured_context_id = nil
+        force_sync = @async == false
+
         allow(RubyReactor::Context).to receive(:new).and_wrap_original do |m, *args|
           ctx = m.call(*args)
+          ctx.inline_async_execution = true if force_sync
           captured_context_id ||= ctx.context_id
           ctx
         end
@@ -58,7 +61,10 @@ module RubyReactor
 
         @run_result = nil
         if @process_jobs && defined?(Sidekiq::Testing)
-          Sidekiq::Testing.inline! do
+          # Ensure SidekiqAdapter is used to capture jobs in fake mode
+          allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
+
+          Sidekiq::Testing.fake! do
             @run_result = execution_class.run(@inputs)
           end
         else
@@ -162,9 +168,53 @@ module RubyReactor
 
       def ensure_executed!
         run unless @executed
+
+        # Process jobs if status is running and processing is enabled
+        return unless @process_jobs && @reactor_instance.context.status.to_s == "running"
+
+        process_pending_jobs
       end
 
       private
+
+      def process_pending_jobs
+        return unless defined?(Sidekiq::Testing)
+
+        # Loop until no more jobs are being queued
+        # This handles batched map execution where jobs queue more jobs
+        max_iterations = 100
+        iterations = 0
+
+        while iterations < max_iterations
+          iterations += 1
+          jobs_processed = false
+
+          # Known worker classes to check
+          worker_classes = [
+            RubyReactor::SidekiqWorkers::Worker,
+            RubyReactor::SidekiqWorkers::MapElementWorker,
+            RubyReactor::SidekiqWorkers::MapExecutionWorker,
+            RubyReactor::SidekiqWorkers::MapCollectorWorker
+          ]
+
+          worker_classes.each do |worker_class|
+            while worker_class.jobs.any?
+              job = worker_class.jobs.shift
+              worker_class.new.perform(*job["args"])
+              jobs_processed = true
+            end
+          end
+
+          break unless jobs_processed
+
+          # After processing a round of jobs, reload the reactor instance to check status
+          @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
+          break unless @reactor_instance.context.status.to_s == "running"
+        end
+
+        # Final reload
+        @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
+      end
 
       def prepare_execution_class
         # Even if no interceptors, we might need to subclass to override async steps

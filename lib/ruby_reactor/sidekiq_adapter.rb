@@ -3,10 +3,6 @@
 module RubyReactor
   class SidekiqAdapter
     def self.perform_async(serialized_context, reactor_class_name = nil, intermediate_results: {})
-      if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
-        return SidekiqWorkers::Worker.new.perform(serialized_context, reactor_class_name)
-      end
-
       job_id = SidekiqWorkers::Worker.perform_async(serialized_context, reactor_class_name)
       context = ContextSerializer.deserialize(serialized_context)
       RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: intermediate_results,
@@ -14,10 +10,6 @@ module RubyReactor
     end
 
     def self.perform_in(delay, serialized_context, reactor_class_name = nil, intermediate_results: {})
-      if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
-        return SidekiqWorkers::Worker.new.perform(serialized_context, reactor_class_name)
-      end
-
       job_id = SidekiqWorkers::Worker.perform_in(delay, serialized_context, reactor_class_name)
       context = ContextSerializer.deserialize(serialized_context)
       RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: intermediate_results,
@@ -28,24 +20,6 @@ module RubyReactor
     def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                        strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
                                        batch_size: nil, serialized_context: nil, fail_fast: nil)
-      if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
-        params = {
-          "map_id" => map_id,
-          "element_id" => element_id,
-          "index" => index,
-          "serialized_inputs" => serialized_inputs,
-          "reactor_class_info" => reactor_class_info,
-          "strict_ordering" => strict_ordering,
-          "parent_context_id" => parent_context_id,
-          "parent_reactor_class_name" => parent_reactor_class_name,
-          "step_name" => step_name,
-          "batch_size" => batch_size,
-          "serialized_context" => serialized_context,
-          "fail_fast" => fail_fast
-        }
-        return RubyReactor::SidekiqWorkers::MapElementWorker.new.perform(params)
-      end
-
       job_id = RubyReactor::SidekiqWorkers::MapElementWorker.perform_async(
         {
           "map_id" => map_id,
@@ -68,23 +42,6 @@ module RubyReactor
     def self.perform_map_element_in(delay, map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                     strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
                                     batch_size: nil, serialized_context: nil)
-      if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
-        params = {
-          "map_id" => map_id,
-          "element_id" => element_id,
-          "index" => index,
-          "serialized_inputs" => serialized_inputs,
-          "reactor_class_info" => reactor_class_info,
-          "strict_ordering" => strict_ordering,
-          "parent_context_id" => parent_context_id,
-          "parent_reactor_class_name" => parent_reactor_class_name,
-          "step_name" => step_name,
-          "batch_size" => batch_size,
-          "serialized_context" => serialized_context
-        }
-        return RubyReactor::SidekiqWorkers::MapElementWorker.new.perform(params)
-      end
-
       RubyReactor::SidekiqWorkers::MapElementWorker.perform_in(
         delay,
         {
@@ -107,18 +64,6 @@ module RubyReactor
     # rubocop:disable Metrics/ParameterLists
     def self.perform_map_collection_async(parent_context_id:, map_id:, parent_reactor_class_name:, step_name:,
                                           strict_ordering:, timeout:)
-      if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
-        params = {
-          "parent_context_id" => parent_context_id,
-          "map_id" => map_id,
-          "parent_reactor_class_name" => parent_reactor_class_name,
-          "step_name" => step_name,
-          "strict_ordering" => strict_ordering,
-          "timeout" => timeout
-        }
-        return RubyReactor::SidekiqWorkers::MapCollectorWorker.new.perform(params)
-      end
-
       job_id = RubyReactor::SidekiqWorkers::MapCollectorWorker.perform_async(
         {
           "parent_context_id" => parent_context_id,
@@ -135,20 +80,6 @@ module RubyReactor
 
     def self.perform_map_execution_async(map_id:, serialized_inputs:, reactor_class_info:, strict_ordering:,
                                          parent_context_id:, parent_reactor_class_name:, step_name:, fail_fast: nil)
-      if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
-        params = {
-          "map_id" => map_id,
-          "serialized_inputs" => serialized_inputs,
-          "reactor_class_info" => reactor_class_info,
-          "strict_ordering" => strict_ordering,
-          "parent_context_id" => parent_context_id,
-          "parent_reactor_class_name" => parent_reactor_class_name,
-          "step_name" => step_name,
-          "fail_fast" => fail_fast
-        }
-        return RubyReactor::SidekiqWorkers::MapExecutionWorker.new.perform(params)
-      end
-
       job_id = RubyReactor::SidekiqWorkers::MapExecutionWorker.perform_async(
         {
           "map_id" => map_id,
