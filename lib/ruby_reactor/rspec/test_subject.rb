@@ -47,7 +47,6 @@ module RubyReactor
 
         allow(RubyReactor::Context).to receive(:new).and_wrap_original do |m, *args|
           ctx = m.call(*args)
-          ctx.inline_async_execution = true if force_sync
           captured_context_id ||= ctx.context_id
           ctx
         end
@@ -64,7 +63,12 @@ module RubyReactor
           # Ensure SidekiqAdapter is used to capture jobs in fake mode
           allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
 
-          Sidekiq::Testing.fake! do
+          # Avoid nesting error which happens in Sidekiq 7+ if a mode is already set
+          begin
+            Sidekiq::Testing.fake! do
+              @run_result = execution_class.run(@inputs)
+            end
+          rescue Sidekiq::Testing::TestModeAlreadySetError
             @run_result = execution_class.run(@inputs)
           end
         else
@@ -206,10 +210,6 @@ module RubyReactor
           end
 
           break unless jobs_processed
-
-          # After processing a round of jobs, reload the reactor instance to check status
-          @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
-          break unless @reactor_instance.context.status.to_s == "running"
         end
 
         # Final reload

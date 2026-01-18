@@ -30,6 +30,9 @@ RubyReactor.configure do |config|
 end
 
 RSpec.configure do |config|
+  config.include RubyReactor::RSpec::Helpers
+  config.include RubyReactor::RSpec::Matchers
+
   # Enable flags like --only-failures and --next-failure
   config.example_status_persistence_file_path = ".rspec_status"
 

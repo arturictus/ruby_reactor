@@ -64,18 +64,37 @@ module RubyReactor
     def initialize(context = {})
       @context = context
       @result = :unexecuted
-      @undo_trace = []
-      @execution_trace = []
+      if @context.is_a?(Context)
+        @execution_trace = @context.execution_trace || []
+        @undo_trace = @execution_trace.select { |e| e[:type] == :undo }
+      else
+        @undo_trace = []
+        @execution_trace = []
+      end
     end
 
     def run(inputs = {})
+      # For all reactors, initialize context first to capture execution ID
+      @context = @context.is_a?(Context) ? @context : Context.new(inputs, self.class)
+
+      # Validate inputs
+      validation_result = self.class.validate_inputs(inputs)
+      if validation_result.failure?
+        @result = validation_result
+        @context.status = "failed"
+        @context.failure_reason = {
+          message: validation_result.error.message,
+          validation_errors: validation_result.error.field_errors
+        }
+        save_context
+        return validation_result
+      end
+
       if self.class.async?
         # For async reactors, enqueue the job and return immediately
-        context = Context.new(inputs, self.class)
-        @context = context
         save_context
 
-        serialized_context = ContextSerializer.serialize(context)
+        serialized_context = ContextSerializer.serialize(@context)
         result = configuration.async_router.perform_async(serialized_context)
 
         unless result.is_a?(RubyReactor::AsyncResult)
