@@ -24,7 +24,7 @@ module RubyReactor
 
         # 2. Add test-specific logic for inline async execution
         # Only interfere if we got an AsyncResult and we are in a testing environment that supports inline execution
-        if result.is_a?(RubyReactor::AsyncResult) && should_check_inline_completion?
+        if (result.is_a?(RubyReactor::AsyncResult) || result.is_a?(RubyReactor::RetryQueuedResult)) && should_check_inline_completion?
           # Check if it finished or paused inline (e.g. Sidekiq::Testing.inline!)
           refresh_context_from_storage
 

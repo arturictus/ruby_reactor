@@ -116,10 +116,8 @@ module RubyReactor
                    @context.root_context&.reactor_class&.async? ||
                    @context.inline_async_execution
 
-        is_inline_testing = defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
-
-        # Always try async retry if configured, unless we are in inline testing mode
-        if is_async && !@context.test_mode && !is_inline_testing
+        # Always try async retry if configured
+        if is_async && !@context.test_mode
           handle_async_retry(step_config, reactor_class, result)
         else
           handle_sync_retry(step_config, reactor_class, result)
@@ -144,9 +142,7 @@ module RubyReactor
 
       def handle_sync_retry(step_config, reactor_class, result)
         delay = calculate_backoff_delay(step_config, result.error, reactor_class)
-        # Skip sleep if we are in inline testing mode
-        should_sleep = !(defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?)
-        sleep(delay) if should_sleep
+        sleep(delay)
         nil # continue loop
       end
 
