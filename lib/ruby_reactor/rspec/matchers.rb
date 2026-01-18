@@ -20,7 +20,7 @@ module RubyReactor
           subject.failure?
         end
 
-        failure_message do |subject|
+        failure_message do |_subject|
           "expected reactor to be failure, but succeeded"
         end
       end
@@ -89,7 +89,7 @@ module RubyReactor
           if @expected_retries
             retries == @expected_retries
           else
-            retries > 0
+            retries.positive?
           end
         end
 
@@ -97,7 +97,7 @@ module RubyReactor
           @expected_retries = count
         end
 
-        failure_message do |subject|
+        failure_message do |_subject|
           msg = "expected reactor to have retried step :#{step_name}"
           msg += " #{@expected_retries} times" if @expected_retries
           msg
@@ -123,7 +123,7 @@ module RubyReactor
           end
         end
 
-        failure_message do |subject|
+        failure_message do |_subject|
           "expected reactor to have validation error on :#{field}"
         end
       end

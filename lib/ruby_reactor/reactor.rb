@@ -156,7 +156,6 @@ module RubyReactor
           # Ignore if not found or other errors during reload check
         end
 
-        @result
       else
         # For sync reactors (potentially with async steps), execute normally
         context = @context.is_a?(Context) ? @context : nil
@@ -165,8 +164,8 @@ module RubyReactor
         @context = executor.context
         @execution_trace = executor.execution_trace
         @undo_trace = executor.undo_trace
-        @result
       end
+      @result
     end
 
     def continue(payload:, step_name:, idempotency_key: nil)

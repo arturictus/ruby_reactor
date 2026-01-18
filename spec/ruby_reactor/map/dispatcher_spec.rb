@@ -84,14 +84,14 @@ RSpec.describe RubyReactor::Map::Dispatcher do
     end
 
     context "when source responds to offset and limit (e.g. ActiveRecord::Relation)" do
+      # rubocop:disable RSpec/VerifiedDoubleReference
       let(:relation) { instance_double("ActiveRecord::Relation") }
+      # rubocop:enable RSpec/VerifiedDoubleReference
       let(:paginated_relation) { [1, 2] }
       let(:arguments) { super().merge(source: relation) }
 
       before do
-        allow(relation).to receive(:offset).and_return(relation)
-        allow(relation).to receive(:limit).and_return(relation)
-        allow(relation).to receive(:to_a).and_return(paginated_relation)
+        allow(relation).to receive_messages(offset: relation, limit: relation, to_a: paginated_relation)
       end
 
       it "uses offset and limit for efficiency" do

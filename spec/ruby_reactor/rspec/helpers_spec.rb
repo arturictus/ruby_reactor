@@ -4,7 +4,7 @@ require "spec_helper"
 require "ruby_reactor/rspec"
 
 RSpec.describe RubyReactor::RSpec::Helpers do
-  include RubyReactor::RSpec::Helpers
+  include described_class
 
   # Define a dummy reactor for testing
   class HelpersTestReactor < RubyReactor::Reactor

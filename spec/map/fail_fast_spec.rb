@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "spec_helper"
 
 RSpec.describe "Map Fail Fast Behavior" do
@@ -75,7 +77,7 @@ RSpec.describe "Map Fail Fast Behavior" do
     end
   end
 
-  def perform_enqueued_jobs(**args, &block)
+  def perform_enqueued_jobs(**_args, &block)
     if defined?(Sidekiq::Testing)
       Sidekiq::Testing.inline!(&block)
     else
@@ -124,7 +126,7 @@ RSpec.describe "Map Fail Fast Behavior" do
         # However, due to parallel execution, "fail" execution might race with "ok2".
         # BUT for the purpose of this test running inline/mocked, it's sequential.
 
-        result = run_reactor(reactor_class, items: items_with_failure)
+        run_reactor(reactor_class, items: items_with_failure)
 
         expect(reactor_class.events).to include("RUN ok1")
         expect(reactor_class.events).to include("RUN fail")
@@ -146,7 +148,7 @@ RSpec.describe "Map Fail Fast Behavior" do
         # Batch 2: fail -> failure
         # Batch 3: ok2 -> should not run (skipped by Dispatcher)
 
-        result = run_reactor(reactor_class, items: items_with_failure)
+        run_reactor(reactor_class, items: items_with_failure)
 
         expect(reactor_class.events).to include("RUN ok1")
         expect(reactor_class.events).to include("RUN fail")
@@ -191,7 +193,7 @@ RSpec.describe "Map Fail Fast Behavior" do
       let(:reactor_class) { FailFastAsyncFalseReactor }
 
       it "processes all items despite failure" do
-        result = run_reactor(reactor_class, items: items_with_failure)
+        run_reactor(reactor_class, items: items_with_failure)
 
         expect(reactor_class.events).to include("RUN ok1")
         expect(reactor_class.events).to include("RUN fail")
@@ -208,7 +210,7 @@ RSpec.describe "Map Fail Fast Behavior" do
       let(:reactor_class) { FailFastBatchFalseReactor }
 
       it "processes all batches despite failure" do
-        result = run_reactor(reactor_class, items: items_with_failure)
+        run_reactor(reactor_class, items: items_with_failure)
 
         expect(reactor_class.events).to include("RUN ok1")
         expect(reactor_class.events).to include("RUN fail")

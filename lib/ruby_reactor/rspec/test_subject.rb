@@ -43,7 +43,6 @@ module RubyReactor
 
         # 2. Capture Context ID
         captured_context_id = nil
-        force_sync = @async == false
 
         allow(RubyReactor::Context).to receive(:new).and_wrap_original do |m, *args|
           ctx = m.call(*args)
@@ -120,8 +119,6 @@ module RubyReactor
                     step_name = last_trace[:step]
                     # Handle symbol/string mismatch
                     ctx.intermediate_results[step_name.to_sym] || ctx.intermediate_results[step_name.to_s]
-                  else
-                    nil
                   end
                 end
           RubyReactor::Success.new(val)
@@ -262,7 +259,7 @@ module RubyReactor
             # Create a new StepConfig with failure logic
             step_config = step_config_orig.clone
 
-            failure_impl = lambda do |input, context|
+            failure_impl = lambda do |_input, _context|
               RubyReactor::Failure("Simulated failure at #{target_step}")
             end
 

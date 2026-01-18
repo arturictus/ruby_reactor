@@ -162,8 +162,6 @@ module RubyReactor
         end
       end
 
-      private
-
       def handle_async_step(step_config)
         # Step-level async: hand off execution to worker
 
