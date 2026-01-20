@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "spec_helper"
 
 RSpec.describe RubyReactor::RSpec::TestSubject, "#mock_step" do
@@ -38,7 +40,7 @@ RSpec.describe RubyReactor::RSpec::TestSubject, "#mock_step" do
 
   context "when replacing functionality completely" do
     before do
-      test_subject.mock_step(:step_one) do |args, _context|
+      test_subject.mock_step(:step_one) do |_args, _context|
         RubyReactor::Success(value: 999)
       end
     end

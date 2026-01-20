@@ -36,7 +36,8 @@ module RubyReactor
       # @yield [args, context, original_impl] block to execute
       #   @yieldparam args [Hash] The arguments passed to the step
       #   @yieldparam context [RubyReactor::Context] The execution context
-      #   @yieldparam original_impl [Proc] A proc that can be called to execute the original implementation: original_impl.call(args, context)
+      #   @yieldparam original_impl [Proc] A proc that can be called to execute the original implementation:
+      #     original_impl.call(args, context)
       def mock_step(step_name, *nested_steps, element_index: nil, &block)
         @interceptors << {
           type: :mock,
@@ -237,7 +238,7 @@ module RubyReactor
         interceptors = @interceptors
         force_sync = @async == false
 
-        Class.new(@reactor_class) do
+        execution_class = Class.new(@reactor_class) do
           # 1. Copy configuration from parent
           @steps = superclass.steps.dup
           @inputs = superclass.inputs.dup
@@ -260,57 +261,69 @@ module RubyReactor
               @steps[name] = new_config
             end
           end
+        end
 
-          # 4. Apply Interceptors
-          interceptors.each do |interceptor|
-            target_step = interceptor[:step_path].first
-            step_config_orig = steps[target_step]
+        # 4. Apply Interceptors
+        apply_interceptors(execution_class, interceptors)
 
-            unless step_config_orig
-              # Maybe it's a map step? We can't easily intercept inner steps from here
-              next
-            end
+        execution_class
+      end
 
-            # Create a new StepConfig
-            step_config = step_config_orig.clone
+      def apply_interceptors(klass, interceptors)
+        interceptors.each do |interceptor|
+          target_step = interceptor[:step_path].first
+          step_config_orig = klass.steps[target_step]
 
-            case interceptor[:type]
-            when :failure
-              failure_impl = lambda do |_input, _context|
-                RubyReactor::Failure("Simulated failure at #{target_step}")
-              end
+          unless step_config_orig
+            # Maybe it's a map step? We can't easily intercept inner steps from here
+            next
+          end
 
-              step_config.instance_variable_set(:@run_block, failure_impl)
-            when :mock
-              mock_block = interceptor[:conditions][:block]
+          # Create a new StepConfig
+          step_config = step_config_orig.clone
 
-              # Prepare original implementation call
-              original_impl = if step_config_orig.has_run_block?
-                                step_config_orig.run_block
-                              elsif step_config_orig.has_impl?
-                                ->(args, ctx) { step_config_orig.impl.run(args, ctx) }
-                              else
-                                ->(_, _) { raise "No implementation found for #{target_step}" }
-                              end
+          case interceptor[:type]
+          when :failure
+            apply_failure_interceptor(step_config, target_step)
+          when :mock
+            apply_mock_interceptor(step_config, target_step, step_config_orig, interceptor)
+          end
 
-              # Create the new implementation that wraps the user block
-              wrapper_impl = lambda do |args, context|
-                # args, context, original
-                result = if mock_block.arity == 3
-                           mock_block.call(args, context, original_impl)
-                         else
-                           mock_block.call(args, context)
-                         end
-                # puts "DEBUG: Mock execution for #{target_step}. Result: #{result.inspect}"
-                result
-              end
+          klass.steps[target_step] = step_config
+        end
+      end
 
-              step_config.instance_variable_set(:@run_block, wrapper_impl)
-            end
+      def apply_failure_interceptor(step_config, target_step)
+        failure_impl = lambda do |_input, _context|
+          RubyReactor::Failure("Simulated failure at #{target_step}")
+        end
 
-            steps[target_step] = step_config
+        step_config.instance_variable_set(:@run_block, failure_impl)
+      end
+
+      def apply_mock_interceptor(step_config, target_step, step_config_orig, interceptor)
+        mock_block = interceptor[:conditions][:block]
+
+        # Prepare original implementation call
+        original_impl = if step_config_orig.has_run_block?
+                          step_config_orig.run_block
+                        elsif step_config_orig.has_impl?
+                          ->(args, ctx) { step_config_orig.impl.run(args, ctx) }
+                        else
+                          ->(_, _) { raise "No implementation found for #{target_step}" }
+                        end
+
+        # Create the new implementation that wraps the user block
+        wrapper_impl = lambda do |args, context|
+          # args, context, original
+          if mock_block.arity == 3
+            mock_block.call(args, context, original_impl)
+          else
+            mock_block.call(args, context)
           end
         end
+
+        step_config.instance_variable_set(:@run_block, wrapper_impl)
       end
     end
   end

@@ -71,19 +71,22 @@ module RubyReactor
         return data if data.is_a?(RubyReactor::Failure)
         return nil unless data.is_a?(Hash)
 
+        # Helper for hash access with string/symbol keys
+        get = ->(key) { data[key] || data[key.to_s] }
+
         RubyReactor::Failure.new(
-          data[:message] || data["message"],
-          step_name: data[:step_name] || data["step_name"],
-          inputs: data[:inputs] || data["inputs"],
-          redact_inputs: data[:redact_inputs] || data["redact_inputs"] || [],
-          backtrace: data[:backtrace] || data["backtrace"],
-          reactor_name: data[:reactor_name] || data["reactor_name"],
-          step_arguments: data[:step_arguments] || data["step_arguments"],
-          exception_class: data[:exception_class] || data["exception_class"],
-          file_path: data[:file_path] || data["file_path"],
-          line_number: data[:line_number] || data["line_number"],
-          code_snippet: data[:code_snippet] || data["code_snippet"],
-          validation_errors: data[:validation_errors] || data["validation_errors"]
+          get.call(:message),
+          step_name: get.call(:step_name),
+          inputs: get.call(:inputs),
+          redact_inputs: get.call(:redact_inputs) || [],
+          backtrace: get.call(:backtrace),
+          reactor_name: get.call(:reactor_name),
+          step_arguments: get.call(:step_arguments),
+          exception_class: get.call(:exception_class),
+          file_path: get.call(:file_path),
+          line_number: get.call(:line_number),
+          code_snippet: get.call(:code_snippet),
+          validation_errors: get.call(:validation_errors)
         )
       end
 

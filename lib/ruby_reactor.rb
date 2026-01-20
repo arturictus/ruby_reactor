@@ -49,37 +49,28 @@ module RubyReactor
     attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments, :exception_class,
                 :file_path, :line_number, :code_snippet, :validation_errors
 
-    # rubocop:disable Metrics/ParameterLists
+    # rubocop:disable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def initialize(error, retryable: nil, step_name: nil, inputs: {}, backtrace: nil, redact_inputs: [],
                    reactor_name: nil, step_arguments: {}, exception_class: nil,
                    file_path: nil, line_number: nil, code_snippet: nil, invalid_payload: false, validation_errors: nil)
-      # rubocop:enable Metrics/ParameterLists
+      # rubocop:enable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
       @error = error
 
       # Handle case where error is a serialized hash (e.g. from async failure propagation)
       if @error.is_a?(Hash)
-        # Ensure indifferent access
-        error_hash = @error
-        err = ->(k) { error_hash[k.to_s] || error_hash[k.to_sym] }
-
-        # Debug exception class extraction
-        # puts "DEBUG: exception_class in hash: #{err[:exception_class].inspect}"
-
-        # Extract main error message
-        @error = err[:message] || err[:error] || @error
-
-        # Extract metadata if not explicitly provided
-        retryable = err[:retryable] if retryable.nil?
-        step_name ||= err[:step_name]
-        reactor_name ||= err[:reactor_name]
-        inputs = inputs.empty? ? (err[:inputs] || {}) : inputs
-        step_arguments = step_arguments.empty? ? (err[:step_arguments] || {}) : step_arguments
-        raw_backtrace ||= err[:backtrace] || backtrace
-        exception_class ||= err[:exception_class]
-        file_path ||= err[:file_path]
-        line_number ||= err[:line_number]
-        code_snippet ||= err[:code_snippet]
-        validation_errors ||= err[:validation_errors]
+        attributes = extract_attributes_from_hash(@error)
+        @error = attributes[:error]
+        retryable = attributes[:retryable] if retryable.nil?
+        step_name ||= attributes[:step_name]
+        reactor_name ||= attributes[:reactor_name]
+        inputs = attributes[:inputs] if inputs.empty?
+        step_arguments = attributes[:step_arguments] if step_arguments.empty?
+        raw_backtrace ||= attributes[:backtrace] || backtrace
+        exception_class ||= attributes[:exception_class]
+        file_path ||= attributes[:file_path]
+        line_number ||= attributes[:line_number]
+        code_snippet ||= attributes[:code_snippet]
+        validation_errors ||= attributes[:validation_errors]
       end
 
       @retryable = if retryable.nil?
@@ -225,6 +216,26 @@ module RubyReactor
 
     def error_message
       @error.respond_to?(:message) ? @error.message : @error.to_s
+    end
+
+    def extract_attributes_from_hash(error_hash)
+      # Ensure indifferent access
+      err = ->(k) { error_hash[k.to_s] || error_hash[k.to_sym] }
+
+      {
+        error: err[:message] || err[:error] || error_hash,
+        retryable: err[:retryable],
+        step_name: err[:step_name],
+        reactor_name: err[:reactor_name],
+        inputs: err[:inputs] || {},
+        step_arguments: err[:step_arguments] || {},
+        backtrace: err[:backtrace],
+        exception_class: err[:exception_class],
+        file_path: err[:file_path],
+        line_number: err[:line_number],
+        code_snippet: err[:code_snippet],
+        validation_errors: err[:validation_errors]
+      }
     end
   end
 
