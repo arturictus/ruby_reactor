@@ -34,7 +34,21 @@ module RubyReactor
         when RubyReactor::Success
           { "_type" => "Success", "value" => serialize_value(value.value) }
         when RubyReactor::Failure
-          { "_type" => "Failure", "error" => serialize_value(value.error), "retryable" => value.retryable }
+          {
+            "_type" => "Failure",
+            "error" => serialize_value(value.error),
+            "retryable" => value.retryable,
+            "step_name" => value.step_name,
+            "inputs" => serialize_value(value.inputs),
+            "backtrace" => value.backtrace,
+            "reactor_name" => value.reactor_name,
+            "step_arguments" => serialize_value(value.step_arguments),
+            "exception_class" => value.exception_class,
+            "file_path" => value.file_path,
+            "line_number" => value.line_number,
+            "code_snippet" => serialize_value(value.code_snippet),
+            "validation_errors" => serialize_value(value.validation_errors)
+          }
         when RubyReactor::Context
           { "_type" => "Context", "value" => value.serialize_for_retry }
         when Symbol
@@ -96,7 +110,20 @@ module RubyReactor
             when "Success"
               RubyReactor::Success(deserialize_value(value["value"]))
             when "Failure"
-              RubyReactor::Failure(deserialize_value(value["error"]), retryable: value["retryable"])
+              RubyReactor::Failure.new(
+                deserialize_value(value["error"]),
+                retryable: value["retryable"],
+                step_name: value["step_name"],
+                inputs: deserialize_value(value["inputs"]),
+                backtrace: value["backtrace"],
+                reactor_name: value["reactor_name"],
+                step_arguments: deserialize_value(value["step_arguments"]),
+                exception_class: value["exception_class"],
+                file_path: value["file_path"],
+                line_number: value["line_number"],
+                code_snippet: deserialize_value(value["code_snippet"]),
+                validation_errors: deserialize_value(value["validation_errors"])
+              )
             when "Context"
               Context.deserialize_from_retry(value["value"])
             when "Symbol"

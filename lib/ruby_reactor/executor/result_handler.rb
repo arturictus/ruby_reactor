@@ -129,7 +129,7 @@ module RubyReactor
 
       def create_failure_from_error(error, redact_inputs)
         original_error = error.original_error
-        exception_class = original_error&.class&.name
+        exception_class = original_error&.class&.name || (error.respond_to?(:exception_class) ? error.exception_class : nil)
         backtrace = original_error&.backtrace || error.backtrace
         file_path, line_number = extract_location(backtrace)
         code_snippet = RubyReactor::Utils::CodeExtractor.extract(file_path, line_number) if file_path

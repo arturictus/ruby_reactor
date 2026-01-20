@@ -97,7 +97,18 @@ module RubyReactor
           storage.store_map_result(map_id, index, { _error: result.error }, parent_class,
                                    strict_ordering: arguments[:strict_ordering])
 
-          storage.store_map_failed_context_id(map_id, context.context_id, parent_class) if arguments[:fail_fast]
+          if arguments[:fail_fast]
+            storage.store_map_failed_context_id(map_id, context.context_id, parent_class)
+            # FAST FAIL: Trigger Collector immediately to cancel/fail the map execution
+            RubyReactor.configuration.async_router.perform_map_collection_async(
+              parent_context_id: arguments[:parent_context_id],
+              map_id: map_id,
+              parent_reactor_class_name: parent_class,
+              step_name: arguments[:step_name],
+              strict_ordering: arguments[:strict_ordering],
+              timeout: 3600
+            )
+          end
         end
       end
 

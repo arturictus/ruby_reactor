@@ -91,20 +91,9 @@ module RubyReactor
         status = ctx.status.to_s
         case status
         when "failed"
-          reason = ctx.failure_reason || {}
-          RubyReactor::Failure.new(
-            reason[:message],
-            step_name: reason[:step_name],
-            inputs: reason[:inputs],
-            backtrace: reason[:backtrace],
-            reactor_name: reason[:reactor_name],
-            step_arguments: reason[:step_arguments],
-            exception_class: reason[:exception_class],
-            file_path: reason[:file_path],
-            line_number: reason[:line_number],
-            code_snippet: reason[:code_snippet],
-            validation_errors: reason[:validation_errors]
-          )
+          return ctx.failure_reason if ctx.failure_reason.is_a?(RubyReactor::Failure)
+
+          RubyReactor::Failure.new(ctx.failure_reason || {})
         when "completed"
           # Determine the success value
           val = if @reactor_class.return_step
@@ -121,6 +110,20 @@ module RubyReactor
                   end
                 end
           RubyReactor::Success.new(val)
+        when "running"
+          # Try to determine if it is truly running or if we just missed the completion
+          if @process_jobs && defined?(Sidekiq::Testing)
+            # Force one more check
+            process_pending_jobs
+            # Reload status
+            @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
+            return result unless @reactor_instance.context.status.to_s == "running"
+          end
+
+          # If still running, return a Pending/Running result instead of nil
+          # This allows matchers to report "expected success but was running"
+          RubyReactor::Failure("Reactor is still running (Async operations pending?)",
+                               retryable: true)
         when "paused"
           RubyReactor::InterruptResult.new(
             execution_id: ctx.context_id,

@@ -10,7 +10,49 @@ module RubyReactor
         end
 
         failure_message do |subject|
-          "expected reactor to be success, but failed with: #{subject.error.inspect}"
+          result = subject.result
+          if result && result.failure?
+            error = result # Use the Failure object which contains all metadata
+            # Safely extract values
+            err_msg = error.respond_to?(:error) ? error.error.to_s : error.to_s
+            # If error.error is the message string, use it.
+            # Note: RubyReactor::Failure#error_message does extraction logic usually.
+
+            ex_class = error.respond_to?(:exception_class) ? error.exception_class : nil
+            step = error.respond_to?(:step_name) ? error.step_name : nil
+            file = error.respond_to?(:file_path) ? error.file_path : nil
+            line = error.respond_to?(:line_number) ? error.line_number : nil
+            snippet = error.respond_to?(:code_snippet) ? error.code_snippet : nil
+            backtrace = error.respond_to?(:backtrace) ? error.backtrace : nil
+
+            # Error details are now extracted by RubyReactor::Failure#initialize when error is a Hash
+            # so we don't need to try and parse the message string manually.
+
+            # Build Formatted Message
+            lines = []
+            lines << "Error: #{ex_class || "UnknownError"}"
+            lines << "#{err_msg}"
+            lines << "Step: :#{step}" if step
+            lines << "File: #{file}:#{line}" if file
+
+            if snippet.is_a?(Array) && !snippet.empty?
+              lines << ""
+              snippet.each do |s|
+                prefix = s[:target] ? "--> " : "    "
+                lines << "#{prefix}#{s[:content]}"
+              end
+            end
+
+            if backtrace && !backtrace.empty?
+              lines << ""
+              lines << "Backtrace:"
+              lines << backtrace.take(10).map { |l| "- #{l}" }
+            end
+
+            lines.join("\n")
+          else
+            "expected reactor to be success, but failed (Status: #{subject.reactor_instance.context.status})"
+          end
         end
       end
 

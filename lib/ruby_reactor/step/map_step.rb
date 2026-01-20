@@ -196,7 +196,7 @@ module RubyReactor
               argument_mappings: arguments[:argument_mappings],
               strict_ordering: arguments[:strict_ordering],
               mapped_reactor_class: arguments[:mapped_reactor_class],
-              fail_fast: arguments[:fail_fast]
+              fail_fast: arguments[:fail_fast].nil? || arguments[:fail_fast]
             )
             queue_collector(map_id, context, step_name, arguments[:strict_ordering])
             "map:#{map_id}"
@@ -277,7 +277,7 @@ module RubyReactor
             map_id: map_id, serialized_inputs: serialized_inputs,
             reactor_class_info: reactor_class_info, strict_ordering: arguments[:strict_ordering],
             parent_context_id: context.context_id, parent_reactor_class_name: context.reactor_class.name,
-            step_name: step_name.to_s, fail_fast: arguments[:fail_fast]
+            step_name: step_name.to_s, fail_fast: arguments[:fail_fast].nil? || arguments[:fail_fast]
           )
         end
       end

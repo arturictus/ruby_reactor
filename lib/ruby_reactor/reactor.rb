@@ -245,6 +245,8 @@ module RubyReactor
 
     def reconstruct_failure_result
       reason = @context.failure_reason || {}
+      return reason if reason.is_a?(RubyReactor::Failure)
+
       # Use string keys preferred, fallback to symbol
       r = ->(k) { reason[k.to_s] || reason[k.to_sym] }
 

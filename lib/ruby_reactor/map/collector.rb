@@ -93,7 +93,9 @@ module RubyReactor
         return unless failed_context_data
 
         failed_context = RubyReactor::Context.deserialize_from_retry(failed_context_data)
-        resume_parent_execution(parent_context, step_name, RubyReactor::Failure(failed_context.failure_reason), storage)
+        reason = failed_context.failure_reason
+        result = reason.is_a?(RubyReactor::Failure) ? reason : RubyReactor::Failure(reason)
+        resume_parent_execution(parent_context, step_name, result, storage)
       end
     end
   end

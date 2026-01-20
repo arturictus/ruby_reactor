@@ -63,7 +63,8 @@ module RubyReactor
             final_result.error,
             step: step_name_sym,
             context: parent_context,
-            original_error: final_result.error.is_a?(Exception) ? final_result.error : nil
+            original_error: final_result.error.is_a?(Exception) ? final_result.error : nil,
+            exception_class: final_result.respond_to?(:exception_class) ? final_result.exception_class : nil
           )
 
           # Pass backtrace if available
