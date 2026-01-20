@@ -28,6 +28,24 @@ module RubyReactor
         self
       end
 
+      # Intercept a step and provide a custom implementation
+      #
+      # @param step_name [Symbol, String] The name of the step to intercept
+      # @param nested_steps [Array<Symbol, String>] Path to nested steps if applicable
+      # @param element_index [Integer] Optional index for map steps
+      # @yield [args, context, original_impl] block to execute
+      #   @yieldparam args [Hash] The arguments passed to the step
+      #   @yieldparam context [RubyReactor::Context] The execution context
+      #   @yieldparam original_impl [Proc] A proc that can be called to execute the original implementation: original_impl.call(args, context)
+      def mock_step(step_name, *nested_steps, element_index: nil, &block)
+        @interceptors << {
+          type: :mock,
+          step_path: [step_name, *nested_steps],
+          conditions: { element_index: element_index, block: block }
+        }
+        self
+      end
+
       def run_async(boolean)
         @async = boolean
         self
@@ -245,8 +263,6 @@ module RubyReactor
 
           # 4. Apply Interceptors
           interceptors.each do |interceptor|
-            next unless interceptor[:type] == :failure
-
             target_step = interceptor[:step_path].first
             step_config_orig = steps[target_step]
 
@@ -255,15 +271,42 @@ module RubyReactor
               next
             end
 
-            # Create a new StepConfig with failure logic
+            # Create a new StepConfig
             step_config = step_config_orig.clone
 
-            failure_impl = lambda do |_input, _context|
-              RubyReactor::Failure("Simulated failure at #{target_step}")
-            end
+            case interceptor[:type]
+            when :failure
+              failure_impl = lambda do |_input, _context|
+                RubyReactor::Failure("Simulated failure at #{target_step}")
+              end
 
-            # Prioritize our failure block
-            step_config.instance_variable_set(:@run_block, failure_impl)
+              step_config.instance_variable_set(:@run_block, failure_impl)
+            when :mock
+              mock_block = interceptor[:conditions][:block]
+
+              # Prepare original implementation call
+              original_impl = if step_config_orig.has_run_block?
+                                step_config_orig.run_block
+                              elsif step_config_orig.has_impl?
+                                ->(args, ctx) { step_config_orig.impl.run(args, ctx) }
+                              else
+                                ->(_, _) { raise "No implementation found for #{target_step}" }
+                              end
+
+              # Create the new implementation that wraps the user block
+              wrapper_impl = lambda do |args, context|
+                # args, context, original
+                result = if mock_block.arity == 3
+                           mock_block.call(args, context, original_impl)
+                         else
+                           mock_block.call(args, context)
+                         end
+                # puts "DEBUG: Mock execution for #{target_step}. Result: #{result.inspect}"
+                result
+              end
+
+              step_config.instance_variable_set(:@run_block, wrapper_impl)
+            end
 
             steps[target_step] = step_config
           end
