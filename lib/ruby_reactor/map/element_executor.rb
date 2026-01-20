@@ -19,7 +19,6 @@ module RubyReactor
         arguments[:serialized_context] ? executor.resume_execution : executor.execute
 
         handle_result(executor.result, arguments, context, storage, executor)
-
         finalize_execution(arguments, storage)
       end
 

@@ -46,8 +46,8 @@ RSpec.describe "Failure Reporting" do
       executor.send(:update_context_status, failure)
 
       expect(context.status).to eq(:failed)
-      expect(context.failure_reason[:exception_class]).to eq("ArgumentError")
-      expect(context.failure_reason[:message]).to eq("invalid argument")
+      expect(context.failure_reason.exception_class).to eq("ArgumentError")
+      expect(context.failure_reason.error.message).to eq("invalid argument")
     end
   end
 

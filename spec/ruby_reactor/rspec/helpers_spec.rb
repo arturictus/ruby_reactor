@@ -104,7 +104,8 @@ RSpec.describe RubyReactor::RSpec::Helpers do
       it "enqueues async job but does not execute when process_jobs is false" do
         subject = test_reactor(HelpersAsyncReactor, inputs: { value: 1 }, process_jobs: false)
         # Ensure it didn't run (status is likely nil or running, result returns nil for unknown/running)
-        expect(subject.result).to be_nil
+        expect(subject.result).to be_a(RubyReactor::Failure)
+        expect(subject.result.error).to include("Reactor is still running")
         # Ensure it enqueued (returned AsyncResult)
         expect(subject.run_result).to be_a(RubyReactor::AsyncResult)
       end

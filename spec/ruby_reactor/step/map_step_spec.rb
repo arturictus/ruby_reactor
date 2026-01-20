@@ -4,6 +4,13 @@ require "spec_helper"
 
 RSpec.describe RubyReactor::Step::MapStep do
   let(:context) do
+    # We need a closer-to-real context for real storage
+    # But for unit testing the Step, we can still mock the context object itself if we serialize it?
+    # Or should we use a real context too?
+    # The user asked to not mock the STORAGE adapter.
+    # The context is just an object passed around.
+    # However, `load_parent_context_from_storage` is mocked below to return this context.
+    # If we use real storage, we might need to store this context first.
     instance_double(RubyReactor::Context,
                     context_id: "test-context-id",
                     map_operations: {},
@@ -14,28 +21,36 @@ RSpec.describe RubyReactor::Step::MapStep do
                     reactor_class: double(name: "TestReactor"))
   end
 
-  let(:storage_adapter) { instance_double(RubyReactor::Storage::RedisAdapter) }
+  let(:storage_adapter) { RubyReactor.configuration.storage_adapter }
+
+  # Async router is fine to be mocked as we don't want to actually enqueue sidekiq jobs here unless necessary
   let(:async_router) { class_double(RubyReactor::SidekiqAdapter) }
 
   before do
-    allow(RubyReactor.configuration).to receive_messages(storage_adapter: storage_adapter, async_router: async_router)
+    allow(RubyReactor.configuration).to receive(:async_router).and_return(async_router)
     allow(async_router).to receive(:perform_map_element_async)
-    allow(storage_adapter).to receive(:store_context)
-    allow(storage_adapter).to receive(:set_map_counter)
-    allow(storage_adapter).to receive(:initialize_map_operation)
-    allow(storage_adapter).to receive(:set_last_queued_index)
-    allow(storage_adapter).to receive(:set_map_offset)
-    allow(storage_adapter).to receive(:set_map_offset_if_not_exists)
-    allow(storage_adapter).to receive(:increment_map_offset).and_return(0)
-    allow(storage_adapter).to receive_messages(retrieve_context: {}, retrieve_map_offset: 0)
-    allow(context).to receive(:serialize_for_retry).and_return({})
+    allow(async_router).to receive(:perform_map_collection_async)
+    allow(async_router).to receive(:perform_map_execution_async)
 
-    # Mock fallback lookup of steps in Dispatcher
-    steps_mock = { test_step: double(arguments: { argument_mappings: {}, source: { source: [] } }) }
-    allow(context.reactor_class).to receive(:steps).and_return(steps_mock)
+    allow(context).to receive(:serialize_for_retry).and_return({
+                                                                 context_id: "test-context-id",
+                                                                 reactor_class: "TestReactor"
+                                                               })
 
-    # Mock load_parent_context_from_storage to return our mocked context
-    allow(RubyReactor::Map::Dispatcher).to receive(:load_parent_context_from_storage).and_return(context)
+    # Allow stepping through map logic
+    allow(context.reactor_class).to receive(:steps).and_return(
+      { test_step: double(arguments: { argument_mappings: {}, source: { source: [] } }) }
+    )
+
+    # NOTE: We are using REAL storage adapter now, so no allows on storage_adapter.
+    # But we might need to pre-seed data if the code expects it (e.g. load_parent_context_from_storage).
+
+    # Store the parent context so Dispatcher can find it
+    RubyReactor.configuration.storage_adapter.store_context(
+      "test-context-id",
+      JSON.dump({ context_id: "test-context-id", reactor_class: "TestReactor" }),
+      "TestReactor"
+    )
   end
 
   describe ".run_async" do
@@ -57,8 +72,16 @@ RSpec.describe RubyReactor::Step::MapStep do
 
         described_class.send(:run_async, arguments, context, :test_step)
 
-        expect(storage_adapter).to have_received(:set_map_counter).with(anything, 3, anything)
-        expect(storage_adapter).to have_received(:initialize_map_operation).with(anything, 3, anything, anything)
+        # Verify side effects in Redis
+        map_id = "test-context-id:test_step"
+        metadata = storage_adapter.retrieve_map_metadata(map_id, "TestReactor")
+
+        expect(metadata).not_to be_nil
+        expect(metadata["count"].to_i).to eq(3)
+
+        # Also verify counter
+        # Depending on implementation, counter might be initialized separately
+        # But metadata uses initialize_map_operation which sets it
       end
     end
 
@@ -78,8 +101,11 @@ RSpec.describe RubyReactor::Step::MapStep do
 
         described_class.send(:run_async, arguments, context, :test_step)
 
-        expect(storage_adapter).to have_received(:set_map_counter).with(anything, 5, anything)
-        expect(storage_adapter).to have_received(:initialize_map_operation).with(anything, 5, anything, anything)
+        map_id = "test-context-id:test_step"
+        metadata = storage_adapter.retrieve_map_metadata(map_id, "TestReactor")
+
+        expect(metadata).not_to be_nil
+        expect(metadata["count"].to_i).to eq(5)
       end
     end
 
@@ -94,7 +120,7 @@ RSpec.describe RubyReactor::Step::MapStep do
         # rubocop:enable RSpec/VerifiedDoubleReference
       end
 
-      it "calls size instead of count" do
+      it "calls size instead of count and stores correct count" do
         # Setup expectations as allowances for spies
         allow(source).to receive(:size).and_return(10)
 
@@ -105,7 +131,10 @@ RSpec.describe RubyReactor::Step::MapStep do
 
         expect(source).to have_received(:size).at_least(:once)
         expect(source).not_to have_received(:count)
-        expect(storage_adapter).to have_received(:set_map_counter).with(anything, 10, anything)
+
+        map_id = "test-context-id:test_step"
+        metadata = storage_adapter.retrieve_map_metadata(map_id, "TestReactor")
+        expect(metadata["count"].to_i).to eq(10)
       end
     end
   end

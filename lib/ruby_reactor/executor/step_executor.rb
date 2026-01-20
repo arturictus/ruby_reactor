@@ -68,6 +68,7 @@ module RubyReactor
       private
 
       def reconstruct_failure(data)
+        return data if data.is_a?(RubyReactor::Failure)
         return nil unless data.is_a?(Hash)
 
         RubyReactor::Failure.new(

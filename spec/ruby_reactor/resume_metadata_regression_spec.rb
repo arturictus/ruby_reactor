@@ -38,7 +38,7 @@ RSpec.describe "Resume Metadata Regression" do
 
     # Verify the context's failure_reason which is stored in Redis
     expect(context.failure_reason).not_to be_nil
-    expect(context.failure_reason[:step_name]).to eq(:failing_step)
-    expect(context.failure_reason[:message]).to match(/Something went wrong/)
+    expect(context.failure_reason.step_name).to eq(:failing_step)
+    expect(context.failure_reason.error).to match(/Something went wrong/)
   end
 end

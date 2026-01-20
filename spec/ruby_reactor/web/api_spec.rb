@@ -36,7 +36,7 @@ RSpec.describe RubyReactor::Web::API, type: :request do
         expect(last_response.status).to eq(200)
         expect(json["status"]).to eq("failed")
         expect(json["error"]).not_to be_nil
-        expect(json["error"]["message"]).to eq("Step 'step2' failed after 1 attempts: Something went wrong")
+        expect(json["error"]["error"]).to eq("Step 'step2' failed after 1 attempts: Something went wrong")
         expect(json["error"]["step_name"]).to eq("step2")
       end
     end
