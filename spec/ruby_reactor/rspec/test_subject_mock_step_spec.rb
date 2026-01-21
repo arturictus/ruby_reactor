@@ -26,7 +26,7 @@ RSpec.describe RubyReactor::RSpec::TestSubject, "#mock_step" do
     end
   end
 
-  subject(:test_subject) { test_reactor(MockingTestReactor, inputs: inputs) }
+  subject(:test_subject) { test_reactor(MockingTestReactor, inputs) }
 
   let(:inputs) { { value: 10 } }
 

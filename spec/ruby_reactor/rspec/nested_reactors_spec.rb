@@ -12,7 +12,7 @@ RSpec.describe "Nested Reactor Helpers" do
   # Support::MultipleComposeRootReactor (has :child1, :child2)
 
   describe "fluent mocking" do
-    subject(:reactor) { test_reactor(reactor_class, inputs: { id: "test" }) }
+    subject(:reactor) { test_reactor(reactor_class, { id: "test" }) }
 
     let(:reactor_class) { Support::MultipleComposeRootReactor }
 
@@ -40,7 +40,7 @@ RSpec.describe "Nested Reactor Helpers" do
 
   describe "map mocking and traversal" do
     # Define a simple map reactor inline for testing
-    subject(:reactor) { test_reactor(map_reactor_class, inputs: { list: [1, 2, 3] }) }
+    subject(:reactor) { test_reactor(map_reactor_class, { list: [1, 2, 3] }) }
 
     let(:map_reactor_class) { Support::MapMockTestReactor }
 

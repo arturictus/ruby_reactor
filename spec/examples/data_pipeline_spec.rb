@@ -42,7 +42,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
 
     it "executes complete ETL pipeline with inline execution" do
       # Create reactor instance to access context
-      subject = test_reactor(UserETLReactor, inputs: {
+      subject = test_reactor(UserETLReactor, {
                                source_file: "/tmp/users.csv",
                                csv_data: sample_users,
                                output_destinations: %w[database search]

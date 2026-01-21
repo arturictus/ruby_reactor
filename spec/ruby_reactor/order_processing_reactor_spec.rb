@@ -5,7 +5,7 @@ require "sidekiq/testing"
 RSpec.describe RubyReactor::OrderProcessingReactor do
   shared_examples "order processing reactor step execution" do
     def execute_op_reactor(inputs = {})
-      test_reactor(described_class, inputs: inputs, async: is_async)
+      test_reactor(described_class, inputs, async: is_async)
     end
 
     describe "step validate_order" do

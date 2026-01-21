@@ -29,7 +29,7 @@ RSpec.describe "Map Infinite Loop Prevention" do
   it "processes all items exactly once without looping" do
     # Configure to use real Sidekiq execution (via TestSubject)
     # The helper handles async logic automatically if we don't force async: false
-    subject = test_reactor(LoopTestReactor, inputs: { items: items })
+    subject = test_reactor(LoopTestReactor, { items: items })
 
     expect(subject).to be_success
     expect(subject.result).to be_a(RubyReactor::Success)

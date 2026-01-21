@@ -64,24 +64,24 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
   describe "#test_reactor" do
     it "returns a TestSubject wrapper" do
-      subject = test_reactor(HelpersTestReactor, inputs: { value: 1 })
+      subject = test_reactor(HelpersTestReactor, { value: 1 })
       expect(subject).to be_a(RubyReactor::RSpec::TestSubject)
     end
 
     it "executes lazily via matcher (success)" do
-      subject = test_reactor(HelpersTestReactor, inputs: { value: 1 })
+      subject = test_reactor(HelpersTestReactor, { value: 1 })
       expect(subject).to be_success
       expect(subject.result.value).to eq(2)
     end
 
     it "executes lazily via matcher (failure)" do
-      subject = test_reactor(HelpersFailureReactor)
+      subject = test_reactor(HelpersFailureReactor, {})
       expect(subject).to be_failure
       expect(subject.error).to include("Boom")
     end
 
     it "can inspect step execution" do
-      subject = test_reactor(HelpersTestReactor, inputs: { value: 1 })
+      subject = test_reactor(HelpersTestReactor, { value: 1 })
       expect(subject).to have_run_step(:add_one).returning(2)
     end
 
@@ -89,20 +89,20 @@ RSpec.describe RubyReactor::RSpec::Helpers do
       require "sidekiq/testing"
 
       it "runs async reactor synchronously when forced" do
-        subject = test_reactor(HelpersAsyncReactor, inputs: { value: 1 }, async: false)
+        subject = test_reactor(HelpersAsyncReactor, { value: 1 }, async: false)
         expect(subject).to be_success
         expect(subject.result.value).to eq(2)
       end
 
       it "runs async reactor with inline execution (Sidekiq)" do
-        subject = test_reactor(HelpersAsyncReactor, inputs: { value: 1 })
+        subject = test_reactor(HelpersAsyncReactor, { value: 1 })
         # Async execution is now automatically handled inline by default via TestSubject
 
         expect(subject).to be_success
       end
 
       it "enqueues async job but does not execute when process_jobs is false" do
-        subject = test_reactor(HelpersAsyncReactor, inputs: { value: 1 }, process_jobs: false)
+        subject = test_reactor(HelpersAsyncReactor, { value: 1 }, process_jobs: false)
         # Ensure it didn't run (status is likely nil or running, result returns nil for unknown/running)
         expect(subject.result).to be_a(RubyReactor::Failure)
         expect(subject.result.error).to include("Reactor is still running")
@@ -113,14 +113,14 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
     context "with async steps" do
       it "runs async steps synchronously when forced" do
-        subject = test_reactor(HelpersAsyncStepReactor, inputs: { value: 1 }, async: false)
+        subject = test_reactor(HelpersAsyncStepReactor, { value: 1 }, async: false)
         expect(subject).to be_success
       end
     end
 
     context "with maps" do
       it "processes map items inline" do
-        subject = test_reactor(HelpersMapReactor, inputs: { items: [1, 2, 3] }, async: false)
+        subject = test_reactor(HelpersMapReactor, { items: [1, 2, 3] }, async: false)
 
         expect(subject).to be_success
         result = subject.step_result(:process_items)
@@ -137,7 +137,7 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
     context "with interrupts" do
       it "detects paused state" do
-        subject = test_reactor(HelpersInterruptReactor, async: false)
+        subject = test_reactor(HelpersInterruptReactor, {}, async: false)
         # It should pause at :wait
         # check status
         # status comes from @reactor_instance.context.status
@@ -152,7 +152,7 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
   describe "#failing_at" do
     it "forces a failure at the specified step" do
-      subject = test_reactor(HelpersTestReactor, inputs: { value: 1 })
+      subject = test_reactor(HelpersTestReactor, { value: 1 })
                 .failing_at(:add_one)
 
       expect(subject).to be_failure
@@ -163,7 +163,7 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
   describe "matchers" do
     it "verifies step order using .after" do
-      subject = test_reactor(HelpersMultiStepReactor)
+      subject = test_reactor(HelpersMultiStepReactor, {})
       expect(subject).to be_success
       expect(subject).to have_run_step(:two).after(:one)
     end
@@ -187,13 +187,13 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
   describe "additional features" do
     it "verifies step order" do
-      subject = test_reactor(HelpersMultiStepReactor)
+      subject = test_reactor(HelpersMultiStepReactor, {})
       expect(subject).to be_success
       expect(subject).to have_run_step(:two).after(:one)
     end
 
     it "verifies validation errors" do
-      subject = test_reactor(HelpersValidationReactor, inputs: { email: "bad" })
+      subject = test_reactor(HelpersValidationReactor, { email: "bad" })
       expect(subject).to be_failure
       expect(subject).to have_validation_error(:email)
     end

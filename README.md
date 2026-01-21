@@ -62,6 +62,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
   - [Complex Workflows with Dependencies](#complex-workflows-with-dependencies)
   - [Error Handling and Compensation](#error-handling-and-compensation)
   - [Using Pre-defined Schemas](#using-pre-defined-schemas)
+  - [Testing](#testing)
 - [Documentation](#documentation)
 - [Future improvements](#future-improvements)
 - [Development](#development)
@@ -680,6 +681,29 @@ class SchemaValidatedReactor < RubyReactor::Reactor
 end
 ```
 
+### Testing
+
+RubyReactor provides testing utilities for RSpec. See the [Testing with RSpec](documentation/testing.md) guide for comprehensive documentation.
+
+```ruby
+RSpec.describe PaymentReactor do
+  it "processes payment successfully" do
+    subject = test_reactor(PaymentReactor, order_id: 123, amount: 99.99)
+    
+    expect(subject).to be_success
+    expect(subject).to have_run_step(:charge_card).after(:validate_order)
+    expect(subject.step_result(:charge_card)).to include(status: "completed")
+  end
+
+  it "handles payment failures with mocked steps" do
+    subject = test_reactor(PaymentReactor, order_id: 123, amount: 99.99)
+      .mock_step(:charge_card) { Failure("Card declined") }
+    
+    expect(subject).to be_failure
+    expect(subject.error).to include("Card declined")
+  end
+end
+```
 
 ## Documentation
 
@@ -705,6 +729,9 @@ Configure robust retry policies for your steps. This guide details the available
 
 ### [Interrupts](documentation/interrupts.md)
 Learn how to pause and resume reactors to handle long-running processes, manual approvals, and asynchronous callbacks. Patterns for correlation IDs, timeouts, and payload validation.
+
+### [Testing with RSpec](documentation/testing.md)
+Comprehensive guide to testing reactors with RubyReactor's testing utilities. Learn about the `TestSubject` class for reactor execution and introspection, step mocking for isolating dependencies, testing nested and composed reactors, and custom RSpec matchers like `be_success`, `have_run_step`, and `have_retried_step`.
 
 ### Examples
 - [Order Processing](documentation/examples/order_processing.md) - Complete order processing workflow example

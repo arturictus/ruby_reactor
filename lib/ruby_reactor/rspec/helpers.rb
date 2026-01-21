@@ -3,7 +3,7 @@
 module RubyReactor
   module RSpec
     module Helpers
-      def test_reactor(reactor_class, inputs: {}, context: {}, async: nil, process_jobs: true)
+      def test_reactor(reactor_class, inputs, context: {}, async: nil, process_jobs: true)
         TestSubject.new(
           reactor_class: reactor_class,
           inputs: inputs,
