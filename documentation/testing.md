@@ -355,6 +355,173 @@ expect(subject).to have_validation_error(:age)
 
 ---
 
+## Testing Interrupts
+
+RubyReactor provides comprehensive test helpers for testing reactors that use the `interrupt` DSL for pause/resume workflows.
+
+### Interrupt State Introspection
+
+#### Checking Paused State
+
+```ruby
+subject = test_reactor(ApprovalWorkflow, request_id: 123)
+
+# Check if reactor is paused
+subject.paused?  # => true/false
+
+# Get the current interrupt step name
+subject.current_step  # => :wait_for_approval (Symbol) or nil
+```
+
+#### Getting Ready Interrupt Steps
+
+When a reactor has multiple concurrent interrupts (e.g., parallel approvals), use `ready_interrupt_steps` to see all steps that are ready to be resumed:
+
+```ruby
+subject = test_reactor(MultiApprovalWorkflow, params)
+
+# Get all ready interrupt steps
+subject.ready_interrupt_steps  # => [:manager_approval, :director_approval]
+```
+
+### Resuming Paused Reactors
+
+Use `resume` to continue execution with a payload:
+
+```ruby
+# Single interrupt - step is automatically detected
+subject = test_reactor(ApprovalWorkflow, request_id: 123)
+expect(subject).to be_paused
+
+subject.resume(payload: { approved: true, approver: "manager" })
+
+expect(subject).to be_success
+```
+
+#### Multiple Concurrent Interrupts
+
+When multiple interrupts are ready, you **must** specify which step to resume:
+
+```ruby
+subject = test_reactor(MultiApprovalWorkflow, params)
+
+# This will raise an error - ambiguous which interrupt to resume
+# subject.resume(payload: { status: "approved" })  # => Error!
+
+# Specify the step explicitly
+subject.resume(step: :manager_approval, payload: { status: "approved" })
+subject.resume(step: :director_approval, payload: { status: "approved" })
+
+expect(subject).to be_success
+```
+
+### Interrupt Matchers
+
+#### `be_paused`
+
+Assert that a reactor is in paused state:
+
+```ruby
+expect(subject).to be_paused
+expect(subject).not_to be_paused
+```
+
+#### `be_paused_at`
+
+Assert that a reactor is paused with specific interrupt(s) ready:
+
+```ruby
+# Single interrupt
+expect(subject).to be_paused_at(:wait_for_approval)
+
+# Check if specific interrupt is among the ready ones
+expect(subject).to be_paused_at(:manager_approval)
+
+# Check multiple interrupts are ready
+expect(subject).to be_paused_at(:manager_approval, :director_approval)
+```
+
+#### `have_ready_interrupts`
+
+Assert the exact set of ready interrupt steps:
+
+```ruby
+# Assert exactly these interrupts are ready
+expect(subject).to have_ready_interrupts(:manager_approval, :director_approval)
+```
+
+### Complete Interrupt Testing Example
+
+```ruby
+RSpec.describe ApprovalWorkflow do
+  describe "single approval" do
+    it "pauses at approval step and resumes" do
+      subject = test_reactor(ApprovalWorkflow, request_id: 123)
+      
+      # Verify paused state
+      expect(subject).to be_paused
+      expect(subject).to be_paused_at(:wait_for_approval)
+      expect(subject.current_step).to eq(:wait_for_approval)
+      
+      # Step results before interrupt should be available
+      expect(subject.step_result(:prepare_request)).to be_present
+      
+      # Resume with approval payload
+      subject.resume(payload: { approved: true, approver: "manager" })
+      
+      # Should complete after resume
+      expect(subject).to be_success
+      expect(subject.step_result(:finalize)).to include(approved: true)
+    end
+    
+    it "stays paused with invalid payload" do
+      subject = test_reactor(ApprovalWorkflow, request_id: 123)
+      
+      # Resume with invalid payload (fails validation)
+      expect {
+        subject.resume(payload: { invalid: "data" })
+      }.to raise_error(RubyReactor::Error::ValidationError)
+    end
+  end
+  
+  describe "multiple approvals" do
+    it "handles concurrent approval requirements" do
+      subject = test_reactor(MultiApprovalWorkflow, request_id: 456)
+      
+      # Verify multiple interrupts are ready
+      expect(subject).to be_paused
+      expect(subject).to have_ready_interrupts(:manager_approval, :director_approval)
+      
+      # Resume first approval
+      subject.resume(step: :manager_approval, payload: { status: "approved" })
+      
+      # Still paused, waiting for second approval
+      expect(subject).to be_paused
+      expect(subject.ready_interrupt_steps).to eq([:director_approval])
+      
+      # Complete second approval
+      subject.resume(step: :director_approval, payload: { status: "approved" })
+      
+      expect(subject).to be_success
+    end
+    
+    it "requires step specification for multiple interrupts" do
+      subject = test_reactor(MultiApprovalWorkflow, request_id: 456)
+      
+      # Without step: parameter, raises error
+      expect {
+        subject.resume(payload: { status: "approved" })
+      }.to raise_error(
+        RubyReactor::Error::ValidationError,
+        /multiple interrupt steps are ready/
+      )
+    end
+  end
+end
+```
+
+---
+
 ## Complete Examples
 
 ### Testing a Payment Workflow
@@ -594,9 +761,13 @@ end
 | `failing_at(name, *nested)` | Simulate failure at a step |
 | `map(step_name)` | Get proxy for mocking map step internals |
 | `composed(step_name)` | Get proxy or traverse composed reactor |
-| `result` | Get the final result (Success/Failure) |
+| `result` | Get the final result (Success/Failure/InterruptResult) |
 | `success?` | Check if reactor succeeded |
 | `failure?` | Check if reactor failed |
+| `paused?` | Check if reactor is paused at an interrupt |
+| `current_step` | Get the current interrupt step name (Symbol or nil) |
+| `ready_interrupt_steps` | Get all ready interrupt step names (Array of Symbols) |
+| `resume(payload:, step:)` | Resume a paused reactor with payload; `step:` required for multiple interrupts |
 | `step_result(name)` | Get a specific step's result |
 | `error` | Get the error message if failed |
 | `map_elements(step_name)` | Get all map element subjects |
@@ -609,6 +780,9 @@ end
 |---------|-------------|
 | `be_success` | Assert reactor completed successfully |
 | `be_failure` | Assert reactor failed |
+| `be_paused` | Assert reactor is paused at an interrupt |
+| `be_paused_at(*steps)` | Assert reactor is paused with specific interrupt(s) ready |
+| `have_ready_interrupts(*steps)` | Assert exact set of ready interrupt steps |
 | `have_run_step(name)` | Assert step was executed |
 | `.returning(value)` | Chain: assert step returned value |
 | `.after(step)` | Chain: assert step ran after another |

@@ -279,6 +279,109 @@ module RubyReactor
         @reactor_instance.context.status.to_s == "failed"
       end
 
+      # --- Interrupt Test Helpers ---
+
+      # Check if the reactor is paused at an interrupt
+      #
+      # @return [Boolean] true if the reactor is in paused state
+      def paused?
+        ensure_executed!
+        @reactor_instance.context.status.to_s == "paused"
+      end
+
+      # Get the current step where the reactor is paused (interrupt step)
+      # Note: When multiple interrupts are ready, this returns just one of them.
+      # Use `ready_interrupt_steps` to get all ready interrupt steps.
+      #
+      # @return [Symbol, nil] the name of the current interrupt step, or nil if not paused
+      def current_step
+        ensure_executed!
+        step = @reactor_instance.context.current_step
+        step&.to_sym
+      end
+
+      # Get all ready interrupt steps (steps that can be resumed)
+      # This is useful when multiple interrupts are waiting concurrently.
+      #
+      # @return [Array<Symbol>] list of ready interrupt step names
+      def ready_interrupt_steps
+        ensure_executed!
+        return [] unless paused?
+
+        # Build the dependency graph and get ready steps
+        graph = RubyReactor::DependencyGraph.new
+        graph_manager = RubyReactor::Executor::GraphManager.new(
+          @reactor_class, graph, @reactor_instance.context
+        )
+        graph_manager.build_and_validate!
+        graph_manager.mark_completed_steps_from_context
+
+        # Filter to only interrupt steps (using interrupt? predicate method)
+        ready = graph_manager.dependency_graph.ready_steps
+        ready.select { |step_config| step_config.respond_to?(:interrupt?) && step_config.interrupt? }
+             .map { |step_config| step_config.name.to_sym }
+      end
+
+      # Resume a paused reactor with the given payload
+      #
+      # @param payload [Hash] The data to provide to the interrupt step
+      # @param step [Symbol, String, nil] The specific interrupt step to resume.
+      #   Required when multiple interrupts are ready. If not provided and only
+      #   one interrupt is ready, that step will be used.
+      # @return [TestSubject] self for chaining and introspection
+      # @raise [Error::ValidationError] if the reactor is not paused, step is ambiguous, or payload is invalid
+      def resume(payload: {}, step: nil)
+        ensure_executed!
+
+        unless paused?
+          raise RubyReactor::Error::ValidationError,
+                "Cannot resume: reactor is not paused (status: #{@reactor_instance.context.status})"
+        end
+
+        step_name = determine_resume_step(step)
+
+        # Use the reactor's continue method
+        @reactor_instance.continue(payload: payload, step_name: step_name)
+
+        # Process any pending async jobs
+        process_pending_jobs if @process_jobs && defined?(Sidekiq::Testing)
+
+        # Reload the reactor instance to get updated state
+        @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
+
+        # Return self for chaining and introspection
+        self
+      end
+
+      private
+
+      def determine_resume_step(step)
+        ready_steps = ready_interrupt_steps
+
+        if step
+          # User explicitly specified a step
+          step_sym = step.to_sym
+          unless ready_steps.include?(step_sym)
+            raise RubyReactor::Error::ValidationError,
+                  "Cannot resume: step :#{step} is not ready. Ready steps: #{ready_steps.inspect}"
+          end
+          step_sym
+        elsif ready_steps.size == 1
+          # Only one step ready, use it
+          ready_steps.first
+        elsif ready_steps.size > 1
+          # Multiple steps ready, step is required
+          raise RubyReactor::Error::ValidationError,
+                "Cannot resume: multiple interrupt steps are ready (#{ready_steps.inspect}). " \
+                "Please specify which step to resume using: resume(step: :step_name, payload: {...})"
+        else
+          # Fallback to current_step (shouldn't happen normally)
+          current_step || raise(RubyReactor::Error::ValidationError, "Cannot resume: no ready interrupt steps found")
+        end
+      end
+
+      public
+
       def step_result(name)
         ensure_executed!
         # Prefer intermediate_results as it is the data store

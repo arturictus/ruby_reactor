@@ -172,6 +172,83 @@ module RubyReactor
         end
       end
 
+      # Matcher to check if reactor is paused at an interrupt
+      ::RSpec::Matchers.define :be_paused do
+        match do |subject|
+          subject.ensure_executed!
+          subject.paused?
+        end
+
+        failure_message do |subject|
+          "expected reactor to be paused, but status was #{subject.reactor_instance.context.status}"
+        end
+
+        failure_message_when_negated do |_subject|
+          "expected reactor not to be paused, but it is"
+        end
+      end
+
+      # Matcher to check if reactor is paused at a specific interrupt step
+      # Works with both single and multiple concurrent interrupts
+      ::RSpec::Matchers.define :be_paused_at do |*step_names|
+        match do |subject|
+          subject.ensure_executed!
+          return false unless subject.paused?
+
+          ready_steps = subject.ready_interrupt_steps
+          step_names.all? { |name| ready_steps.include?(name.to_sym) }
+        end
+
+        failure_message do |subject|
+          if subject.paused?
+            ready_steps = subject.ready_interrupt_steps
+            if step_names.size == 1
+              "expected reactor to be paused at :#{step_names.first}, " \
+                "but ready interrupt steps are: #{ready_steps.inspect}"
+            else
+              "expected reactor to be paused at #{step_names.map { |s| ":#{s}" }.join(", ")}, " \
+                "but ready interrupt steps are: #{ready_steps.inspect}"
+            end
+          else
+            "expected reactor to be paused at #{step_names.map { |s| ":#{s}" }.join(", ")}, " \
+              "but status was #{subject.reactor_instance.context.status}"
+          end
+        end
+
+        failure_message_when_negated do |_subject|
+          "expected reactor not to be paused at #{step_names.map { |s| ":#{s}" }.join(", ")}, but it is"
+        end
+      end
+
+      # Matcher to check the exact set of ready interrupt steps
+      ::RSpec::Matchers.define :have_ready_interrupts do |*expected_steps|
+        match do |subject|
+          subject.ensure_executed!
+          return false unless subject.paused?
+
+          actual_steps = subject.ready_interrupt_steps.sort
+          expected = expected_steps.map(&:to_sym).sort
+          actual_steps == expected
+        end
+
+        failure_message do |subject|
+          if subject.paused?
+            actual_steps = subject.ready_interrupt_steps
+            "expected ready interrupt steps to be #{expected_steps.map { |s| ":#{s}" }}, " \
+              "but got #{actual_steps.inspect}"
+          else
+            "expected reactor to be paused with ready interrupt steps, " \
+              "but status was #{subject.reactor_instance.context.status}"
+          end
+        end
+
+        failure_message_when_negated do |subject|
+          actual_steps = subject.ready_interrupt_steps
+          "expected ready interrupt steps not to be #{expected_steps.map { |s| ":#{s}" }}, " \
+            "but it was #{actual_steps.inspect}"
+        end
+      end
+
       # Add more matchers as per plan
       # rubocop:enable Metrics/BlockLength
     end
