@@ -12,26 +12,26 @@ RSpec.describe "Nested Reactor Helpers" do
   # Support::MultipleComposeRootReactor (has :child1, :child2)
 
   describe "fluent mocking" do
-    subject { test_reactor(reactor_class, inputs: { id: "test" }) }
+    subject(:reactor) { test_reactor(reactor_class, inputs: { id: "test" }) }
 
     let(:reactor_class) { Support::MultipleComposeRootReactor }
 
     context "with composed steps" do
       it "mocks inner step of a composed reactor" do
-        subject.composed(:child2).mock_step(:async_step) do |args, _ctx|
+        reactor.composed(:child2).mock_step(:async_step) do |args, _ctx|
           RubyReactor::Success("mocked_#{args[:id]}")
         end
 
-        expect(subject).to be_success
+        expect(reactor).to be_success
 
         # Verify the mock behavior
-        child2_subject = subject.composed(:child2)
+        child2_subject = reactor.composed(:child2)
         expect(child2_subject).to have_run_step(:async_step).returning("mocked_child2")
       end
 
       it "can traverse composed steps" do
-        expect(subject).to be_success
-        child1 = subject.composed(:child1)
+        expect(reactor).to be_success
+        child1 = reactor.composed(:child1)
         expect(child1).to be_success
         expect(child1).to have_run_step(:async_step).returning("async_done_child1")
       end
@@ -40,23 +40,23 @@ RSpec.describe "Nested Reactor Helpers" do
 
   describe "map mocking and traversal" do
     # Define a simple map reactor inline for testing
-    subject { test_reactor(map_reactor_class, inputs: { list: [1, 2, 3] }) }
+    subject(:reactor) { test_reactor(map_reactor_class, inputs: { list: [1, 2, 3] }) }
 
     let(:map_reactor_class) { Support::MapMockTestReactor }
 
     it "mocks inner step of a map reactor" do
-      subject.map(:process_list).mock_step(:transform) do |args, _ctx, original|
+      reactor.map(:process_list).mock_step(:transform) do |args, ctx, original|
         if args[:value] == 2
           RubyReactor::Success(999) # Mock specific value
         else
-          original.call(args, _ctx)
+          original.call(args, ctx)
         end
       end
 
-      expect(subject).to be_success
+      expect(reactor).to be_success
 
       # Verify via traversal
-      elements = subject.map_elements(:process_list)
+      elements = reactor.map_elements(:process_list)
       expect(elements.size).to eq(3)
 
       expect(elements[0]).to have_run_step(:transform).returning(2) # 1 * 2
@@ -65,9 +65,9 @@ RSpec.describe "Nested Reactor Helpers" do
     end
 
     it "traverses individual elements" do
-      expect(subject).to be_success
+      expect(reactor).to be_success
 
-      element = subject.map_element(:process_list, index: 1)
+      element = reactor.map_element(:process_list, index: 1)
       expect(element).to have_run_step(:transform).returning(4)
     end
   end

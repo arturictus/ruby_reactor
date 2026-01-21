@@ -2,6 +2,7 @@
 
 module RubyReactor
   module RSpec
+    # rubocop:disable Metrics/ClassLength
     class TestSubject
       include ::RSpec::Mocks::ExampleMethods
 
@@ -513,5 +514,6 @@ module RubyReactor
         step_config.instance_variable_set(:@async, false)
       end
     end
+    # rubocop:enable Metrics/ClassLength
   end
 end
