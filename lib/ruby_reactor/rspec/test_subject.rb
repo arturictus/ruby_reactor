@@ -47,6 +47,119 @@ module RubyReactor
         self
       end
 
+      # Fluent API for mocking nested map steps
+      # @example
+      #   reactor.map(:my_map).mock_step(:inner_step) { ... }
+      def map(step_name)
+        StepProxy.new(self, step_name)
+      end
+
+      # Fluent API for mocking nested compose steps
+      # @example
+      #   reactor.compose(:my_sub_reactor).mock_step(:inner_step) { ... }
+      def composed(step_name)
+        # If already executed, return the traversed subject
+        return traverse_composed(step_name) if @executed
+
+        # Otherwise return a configuration proxy
+        StepProxy.new(self, step_name)
+      end
+      alias compose composed
+
+      # Proxy class for fluent mocking configuration
+      class StepProxy
+        def initialize(subject, step_name)
+          @subject = subject
+          @step_name = step_name
+        end
+
+        def mock_step(inner_step_name, *nested_steps, &block)
+          @subject.mock_step(@step_name, inner_step_name, *nested_steps, &block)
+          @subject # Return subject to allow chaining or calling run
+        end
+
+        # Support deep nesting?
+        def map(inner_step_name)
+          StepProxy.new(@subject, [@step_name, inner_step_name].flatten)
+        end
+
+        def composed(inner_step_name)
+          StepProxy.new(@subject, [@step_name, inner_step_name].flatten)
+        end
+      end
+
+      # --- Traversal ---
+
+      def map_elements(step_name)
+        ensure_executed!
+
+        # Check composed_contexts
+        entry = @reactor_instance.context.composed_contexts[step_name] ||
+                @reactor_instance.context.composed_contexts[step_name.to_s] ||
+                @reactor_instance.context.composed_contexts[step_name.to_sym]
+
+        return [] unless entry && entry[:type] == :map_ref
+
+        map_id = entry[:map_id]
+        storage = RubyReactor.configuration.storage_adapter
+
+        # This requires the storage adapter to implement retrieval of map element context IDs
+        # If it's not implemented in MemoryAdapter (if used), we might need to fallback?
+        # But tests use Redis.
+        child_ids = storage.retrieve_map_element_context_ids(map_id, @reactor_instance.class.name)
+
+        child_ids.map do |id|
+          klass = RubyReactor::Context.resolve_reactor_class(entry[:element_reactor_class])
+          child_instance = klass.find(id)
+          self.class.new(
+            reactor_class: child_instance.class,
+            inputs: child_instance.context.inputs,
+            context: child_instance.context,
+            async: @async,
+            process_jobs: @process_jobs
+          ).tap do |s|
+            s.instance_variable_set(:@executed, true)
+            s.instance_variable_set(:@reactor_instance, child_instance)
+          end
+        end
+      end
+
+      def map_element(step_name, index: 0)
+        elements = map_elements(step_name)
+        elements[index]
+      end
+
+      private
+
+      def traverse_composed(step_name)
+        ensure_executed!
+
+        entry = @reactor_instance.context.composed_contexts[step_name] ||
+                @reactor_instance.context.composed_contexts[step_name.to_s] ||
+                @reactor_instance.context.composed_contexts[step_name.to_sym]
+
+        unless entry && entry[:type] == :composed
+          # Try to find failed attempt if validation failure?
+          return nil
+        end
+
+        child_context = entry[:context]
+        child_instance = child_context.reactor_class.new(child_context)
+
+        self.class.new(
+          reactor_class: child_instance.class,
+          inputs: child_instance.context.inputs,
+          context: child_instance.context,
+          async: @async,
+          process_jobs: @process_jobs
+        ).tap do |s|
+          s.instance_variable_set(:@executed, true)
+          s.instance_variable_set(:@reactor_instance, child_instance)
+        end
+      end
+
+      public
+
       def run_async(boolean)
         @async = boolean
         self
@@ -96,7 +209,10 @@ module RubyReactor
         # 4. Reload
         raise "Could not capture context ID during execution" unless captured_context_id
 
-        @reactor_instance = @reactor_class.find(captured_context_id)
+        # Reload using the execution class (which might be the mocked subclass with unique name)
+        @reactor_instance = execution_class.find(captured_context_id)
+        # Update our reference to the class so future reloads (e.g. in result introspection) work
+        @reactor_class = execution_class
         @executed = true
         self
       end
@@ -247,8 +363,12 @@ module RubyReactor
           @async = superclass.async?
           @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
 
-          # 2. Add Name Handling
-          define_singleton_method(:name) { superclass.name }
+          # 2. Add Name Handling with Unique Registry Entry
+          # We must register a unique name so that if this reactor is reloaded (e.g. after async child completion),
+          # it resolves back to THIS mocked class, not the original superclass.
+          unique_name = "#{superclass.name}Mock#{object_id}"
+          define_singleton_method(:name) { unique_name }
+          RubyReactor::Registry.register(unique_name, self)
 
           # 3. Apply Force Sync (Disable async on all steps)
           if force_sync
@@ -270,8 +390,10 @@ module RubyReactor
       end
 
       def apply_interceptors(klass, interceptors)
-        interceptors.each do |interceptor|
-          target_step = interceptor[:step_path].first
+        # Group interceptors by the current level step
+        grouped = interceptors.group_by { |i| i[:step_path].first }
+
+        grouped.each do |target_step, step_interceptors|
           step_config_orig = klass.steps[target_step]
 
           unless step_config_orig
@@ -282,15 +404,80 @@ module RubyReactor
           # Create a new StepConfig
           step_config = step_config_orig.clone
 
-          case interceptor[:type]
-          when :failure
-            apply_failure_interceptor(step_config, target_step)
-          when :mock
-            apply_mock_interceptor(step_config, target_step, step_config_orig, interceptor)
+          # Check if we have nested interceptors
+          nested_interceptors = step_interceptors.select { |i| i[:step_path].size > 1 }
+
+          if nested_interceptors.any?
+            apply_nested_interceptors(step_config, nested_interceptors)
+            step_config.instance_variable_set(:@async, false)
+          end
+
+          # Apply direct interceptors (mocks/failures on this step)
+          direct_interceptors = step_interceptors.select { |i| i[:step_path].size == 1 }
+          direct_interceptors.each do |interceptor|
+            case interceptor[:type]
+            when :failure
+              apply_failure_interceptor(step_config, target_step)
+            when :mock
+              apply_mock_interceptor(step_config, target_step, step_config_orig, interceptor)
+            end
           end
 
           klass.steps[target_step] = step_config
         end
+      end
+
+      def apply_nested_interceptors(step_config, interceptors)
+        # Determine if it's a map step or compose step based on arguments
+        # Map steps have :mapped_reactor_class in arguments
+        # Compose steps (ComposeStep logic) should also have it in arguments (passed via DSL builder)
+
+        args = step_config.arguments
+        target_reactor_class_source = nil
+        arg_key = nil
+
+        if args[:mapped_reactor_class]
+          target_reactor_class_source = args[:mapped_reactor_class][:source]
+          arg_key = :mapped_reactor_class
+        elsif args[:composed_reactor_class]
+          target_reactor_class_source = args[:composed_reactor_class][:source]
+          arg_key = :composed_reactor_class
+        end
+
+        return unless target_reactor_class_source.is_a?(RubyReactor::Template::Value)
+
+        original_child_reactor = target_reactor_class_source.value
+
+        # Dynamically subclass the child reactor
+        mocked_child_reactor = Class.new(original_child_reactor) do
+          define_singleton_method(:name) { original_child_reactor.name }
+          # Copy configuration
+          @steps = superclass.steps.dup
+          @inputs = superclass.inputs.dup
+          @return_step = superclass.return_step
+          @start_step = superclass.instance_variable_get(:@start_step)
+          @async = superclass.async?
+        end
+
+        # Recursively apply interceptors to the child reactor
+        # Shift path: [:map_step, :inner, :deep] -> [:inner, :deep]
+        child_interceptors = interceptors.map do |i|
+          i.merge(step_path: i[:step_path].drop(1))
+        end
+
+        apply_interceptors(mocked_child_reactor, child_interceptors)
+
+        # Replace the argument source with the mocked class
+        # We need to clone arguments hash to avoid mutating original config globally if shared?
+        # StepConfig arguments are usually unique per config instance (we cloned step_config)
+        # BUT arguments hash is shared references. We must dup it.
+
+        current_args = step_config.arguments
+        step_config.instance_variable_set(:@arguments, current_args.dup)
+
+        step_config.arguments[arg_key] = step_config.arguments[arg_key].dup if step_config.arguments[arg_key]
+
+        step_config.arguments[arg_key][:source] = RubyReactor::Template::Value.new(mocked_child_reactor)
       end
 
       def apply_failure_interceptor(step_config, target_step)
@@ -315,7 +502,6 @@ module RubyReactor
 
         # Create the new implementation that wraps the user block
         wrapper_impl = lambda do |args, context|
-          # args, context, original
           if mock_block.arity == 3
             mock_block.call(args, context, original_impl)
           else
@@ -324,6 +510,7 @@ module RubyReactor
         end
 
         step_config.instance_variable_set(:@run_block, wrapper_impl)
+        step_config.instance_variable_set(:@async, false)
       end
     end
   end
