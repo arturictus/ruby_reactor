@@ -160,6 +160,27 @@ expect(subject).to be_success
 expect(subject.step_result(:charge_card)).to eq({ transaction_id: "test-123" })
 ```
 
+### Chaining Multiple Mocks
+
+You can chain multiple `mock_step` calls to mock several steps in a single fluent expression. This is useful when you need to isolate multiple external service calls:
+
+```ruby
+RSpec.describe MultipleRequestsReactor do
+  subject(:reactor) do
+    test_reactor(described_class, request_id: 1)
+      .mock_step(:call_service_1) { |args| Success(args[:request_id]) }
+      .mock_step(:call_service_2) { |args| Success(args[:request_id]) }
+      .mock_step(:call_service_3) { |args| Success(args[:request_id]) }
+  end
+
+  it "processes successfully with all mocked services" do
+    expect(reactor).to be_success
+  end
+end
+```
+
+Each `mock_step` call returns the `TestSubject`, allowing you to chain as many mocks as needed. The mocks are applied in the order specified, and each mocked step will use the provided block instead of its original implementation.
+
 ### Wrapping Original Implementations
 
 The mock block receives a third parameter that allows calling the original implementation:

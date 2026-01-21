@@ -462,8 +462,9 @@ module RubyReactor
           # 1. Copy configuration from parent
           @steps = superclass.steps.dup
           @inputs = superclass.inputs.dup
+          @input_validations = superclass.input_validations.dup
+          @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
-          @start_step = superclass.instance_variable_get(:@start_step)
           @async = superclass.async?
           @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
 
@@ -558,9 +559,11 @@ module RubyReactor
           # Copy configuration
           @steps = superclass.steps.dup
           @inputs = superclass.inputs.dup
+          @input_validations = superclass.input_validations.dup
+          @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
-          @start_step = superclass.instance_variable_get(:@start_step)
           @async = superclass.async?
+          @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
         end
 
         # Recursively apply interceptors to the child reactor
