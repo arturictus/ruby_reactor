@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "support/worker_mock"
-
 RSpec.describe RubyReactor do
   it "has a version number" do
     expect(RubyReactor::VERSION).not_to be_nil
@@ -724,12 +722,10 @@ RSpec.describe RubyReactor do
       step_config = TestOuterReactorWithAsyncCompose.steps[:async_process]
       expect(step_config.async?).to be true
 
-      # Mock the async router
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(Support::WorkerMock)
-
-      # Run the reactor - this should hand off the compose step to async execution
-      reactor = TestOuterReactorWithAsyncCompose.new
-      result = reactor.run(number: 5)
+      # Run the reactor with inline Sidekiq
+      result = Sidekiq::Testing.inline! do
+        TestOuterReactorWithAsyncCompose.run(number: 5)
+      end
 
       # In test mode, the worker executes inline and returns the actual result
       expect(result.success?).to be true
@@ -783,13 +779,11 @@ RSpec.describe RubyReactor do
       # Check that the compose step has retry configuration
       step_config = TestRetryOuterReactor.steps[:retry_process]
       expect(step_config.async?).to be true
-      # expect(step_config.retryable?).to be true
 
-      # Mock the async router
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(Support::WorkerMock)
-
-      # Run the reactor - this should hand off to async execution
-      result = TestRetryOuterReactor.run(number: 5)
+      # Run the reactor with inline Sidekiq
+      result = Sidekiq::Testing.inline! do
+        TestRetryOuterReactor.run(number: 5)
+      end
 
       # In test mode, the worker executes inline and returns the actual result
       expect(result.success?).to be true
@@ -818,7 +812,7 @@ RSpec.describe RubyReactor do
     end
 
     before do
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
+      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
     end
 
     it "returns job_id and intermediate_results correctly" do

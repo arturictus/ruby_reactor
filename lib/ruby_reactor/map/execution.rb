@@ -31,6 +31,7 @@ module RubyReactor
       end
 
       def self.execute_all_elements(source:, mappings:, reactor_class:, parent_context:, storage_options:)
+        # rubocop:disable Metrics/BlockLength
         source.map.with_index do |element, index|
           if storage_options[:fail_fast]
             failed_context_id = storage_options[:storage].retrieve_map_failed_context_id(
@@ -71,12 +72,12 @@ module RubyReactor
 
           result
         end.compact
+        # rubocop:enable Metrics/BlockLength
       end
 
       def self.link_contexts(child_context, parent_context)
         child_context.parent_context = parent_context
         child_context.root_context = parent_context.root_context || parent_context
-        child_context.test_mode = parent_context.test_mode
         child_context.inline_async_execution = parent_context.inline_async_execution
       end
 

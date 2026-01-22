@@ -131,7 +131,7 @@ RSpec.describe "Compose" do
     # Keys are symbolized during deserialization
     composed_data = retry_context.composed_contexts[:update_user_profile]
     expect(composed_data).not_to be_nil
-    expect(composed_data[:type]).to eq("composed") # JSON serialization might make it string
+    expect(composed_data[:type]).to eq(:composed) # JSON serialization might make it string
 
     child_context = composed_data[:context]
     expect(child_context).to be_a(RubyReactor::Context)

@@ -42,17 +42,16 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
 
     it "executes complete ETL pipeline with inline execution" do
       # Create reactor instance to access context
-      reactor = UserETLReactor.new
-      result = reactor.run(
-        source_file: "/tmp/users.csv",
-        csv_data: sample_users,
-        output_destinations: %w[database search]
-      )
+      subject = test_reactor(UserETLReactor, {
+                               source_file: "/tmp/users.csv",
+                               csv_data: sample_users,
+                               output_destinations: %w[database search]
+                             })
 
-      expect(result).to be_a(RubyReactor::Success)
+      expect(subject).to be_success
 
       # The reactor returns :generate_report, so result.value is the report directly
-      report = result.value
+      report = subject.result.value
       expect(report).not_to be_nil
       expect(report[:successful_count]).to eq(3)
       expect(report[:failed_count]).to eq(0)
@@ -60,7 +59,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
       expect(report[:source_count]).to eq(3)
 
       # Access intermediate results from context
-      context = reactor.context
+      context = subject.reactor_instance.context
       transformed = context.intermediate_results[:transform_users]
       expect(transformed).to be_an(Array)
       expect(transformed.length).to eq(3)
@@ -270,7 +269,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
     end
 
     before do
-      allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
+      allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
       Sidekiq::Testing.fake!
     end
 

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 module RubyReactor
+  # rubocop:disable Metrics/ClassLength
   class Reactor
     include RubyReactor::Dsl::Reactor
 
@@ -64,34 +65,71 @@ module RubyReactor
     def initialize(context = {})
       @context = context
       @result = :unexecuted
-      @undo_trace = []
-      @execution_trace = []
+
+      if @context.is_a?(Context)
+        @execution_trace = @context.execution_trace || []
+        @undo_trace = @execution_trace.select { |e| e[:type] == :undo }
+        @result = reconstruct_result
+      else
+        @undo_trace = []
+        @execution_trace = []
+      end
     end
 
+    # rubocop:disable Metrics/MethodLength
     def run(inputs = {})
-      if self.class.async?
-        # For async reactors, enqueue the job and return immediately
-        context = Context.new(inputs, self.class)
-        serialized_context = ContextSerializer.serialize(context)
-        configuration.async_router.perform_async(serialized_context)
+      # For all reactors, initialize context first to capture execution ID
+      @context = @context.is_a?(Context) ? @context : Context.new(inputs, self.class)
+
+      # Validate inputs
+      validation_result = self.class.validate_inputs(inputs)
+      if validation_result.failure?
+        @result = validation_result
+        @context.status = "failed"
+        @context.failure_reason = {
+          message: validation_result.error.message,
+          validation_errors: validation_result.error.field_errors
+        }
+        save_context
+        return validation_result
+      end
+
+      if self.class.async? && !@context.inline_async_execution
+        # For async reactors, queue a job for the whole reactor
+        @context.status = :running
+        save_context
+
+        serialized_context = ContextSerializer.serialize(@context)
+        @result = configuration.async_router.perform_async(serialized_context, self.class.name,
+                                                           intermediate_results: @context.intermediate_results)
+
+        # Even if it's an AsyncResult, it might have finished inline (e.g. Sidekiq::Testing.inline!)
+        # Check storage to see if it's already finished or paused (interrupted).
+        begin
+          reloaded = self.class.find(@context.context_id)
+          if reloaded.finished? || reloaded.context.status.to_s == "paused"
+            @context = reloaded.context
+            @result = reloaded.result
+            @execution_trace = reloaded.execution_trace
+            @undo_trace = reloaded.undo_trace
+            return @result
+          end
+        rescue StandardError
+          # Ignore if not found or other errors during reload check
+        end
+
       else
         # For sync reactors (potentially with async steps), execute normally
         context = @context.is_a?(Context) ? @context : nil
         executor = Executor.new(self.class, inputs, context)
         @result = executor.execute
-
         @context = executor.context
-
-        # Merge traces
-        @undo_trace = executor.undo_trace
         @execution_trace = executor.execution_trace
-
-        # If execution returned an AsyncResult (from step-level async), return it
-        return @result if @result.is_a?(RubyReactor::AsyncResult)
-
-        @result
+        @undo_trace = executor.undo_trace
       end
+      @result
     end
+    # rubocop:enable Metrics/MethodLength, Metrics/AbcSize
 
     def continue(payload:, step_name:, idempotency_key: nil)
       _ = idempotency_key
@@ -178,6 +216,125 @@ module RubyReactor
       raise Error::DependencyError, "Dependency graph contains cycles"
     end
 
+    def reconstruct_result
+      case @context.status.to_s
+      when "completed" then reconstruct_success_result
+      when "failed" then reconstruct_failure_result
+      when "paused" then reconstruct_paused_result
+      else :unexecuted
+      end
+    end
+
+    def reconstruct_success_result
+      rs = self.class.respond_to?(:returns) ? self.class.returns : nil
+      val = if rs
+              @context.intermediate_results[rs.to_sym] || @context.intermediate_results[rs.to_s]
+            else
+              find_last_step_result
+            end
+      Success.new(val)
+    end
+
+    def find_last_step_result
+      last_run = @execution_trace.reverse.find { |e| e[:type] == :run || e["type"] == "run" }
+      return unless last_run
+
+      step_name = last_run[:step] || last_run["step"]
+      @context.intermediate_results[step_name.to_sym] || @context.intermediate_results[step_name.to_s]
+    end
+
+    def reconstruct_failure_result
+      reason = @context.failure_reason || {}
+      return reason if reason.is_a?(RubyReactor::Failure)
+
+      # Use string keys preferred, fallback to symbol
+      r = ->(k) { reason[k.to_s] || reason[k.to_sym] }
+
+      Failure.new(
+        r[:message],
+        step_name: r[:step_name],
+        inputs: r[:inputs] || {},
+        backtrace: r[:backtrace],
+        reactor_name: r[:reactor_name],
+        step_arguments: r[:step_arguments] || {},
+        exception_class: r[:exception_class],
+        file_path: r[:file_path],
+        line_number: r[:line_number],
+        code_snippet: r[:code_snippet],
+        validation_errors: r[:validation_errors],
+        retryable: r[:retryable],
+        invalid_payload: r[:invalid_payload]
+      )
+    end
+
+    def reconstruct_paused_result
+      InterruptResult.new(
+        execution_id: @context.context_id,
+        intermediate_results: @context.intermediate_results
+      )
+    end
+
+    def initialize_and_validate_run?(inputs)
+      # For all reactors, initialize context first to capture execution ID
+      @context = @context.is_a?(Context) ? @context : Context.new(inputs, self.class)
+
+      validation_result = self.class.validate_inputs(inputs)
+      if validation_result.failure?
+        handle_validation_failure(validation_result)
+        return false
+      end
+      true
+    end
+
+    def handle_validation_failure(result)
+      @result = result
+      @context.status = "failed"
+      @context.failure_reason = {
+        message: result.error.message,
+        validation_errors: result.error.field_errors
+      }
+      save_context
+    end
+
+    def perform_async_run
+      @context.status = :running
+      save_context
+
+      serialized_context = ContextSerializer.serialize(@context)
+      @result = configuration.async_router.perform_async(serialized_context, self.class.name,
+                                                         intermediate_results: @context.intermediate_results)
+
+      check_for_inline_completion
+    end
+
+    def check_for_inline_completion
+      # Even if it's an AsyncResult, it might have finished inline (e.g. Sidekiq::Testing.inline!)
+      # Check storage to see if it's already finished or paused (interrupted).
+      reloaded = self.class.find(@context.context_id)
+      if reloaded.finished? || reloaded.context.status.to_s == "paused"
+        update_state_from_reloaded(reloaded)
+        @result
+      end
+    rescue StandardError
+      # Ignore if not found or other errors during reload check
+    end
+
+    def update_state_from_reloaded(reloaded)
+      @context = reloaded.context
+      @result = reloaded.result
+      @execution_trace = reloaded.execution_trace
+      @undo_trace = reloaded.undo_trace
+    end
+
+    def perform_sync_run(inputs)
+      context = @context.is_a?(Context) ? @context : nil
+      executor = Executor.new(self.class, inputs, context)
+      @result = executor.execute
+      @context = executor.context
+      @execution_trace = executor.execution_trace
+      @undo_trace = executor.undo_trace
+    end
+
     def validate_continue_step!(step_name)
       return if step_name.to_s == @context.current_step.to_s
 
@@ -258,4 +415,5 @@ module RubyReactor
       storage.store_context(@context.context_id, serialized_context, reactor_class_name)
     end
   end
+  # rubocop:enable Metrics/ClassLength
 end

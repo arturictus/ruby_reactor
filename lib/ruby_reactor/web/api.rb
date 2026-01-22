@@ -24,39 +24,44 @@ module RubyReactor
           r.on String do |reactor_id|
             # GET /api/reactors/:id
             r.get do
-              data = RubyReactor::Configuration.instance.storage_adapter.find_context_by_id(reactor_id)
-              return { error: "Reactor not found" } unless data
+              raw_data = RubyReactor::Configuration.instance.storage_adapter.find_context_by_id(reactor_id)
+              return { error: "Reactor not found" } unless raw_data
 
-              reactor_class = data["reactor_class"] ? Object.const_get(data["reactor_class"]) : nil
+              # Clean data for API usage
+              data = ContextSerializer.deserialize_value(raw_data)
+
+              reactor_class = data[:reactor_class] ? Object.const_get(data[:reactor_class].to_s) : nil
               structure = {}
 
               structure = self.class.build_structure(reactor_class) if reactor_class.respond_to?(:steps)
 
-              {
-                id: data["context_id"],
-                class: data["reactor_class"],
-                status: if %w[failed paused completed running].include?(data["status"])
-                          data["status"]
-                        elsif data["cancelled"]
+              response_data = {
+                id: data[:context_id],
+                class: data[:reactor_class].to_s,
+                status: if %w[failed paused completed running].include?(data[:status].to_s)
+                          data[:status].to_s
+                        elsif data[:cancelled]
                           "cancelled"
                         else
-                          (data["current_step"] ? "running" : "completed")
+                          (data[:current_step] ? "running" : "completed")
                         end,
-                current_step: data["current_step"],
-                retry_count: data["retry_count"] || 0,
-                undo_stack: data["undo_stack"] || [],
-                step_attempts: data.dig("retry_context", "step_attempts") || {},
-                created_at: data["started_at"],
-                inputs: data["inputs"],
-                intermediate_results: data["intermediate_results"],
+                current_step: data[:current_step].to_s,
+                retry_count: data[:retry_count] || 0,
+                undo_stack: data[:undo_stack] || [],
+                step_attempts: data.dig(:retry_context, :step_attempts) || {},
+                created_at: data[:started_at],
+                inputs: data[:inputs],
+                intermediate_results: data[:intermediate_results],
                 structure: structure,
-                steps: data["execution_trace"] || [],
+                steps: data[:execution_trace] || [],
                 composed_contexts: self.class.hydrate_composed_contexts(
-                  data["composed_contexts"] || {},
-                  data["reactor_class"]
+                  data[:composed_contexts] || {},
+                  data[:reactor_class]&.to_s
                 ),
-                error: data["failure_reason"]
+                error: data[:failure_reason]
               }
+
+              ContextSerializer.simplify_for_api(response_data)
             end
 
             # POST /api/reactors/:id/retry
@@ -159,7 +164,8 @@ module RubyReactor
         return {} unless composed_contexts.is_a?(Hash)
 
         composed_contexts.transform_values do |value|
-          if ["map_ref", :map_ref].include?(value["type"])
+          type = value[:type] || value["type"]
+          if ["map_ref", :map_ref].include?(type)
             hydrate_map_ref(value, reactor_class_name)
           else
             value
@@ -169,10 +175,12 @@ module RubyReactor
 
       def self.hydrate_map_ref(ref_data, reactor_class_name)
         storage = RubyReactor.configuration.storage_adapter
-        map_id = ref_data["map_id"]
+        map_id = ref_data[:map_id] || ref_data["map_id"]
 
         # Use the specific element reactor class if available, otherwise fallback to parent
-        target_reactor_class = ref_data["element_reactor_class"] || reactor_class_name
+        target_reactor_class = ref_data[:element_reactor_class] ||
+                               ref_data["element_reactor_class"] ||
+                               reactor_class_name
 
         # 1. Check for specific failure (O(1))
         # Stored by ResultHandler when a map element fails

@@ -57,7 +57,9 @@ module RubyReactor
         private
 
         def should_run_async?(arguments, context)
-          arguments[:async] && !context.inline_async_execution
+          return false if context.inline_async_execution
+
+          arguments[:async]
         end
 
         def run_inline(arguments, context)
@@ -118,30 +120,21 @@ module RubyReactor
         def link_contexts(child_context, parent_context)
           child_context.parent_context = parent_context
           child_context.root_context = parent_context.root_context || parent_context
-          child_context.test_mode = parent_context.test_mode
           child_context.inline_async_execution = parent_context.inline_async_execution
         end
 
-        def process_results(results, collect_block, fail_fast = true)
+        def process_results(results, collect_block, _fail_fast = true)
           if collect_block
             begin
               # Collect block receives Result objects when fail_fast is false, values when true
-              RubyReactor::Success(collect_block.call(results))
+              return RubyReactor::Success(collect_block.call(results))
             rescue StandardError => e
-              RubyReactor::Failure(e)
+              return RubyReactor::Failure(e)
             end
-          elsif fail_fast
-            # Default behavior when no collect block
-            # Current behavior: results are already values
-            RubyReactor::Success(results)
-          else
-            # New behavior: extract successful values only
-            # New behavior: extract successful values only IF fail_fast is true behavior implies only values
-            # However, if fail_fast is false, we want to return results as is, or if logic dictates otherwise.
-            # wait, if fail_fast=false, we expect Result objects so we can check if success/failure.
-            # If we return only successes, we hide failures.
-            RubyReactor::Success(results)
           end
+
+          # Simplified: both branches returned Success(results)
+          RubyReactor::Success(results)
         end
 
         def extract_path(value, path)
@@ -203,7 +196,7 @@ module RubyReactor
               argument_mappings: arguments[:argument_mappings],
               strict_ordering: arguments[:strict_ordering],
               mapped_reactor_class: arguments[:mapped_reactor_class],
-              fail_fast: arguments[:fail_fast]
+              fail_fast: arguments[:fail_fast].nil? || arguments[:fail_fast]
             )
             queue_collector(map_id, context, step_name, arguments[:strict_ordering])
             "map:#{map_id}"
@@ -284,7 +277,7 @@ module RubyReactor
             map_id: map_id, serialized_inputs: serialized_inputs,
             reactor_class_info: reactor_class_info, strict_ordering: arguments[:strict_ordering],
             parent_context_id: context.context_id, parent_reactor_class_name: context.reactor_class.name,
-            step_name: step_name.to_s, fail_fast: arguments[:fail_fast]
+            step_name: step_name.to_s, fail_fast: arguments[:fail_fast].nil? || arguments[:fail_fast]
           )
         end
       end

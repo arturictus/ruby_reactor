@@ -11,7 +11,9 @@ RSpec.describe "Retry Re-execution Regression" do
   end
 
   it "does not re-execute completed steps during retries" do
-    reactor_class.call({})
+    Sidekiq::Testing.inline! do
+      reactor_class.call({})
+    end
 
     expect(reactor_class.step_counts[:step1]).to eq(1)
     expect(reactor_class.step_counts[:step2]).to eq(1)

@@ -5,8 +5,8 @@ require "spec_helper"
 RSpec.describe "Map Batch Size Execution" do
   before do
     # Use real Redis from spec_helper configuration
-    # But we need to ensure AsyncRouter is used instead of WorkerMock for this test
-    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::AsyncRouter)
+    # But we need to ensure SidekiqAdapter is used instead of WorkerMock for this test
+    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
 
     Sidekiq::Testing.fake!
   end

@@ -29,6 +29,10 @@ RSpec.describe "Execution Trace Verification", type: :integration do
   end
 
   context "when executing asynchronously" do
+    around do |example|
+      Sidekiq::Testing.inline! { example.run }
+    end
+
     it "verifies that execution trace matches actual execution for successful flow" do
       reactor = RubyReactor::OrderProcessingReactor.new
       result = reactor.run(order_id: "order_123", product_id: "prod_456", quantity: 2, amount: 200.0)

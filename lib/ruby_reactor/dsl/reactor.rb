@@ -118,8 +118,9 @@ module RubyReactor
           step_config
         end
 
-        def returns(step_name)
-          @return_step = step_name
+        def returns(step_name = nil)
+          @return_step = step_name if step_name
+          @return_step
         end
 
         def middleware(middleware_class)

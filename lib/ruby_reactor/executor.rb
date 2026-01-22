@@ -40,6 +40,7 @@ module RubyReactor
       input_validator = InputValidator.new(@reactor_class, @context)
       input_validator.validate!
 
+      @context.status = :running
       save_context
 
       graph_manager = GraphManager.new(@reactor_class, @dependency_graph, @context)
@@ -59,6 +60,7 @@ module RubyReactor
     end
 
     def resume_execution
+      @context.status = :running
       prepare_for_resume
       save_context
 
@@ -118,19 +120,7 @@ module RubyReactor
         @context.status = :completed
       when RubyReactor::Failure
         @context.status = :failed
-        @context.failure_reason = {
-          message: result.error.is_a?(Exception) ? result.error.message : result.error.to_s,
-          step_name: result.step_name,
-          inputs: result.inputs,
-          backtrace: result.backtrace,
-          reactor_name: result.reactor_name,
-          step_arguments: result.step_arguments,
-          exception_class: result.exception_class,
-          file_path: result.file_path,
-          line_number: result.line_number,
-          code_snippet: result.code_snippet,
-          validation_errors: result.validation_errors
-        }
+        @context.failure_reason = result
       when RubyReactor::InterruptResult
         @context.status = :paused
       end

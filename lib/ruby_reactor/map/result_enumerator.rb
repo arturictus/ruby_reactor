@@ -60,7 +60,7 @@ module RubyReactor
       end
 
       def [](index)
-        return nil if index < 0 || index >= count
+        return nil if index.negative? || index >= count
 
         results = @storage.retrieve_map_results_batch(
           @map_id,

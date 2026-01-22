@@ -34,9 +34,25 @@ module RubyReactor
         when RubyReactor::Success
           { "_type" => "Success", "value" => serialize_value(value.value) }
         when RubyReactor::Failure
-          { "_type" => "Failure", "error" => serialize_value(value.error), "retryable" => value.retryable }
+          {
+            "_type" => "Failure",
+            "error" => serialize_value(value.error),
+            "retryable" => value.retryable,
+            "step_name" => value.step_name,
+            "inputs" => serialize_value(value.inputs),
+            "backtrace" => value.backtrace,
+            "reactor_name" => value.reactor_name,
+            "step_arguments" => serialize_value(value.step_arguments),
+            "exception_class" => value.exception_class,
+            "file_path" => value.file_path,
+            "line_number" => value.line_number,
+            "code_snippet" => serialize_value(value.code_snippet),
+            "validation_errors" => serialize_value(value.validation_errors)
+          }
         when RubyReactor::Context
           { "_type" => "Context", "value" => value.serialize_for_retry }
+        when Symbol
+          { "_type" => "Symbol", "value" => value.to_s }
         when Time
           { "_type" => "Time", "value" => value.iso8601 }
         when BigDecimal
@@ -94,9 +110,24 @@ module RubyReactor
             when "Success"
               RubyReactor::Success(deserialize_value(value["value"]))
             when "Failure"
-              RubyReactor::Failure(deserialize_value(value["error"]), retryable: value["retryable"])
+              RubyReactor::Failure.new(
+                deserialize_value(value["error"]),
+                retryable: value["retryable"],
+                step_name: value["step_name"],
+                inputs: deserialize_value(value["inputs"]),
+                backtrace: value["backtrace"],
+                reactor_name: value["reactor_name"],
+                step_arguments: deserialize_value(value["step_arguments"]),
+                exception_class: value["exception_class"],
+                file_path: value["file_path"],
+                line_number: value["line_number"],
+                code_snippet: deserialize_value(value["code_snippet"]),
+                validation_errors: deserialize_value(value["validation_errors"])
+              )
             when "Context"
               Context.deserialize_from_retry(value["value"])
+            when "Symbol"
+              value["value"].to_sym
             when "Time"
               Time.iso8601(value["value"])
             when "BigDecimal"
@@ -130,15 +161,35 @@ module RubyReactor
                 strict_ordering: value["strict_ordering"],
                 batch_size: value["batch_size"]
               )
+
             else
-              value
+              # Unknown type wrapper, return as is (but deserialize values)
+              value.transform_values { |v| deserialize_value(v) }
             end
           else
-            # Regular hash - symbolize all keys recursively
+            # Regular Hash
             value.transform_keys(&:to_sym).transform_values { |v| deserialize_value(v) }
           end
         when Array
           value.map { |v| deserialize_value(v) }
+        else
+          value
+        end
+      end
+
+      # Simplifies data for public API usage (removes wrappers, flattens types)
+      def simplify_for_api(value)
+        case value
+        when Hash
+          value.each_with_object({}) do |(k, v), hash|
+            hash[k.to_s] = simplify_for_api(v)
+          end
+        when Array
+          value.map { |v| simplify_for_api(v) }
+        when Success, Failure, Context
+          simplify_for_api(value.to_h)
+        when Symbol
+          value.to_s
         else
           value
         end

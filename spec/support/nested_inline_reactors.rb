@@ -38,7 +38,9 @@ module Support
 
       step :async_step do
         async true
-        run { |args, _| RubyReactor::Success("async_done_#{args[:id]}") }
+        run do |args, _|
+          RubyReactor::Success("async_done_#{args[:id]}")
+        end
       end
 
       argument :id, value("child2")

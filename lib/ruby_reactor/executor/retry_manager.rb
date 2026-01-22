@@ -116,7 +116,8 @@ module RubyReactor
                    @context.root_context&.reactor_class&.async? ||
                    @context.inline_async_execution
 
-        if is_async && !@context.test_mode
+        # Always try async retry if configured
+        if is_async
           handle_async_retry(step_config, reactor_class, result)
         else
           handle_sync_retry(step_config, reactor_class, result)
@@ -124,12 +125,19 @@ module RubyReactor
       end
 
       def handle_async_retry(step_config, reactor_class, result)
-        requeue_job_for_step_retry(step_config, result.error, reactor_class)
-        RetryQueuedResult.new(
-          step_config.name,
-          @context.retry_context.attempts_for_step(step_config.name),
-          @context.retry_context.next_retry_at
-        )
+        requeue_result = requeue_job_for_step_retry(step_config, result.error, reactor_class)
+
+        # If it returned an AsyncResult, we are truly async.
+        # Otherwise, it ran inline and we should return the result of that execution.
+        if requeue_result.is_a?(RubyReactor::AsyncResult)
+          RetryQueuedResult.new(
+            step_config.name,
+            @context.retry_context.attempts_for_step(step_config.name),
+            @context.retry_context.next_retry_at
+          )
+        else
+          requeue_result
+        end
       end
 
       def handle_sync_retry(step_config, reactor_class, result)

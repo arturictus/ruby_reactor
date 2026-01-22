@@ -13,7 +13,7 @@ module RubyReactor
       end
 
       def execute_all_steps
-        until @dependency_graph.all_completed?
+        until @dependency_graph.all_completed? || @context.finished?
           ready_steps = @dependency_graph.ready_steps
 
           if ready_steps.empty?
@@ -65,53 +65,29 @@ module RubyReactor
         end
       end
 
-      def merge_executor_state(other_executor)
-        # Merge the state from the async-executed executor back into ours
-        # We need to update our context IN PLACE, not replace the reference,
-        # because the Executor also holds a reference to the same context object
+      private
 
-        # Update intermediate results
-        other_executor.context.intermediate_results.each do |step_name, value|
-          @context.set_result(step_name, value)
-        end
+      def reconstruct_failure(data)
+        return data if data.is_a?(RubyReactor::Failure)
+        return nil unless data.is_a?(Hash)
 
-        # Append execution trace from the async execution
-        # The Worker's execution will have ALL steps including ones we already executed,
-        # but we only want to add the NEW entries (from current_step onwards)
-        current_trace_length = @context.execution_trace.length
-        new_trace_entries = other_executor.context.execution_trace[current_trace_length..] || []
+        # Helper for hash access with string/symbol keys
+        get = ->(key) { data[key] || data[key.to_s] }
 
-        @context.execution_trace.concat(new_trace_entries)
-
-        # Update retry context
-        @context.retry_context = other_executor.context.retry_context
-
-        # Update current_step:
-        # If the other executor has a current_step, it means it paused/interrupted there. We should adopt it.
-        # If it's nil, it means it completed successfully, so we clear our current_step (which was the async step).
-        @context.current_step = other_executor.context.current_step
-
-        # Update our dependency graph to reflect completed steps
-        other_executor.context.intermediate_results.each_key do |step_name|
-          @dependency_graph.complete_step(step_name)
-        end
-
-        # Also mark the current_step as completed if it exists (for failed steps that don't have results)
-        @dependency_graph.complete_step(other_executor.context.current_step) if other_executor.context.current_step
-
-        # Merge any undo stack items
-        other_executor.undo_stack.each do |item|
-          # Avoid duplicates by checking if this step is already in the undo stack
-          # Use string comparison for step names to avoid symbol/string mismatch issues
-          unless @compensation_manager.undo_stack.any? { |existing| existing[:step].name.to_s == item[:step].name.to_s }
-            @compensation_manager.add_to_undo_stack(item)
-          end
-        end
-
-        # Merge undo trace from the other executor
-        other_executor.undo_trace.each do |trace_entry|
-          @compensation_manager.undo_trace << trace_entry
-        end
+        RubyReactor::Failure.new(
+          get.call(:message),
+          step_name: get.call(:step_name),
+          inputs: get.call(:inputs),
+          redact_inputs: get.call(:redact_inputs) || [],
+          backtrace: get.call(:backtrace),
+          reactor_name: get.call(:reactor_name),
+          step_arguments: get.call(:step_arguments),
+          exception_class: get.call(:exception_class),
+          file_path: get.call(:file_path),
+          line_number: get.call(:line_number),
+          code_snippet: get.call(:code_snippet),
+          validation_errors: get.call(:validation_errors)
+        )
       end
 
       def execute_step_with_retry(step_config)
@@ -190,8 +166,6 @@ module RubyReactor
         end
       end
 
-      private
-
       def handle_async_step(step_config)
         # Step-level async: hand off execution to worker
 
@@ -204,60 +178,11 @@ module RubyReactor
 
         serialized_context = ContextSerializer.serialize(context_to_serialize)
 
-        result = configuration.async_router.perform_async(
+        configuration.async_router.perform_async(
           serialized_context,
           reactor_class_name,
           intermediate_results: @context.intermediate_results
         )
-
-        # Handle different result types from async router
-        case result
-        when RubyReactor::AsyncResult
-          # Production behavior: return async result to caller
-
-          result
-        when Executor
-          handle_inline_executor_result(result)
-        else
-          # Unexpected result type, treat as error
-          raise Error::ValidationError.new(
-            "Unexpected result type from async router: #{result.class}",
-            context: @context
-          )
-        end
-      end
-
-      def handle_inline_executor_result(result)
-        # Worker executed inline and returned an executor.
-        # This happens when running in test mode or when perform_async returns an executor.
-        # We need to merge the state back into our current executor.
-        #
-        # If we are a child reactor, the worker executed the root reactor, so the result
-        # will be a Root executor. We handle this mismatch below by finding our
-        # corresponding child context within the root result.
-        if @context.root_context && (result.context.reactor_class != @reactor_class)
-          # We are a child, and result is root.
-          # We need to find ourselves in the root result using context_id.
-          matching_context = find_context_by_id(result.context, @context.context_id)
-
-          if matching_context
-            # Replace the result's context with the matching child context
-            # so merge_executor_state works correctly
-            result.instance_variable_set(:@context, matching_context)
-          else
-            # Fallback: if we can't find it (shouldn't happen), we might be in trouble.
-            # But let's try to proceed, maybe it's not nested?
-            # For now, raise an error to be explicit
-            raise Error::ValidationError.new(
-              "Could not find child context with ID #{@context.context_id} in root result",
-              context: @context
-            )
-          end
-        end
-
-        merge_executor_state(result)
-
-        result.result
       end
 
       def handle_interrupt_step(step_config)

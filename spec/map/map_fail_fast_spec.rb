@@ -362,7 +362,8 @@ RSpec.describe "Map fail_fast Option" do
       storage.store_context(context.context_id, serialized_ctx, AsyncFailFastReactor.name)
 
       # Trigger execution via async router
-      # This mimics Reactor#run for async reactors (but we do it manually to ensure context persistence and ID availability)
+      # This mimics Reactor#run for async reactors (but we do it manually to ensure context persistence
+      # and ID availability)
       RubyReactor.configuration.async_router.perform_async(serialized_ctx)
 
       # Drain Sidekiq jobs
@@ -370,6 +371,9 @@ RSpec.describe "Map fail_fast Option" do
       # 1. MapExecutionWorker acts as the "Manager" dispatching batches
       # 2. MapElementWorker executes the individual elements
       # 3. MapCollectorWorker waits for results
+
+      # Main Worker
+      RubyReactor::SidekiqWorkers::Worker.drain
 
       # Initial dispatch
       RubyReactor::SidekiqWorkers::MapExecutionWorker.drain
@@ -387,7 +391,7 @@ RSpec.describe "Map fail_fast Option" do
       # but only 1-4 might have run (3 failed), and 5 was skipped due to fail_fast check in Execution.
 
       expect(stored_reactor.context.status).to eq("failed")
-      expect(stored_reactor.context.failure_reason[:message]).to include("Simulated failure for 3")
+      expect(stored_reactor.context.failure_reason.error).to include("Simulated failure for 3")
     end
   end
 end
