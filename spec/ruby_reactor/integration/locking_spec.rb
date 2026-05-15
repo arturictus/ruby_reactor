@@ -68,5 +68,37 @@ RSpec.describe "Locking Integration" do
         SemaphoreReactor.run(limit_id: 1)
       end.to raise_error(RubyReactor::Semaphore::AcquisitionError)
     end
+
+    it "returns the token to the pool on successful run" do
+      3.times { expect(SemaphoreReactor.run(limit_id: 1)).to be_success }
+
+      # Pool started with 2 tokens; after 3 sequential runs all tokens should
+      # still be available, proving release happened each time.
+      expect(redis.llen("semaphore:api_limit")).to eq(2)
+      expect(redis.scard("semaphore:api_limit:held")).to eq(0)
+    end
+
+    it "ignores double release without inflating the pool" do
+      s = RubyReactor::Semaphore.new("api_limit", limit: 2)
+      s.acquire
+      expect(s.release).to be true
+      expect(s.release).to be false
+
+      expect(redis.llen("semaphore:api_limit")).to eq(2)
+      expect(redis.scard("semaphore:api_limit:held")).to eq(0)
+    end
+
+    it "never grows past limit even under repeated releases" do
+      s = RubyReactor::Semaphore.new("api_limit", limit: 2)
+      s.acquire
+      token = s.token
+
+      # Forge a release call attempting to re-add the same token after it was
+      # already returned. The held-set gate must reject it.
+      RubyReactor.configuration.storage_adapter.semaphore_release("semaphore:api_limit", token, 2)
+      RubyReactor.configuration.storage_adapter.semaphore_release("semaphore:api_limit", token, 2)
+
+      expect(redis.llen("semaphore:api_limit")).to eq(2)
+    end
   end
 end

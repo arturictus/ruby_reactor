@@ -4,26 +4,33 @@ module RubyReactor
   class Semaphore
     class AcquisitionError < StandardError; end
 
-    attr_reader :key, :limit, :wait
+    attr_reader :key, :limit, :wait, :token
 
     def initialize(key, limit: 1, wait: 0)
       @key = "semaphore:#{key}"
       @limit = limit
       @wait = wait
+      @token = nil
     end
 
-    def acquire
+    def acquire # rubocop:disable Naming/PredicateMethod
       ensure_initialized
 
-      unless adapter.semaphore_acquire(@key, timeout: @wait)
-        raise AcquisitionError, "Could not acquire semaphore '#{@key}' within #{@wait} seconds"
-      end
+      token = adapter.semaphore_acquire(@key, timeout: @wait)
+      raise AcquisitionError, "Could not acquire semaphore '#{@key}' within #{@wait} seconds" unless token
 
+      @token = token
       true
     end
 
+    # Returns true if a held token was returned to the pool.
+    # Idempotent: a second release (or one without a prior acquire) is a no-op.
     def release
-      adapter.semaphore_release(@key)
+      return false unless @token
+
+      result = adapter.semaphore_release(@key, @token, @limit)
+      @token = nil
+      result
     end
 
     def synchronize
