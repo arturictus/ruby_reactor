@@ -113,6 +113,59 @@ class RateLimitedReactor < RubyReactor::Reactor
   end
 end
 
+module SkippedStepCounters
+  class << self
+    attr_accessor :first_ran, :second_ran, :third_ran, :undo_count
+
+    def reset
+      @first_ran = 0
+      @second_ran = 0
+      @third_ran = 0
+      @undo_count = 0
+    end
+  end
+  reset
+end
+
+class StepSkipReactor < RubyReactor::Reactor
+  input :should_skip
+
+  step :first do
+    run do |_inputs|
+      SkippedStepCounters.first_ran += 1
+      RubyReactor.Success(:first_done)
+    end
+
+    undo do |_error, _args, _ctx|
+      SkippedStepCounters.undo_count += 1
+      RubyReactor.Success(:undone)
+    end
+  end
+
+  step :second do
+    argument :should_skip, input(:should_skip)
+    wait_for :first
+
+    run do |args|
+      SkippedStepCounters.second_ran += 1
+      if args[:should_skip]
+        RubyReactor.Skipped(reason: "no work to do")
+      else
+        RubyReactor.Success(:second_done)
+      end
+    end
+  end
+
+  step :third do
+    wait_for :second
+
+    run do |_inputs|
+      SkippedStepCounters.third_ran += 1
+      RubyReactor.Success(:third_done)
+    end
+  end
+end
+
 class MultiWindowRateLimitedReactor < RubyReactor::Reactor
   with_rate_limit(
     limits: { second: 2, minute: 5 }

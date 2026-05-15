@@ -415,6 +415,18 @@ result.success?  # true (Skipped is a Success subclass)
 result.skipped?  # true on dedup hit, false otherwise
 ```
 
+A step's `run` block can also return `RubyReactor.Skipped(reason: "...")` to halt the reactor cleanly — remaining steps don't execute, **and already-completed steps are NOT compensated**. Use it when the rest of the workflow is unnecessary and partial progress should be kept (`Failure` is for "stop and roll back").
+
+```ruby
+step :ensure_active do
+  argument :user, result(:fetch_user)
+  run do |args|
+    next RubyReactor.Skipped(reason: "user_opted_out") if args[:user].opted_out?
+    RubyReactor.Success(args[:user])
+  end
+end
+```
+
 See [Locks, Semaphores, Rate Limits & Periods](documentation/locks_and_semaphores.md) for re-entrancy, auto-extend, multi-window quotas, bucket semantics, owner identity, snooze tuning, and operational notes.
 
 ### Map & Parallel Execution

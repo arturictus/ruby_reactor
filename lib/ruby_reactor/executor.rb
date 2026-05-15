@@ -284,8 +284,15 @@ module RubyReactor
         @result = @step_executor.execute_all_steps
       else
         case result
-        when RetryQueuedResult, RubyReactor::Failure, RubyReactor::AsyncResult, RubyReactor::InterruptResult
-          # Step was requeued, failed, or handed off to async - return the result
+        # Skipped must be listed before Success (Skipped < Success) so the
+        # halt path wins over the "continue with remaining steps" path.
+        when RubyReactor::Skipped,
+             RetryQueuedResult,
+             RubyReactor::Failure,
+             RubyReactor::AsyncResult,
+             RubyReactor::InterruptResult
+          # Terminal: step was skipped, requeued, failed, paused, or handed
+          # off to async. Return the result as-is.
           @result = result
         when RubyReactor::Success
           # Step succeeded, continue with remaining steps

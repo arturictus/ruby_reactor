@@ -12,3 +12,4 @@
 log
 # rails demo app
 demo_app/
+.claude/settings.local.json

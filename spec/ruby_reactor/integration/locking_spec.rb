@@ -169,6 +169,65 @@ RSpec.describe "Locking Integration" do
     end
   end
 
+  describe "Skipped step result" do
+    before { SkippedStepCounters.reset }
+
+    it "halts the reactor when a step returns Skipped" do
+      result = StepSkipReactor.run(should_skip: true)
+
+      expect(result).to be_a(RubyReactor::Skipped)
+      expect(result.skipped?).to be true
+      expect(result.reason).to eq("no work to do")
+      expect(result.step_name).to eq(:second)
+    end
+
+    it "does not execute downstream steps after a skip" do
+      StepSkipReactor.run(should_skip: true)
+
+      expect(SkippedStepCounters.first_ran).to eq(1)
+      expect(SkippedStepCounters.second_ran).to eq(1)
+      expect(SkippedStepCounters.third_ran).to eq(0)
+    end
+
+    it "does NOT compensate previously completed steps" do
+      StepSkipReactor.run(should_skip: true)
+
+      expect(SkippedStepCounters.undo_count).to eq(0)
+    end
+
+    it "still runs the full chain when the step returns Success" do
+      result = StepSkipReactor.run(should_skip: false)
+
+      expect(result).to be_success
+      expect(result.skipped?).to be false
+      expect(SkippedStepCounters.first_ran).to eq(1)
+      expect(SkippedStepCounters.second_ran).to eq(1)
+      expect(SkippedStepCounters.third_ran).to eq(1)
+      expect(SkippedStepCounters.undo_count).to eq(0)
+    end
+
+    it "still satisfies result.success? (Skipped is a Success subclass)" do
+      result = StepSkipReactor.run(should_skip: true)
+      expect(result.success?).to be true
+    end
+
+    it "is constructible via RubyReactor.Skipped(...)" do
+      skipped = RubyReactor.Skipped(reason: "manual")
+      expect(skipped).to be_a(RubyReactor::Skipped)
+      expect(skipped.reason).to eq("manual")
+    end
+
+    it "records the skip in the execution trace" do
+      reactor = StepSkipReactor.new
+      reactor.run(should_skip: true)
+
+      skipped_entries = reactor.execution_trace.select { |e| e[:type] == :skipped }
+      expect(skipped_entries.size).to eq(1)
+      expect(skipped_entries.first[:step]).to eq(:second)
+      expect(skipped_entries.first[:reason]).to eq("no work to do")
+    end
+  end
+
   describe "Rate Limits" do
     before { RateLimitCounters.reset }
 

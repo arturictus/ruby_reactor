@@ -46,6 +46,7 @@ The period primitive is different: it is **dedup**, not concurrency. It records 
   - [When the marker is written](#when-the-marker-is-written)
   - [Composing with `with_lock`](#composing-with-with_lock)
   - [The `Skipped` result](#the-skipped-result)
+  - [Skipping mid-reactor from a step](#skipping-mid-reactor-from-a-step)
 - [Snooze configuration](#snooze-configuration)
 - [Inheritance](#inheritance)
 - [Observability](#observability)
@@ -324,18 +325,83 @@ Order of evaluation per call:
 
 ### The `Skipped` result
 
+`RubyReactor::Skipped` is a Success-subclass result returned in two situations:
+
+1. **Implicit period gate**, as shown above — a `with_period` reactor reruns in an already-claimed bucket.
+2. **Explicit step return** — a step's `run` block returns `RubyReactor.Skipped(...)` to halt the reactor cleanly without compensation. See [Skipping mid-reactor from a step](#skipping-mid-reactor-from-a-step) below.
+
+Both shapes share the same API:
+
 ```ruby
 result = MonthlyBillingReactor.run(org_id: 42)
 
 result.success?    # => true   (Skipped is a Success subclass)
 result.skipped?    # => true
-result.period_key  # => "period:monthly_billing:42:2026-05"
-result.reason      # => :period
+result.reason      # => :period (or whatever the step passed)
+result.period_key  # => "period:monthly_billing:42:2026-05" (period gate only)
+result.step_name   # => :build_report (step return only)
 ```
 
-`Skipped` deliberately satisfies `success?` so existing `if result.success? ... else ...` branches still take the right path. Code that wants to log or count duplicates can check `result.skipped?` explicitly.
+`Skipped` deliberately satisfies `success?` so existing `if result.success? ... else ...` branches still take the right path. Code that wants to log or count skips explicitly checks `result.skipped?`.
 
-The reactor's context status becomes `:skipped` (rather than `:completed`), so dashboards can render dedup events distinctly.
+The reactor's context status becomes `:skipped` (rather than `:completed`), so dashboards can render skip events distinctly.
+
+### Skipping mid-reactor from a step
+
+You can also produce a `Skipped` result from inside a step's `run` block. This is useful when a step discovers that the rest of the workflow is unnecessary **and the partial progress so far is fine to keep**.
+
+```ruby
+class SyncSubscriberReactor < RubyReactor::Reactor
+  input :user_id
+
+  step :fetch_user do
+    argument :user_id, input(:user_id)
+    run { |args| User.find(args[:user_id]) }
+  end
+
+  step :ensure_active do
+    argument :user, result(:fetch_user)
+    run do |args|
+      # Nothing to do — bail out, but keep the user-fetch we already did.
+      next RubyReactor.Skipped(reason: "user_opted_out") if args[:user].opted_out?
+
+      RubyReactor.Success(args[:user])
+    end
+  end
+
+  step :push_to_mailing_list do
+    argument :user, result(:ensure_active)
+    run { |args| Mailchimp.subscribe(args[:user]) }
+  end
+end
+
+result = SyncSubscriberReactor.run(user_id: 42)
+
+if result.skipped?
+  Rails.logger.info("Sync skipped (#{result.reason}) at step #{result.step_name}")
+end
+```
+
+What happens when a step returns `Skipped`:
+
+| Aspect                                | Behavior                                                                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Remaining steps                       | Not executed. The reactor halts at the skipping step.                                                                                 |
+| Previously completed steps            | **Left intact — no compensation** runs. This is the critical difference vs `Failure`.                                                 |
+| Step's value                          | Not stored in `intermediate_results` (it produced no usable output). Downstream never runs, so unreachable.                           |
+| Execution trace                       | A `{ type: :skipped, step: <name>, reason: <reason> }` entry is appended.                                                             |
+| Returned `Skipped`                    | Carries `step_name` (the halting step) and `reason` (whatever the user passed).                                                       |
+| `Reactor.run` / `result.success?`     | Returns the `Skipped`. `success?` is `true`, `skipped?` is `true`, status `:skipped`.                                                 |
+
+**`Skipped` vs `Failure` decision matrix:**
+
+| Situation                                            | Return                                            |
+| ---------------------------------------------------- | ------------------------------------------------- |
+| Step did its job; subsequent steps not needed        | `RubyReactor.Skipped(reason: "...")`              |
+| Step couldn't proceed because of an error            | `RubyReactor.Failure(error)` — triggers undo path |
+| Step succeeded normally                              | `RubyReactor.Success(value)`                      |
+
+A common smell to avoid: returning `Skipped` from a step that has just done **partial** work that needs cleanup. If you'd want compensation to run, use `Failure` instead — `Skipped` explicitly says "the partial progress is correct, stop here."
 
 ## Snooze configuration
 
