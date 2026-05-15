@@ -41,19 +41,20 @@ end
 # Synchronous call returns immediately
 async_result = OrderProcessingReactor.run(order_id: 123)
 
-# Check status later
-case async_result.status
-when :pending
-  puts "Execution is queued"
-when :running
-  puts "Execution is in progress"
-when :success
-  puts "Execution completed successfully"
-  result = async_result.result
-when :failed
-  puts "Execution failed: #{async_result.error}"
+async_result.execution_id       # UUID for reloading state
+async_result.intermediate_results # Whatever was computed before handoff
+
+# Inspect status later by reloading from storage
+reactor = OrderProcessingReactor.find(async_result.execution_id)
+case reactor.context.status.to_s
+when "running"   then puts "Execution is in progress"
+when "completed" then puts "Done: #{reactor.result.value}"
+when "failed"    then puts "Failed: #{reactor.result.error}"
+when "paused"    then puts "Waiting on interrupt"
 end
 ```
+
+> **Note:** `AsyncResult` itself does not poll. It only carries the job handle and any results computed before handoff (`job_id`, `execution_id`, `intermediate_results`). To check progress, reload via `Reactor.find(execution_id)` and inspect `context.status`, or use the web dashboard.
 
 ### Architecture
 
@@ -85,25 +86,27 @@ Individual steps can be marked as `async: true`. Execution runs synchronously un
 class OrderProcessingReactor < RubyReactor::Reactor
   step :validate_order do
     # Runs synchronously
-    run { validate_order_logic }
+    run { |args, _ctx| validate_order_logic(args) }
   end
 
-  step :process_payment, async: true do
-    # First async step - triggers handoff to worker
-    run { process_payment_logic }
+  step :process_payment do
+    async true # First async step — triggers handoff to worker
+    run { |args, _ctx| process_payment_logic(args) }
   end
 
   step :update_inventory do
     # Runs in worker after handoff
-    run { update_inventory_logic }
+    run { |args, _ctx| update_inventory_logic(args) }
   end
 
   step :send_confirmation do
     # Runs in same worker
-    run { send_confirmation_logic }
+    run { |args, _ctx| send_confirmation_logic(args) }
   end
 end
 ```
+
+> **DSL note:** `async` is declared inside the step block (`async true`), not as a keyword on `step :name, async: true`. The `step` method only accepts a step name and an optional implementation class as positional arguments.
 
 ### Execution Flow
 
@@ -244,17 +247,18 @@ class PaymentProcessingReactor < RubyReactor::Reactor
 
   step :validate_payment do
     retries max_attempts: 3, backoff: :exponential, base_delay: 1.second
-    run { validate_payment_logic }
+    run { |args, _ctx| validate_payment_logic(args) }
   end
 
-  step :charge_card, async: true do
+  step :charge_card do
+    async true
     retries max_attempts: 5, backoff: :linear, base_delay: 5.seconds
-    run { charge_card_logic }
+    run { |args, _ctx| charge_card_logic(args) }
   end
 
   step :update_records do
     # No retry - critical step
-    run { update_records_logic }
+    run { |args, _ctx| update_records_logic(args) }
   end
 end
 ```
@@ -298,25 +302,30 @@ class OrderProcessingReactor < RubyReactor::Reactor
   async true
 
   step :process_payment do
-    run { process_payment_logic }
+    argument :order, result(:validate_order)
+    run { |args, _ctx| process_payment_logic(args[:order]) }
 
-    undo do |payment_id:, **|
-      # Runs in worker if execution fails later
-      PaymentService.refund(payment_id)
+    undo do |result, _args, _ctx|
+      # Runs in worker when a LATER step fails
+      PaymentService.refund(result[:payment_id])
+      Success()
     end
 
-    compensate do |payment_id:, **|
-      # Runs in worker if execution fails later
-      PaymentService.refund(payment_id)
+    compensate do |error, args, _ctx|
+      # Runs in worker if THIS step fails
+      AuditService.log_payment_failure(args[:order].id, error.message)
+      Success()
     end
   end
 
   step :update_inventory do
-    run { update_inventory_logic }
+    argument :order, result(:validate_order)
+    run { |args, _ctx| update_inventory_logic(args[:order]) }
 
-    compensate do |order:, **|
+    compensate do |_error, args, _ctx|
       # Runs in worker on failure
-      InventoryService.restore(order)
+      InventoryService.restore(args[:order])
+      Success()
     end
   end
 end
@@ -337,15 +346,18 @@ Retries are visible in Sidekiq web UI with:
 ### Sidekiq Worker Setup
 
 ```ruby
-# config/sidekiq.rb
-require 'ruby_reactor/worker'
-
+# config/initializers/ruby_reactor.rb (Rails) or load before booting Sidekiq
 RubyReactor.configure do |config|
+  config.storage.adapter = :redis
+  config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
+
   config.sidekiq_queue = :default
   config.sidekiq_retry_count = 3
   config.logger = Logger.new('log/ruby_reactor.log')
 end
 ```
+
+Sidekiq workers are loaded automatically via Zeitwerk when `ruby_reactor` is required — no extra `require` is needed.
 
 ## Performance Considerations
 

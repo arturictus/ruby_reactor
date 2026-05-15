@@ -46,28 +46,30 @@ class OrderProcessingReactor < RubyReactor::Reactor
   # Reactor-level retry defaults
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
 
-  step :validate_order do
-    validate_args do
-      required(:order_id).filled(:string)
-    end
+  input :order_id do
+    required(:order_id).filled(:string)
+  end
 
-    run do |order_id:|
-      order = Order.find_by(id: order_id)
-      raise "Order not found" unless order
-      raise "Order already processed" if order.processed?
-      raise "Order cancelled" if order.cancelled?
+  step :validate_order do
+    argument :order_id, input(:order_id)
+
+    run do |args, _ctx|
+      order = Order.find_by(id: args[:order_id])
+      return Failure("Order not found") unless order
+      return Failure("Order already processed") if order.processed?
+      return Failure("Order cancelled") if order.cancelled?
 
       Success({ order: order })
     end
   end
 
   step :check_inventory do
-    argument :order, result(:validate_order)
+    argument :order, result(:validate_order, :order)
 
-    run do |order:, **|
+    run do |args, _ctx|
       unavailable_items = []
 
-      order.items.each do |item|
+      args[:order].items.each do |item|
         product = Product.find(item.product_id)
         if product.inventory_count < item.quantity
           unavailable_items << {
@@ -78,35 +80,37 @@ class OrderProcessingReactor < RubyReactor::Reactor
         end
       end
 
-      raise "Insufficient inventory: #{unavailable_items}" unless unavailable_items.empty?
+      return Failure("Insufficient inventory: #{unavailable_items}") unless unavailable_items.empty?
 
       Success({ inventory_checked: true })
     end
   end
 
   step :reserve_inventory do
-    argument :order, result(:validate_order)
+    argument :order, result(:validate_order, :order)
 
-    run do |order:, **|
-      reservation_id = InventoryService.reserve_items(order.items)
-      raise "Inventory reservation failed" unless reservation_id
+    run do |args, _ctx|
+      reservation_id = InventoryService.reserve_items(args[:order].items)
+      return Failure("Inventory reservation failed") unless reservation_id
 
       Success({ reservation_id: reservation_id })
     end
 
-    undo do |reservation_id:, **|
-      # Release reservation on failure
-      InventoryService.release_reservation(reservation_id) if reservation_id
+    undo do |result, _args, _ctx|
+      # Release reservation when a later step fails
+      InventoryService.release_reservation(result[:reservation_id]) if result[:reservation_id]
+      Success()
     end
   end
 
   step :process_payment do
-    argument :order, result(:validate_order)
+    argument :order, result(:validate_order, :order)
 
     # Payment processing needs careful retry handling
     retries max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
 
-    run do |order:, **|
+    run do |args, _ctx|
+      order = args[:order]
       payment_result = PaymentService.charge(
         amount: order.total,
         currency: order.currency,
@@ -114,44 +118,42 @@ class OrderProcessingReactor < RubyReactor::Reactor
         description: "Order ##{order.id}"
       )
 
-      raise "Payment failed: #{payment_result.error}" unless payment_result.success?
+      return Failure("Payment failed: #{payment_result.error}") unless payment_result.success?
 
       Success({ payment_id: payment_result.id, payment_amount: order.total })
     end
 
-    undo do |payment_id:, **|
-      # Refund payment on failure
-      PaymentService.refund(payment_id) if payment_id
+    undo do |result, _args, _ctx|
+      PaymentService.refund(result[:payment_id]) if result[:payment_id]
+      Success()
     end
   end
 
   step :update_inventory do
-    argument :order, result(:validate_order)
-    argument :reservation_id, result(:reserve_inventory)
+    argument :order, result(:validate_order, :order)
+    argument :reservation_id, result(:reserve_inventory, :reservation_id)
 
-    run do |order:, reservation_id:, **|
-      # Convert reservation to permanent inventory reduction
-      success = InventoryService.confirm_reservation(reservation_id)
-      raise "Inventory update failed" unless success
+    run do |args, _ctx|
+      success = InventoryService.confirm_reservation(args[:reservation_id])
+      return Failure("Inventory update failed") unless success
 
       Success({ inventory_updated: true })
     end
 
-    undo do |order:, reservation_id:, **|
-      # This shouldn't normally happen since payment succeeded
-      # But if it does, we need to restore inventory
-      InventoryService.restore_from_reservation(reservation_id) if reservation_id
+    undo do |_result, args, _ctx|
+      InventoryService.restore_from_reservation(args[:reservation_id]) if args[:reservation_id]
+      Success()
     end
   end
 
   step :update_order_status do
-    argument :order, result(:validate_order)
-    argument :payment_id, result(:process_payment)
+    argument :order, result(:validate_order, :order)
+    argument :payment_id, result(:process_payment, :payment_id)
 
-    run do |order:, payment_id:, **|
-      order.update!(
+    run do |args, _ctx|
+      args[:order].update!(
         status: :completed,
-        payment_id: payment_id,
+        payment_id: args[:payment_id],
         processed_at: Time.current
       )
 
@@ -160,23 +162,25 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :send_confirmation do
-    argument :order, result(:validate_order)
-    argument :payment_id, result(:process_payment)
+    argument :order, result(:validate_order, :order)
+    argument :payment_id, result(:process_payment, :payment_id)
 
     retries max_attempts: 3, backoff: :linear, base_delay: 10.seconds
 
-    run do |order:, payment_id:, **|
+    run do |args, _ctx|
       email_result = EmailService.send_order_confirmation(
-        to: order.customer.email,
-        order: order,
-        payment_id: payment_id
+        to: args[:order].customer.email,
+        order: args[:order],
+        payment_id: args[:payment_id]
       )
 
-      raise "Confirmation email failed" unless email_result.success?
+      return Failure("Confirmation email failed") unless email_result.success?
 
       Success({ confirmation_sent: true })
     end
   end
+
+  returns :send_confirmation
 end
 ```
 
@@ -187,16 +191,21 @@ end
 ```ruby
 # Start order processing asynchronously
 async_result = OrderProcessingReactor.run(order_id: 12345)
+async_result.execution_id # UUID for state lookup
 
-# Check status later
-case async_result.status
-when :success
+# Reload state later (e.g. from a polling endpoint)
+reactor = OrderProcessingReactor.find(async_result.execution_id)
+case reactor.context.status.to_s
+when "completed"
   puts "Order processed successfully!"
-  result = async_result.result
-  puts "Payment ID: #{result.step_results[:process_payment][:payment_id]}"
-when :failed
-  puts "Order processing failed: #{async_result.error.message}"
+  payment_id = reactor.context.intermediate_results[:process_payment][:payment_id]
+  puts "Payment ID: #{payment_id}"
+when "failed"
+  failure = reactor.result # RubyReactor::Failure
+  puts "Order processing failed at #{failure.step_name}: #{failure.error}"
   # Could trigger manual review process
+when "running"
+  puts "Still processing..."
 end
 ```
 
@@ -204,14 +213,15 @@ end
 
 ```ruby
 # For testing or immediate processing
-result = OrderProcessingReactor.run(order_id: 12345)
+reactor = OrderProcessingReactor.new
+result = reactor.run(order_id: 12345)
 
 if result.success?
   puts "Order completed!"
-  puts "Steps completed: #{result.completed_steps.to_a}"
+  puts "Steps completed: #{reactor.context.intermediate_results.keys}"
 else
-  puts "Failed at step: #{result.error.step_name}"
-  puts "Error: #{result.error.message}"
+  puts "Failed at step: #{result.step_name}"
+  puts "Error: #{result.error}"
 end
 ```
 
@@ -256,10 +266,10 @@ RSpec.describe OrderProcessingReactor do
       allow(InventoryService).to receive(:confirm_reservation).and_return(true)
       allow(EmailService).to receive(:send_order_confirmation).and_return(successful_email)
 
-      result = OrderProcessingReactor.run(order_id: order.id)
+      subject = test_reactor(OrderProcessingReactor, order_id: order.id)
 
-      expect(result).to be_success
-      expect(result.completed_steps).to include(:send_confirmation)
+      expect(subject).to be_success
+      expect(subject).to have_run_step(:send_confirmation)
     end
   end
 
@@ -271,10 +281,10 @@ RSpec.describe OrderProcessingReactor do
 
       expect(InventoryService).to receive(:release_reservation).with("res_123")
 
-      result = OrderProcessingReactor.run(order_id: order.id)
+      subject = test_reactor(OrderProcessingReactor, order_id: order.id)
 
-      expect(result).to be_failure
-      expect(result.error.message).to include("Payment failed")
+      expect(subject).to be_failure
+      expect(subject.error).to include("Payment failed")
     end
   end
 end
@@ -315,15 +325,16 @@ email_delivery_failure_rate
 class PartialOrderProcessingReactor < OrderProcessingReactor
   # Override to allow partial fulfillment
   step :check_inventory do
-    run do |order:, **|
-      available_items, unavailable_items = partition_available_items(order.items)
+    argument :order, result(:validate_order, :order)
+
+    run do |args, _ctx|
+      available_items, unavailable_items = partition_available_items(args[:order].items)
 
       if available_items.any? && unavailable_items.any?
-        # Create partial order for available items
-        partial_order = create_partial_order(order, available_items)
+        partial_order = create_partial_order(args[:order], available_items)
         Success({ partial_order: partial_order, unavailable_items: unavailable_items })
       elsif available_items.empty?
-        raise "No items available"
+        Failure("No items available")
       else
         Success({ inventory_checked: true })
       end
@@ -336,23 +347,27 @@ end
 
 ```ruby
 class OrderCancellationReactor < RubyReactor::Reactor
-  step :load_order do
-    validate_args do
-      required(:order_id).filled(:string)
-    end
+  input :order_id do
+    required(:order_id).filled(:string)
+  end
 
-    run do |order_id:|
-      order = Order.find_by(id: order_id)
-      raise "Order not found" unless order
+  step :load_order do
+    argument :order_id, input(:order_id)
+
+    run do |args, _ctx|
+      order = Order.find_by(id: args[:order_id])
+      return Failure("Order not found") unless order
       Success({ order: order })
     end
   end
 
   step :cancel_order do
-    run do |order:, **|
+    argument :order, result(:load_order, :order)
+
+    run do |args, _ctx|
+      order = args[:order]
       # Only cancel if not already completed
       if order.completed?
-        # Initiate refund and inventory restoration
         PaymentService.refund(order.payment_id)
         InventoryService.restore_order_items(order)
       end

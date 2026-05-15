@@ -24,12 +24,15 @@ Steps are the individual units of work within a reactor. Each step has a name an
 
 ### Inline Step Definition
 
+`run` blocks always receive two positional arguments: the resolved arguments hash and the execution context. Declare inputs with `argument :name, source`:
+
 ```ruby
 step :validate_order do
-  run do |order_id|
-    # Step implementation
-    order = Order.find(order_id)
-    raise "Order not found" unless order
+  argument :order_id, input(:order_id)
+
+  run do |args, _context|
+    order = Order.find(args[:order_id])
+    return Failure("Order not found") unless order
     Success({ order: order })
   end
 end
@@ -144,29 +147,22 @@ end
 
 ## Results
 
-Every reactor execution returns a comprehensive result object.
-<!-- 
-# TODO
+`Reactor.run` returns one of four result types:
 
-This is not true, update to use instance and what is stored
+- **`RubyReactor::Success`** — `success?` is `true`. `value` holds the output of the step named in `returns`, or the full `intermediate_results` hash if no `returns` is declared.
+- **`RubyReactor::Failure`** — `failure?` is `true`. Readers include `error`, `step_name`, `reactor_name`, `step_arguments`, `inputs`, `exception_class`, `file_path`, `line_number`, `backtrace`, `validation_errors`, and `retryable?`.
+- **`RubyReactor::AsyncResult`** — returned by an async reactor or when a step hands off to a worker. Readers: `job_id`, `execution_id`, `intermediate_results`.
+- **`RubyReactor::InterruptResult`** — returned when an `interrupt` step pauses execution. Readers: `execution_id`, `correlation_id`, `status` (`:paused`), `timeout_at`, `intermediate_results`.
+
+Step-by-step state lives on the context, not the result object. Reload via `Reactor.find(execution_id)` to inspect:
+
 ```ruby
-result = OrderProcessingReactor.run(order_id: 123)
-
-# Overall status
-result.success?        # => true/false
-result.failure?        # => true/false
-
-# Step outputs
-result.step_results    # => { validate_order: {...}, process_payment: {...} }
-result.intermediate_results  # => Hash of all step outputs
-
-# Execution tracking
-result.completed_steps # => #<Set: {:validate_order, :process_payment}>
-result.inputs          # => { order_id: 123 }
-
-# Error information
-result.error           # => Exception object if failed
-``` -->
+reactor = OrderProcessingReactor.find(execution_id)
+reactor.context.intermediate_results # => { validate_order: {...}, ... }
+reactor.context.status               # => "completed" | "failed" | "paused" | "running"
+reactor.execution_trace              # ordered list of run/undo/compensate entries
+reactor.result                       # reconstructed Success/Failure/InterruptResult
+```
 
 ## Error Handling
 
@@ -178,14 +174,18 @@ When a step fails, execution stops and compensation begins:
 
 ```ruby
 step :process_payment do
-  run do
+  argument :amount, input(:amount)
+  argument :token, input(:card_token)
+
+  run do |args, _ctx|
     # This might fail
-    PaymentService.charge(amount, token)
+    PaymentService.charge(args[:amount], args[:token])
   end
 
-  compensate do |payment_id: nil, **|
-    # Undo the payment if it was created
-    PaymentService.refund(payment_id) if payment_id
+  compensate do |error, args, _ctx|
+    # Compensation receives (error, arguments, context)
+    # Best-effort cleanup specific to this step's failure
+    AuditService.log_payment_failure(args[:token], error.message)
   end
 end
 ```
@@ -349,22 +349,23 @@ result = Reactor.run(inputs)
 
 ### Asynchronous Execution
 
-<!-- TODO: review this part -->
-
 ```ruby
 async_result = Reactor.run(inputs)
 # Returns immediately
-# Check status later
+async_result.execution_id # UUID to look up state later
 
-case async_result.status
-when :success
-  result = async_result.result
-when :failed
-  error = async_result.error
+# Reload to inspect status / final result
+reactor = Reactor.find(async_result.execution_id)
+case reactor.context.status.to_s
+when "completed" then reactor.result.value
+when "failed"    then reactor.result.error
+when "paused"    then reactor.result.correlation_id
+when "running"   then :still_running
 end
 ```
 
 **Characteristics:**
+
 - Non-blocking execution
 - Background processing with Sidekiq
 - Retry capabilities
@@ -372,33 +373,38 @@ end
 
 ## Step Arguments
 
-Steps receive arguments through keyword arguments, with automatic dependency injection.
+`run` blocks always receive two positional arguments: the resolved arguments hash and the context. Declare each argument explicitly with `argument :name, source` — there is no implicit keyword injection.
+
+Sources you can use:
+
+- `input(:name)` — value from the reactor's inputs (the hash passed to `Reactor.run`).
+- `input(:name, :path)` — nested path access into a hash input.
+- `result(:step_name)` — full output of a previous step.
+- `result(:step_name, :path)` — nested path into a previous step's output.
+- `value(literal)` — a constant value.
 
 ```ruby
 step :validate_order do
-  run do |order_id:, customer_id:|
-    # Direct access to reactor inputs
-    order = Order.find_by(id: order_id, customer_id: customer_id)
+  argument :order_id, input(:order_id)
+  argument :customer_id, input(:customer_id)
+
+  run do |args, _context|
+    order = Order.find_by(id: args[:order_id], customer_id: args[:customer_id])
     Success({ order: order })
   end
 end
 
 step :process_payment do
-  argument :order_data, result(:validate_order)
+  argument :order, result(:validate_order, :order)
 
   run do |args, _context|
-    # Access results from previous steps
-    order = args[:order_data][:order]
-    payment = PaymentService.charge(order.total, order.card_token)
+    payment = PaymentService.charge(args[:order].total, args[:order].card_token)
     Success({ payment_id: payment.id })
   end
 end
 ```
 
-**Argument Resolution:**
-1. **Step Results**: Outputs from completed dependent steps
-2. **Reactor Inputs**: Original inputs passed to `run()`
-3. **Intermediate Results**: Accumulated outputs from all steps
+If a step declares no `argument`s, the reactor's raw inputs hash is passed as `args`.
 
 ## Undo
 
@@ -415,15 +421,16 @@ Unlike compensation which only runs for the failing step, undo is triggered duri
 
 ```ruby
 step :reserve_inventory do
-  run do |items:|
-    reservation_id = InventoryService.reserve(items)
+  argument :items, input(:items)
+
+  run do |args, _ctx|
+    reservation_id = InventoryService.reserve(args[:items])
     Success({ reservation_id: reservation_id })
   end
 
-  undo do |reservation_result, arguments, context|
+  undo do |result, arguments, context|
     # Undo receives the step's result, arguments, and full context
-    reservation_id = reservation_result[:reservation_id]
-    InventoryService.release(reservation_id)
+    InventoryService.release(result[:reservation_id])
     Success("Inventory reservation released")
   end
 end
@@ -438,9 +445,11 @@ Undo blocks receive three parameters:
 
 ```ruby
 step :complex_operation do
-  run do |input:|
+  argument :input, input(:payload)
+
+  run do |args, _ctx|
     # Complex operation that modifies external state
-    record = create_record(input)
+    record = create_record(args[:input])
     notification = send_notification(record)
     Success({ record_id: record.id, notification_id: notification.id })
   end
@@ -477,8 +486,10 @@ Compensation runs immediately when a step fails, before the broader rollback pro
 
 ```ruby
 step :reserve_inventory do
-  run do |items:|
-    reservation_id = InventoryService.reserve(items)
+  argument :items, input(:items)
+
+  run do |args, _ctx|
+    reservation_id = InventoryService.reserve(args[:items])
     Success({ reservation_id: reservation_id })
   end
 
@@ -501,9 +512,12 @@ Compensation blocks receive three parameters:
 
 ```ruby
 step :process_payment do
-  run do |order:, payment_method:|
+  argument :order, result(:validate_order)
+  argument :payment_method, input(:payment_method)
+
+  run do |args, _ctx|
     # Payment processing logic that might fail
-    PaymentService.charge(order.total, payment_method)
+    PaymentService.charge(args[:order].total, args[:payment_method])
   end
 
   compensate do |error, arguments, context|

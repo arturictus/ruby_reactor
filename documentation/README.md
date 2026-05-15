@@ -8,13 +8,15 @@ RubyReactor is a powerful Ruby framework for building reliable, sequential busin
 - [Core Concepts](core_concepts.md)
 - [DAG Execution and Saga Patterns](DAG.md)
 - [Async Reactors](async_reactors.md)
+- [Composition](composition.md)
+- [Data Pipelines](data_pipelines.md)
 - [Retry Configuration](retry_configuration.md)
-- [Migration Guide](migration_guide.md)
+- [Interrupts](interrupts.md)
+- [Testing with RSpec](testing.md)
 - [Examples](examples/)
   - [Order Processing](examples/order_processing.md)
   - [Payment Processing](examples/payment_processing.md)
   - [Inventory Management](examples/inventory_management.md)
-- [API Reference](api_reference.md)
 
 ## Quick Start
 
@@ -22,21 +24,30 @@ RubyReactor is a powerful Ruby framework for building reliable, sequential busin
 require 'ruby_reactor'
 
 class OrderProcessingReactor < RubyReactor::Reactor
+  input :order_id
+
   step :validate_order do
-    run { validate_order_logic }
+    argument :order_id, input(:order_id)
+    run { |args, _ctx| Success(Order.find(args[:order_id])) }
   end
 
   step :process_payment do
-    run { process_payment_logic }
+    argument :order, result(:validate_order)
+    run { |args, _ctx| Success(PaymentService.charge(args[:order])) }
   end
 
   step :send_confirmation do
-    run { send_email_confirmation }
+    argument :order, result(:validate_order)
+    run { |args, _ctx| Success(EmailService.send(args[:order])) }
   end
+
+  returns :process_payment
 end
 
 # Execute synchronously
 result = OrderProcessingReactor.run(order_id: 123)
+result.success? # => true
+result.value    # => payment result
 ```
 
 ## Key Features
@@ -106,9 +117,10 @@ RubyReactor provides comprehensive error handling:
 
 ## Requirements
 
-- Ruby 2.7+
-- Redis (for async execution)
+- Ruby 3.0+
+- Redis (for async execution and state persistence)
 - Sidekiq (for background processing)
+- dry-validation (optional, for input/payload validation)
 
 ## Installation
 
@@ -120,4 +132,4 @@ gem 'ruby_reactor'
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for development setup and contribution guidelines.
+Bug reports and pull requests are welcome at <https://github.com/arturictus/ruby_reactor>. See the root [README](../README.md#contributing) for development setup.
