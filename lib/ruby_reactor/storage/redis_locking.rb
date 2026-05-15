@@ -165,6 +165,46 @@ module RubyReactor
       def period_mark(key, ttl)
         @redis.set(key, "1", ex: ttl)
       end
+
+      # Rate Limit Primitives — fixed-window counter, supports multiple
+      # windows in one atomic call. Two-pass inside Lua so a miss on the Nth
+      # window does not leave the previous N-1 incremented.
+      #
+      # ARGV layout: [now, period_1, limit_1, ttl_1, period_2, limit_2, ttl_2, ...]
+      # KEYS:        [bucket_key_1, bucket_key_2, ...]
+      # Returns:     [allowed (1|0), retry_after_seconds, failed_index]
+
+      RATE_LIMIT_SCRIPT = <<~LUA
+        local now = tonumber(ARGV[1])
+        local n = #KEYS
+
+        for i = 1, n do
+          local base = 2 + (i - 1) * 3
+          local period = tonumber(ARGV[base])
+          local lim = tonumber(ARGV[base + 1])
+          local count = tonumber(redis.call('get', KEYS[i]) or '0')
+          if count >= lim then
+            local retry_after = period - (now % period)
+            if retry_after <= 0 then retry_after = 1 end
+            return {0, retry_after, i}
+          end
+        end
+
+        for i = 1, n do
+          local base = 2 + (i - 1) * 3
+          local ttl = tonumber(ARGV[base + 2])
+          local count = redis.call('incr', KEYS[i])
+          if count == 1 then
+            redis.call('expire', KEYS[i], ttl)
+          end
+        end
+
+        return {1, 0, 0}
+      LUA
+
+      def rate_limit_check_and_increment(keys, argv)
+        @redis.eval(RATE_LIMIT_SCRIPT, keys: keys, argv: argv)
+      end
     end
     # rubocop:enable Naming/PredicateMethod
   end

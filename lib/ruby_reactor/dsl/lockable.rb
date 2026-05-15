@@ -8,15 +8,17 @@ module RubyReactor
       end
 
       module ClassMethods
-        attr_reader :lock_config, :semaphore_config, :period_config
+        attr_reader :lock_config, :semaphore_config, :period_config, :rate_limit_config
 
-        # Propagate lock/semaphore/period config to subclasses; without this a
-        # subclass of a configured reactor would silently lose those settings.
+        # Propagate lock/semaphore/period/rate-limit config to subclasses;
+        # without this a subclass of a configured reactor would silently lose
+        # those settings.
         def inherited(subclass)
           super
           subclass.instance_variable_set(:@lock_config, @lock_config) if @lock_config
           subclass.instance_variable_set(:@semaphore_config, @semaphore_config) if @semaphore_config
           subclass.instance_variable_set(:@period_config, @period_config) if @period_config
+          subclass.instance_variable_set(:@rate_limit_config, @rate_limit_config) if @rate_limit_config
         end
 
         # Configure locking for this reactor
@@ -70,6 +72,57 @@ module RubyReactor
             every: every,
             key_proc: block
           }
+        end
+
+        # Configure rate limiting for this reactor (fixed-window counter).
+        # Pass either a single window via `limit:` + `period:`, or a hash of
+        # windows via `limits:` for layered API quotas.
+        #
+        # @example Single window
+        #   with_rate_limit(limit: 3, period: :second) { |i| "stripe:#{i[:account_id]}" }
+        #
+        # @example Multi-window (3/sec AND 100/min AND 5000/hr)
+        #   with_rate_limit(
+        #     limits: { second: 3, minute: 100, hour: 5000 }
+        #   ) { |i| "stripe:#{i[:account_id]}" }
+        #
+        # @param limit [Integer] requests per period (single-window form)
+        # @param period [Symbol, Integer] :second / :minute / :hour / :day /
+        #   :week / :month / :year, or integer seconds (single-window form)
+        # @param limits [Hash{Symbol,Integer => Integer}] mapping of period
+        #   unit to limit (multi-window form)
+        # @yield [inputs] Block returning the rate-limit key base.
+        def with_rate_limit(limit: nil, period: nil, limits: nil, &block)
+          normalized = normalize_rate_limit_args(limit, period, limits)
+
+          @rate_limit_config = {
+            limits: normalized,
+            key_proc: block
+          }
+        end
+
+        private
+
+        def normalize_rate_limit_args(limit, period, limits)
+          if limits
+            raise ArgumentError, "with_rate_limit: use either :limits, or :limit + :period, not both" if limit || period
+
+            limits.map do |period_key, limit_val|
+              {
+                period_seconds: RubyReactor::Period.period_seconds(period_key),
+                limit: Integer(limit_val),
+                name: period_key.to_s
+              }
+            end
+          elsif limit && period
+            [{
+              period_seconds: RubyReactor::Period.period_seconds(period),
+              limit: Integer(limit),
+              name: period.to_s
+            }]
+          else
+            raise ArgumentError, "with_rate_limit requires :limit + :period, or :limits"
+          end
         end
       end
     end

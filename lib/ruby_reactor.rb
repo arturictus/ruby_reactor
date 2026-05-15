@@ -8,6 +8,7 @@ require_relative "ruby_reactor/dsl/lockable" # Add this
 require_relative "ruby_reactor/lock"
 require_relative "ruby_reactor/semaphore"
 require_relative "ruby_reactor/period"
+require_relative "ruby_reactor/rate_limit"
 
 # Load dry-validation if available (for validation features)
 begin

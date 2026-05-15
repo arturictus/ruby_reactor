@@ -9,6 +9,7 @@ module RubyReactor
   # buckets and run again.
   module Period
     SYMBOLIC_PERIODS = {
+      second: 1,
       minute: 60,
       hour: 60 * 60,
       day: 60 * 60 * 24,
@@ -21,6 +22,7 @@ module RubyReactor
     # aligned for symbolic periods, index-based for integer seconds.
     def self.bucket_id(every, now: Time.now.utc)
       case every
+      when :second then now.strftime("%Y-%m-%dT%H-%M-%S")
       when :minute then now.strftime("%Y-%m-%dT%H-%M")
       when :hour   then now.strftime("%Y-%m-%dT%H")
       when :day    then now.strftime("%Y-%m-%d")

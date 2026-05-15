@@ -90,3 +90,38 @@ class LockedPeriodicReactor < RubyReactor::Reactor
     end
   end
 end
+
+module RateLimitCounters
+  class << self
+    attr_accessor :runs
+
+    def reset
+      @runs = 0
+    end
+  end
+  reset
+end
+
+class RateLimitedReactor < RubyReactor::Reactor
+  with_rate_limit(limit: 3, period: :second) { |inputs| "api:#{inputs[:account_id]}" }
+
+  step :call_api do
+    run do |_inputs|
+      RateLimitCounters.runs += 1
+      RubyReactor.Success(ok: true)
+    end
+  end
+end
+
+class MultiWindowRateLimitedReactor < RubyReactor::Reactor
+  with_rate_limit(
+    limits: { second: 2, minute: 5 }
+  ) { |inputs| "multi_api:#{inputs[:account_id]}" }
+
+  step :call_api do
+    run do |_inputs|
+      RateLimitCounters.runs += 1
+      RubyReactor.Success(ok: true)
+    end
+  end
+end

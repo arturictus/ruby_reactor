@@ -47,6 +47,7 @@ module RubyReactor
         return @result
       end
 
+      check_rate_limit
       acquire_locks
 
       input_validator = InputValidator.new(@reactor_class, @context)
@@ -64,7 +65,9 @@ module RubyReactor
       mark_period_on_success(@result)
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
       @result
-    rescue RubyReactor::Lock::AcquisitionError, RubyReactor::Semaphore::AcquisitionError => e
+    rescue RubyReactor::Lock::AcquisitionError,
+           RubyReactor::Semaphore::AcquisitionError,
+           RubyReactor::RateLimit::ExceededError => e
       raise e
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
@@ -93,7 +96,9 @@ module RubyReactor
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
 
       @result
-    rescue RubyReactor::Lock::AcquisitionError, RubyReactor::Semaphore::AcquisitionError => e
+    rescue RubyReactor::Lock::AcquisitionError,
+           RubyReactor::Semaphore::AcquisitionError,
+           RubyReactor::RateLimit::ExceededError => e
       raise e
     rescue StandardError => e
       handle_resume_error(e)
@@ -134,6 +139,19 @@ module RubyReactor
     def acquire_locks
       acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
       acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+    end
+
+    # Consume one slot from each configured rate-limit window. Raises
+    # `RubyReactor::RateLimit::ExceededError` (carrying a `retry_after_seconds`
+    # hint) if any window is full. Only consulted on initial `execute`; resumes
+    # never re-check (a paused reactor must not block itself on resume).
+    def check_rate_limit
+      return unless @reactor_class.respond_to?(:rate_limit_config) && @reactor_class.rate_limit_config
+
+      config = @reactor_class.rate_limit_config
+      key_base = config[:key_proc].call(@context.inputs)
+
+      RubyReactor::RateLimit.new(key_base, limits: config[:limits]).check_and_increment!
     end
 
     # Returns a Skipped result if the period bucket is already marked, else nil.

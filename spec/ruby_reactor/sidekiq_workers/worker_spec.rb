@@ -58,6 +58,44 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
       end
     end
 
+    context "when rate limit is exceeded" do
+      let(:error) do
+        RubyReactor::RateLimit::ExceededError.new(
+          "rate limit hit",
+          retry_after_seconds: 2,
+          key_base: "api",
+          limit: 3,
+          period_seconds: 1,
+          period_name: "second"
+        )
+      end
+
+      before do
+        allow(executor).to receive(:resume_execution).and_raise(error)
+      end
+
+      it "uses the error's retry_after_seconds as the snooze delay" do
+        expect(described_class).to receive(:perform_in).with(2.0, serialized_context, nil, 1)
+
+        subject.perform(serialized_context)
+      end
+
+      it "floors very short retry_after at 0.1s" do
+        tiny = RubyReactor::RateLimit::ExceededError.new(
+          "rate limit hit",
+          retry_after_seconds: 0.01,
+          key_base: "api",
+          limit: 3,
+          period_seconds: 1,
+          period_name: "second"
+        )
+        allow(executor).to receive(:resume_execution).and_raise(tiny)
+
+        expect(described_class).to receive(:perform_in).with(0.1, serialized_context, nil, 1)
+        subject.perform(serialized_context)
+      end
+    end
+
     context "when snooze attempts are exhausted" do
       let(:adapter) { instance_double(RubyReactor::Storage::RedisAdapter) }
 

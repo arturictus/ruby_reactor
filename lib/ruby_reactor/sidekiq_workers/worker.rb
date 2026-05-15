@@ -44,11 +44,12 @@ module RubyReactor
           # Return the executor (which now has the result stored in it)
           executor
         rescue RubyReactor::Lock::AcquisitionError,
-               RubyReactor::Semaphore::AcquisitionError => e
-          # Snooze on expected concurrency contention. We avoid Sidekiq's
-          # native retry path so this doesn't burn the job's retry budget or
-          # appear as an error in dashboards. After the configured cap is
-          # reached we escalate by marking the reactor as failed.
+               RubyReactor::Semaphore::AcquisitionError,
+               RubyReactor::RateLimit::ExceededError => e
+          # Snooze on expected concurrency or rate contention. We avoid
+          # Sidekiq's native retry path so this doesn't burn the job's retry
+          # budget or appear as an error in dashboards. After the configured
+          # cap is reached we escalate by marking the reactor as failed.
           handle_snooze(serialized_context, reactor_class_name, context, snooze_count, e)
         end
       end
@@ -64,14 +65,23 @@ module RubyReactor
           return
         end
 
-        delay = compute_snooze_delay(config)
+        delay = compute_snooze_delay(config, error)
         self.class.perform_in(delay, serialized_context, reactor_class_name, snooze_count + 1)
       end
 
-      def compute_snooze_delay(config)
-        base = config.lock_snooze_base_delay.to_f
+      # Use the error's `retry_after_seconds` hint when available
+      # (RateLimit::ExceededError carries the time until the bucket rolls);
+      # otherwise fall back to the configured base + jitter for lock/semaphore
+      # contention which has no precise hint.
+      def compute_snooze_delay(config, error)
         jitter = config.lock_snooze_jitter.to_f
-        base + (jitter.positive? ? rand(0.0..jitter) : 0.0)
+        jitter_amount = jitter.positive? ? rand(0.0..jitter) : 0.0
+
+        if error.respond_to?(:retry_after_seconds) && error.retry_after_seconds
+          [error.retry_after_seconds.to_f, 0.1].max + jitter_amount
+        else
+          config.lock_snooze_base_delay.to_f + jitter_amount
+        end
       end
 
       def escalate_snooze(context, snooze_count, error)

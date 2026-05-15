@@ -2,18 +2,20 @@
 
 RubyReactor ships with three Redis-backed coordination primitives — each tackling a different problem:
 
-| Primitive        | Question it answers                                                                              |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| `with_lock`      | "Is anyone else **currently** running with this key?" — concurrency control.                     |
-| `with_semaphore` | "Are too many runs **currently** in flight for this key?" — capacity control.                    |
-| `with_period`    | "Has a successful run **already happened in this calendar bucket**?" — dedup / once-per-period.  |
+| Primitive         | Question it answers                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| `with_lock`       | "Is anyone else **currently** running with this key?" — concurrency control.                         |
+| `with_semaphore`  | "Are too many runs **currently** in flight for this key?" — capacity control.                        |
+| `with_rate_limit` | "Have we already made N calls in this time window?" — fixed-window rate limiting (e.g. 3/sec).       |
+| `with_period`     | "Has a successful run **already happened in this calendar bucket**?" — dedup / once-per-period.      |
 
 They are orthogonal and composable: a reactor can declare any combination.
 
 A typical use case:
 
 - Only one `RefundOrderReactor` should run per order at a time → exclusive lock keyed by order id.
-- Calls to a rate-limited external API should never exceed 5 concurrent requests → semaphore with `limit: 5`.
+- Calls to an external service should never exceed 5 concurrent requests → semaphore with `limit: 5`.
+- Calls to a rate-limited API must respect "3 per second AND 100 per minute" → multi-window `with_rate_limit`.
 - A monthly billing reactor should run exactly once per org per month, even if a buggy scheduler enqueues it daily → period gate keyed by org id with `every: :month`.
 
 The lock/semaphore primitives:
@@ -34,6 +36,11 @@ The period primitive is different: it is **dedup**, not concurrency. It records 
 - [Semaphores](#semaphores)
   - [Token model](#token-model)
   - [Release safety](#release-safety)
+- [Rate Limits](#rate-limits)
+  - [Single window](#single-window)
+  - [Multi-window quotas](#multi-window-quotas)
+  - [Algorithm & atomicity](#algorithm--atomicity)
+  - [Smart snooze on async](#smart-snooze-on-async)
 - [Periods (once-per-bucket dedup)](#periods-once-per-bucket-dedup)
   - [Bucket model](#bucket-model)
   - [When the marker is written](#when-the-marker-is-written)
@@ -162,6 +169,85 @@ The release script enforces two invariants:
 
 This means a buggy double-release, a stale token from a crashed process, or a forged release attempt cannot inflate the pool beyond its configured capacity.
 
+## Rate Limits
+
+`with_rate_limit` caps **how many runs are allowed within a time window**, regardless of whether they overlap in time. This is what you want for "no more than 3 calls per second to the Stripe API."
+
+It is not the same as `with_semaphore`:
+
+- Semaphore: "no more than N **concurrent** runs at any instant."
+- Rate limit: "no more than N runs **starting** within any X-second window."
+
+A reactor making three back-to-back API calls in 100ms hits a `3/sec` rate limit on the fourth — even though only one is ever in flight at a time.
+
+### Single window
+
+```ruby
+class ChargeReactor < RubyReactor::Reactor
+  input :account_id
+
+  with_rate_limit(limit: 3, period: :second) { |inputs| "stripe:#{inputs[:account_id]}" }
+
+  step :charge do
+    argument :account_id, input(:account_id)
+    run { |args| Stripe.charge(args[:account_id]) }
+  end
+end
+```
+
+`period:` accepts the same units as `with_period`: `:second`, `:minute`, `:hour`, `:day`, `:week`, `:month`, `:year`, or integer seconds.
+
+The block returns the **key base**; each window stores its counter under `rate:<base>:<period_name>:<bucket_id>` so different periods don't collide.
+
+### Multi-window quotas
+
+Real upstream APIs typically expose layered limits ("3/sec AND 100/min AND 5000/hr"). Pass them all in one call with `limits:`:
+
+```ruby
+with_rate_limit(
+  limits: { second: 3, minute: 100, hour: 5000 }
+) { |inputs| "stripe:#{inputs[:account_id]}" }
+```
+
+All windows are checked atomically in one Lua call. **If any window fails, none of the others get incremented** — so a burst that blows the per-second cap doesn't also burn a per-minute slot.
+
+The error reports the tightest (failing) window:
+
+```ruby
+begin
+  ChargeReactor.run(account_id: 42)
+rescue RubyReactor::RateLimit::ExceededError => e
+  e.period_name          # => "second"
+  e.limit                # => 3
+  e.period_seconds       # => 1
+  e.retry_after_seconds  # => seconds until the bucket rolls (1..period)
+  e.key_base             # => "stripe:42"
+end
+```
+
+### Algorithm & atomicity
+
+Fixed-window counter (same family as the [kpumuk/throttling](https://github.com/kpumuk/throttling) gem):
+
+- Bucket id = `floor(now / period_seconds)`. It changes the instant the period rolls, so old buckets become irrelevant the moment they expire — no cleanup needed.
+- One Redis `INCR` per window, with a single `EXPIRE` on the first increment of a new bucket. TTL = `2 * period_seconds` for safety.
+- Multi-window: two passes inside a single Lua script — check all, then increment all. No interleaving with other clients.
+
+Trade-off vs token bucket: fixed-window can allow up to 2× the limit across the very boundary (3 at `:59.99` + 3 at `:00.01` = 6 in 20ms). For typical upstream API limits this is fine; if you need strict pacing, layer a second `with_rate_limit(limit: 1, period: <interval>)`.
+
+### Smart snooze on async
+
+When a Sidekiq worker hits a rate limit, it reads `retry_after_seconds` off the error and snoozes for **exactly** that long (plus jitter, floored at 0.1s). The next attempt fires the moment the bucket rolls — no busy waiting, no fixed cadence.
+
+This shares the existing snooze cap (`lock_snooze_max_attempts`). After the cap is reached, the context is marked `:failed`, same as for lock/semaphore contention.
+
+| Caller        | Behavior on rate-limit hit                                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Inline        | Raises `RubyReactor::RateLimit::ExceededError`. Caller can `sleep(error.retry_after_seconds); retry` or surface 429 to its user.      |
+| Sidekiq async | Snoozes `perform_in(retry_after + jitter, ...)`. Does not burn Sidekiq retry budget. Counted against `lock_snooze_max_attempts`.      |
+
+The rate-limit check happens **before** lock/semaphore acquisition: a job that would be rate-limited never grabs a mutex.
+
 ## Periods (once-per-bucket dedup)
 
 The period gate solves a different problem from locks and semaphores: it ensures a reactor runs **at most once per calendar bucket**, regardless of how many times its caller enqueues it.
@@ -274,7 +360,7 @@ The current snooze count is tracked as a positional arg on the Sidekiq job, so i
 
 ## Inheritance
 
-Lock, semaphore, and period config defined on a reactor are propagated to subclasses:
+Lock, semaphore, rate-limit, and period config defined on a reactor are propagated to subclasses:
 
 ```ruby
 class BaseRefund < RubyReactor::Reactor
@@ -286,7 +372,7 @@ class FullRefund < BaseRefund   # also locks "order:<id>"
 end
 ```
 
-A subclass can call `with_lock` / `with_semaphore` / `with_period` again to override the inherited configuration.
+A subclass can call `with_lock` / `with_semaphore` / `with_rate_limit` / `with_period` again to override the inherited configuration.
 
 ## Observability
 
@@ -295,6 +381,7 @@ A subclass can call `with_lock` / `with_semaphore` / `with_period` again to over
 - The held-tokens set for a semaphore is `semaphore:<key>:held`. Its cardinality plus `LLEN semaphore:<key>` should always equal `limit` at rest.
 - The period marker is the plain key `period:<base>:<bucket_id>`. `TTL` on that key tells you when the bucket frees up.
 - A `Skipped` result sets context status to `:skipped` (separate from `:completed`/`:failed`).
+- Rate-limit counters are at `rate:<base>:<period_name>:<bucket_id>`. `GET` gives the current count for the window; `TTL` gives time until the bucket rolls.
 
 ## Limitations
 
@@ -303,3 +390,4 @@ A subclass can call `with_lock` / `with_semaphore` / `with_period` again to over
 - **Multi-Redis** failover is not addressed. The lock is as durable as your Redis deployment; for cross-region critical sections, consider an external locking service.
 - **Wait inside a Sidekiq worker** is intentionally disabled. If you want to keep a worker thread parked on `BLPOP`, run that reactor inline instead.
 - **`with_period` alone is not a mutex.** Concurrent racers can both run before either has written the marker. Pair with `with_lock` if you need true at-most-one-per-bucket. The period is calendar-aligned, not "N hours since last run"; if you need sliding semantics, pass an integer `every:`.
+- **`with_rate_limit` is fixed-window.** Up to 2× the limit can run across a single window boundary. For strict pacing, use a token-bucket-style external rate limiter or stack a tighter `with_rate_limit(limit: 1, period: <interval>)` for serialized requests.

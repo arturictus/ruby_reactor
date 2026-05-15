@@ -169,6 +169,104 @@ RSpec.describe "Locking Integration" do
     end
   end
 
+  describe "Rate Limits" do
+    before { RateLimitCounters.reset }
+
+    def capture_rate_limit_error
+      yield
+      nil
+    rescue RubyReactor::RateLimit::ExceededError => e
+      e
+    end
+
+    it "allows up to `limit` calls per period" do
+      3.times do
+        result = RateLimitedReactor.run(account_id: 1)
+        expect(result).to be_success
+      end
+      expect(RateLimitCounters.runs).to eq(3)
+    end
+
+    it "raises ExceededError when the window is full" do
+      3.times { RateLimitedReactor.run(account_id: 1) }
+
+      error = capture_rate_limit_error { RateLimitedReactor.run(account_id: 1) }
+
+      expect(error).to be_a(RubyReactor::RateLimit::ExceededError)
+      expect(error.limit).to eq(3)
+      expect(error.period_seconds).to eq(1)
+      expect(error.period_name).to eq("second")
+      expect(error.retry_after_seconds).to be_between(1, 1)
+      expect(error.key_base).to eq("api:1")
+    end
+
+    it "isolates buckets per key" do
+      3.times { RateLimitedReactor.run(account_id: 1) }
+      result = RateLimitedReactor.run(account_id: 2)
+
+      expect(result).to be_success
+      expect(RateLimitCounters.runs).to eq(4)
+    end
+
+    it "does not consume a slot when the window is full" do
+      3.times { RateLimitedReactor.run(account_id: 1) }
+
+      bucket_key = "rate:api:1:second:#{Time.now.to_i / 1}"
+      before_failed = redis.get(bucket_key).to_i
+
+      raised = nil
+      begin
+        RateLimitedReactor.run(account_id: 1)
+      rescue RubyReactor::RateLimit::ExceededError => e
+        raised = e
+      end
+      expect(raised).not_to be_nil
+
+      after_failed = redis.get(bucket_key).to_i
+      expect(after_failed).to eq(before_failed)
+    end
+
+    describe "multi-window" do
+      it "passes when both windows have headroom" do
+        2.times do
+          result = MultiWindowRateLimitedReactor.run(account_id: 5)
+          expect(result).to be_success
+        end
+      end
+
+      it "fails when the tightest (per-second) window is full" do
+        2.times { MultiWindowRateLimitedReactor.run(account_id: 5) }
+
+        error = capture_rate_limit_error { MultiWindowRateLimitedReactor.run(account_id: 5) }
+
+        expect(error).to be_a(RubyReactor::RateLimit::ExceededError)
+        expect(error.period_name).to eq("second")
+        expect(error.limit).to eq(2)
+      end
+
+      it "does not increment any window when one fails" do
+        2.times { MultiWindowRateLimitedReactor.run(account_id: 5) }
+
+        minute_key = "rate:multi_api:5:minute:#{Time.now.to_i / 60}"
+        before = redis.get(minute_key).to_i
+
+        raised = nil
+        begin
+          MultiWindowRateLimitedReactor.run(account_id: 5)
+        rescue RubyReactor::RateLimit::ExceededError => e
+          raised = e
+        end
+        expect(raised).not_to be_nil
+
+        after = redis.get(minute_key).to_i
+
+        # Minute window still has headroom, but should not have been incremented
+        # because the second window failed first.
+        expect(after).to eq(before)
+      end
+    end
+  end
+
   describe "Semaphores" do
     it "succeeds when semaphore capacity is available" do
       result = SemaphoreReactor.run(limit_id: 1)
