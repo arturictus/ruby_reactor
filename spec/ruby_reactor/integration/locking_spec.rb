@@ -33,6 +33,48 @@ RSpec.describe "Locking Integration" do
       end.to raise_error(RubyReactor::Lock::AcquisitionError)
     end
 
+    describe "auto-extend" do
+      let(:adapter) { RubyReactor.configuration.storage_adapter }
+
+      it "refreshes the lock TTL while held" do
+        lock = RubyReactor::Lock.new(
+          "extend_test",
+          owner: "owner-1",
+          ttl: 2,
+          auto_extend: true
+        )
+        lock.acquire
+
+        # Wait past the original TTL. Extender (interval = ttl/3 ≈ 0.67s)
+        # should have refreshed the key at least twice.
+        sleep 2.5
+        expect(redis.exists?("lock:extend_test")).to be true
+
+        lock.release
+        expect(redis.exists?("lock:extend_test")).to be false
+      end
+
+      it "stops extending after release" do
+        lock = RubyReactor::Lock.new(
+          "extend_stop_test",
+          owner: "owner-2",
+          ttl: 2,
+          auto_extend: true
+        )
+        lock.acquire
+        lock.release
+
+        # No more extender activity: another holder takes the key, and our
+        # (dead) extender must not refresh someone else's lock.
+        redis.hset("lock:extend_stop_test", "owner", "someone_else")
+        redis.hset("lock:extend_stop_test", "count", "1")
+        redis.expire("lock:extend_stop_test", 1)
+
+        sleep 1.2
+        expect(redis.exists?("lock:extend_stop_test")).to be false
+      end
+    end
+
     it "reschedules asynchronously when lock is held" do
       # Manually hold the lock
       redis.hset("lock:user_1", "owner", "other_guy")

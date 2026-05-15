@@ -70,7 +70,7 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
         allow(RubyReactor::ContextSerializer).to receive(:serialize).and_return("{serialized}")
         allow(RubyReactor.configuration).to receive(:storage_adapter).and_return(adapter)
         allow(adapter).to receive(:store_context)
-        allow(Sidekiq.logger).to receive(:warn)
+        allow(RubyReactor.configuration.logger).to receive(:warn)
       end
 
       it "does not reschedule" do

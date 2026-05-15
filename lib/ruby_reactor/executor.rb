@@ -129,13 +129,17 @@ module RubyReactor
     def acquire_exclusive_lock
       config = @reactor_class.lock_config
       key = config[:key_proc].call(@context.inputs)
-      ttl = config[:ttl]
-      wait = config[:wait]
 
       # Use root context ID as owner to allow re-entrancy across nested reactors
       owner = (@context.root_context || @context).context_id
 
-      lock = RubyReactor::Lock.new(key, owner: owner, ttl: ttl, wait: wait)
+      lock = RubyReactor::Lock.new(
+        key,
+        owner: owner,
+        ttl: config[:ttl],
+        wait: config[:wait],
+        auto_extend: config.fetch(:auto_extend, true)
+      )
       lock.acquire
       @acquired_lock = lock
     end

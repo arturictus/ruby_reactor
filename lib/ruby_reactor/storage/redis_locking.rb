@@ -42,6 +42,19 @@ module RubyReactor
         end
       LUA
 
+      LOCK_EXTEND_SCRIPT = <<~LUA
+        local key = KEYS[1]
+        local owner = ARGV[1]
+        local ttl = tonumber(ARGV[2])
+
+        if redis.call('hget', key, 'owner') == owner then
+          redis.call('expire', key, ttl)
+          return 1
+        else
+          return 0
+        end
+      LUA
+
       # Lock Primitives
 
       def lock_acquire(key, owner, ttl)
@@ -51,6 +64,11 @@ module RubyReactor
 
       def lock_release(key, owner)
         result = @redis.eval(LOCK_RELEASE_SCRIPT, keys: [key], argv: [owner])
+        result == 1
+      end
+
+      def lock_extend(key, owner, ttl)
+        result = @redis.eval(LOCK_EXTEND_SCRIPT, keys: [key], argv: [owner, ttl])
         result == 1
       end
 
