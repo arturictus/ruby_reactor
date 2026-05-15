@@ -4,11 +4,7 @@ require "spec_helper"
 require_relative "../../examples/locking_reactors"
 
 RSpec.describe "Locking Integration" do
-  let(:redis) { Redis.new(url: "redis://localhost:6780") }
-
-  before do
-    redis.flushdb
-  end
+  # `redis` + `flushdb` come from spec_helper's RedisHelpers + global `before`.
 
   describe "Exclusive Locks" do
     it "succeeds when lock is available" do
