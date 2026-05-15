@@ -24,6 +24,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 - **Compensation**: Automatic rollback of completed steps when a failure occurs.
 - **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
+- **Distributed Locks & Semaphores**: Coordinate access to shared resources across processes with Redis-backed exclusive locks and concurrency-limiting semaphores. Async jobs snooze on contention instead of consuming retry budget.
 
 ## Comparison
 
@@ -32,6 +33,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 | DAG/Parallel execution   | Yes          | No              | Limited     | Manual              |
 | Auto compensation/undo   | Yes          | No              | Manual      | Manual              |
 | Interrupts (pause/resume)| Yes          | No              | No          | Manual              |
+| Locks & semaphores       | Yes          | No              | No          | Manual              |
 | Built-in web dashboard   | Yes          | No              | No          | No                  |
 | Async with Sidekiq       | Yes          | No              | Limited     | Yes                 |
 
@@ -56,6 +58,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
     - [Full Reactor Async](#full-reactor-async)
     - [Step-Level Async](#step-level-async)
   - [Interrupts (Pause & Resume)](#interrupts-pause--resume)
+  - [Locks & Semaphores](#locks--semaphores)
   - [Map & Parallel Execution](#map--parallel-execution)
     - [Map with Dynamic Source (ActiveRecord)](#map-with-dynamic-source-activerecord)
   - [Input Validation](#input-validation)
@@ -99,7 +102,14 @@ RubyReactor.configure do |config|
   # Sidekiq configuration for async execution
   config.sidekiq_queue = :default
   config.sidekiq_retry_count = 3
-  
+
+  # Lock contention snooze behavior for async reactors. When a Sidekiq worker
+  # cannot acquire a lock or semaphore, it re-enqueues itself with this delay
+  # (plus jitter) up to `lock_snooze_max_attempts` times before giving up.
+  config.lock_snooze_base_delay = 5
+  config.lock_snooze_jitter = 5
+  config.lock_snooze_max_attempts = 20
+
   # Logger configuration
   config.logger = Logger.new($stdout)
 end
@@ -325,6 +335,44 @@ ApprovalReactor.continue_by_correlation_id(
   step_name: :wait_for_manager
 )
 ```
+
+### Locks & Semaphores
+
+Coordinate access to a shared resource across processes with Redis-backed primitives. Use `with_lock` to ensure only one reactor instance per key runs at a time, or `with_semaphore` to cap concurrency.
+
+```ruby
+class RefundOrderReactor < RubyReactor::Reactor
+  input :order_id
+
+  # Only one refund per order at a time. Auto-extend keeps the TTL fresh while
+  # the reactor runs, so long steps cannot let the lock expire mid-flight.
+  with_lock(ttl: 60) { |inputs| "order:#{inputs[:order_id]}" }
+
+  step :refund do
+    argument :order_id, input(:order_id)
+    run { |args| PaymentGateway.refund(args[:order_id]) }
+  end
+end
+
+class GeocodeReactor < RubyReactor::Reactor
+  input :address
+
+  # At most 5 geocode calls in flight across the fleet.
+  with_semaphore(limit: 5) { |inputs| "geocode_api" }
+
+  step :geocode do
+    argument :address, input(:address)
+    run { |args| Geocoder.lookup(args[:address]) }
+  end
+end
+```
+
+On contention:
+
+- **Inline** (`Reactor.run`) raises `RubyReactor::Lock::AcquisitionError` / `RubyReactor::Semaphore::AcquisitionError`.
+- **Async** (Sidekiq) snoozes the job via `perform_in(delay, ...)`. Snoozes do not count against the Sidekiq retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed.
+
+See [Locks & Semaphores](documentation/locks_and_semaphores.md) for re-entrancy, auto-extend, owner semantics, snooze tuning, and operational notes.
 
 ### Map & Parallel Execution
 
@@ -732,6 +780,10 @@ Learn how to pause and resume reactors to handle long-running processes, manual 
 
 ### [Testing with RSpec](documentation/testing.md)
 Comprehensive guide to testing reactors with RubyReactor's testing utilities. Learn about the `TestSubject` class for reactor execution and introspection, step mocking for isolating dependencies, testing nested and composed reactors, and custom RSpec matchers like `be_success`, `have_run_step`, and `have_retried_step`.
+
+### [Locks & Semaphores](documentation/locks_and_semaphores.md)
+
+Coordinate access to shared resources across processes with Redis-backed exclusive locks and concurrency-limiting semaphores. Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, snooze tuning, and the safety guarantees of the token-based semaphore implementation.
 
 ### Examples
 - [Order Processing](documentation/examples/order_processing.md) - Complete order processing workflow example
