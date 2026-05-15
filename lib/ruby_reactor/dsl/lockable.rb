@@ -10,6 +10,14 @@ module RubyReactor
       module ClassMethods
         attr_reader :lock_config, :semaphore_config
 
+        # Propagate lock/semaphore config to subclasses; without this a subclass
+        # of a locked reactor would silently run without the lock.
+        def inherited(subclass)
+          super
+          subclass.instance_variable_set(:@lock_config, @lock_config) if @lock_config
+          subclass.instance_variable_set(:@semaphore_config, @semaphore_config) if @semaphore_config
+        end
+
         # Configure locking for this reactor
         # @param ttl [Integer] Time to live in seconds (default: 60)
         # @param wait [Integer] Time to wait for lock in seconds (default: 0)

@@ -137,7 +137,7 @@ module RubyReactor
         key,
         owner: owner,
         ttl: config[:ttl],
-        wait: config[:wait],
+        wait: contention_wait(config[:wait]),
         auto_extend: config.fetch(:auto_extend, true)
       )
       lock.acquire
@@ -148,31 +148,44 @@ module RubyReactor
       config = @reactor_class.semaphore_config
       key = config[:key_proc].call(@context.inputs)
       limit = config[:limit]
-      wait = config[:wait]
 
-      semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: wait)
+      semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: contention_wait(config[:wait]))
       semaphore.acquire
       @acquired_semaphore = semaphore
     end
 
+    # Inside a Sidekiq worker we'd rather snooze the job via perform_in than
+    # tie up the worker thread on a BLPOP / sleep loop. The non-blocking path
+    # fails fast and the Worker rescue branch reschedules.
+    def contention_wait(configured_wait)
+      return 0 if @context.inline_async_execution
+
+      configured_wait
+    end
+
     def release_locks
-      if @acquired_semaphore
-        begin
-          @acquired_semaphore.release
-        rescue StandardError
-          # Swallow release errors so we still attempt lock release + save_context.
-        end
-        @acquired_semaphore = nil
-      end
+      release_one("semaphore", @acquired_semaphore) if @acquired_semaphore
+      @acquired_semaphore = nil
 
       return unless @acquired_lock
 
-      begin
-        @acquired_lock.release
-      rescue StandardError
-        # Same: never let release break the ensure chain.
-      end
+      release_one("lock", @acquired_lock)
       @acquired_lock = nil
+    end
+
+    def release_one(kind, primitive)
+      released = primitive.release
+      return if released
+
+      RubyReactor.configuration.logger.warn(
+        "RubyReactor #{kind} '#{primitive.key}' was not held at release time " \
+        "(likely TTL expired or owner changed)"
+      )
+    rescue StandardError => e
+      # Never let release break the ensure chain — log and move on.
+      RubyReactor.configuration.logger.warn(
+        "RubyReactor failed to release #{kind} '#{primitive.key}': #{e.message}"
+      )
     end
 
     def update_context_status(result)

@@ -39,3 +39,9 @@ class SemaphoreReactor < RubyReactor::Reactor
     end
   end
 end
+
+class InheritedLockReactor < SimpleLockReactor
+end
+
+class InheritedSemaphoreReactor < SemaphoreReactor
+end

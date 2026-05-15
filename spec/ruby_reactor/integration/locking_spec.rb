@@ -33,6 +33,17 @@ RSpec.describe "Locking Integration" do
       end.to raise_error(RubyReactor::Lock::AcquisitionError)
     end
 
+    describe "inheritance" do
+      it "propagates lock config to subclasses" do
+        expect(InheritedLockReactor.lock_config).to eq(SimpleLockReactor.lock_config)
+      end
+
+      it "lets a subclass acquire the inherited lock" do
+        result = InheritedLockReactor.run(user_id: 42)
+        expect(result).to be_success
+      end
+    end
+
     describe "auto-extend" do
       let(:adapter) { RubyReactor.configuration.storage_adapter }
 
