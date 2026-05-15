@@ -34,6 +34,8 @@ module RubyReactor
         }
       )
       @result = nil
+      @acquired_lock = nil
+      @acquired_semaphore = nil
     end
 
     def execute
@@ -60,6 +62,7 @@ module RubyReactor
       update_context_status(@result)
       @result
     ensure
+      release_locks
       save_context
     end
 
@@ -87,6 +90,7 @@ module RubyReactor
       update_context_status(@result)
       @result
     ensure
+      release_locks
       save_context
     end
 
@@ -132,14 +136,8 @@ module RubyReactor
       owner = (@context.root_context || @context).context_id
 
       lock = RubyReactor::Lock.new(key, owner: owner, ttl: ttl, wait: wait)
-
-      begin
-        lock.acquire
-      rescue RubyReactor::Lock::AcquisitionError => e
-        # If we can't acquire the lock, we raise the error.
-        # Async workers (Sidekiq) should catch this and reschedule/snooze the job.
-        raise e
-      end
+      lock.acquire
+      @acquired_lock = lock
     end
 
     def acquire_semaphore
@@ -149,13 +147,28 @@ module RubyReactor
       wait = config[:wait]
 
       semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: wait)
+      semaphore.acquire
+      @acquired_semaphore = semaphore
+    end
+
+    def release_locks
+      if @acquired_semaphore
+        begin
+          @acquired_semaphore.release
+        rescue StandardError
+          # Swallow release errors so we still attempt lock release + save_context.
+        end
+        @acquired_semaphore = nil
+      end
+
+      return unless @acquired_lock
 
       begin
-        semaphore.acquire
-      rescue RubyReactor::Semaphore::AcquisitionError => e
-        # Same as lock acquisition failure
-        raise e
+        @acquired_lock.release
+      rescue StandardError
+        # Same: never let release break the ensure chain.
       end
+      @acquired_lock = nil
     end
 
     def update_context_status(result)
