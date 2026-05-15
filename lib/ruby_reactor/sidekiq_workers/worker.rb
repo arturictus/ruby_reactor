@@ -17,7 +17,7 @@ module RubyReactor
         # Handle infrastructure failures (network, Redis, etc.)
       end
 
-      def perform(serialized_context, reactor_class_name = nil)
+      def perform(serialized_context, reactor_class_name = nil, snooze_count = 0)
         context = ContextSerializer.deserialize(serialized_context)
 
         # If reactor_class_name is provided, use it to get the reactor class
@@ -43,18 +43,62 @@ module RubyReactor
 
           # Return the executor (which now has the result stored in it)
           executor
-        rescue RubyReactor::Lock::AcquisitionError => _e
-          # Snooze execution if lock is busy
-          # We purposefully don't use Sidekiq's native retry to avoid error noise for expected lock contention
-          self.class.perform_in(5, serialized_context, reactor_class_name)
+        rescue RubyReactor::Lock::AcquisitionError,
+               RubyReactor::Semaphore::AcquisitionError => e
+          # Snooze on expected concurrency contention. We avoid Sidekiq's
+          # native retry path so this doesn't burn the job's retry budget or
+          # appear as an error in dashboards. After the configured cap is
+          # reached we escalate by marking the reactor as failed.
+          handle_snooze(serialized_context, reactor_class_name, context, snooze_count, e)
         end
       end
 
       private
 
+      def handle_snooze(serialized_context, reactor_class_name, context, snooze_count, error)
+        config = RubyReactor.configuration
+        max = config.lock_snooze_max_attempts
+
+        if max != :infinity && snooze_count >= max
+          escalate_snooze(context, snooze_count, error)
+          return
+        end
+
+        delay = compute_snooze_delay(config)
+        self.class.perform_in(delay, serialized_context, reactor_class_name, snooze_count + 1)
+      end
+
+      def compute_snooze_delay(config)
+        base = config.lock_snooze_base_delay.to_f
+        jitter = config.lock_snooze_jitter.to_f
+        base + (jitter.positive? ? rand(0.0..jitter) : 0.0)
+      end
+
+      def escalate_snooze(context, snooze_count, error)
+        RubyReactor.configuration.logger.warn(
+          "RubyReactor snooze limit reached after #{snooze_count} attempts " \
+          "for context #{context.context_id}: #{error.message}"
+        )
+
+        context.status = :failed
+        context.failure_reason = {
+          message: error.message,
+          exception_class: error.class.name,
+          snooze_attempts: snooze_count
+        }
+
+        serialized = ContextSerializer.serialize(context)
+        reactor_class_name = context.reactor_class&.name || "AnonymousReactor"
+        RubyReactor.configuration.storage_adapter.store_context(
+          context.context_id,
+          serialized,
+          reactor_class_name
+        )
+      end
+
       def log_infrastructure_failure(msg, exception)
-        ::Sidekiq.logger.error("RubyReactor infrastructure failure: #{exception.message}")
-        ::Sidekiq.logger.error("Job details: #{msg.inspect}")
+        RubyReactor.configuration.logger.error("RubyReactor infrastructure failure: #{exception.message}")
+        RubyReactor.configuration.logger.error("Job details: #{msg.inspect}")
       end
     end
   end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "spec_helper"
 require "sidekiq/testing"
 require "ruby_reactor/sidekiq_workers/worker"
@@ -13,6 +15,10 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
     allow(RubyReactor::Executor).to receive(:new).and_return(executor)
     allow(executor).to receive(:save_context)
     allow(context).to receive(:inline_async_execution=)
+    # Deterministic delay for assertions
+    RubyReactor.configuration.lock_snooze_base_delay = 5
+    RubyReactor.configuration.lock_snooze_jitter = 0
+    RubyReactor.configuration.lock_snooze_max_attempts = 20
   end
 
   describe "#perform" do
@@ -26,8 +32,76 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
         allow(executor).to receive(:resume_execution).and_raise(RubyReactor::Lock::AcquisitionError)
       end
 
+      it "reschedules the job with the snooze counter incremented" do
+        expect(described_class).to receive(:perform_in).with(5.0, serialized_context, nil, 1)
+
+        subject.perform(serialized_context)
+      end
+
+      it "carries the snooze counter forward across reschedules" do
+        expect(described_class).to receive(:perform_in).with(5.0, serialized_context, nil, 4)
+
+        subject.perform(serialized_context, nil, 3)
+      end
+    end
+
+    context "when semaphore acquisition fails" do
+      before do
+        allow(executor).to receive(:resume_execution)
+          .and_raise(RubyReactor::Semaphore::AcquisitionError)
+      end
+
       it "reschedules the job" do
-        expect(described_class).to receive(:perform_in).with(5, serialized_context, nil)
+        expect(described_class).to receive(:perform_in).with(5.0, serialized_context, nil, 1)
+
+        subject.perform(serialized_context)
+      end
+    end
+
+    context "when snooze attempts are exhausted" do
+      let(:adapter) { instance_double(RubyReactor::Storage::RedisAdapter) }
+
+      before do
+        RubyReactor.configuration.lock_snooze_max_attempts = 3
+        allow(executor).to receive(:resume_execution)
+          .and_raise(RubyReactor::Lock::AcquisitionError, "lock busy")
+        allow(context).to receive(:status=)
+        allow(context).to receive(:failure_reason=)
+        allow(RubyReactor::ContextSerializer).to receive(:serialize).and_return("{serialized}")
+        allow(RubyReactor.configuration).to receive(:storage_adapter).and_return(adapter)
+        allow(adapter).to receive(:store_context)
+        allow(Sidekiq.logger).to receive(:warn)
+      end
+
+      it "does not reschedule" do
+        expect(described_class).not_to receive(:perform_in)
+        subject.perform(serialized_context, nil, 3)
+      end
+
+      it "marks the context as failed and persists it" do
+        expect(context).to receive(:status=).with(:failed)
+        expect(context).to receive(:failure_reason=) do |reason|
+          expect(reason).to include(
+            exception_class: "RubyReactor::Lock::AcquisitionError",
+            snooze_attempts: 3
+          )
+        end
+        expect(adapter).to receive(:store_context).with("test-execution-id", "{serialized}", "TestReactor")
+
+        subject.perform(serialized_context, nil, 3)
+      end
+    end
+
+    context "with jitter configured" do
+      before do
+        RubyReactor.configuration.lock_snooze_jitter = 5
+        allow(executor).to receive(:resume_execution).and_raise(RubyReactor::Lock::AcquisitionError)
+      end
+
+      it "schedules within the [base, base + jitter] window" do
+        allow(described_class).to receive(:perform_in) do |delay, *_rest|
+          expect(delay).to be_between(5.0, 10.0)
+        end
 
         subject.perform(serialized_context)
       end

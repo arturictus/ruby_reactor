@@ -38,8 +38,12 @@ RSpec.describe "Locking Integration" do
       redis.hset("lock:user_1", "owner", "other_guy")
       redis.hset("lock:user_1", "count", "1")
 
-      # Stub SidekiqWorker to capture rescheduling
-      expect(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in).with(5, any_args)
+      RubyReactor.configuration.lock_snooze_base_delay = 5
+      RubyReactor.configuration.lock_snooze_jitter = 0
+
+      # Stub SidekiqWorker to capture rescheduling (snooze counter starts at 1)
+      expect(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+        .with(5.0, instance_of(String), "SimpleLockReactor", 1)
 
       # Call the worker's perform method with a serialized context
       context = RubyReactor::Context.new({ user_id: 1 }, SimpleLockReactor)
