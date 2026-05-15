@@ -45,3 +45,48 @@ end
 
 class InheritedSemaphoreReactor < SemaphoreReactor
 end
+
+module PeriodicCounters
+  class << self
+    attr_accessor :runs, :locked_runs
+
+    def reset
+      @runs = 0
+      @locked_runs = 0
+    end
+  end
+  reset
+end
+
+class PeriodicReactor < RubyReactor::Reactor
+  with_period(every: :day) { |inputs| "daily_report:#{inputs[:org_id]}" }
+
+  step :build_report do
+    run do |_inputs|
+      PeriodicCounters.runs += 1
+      RubyReactor.Success(built: true)
+    end
+  end
+end
+
+class FailingPeriodicReactor < RubyReactor::Reactor
+  with_period(every: :day) { |inputs| "failing_daily:#{inputs[:org_id]}" }
+
+  step :always_fail do
+    run do |_inputs|
+      RubyReactor.Failure(StandardError.new("boom"))
+    end
+  end
+end
+
+class LockedPeriodicReactor < RubyReactor::Reactor
+  with_lock(ttl: 10, auto_extend: false) { |inputs| "locked_periodic:#{inputs[:id]}" }
+  with_period(every: :day) { |inputs| "locked_periodic:#{inputs[:id]}" }
+
+  step :work do
+    run do |_inputs|
+      PeriodicCounters.locked_runs += 1
+      RubyReactor.Success(ok: true)
+    end
+  end
+end

@@ -107,6 +107,68 @@ RSpec.describe "Locking Integration" do
     end
   end
 
+  describe "Periods" do
+    before { PeriodicCounters.reset }
+
+    it "runs the first time and marks the bucket" do
+      result = PeriodicReactor.run(org_id: 7)
+
+      expect(result).to be_success
+      expect(result.skipped?).to be false
+      expect(PeriodicCounters.runs).to eq(1)
+
+      bucket_key = RubyReactor::Period.key("daily_report:7", :day)
+      expect(redis.exists?(bucket_key)).to be true
+    end
+
+    it "skips subsequent runs in the same bucket without executing steps" do
+      PeriodicReactor.run(org_id: 7)
+      result = PeriodicReactor.run(org_id: 7)
+
+      expect(result).to be_a(RubyReactor::Skipped)
+      expect(result.skipped?).to be true
+      expect(result.success?).to be true
+      expect(result.period_key).to end_with(":#{RubyReactor::Period.bucket_id(:day)}")
+      expect(PeriodicCounters.runs).to eq(1)
+    end
+
+    it "isolates buckets per key" do
+      PeriodicReactor.run(org_id: 7)
+      result = PeriodicReactor.run(org_id: 8)
+
+      expect(result).to be_success
+      expect(result.skipped?).to be false
+      expect(PeriodicCounters.runs).to eq(2)
+    end
+
+    it "does not mark the bucket when the run fails" do
+      first = FailingPeriodicReactor.run(org_id: 1)
+      expect(first).to be_failure
+
+      bucket_key = RubyReactor::Period.key("failing_daily:1", :day)
+      expect(redis.exists?(bucket_key)).to be false
+
+      second = FailingPeriodicReactor.run(org_id: 1)
+      expect(second).to be_failure
+    end
+
+    it "combines with with_lock for at-most-one-per-bucket" do
+      LockedPeriodicReactor.run(id: 99)
+      result = LockedPeriodicReactor.run(id: 99)
+
+      expect(result.skipped?).to be true
+      expect(PeriodicCounters.locked_runs).to eq(1)
+    end
+
+    it "uses TTL = 2x the period length" do
+      PeriodicReactor.run(org_id: 7)
+      bucket_key = RubyReactor::Period.key("daily_report:7", :day)
+      ttl = redis.ttl(bucket_key)
+      expect(ttl).to be > 86_400 # > 1 day
+      expect(ttl).to be <= 86_400 * 2 # ≤ 2 days
+    end
+  end
+
   describe "Semaphores" do
     it "succeeds when semaphore capacity is available" do
       result = SemaphoreReactor.run(limit_id: 1)

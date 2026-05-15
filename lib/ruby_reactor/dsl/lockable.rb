@@ -8,14 +8,15 @@ module RubyReactor
       end
 
       module ClassMethods
-        attr_reader :lock_config, :semaphore_config
+        attr_reader :lock_config, :semaphore_config, :period_config
 
-        # Propagate lock/semaphore config to subclasses; without this a subclass
-        # of a locked reactor would silently run without the lock.
+        # Propagate lock/semaphore/period config to subclasses; without this a
+        # subclass of a configured reactor would silently lose those settings.
         def inherited(subclass)
           super
           subclass.instance_variable_set(:@lock_config, @lock_config) if @lock_config
           subclass.instance_variable_set(:@semaphore_config, @semaphore_config) if @semaphore_config
+          subclass.instance_variable_set(:@period_config, @period_config) if @period_config
         end
 
         # Configure locking for this reactor
@@ -43,6 +44,30 @@ module RubyReactor
           @semaphore_config = {
             limit: limit,
             wait: wait,
+            key_proc: block
+          }
+        end
+
+        # Configure a calendar-aligned dedup window for this reactor. The
+        # reactor will run at most once per bucket per key; subsequent calls
+        # in the same bucket return `RubyReactor::Skipped` without executing
+        # any steps.
+        #
+        # Note: `with_period` is *dedup*, not *concurrency*. Two concurrent
+        # racers can both see no marker and both run. Pair with `with_lock`
+        # for true at-most-one semantics within the bucket.
+        #
+        # @param every [Symbol, Integer] :minute / :hour / :day / :week /
+        #   :month / :year, or an integer number of seconds for a sliding
+        #   bucket (index = `time.to_i / every`).
+        # @yield [inputs] Block that returns the period key base. The final
+        #   Redis marker key is `period:<base>:<bucket_id>`.
+        def with_period(every:, &block)
+          # Validate eagerly so misconfiguration surfaces at class load time.
+          RubyReactor::Period.period_seconds(every)
+
+          @period_config = {
+            every: every,
             key_proc: block
           }
         end

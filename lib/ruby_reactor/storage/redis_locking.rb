@@ -155,6 +155,16 @@ module RubyReactor
       def semaphore_exists?(key)
         @redis.exists?("#{key}:init")
       end
+
+      # Period Primitives — used by `with_period` to dedup bucketed runs.
+
+      def period_seen?(key)
+        @redis.exists?(key)
+      end
+
+      def period_mark(key, ttl)
+        @redis.set(key, "1", ex: ttl)
+      end
     end
     # rubocop:enable Naming/PredicateMethod
   end

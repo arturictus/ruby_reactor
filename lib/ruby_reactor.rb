@@ -7,6 +7,7 @@ require_relative "ruby_reactor/utils/code_extractor"
 require_relative "ruby_reactor/dsl/lockable" # Add this
 require_relative "ruby_reactor/lock"
 require_relative "ruby_reactor/semaphore"
+require_relative "ruby_reactor/period"
 
 # Load dry-validation if available (for validation features)
 begin
@@ -43,8 +44,29 @@ module RubyReactor
       false
     end
 
+    def skipped?
+      false
+    end
+
     def to_h
       { success: true, value: @value }
+    end
+  end
+
+  # Returned when a reactor is gated by `with_period` and the current bucket
+  # has already been marked complete. Subclass of Success so callers that only
+  # check `success?` continue to work; `skipped?` distinguishes it.
+  class Skipped < Success
+    attr_reader :reason, :period_key
+
+    def initialize(reason: :period, period_key: nil)
+      super(nil)
+      @reason = reason
+      @period_key = period_key
+    end
+
+    def skipped?
+      true
     end
   end
 
@@ -106,6 +128,10 @@ module RubyReactor
 
     def retryable?
       @retryable
+    end
+
+    def skipped?
+      false
     end
 
     def invalid_payload?

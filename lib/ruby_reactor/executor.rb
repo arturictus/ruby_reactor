@@ -39,6 +39,14 @@ module RubyReactor
     end
 
     def execute
+      skipped = check_period_gate
+      if skipped
+        @result = skipped
+        update_context_status(@result)
+        save_context
+        return @result
+      end
+
       acquire_locks
 
       input_validator = InputValidator.new(@reactor_class, @context)
@@ -53,6 +61,7 @@ module RubyReactor
 
       @result = @step_executor.execute_all_steps
       update_context_status(@result)
+      mark_period_on_success(@result)
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
       @result
     rescue RubyReactor::Lock::AcquisitionError, RubyReactor::Semaphore::AcquisitionError => e
@@ -79,6 +88,7 @@ module RubyReactor
                 end
 
       update_context_status(@result)
+      mark_period_on_success(@result)
 
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
 
@@ -124,6 +134,34 @@ module RubyReactor
     def acquire_locks
       acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
       acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+    end
+
+    # Returns a Skipped result if the period bucket is already marked, else nil.
+    # Only consulted on initial `execute`; resumes never re-check (a paused run
+    # must not skip itself when its own marker eventually appears).
+    def check_period_gate
+      return nil unless @reactor_class.respond_to?(:period_config) && @reactor_class.period_config
+
+      config = @reactor_class.period_config
+      key = period_key(config)
+      return nil unless RubyReactor.configuration.storage_adapter.period_seen?(key)
+
+      RubyReactor::Skipped.new(reason: :period, period_key: key)
+    end
+
+    def mark_period_on_success(result)
+      return unless @reactor_class.respond_to?(:period_config) && @reactor_class.period_config
+      return unless result.is_a?(RubyReactor::Success)
+      return if result.is_a?(RubyReactor::Skipped)
+
+      config = @reactor_class.period_config
+      ttl = RubyReactor::Period.ttl_seconds(config[:every])
+      RubyReactor.configuration.storage_adapter.period_mark(period_key(config), ttl)
+    end
+
+    def period_key(config)
+      base = config[:key_proc].call(@context.inputs)
+      RubyReactor::Period.key(base, config[:every])
     end
 
     def acquire_exclusive_lock
@@ -194,6 +232,8 @@ module RubyReactor
       case result
       when RubyReactor::AsyncResult
         @context.status = :running
+      when RubyReactor::Skipped
+        @context.status = :skipped
       when RubyReactor::Success
         @context.status = :completed
       when RubyReactor::Failure

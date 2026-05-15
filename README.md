@@ -24,7 +24,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 - **Compensation**: Automatic rollback of completed steps when a failure occurs.
 - **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
-- **Distributed Locks & Semaphores**: Coordinate access to shared resources across processes with Redis-backed exclusive locks and concurrency-limiting semaphores. Async jobs snooze on contention instead of consuming retry budget.
+- **Distributed Locks, Semaphores & Periods**: Coordinate across processes with Redis-backed primitives — exclusive locks for at-most-one-runner, semaphores for capacity caps, and `with_period` to dedup reactors to once per calendar bucket (once per day/month/year/etc). Async jobs snooze on contention instead of consuming retry budget.
 
 ## Comparison
 
@@ -33,7 +33,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 | DAG/Parallel execution   | Yes          | No              | Limited     | Manual              |
 | Auto compensation/undo   | Yes          | No              | Manual      | Manual              |
 | Interrupts (pause/resume)| Yes          | No              | No          | Manual              |
-| Locks & semaphores       | Yes          | No              | No          | Manual              |
+| Locks / sem / periods    | Yes          | No              | No          | Manual              |
 | Built-in web dashboard   | Yes          | No              | No          | No                  |
 | Async with Sidekiq       | Yes          | No              | Limited     | Yes                 |
 
@@ -338,7 +338,11 @@ ApprovalReactor.continue_by_correlation_id(
 
 ### Locks & Semaphores
 
-Coordinate access to a shared resource across processes with Redis-backed primitives. Use `with_lock` to ensure only one reactor instance per key runs at a time, or `with_semaphore` to cap concurrency.
+Coordinate across processes with Redis-backed primitives:
+
+- **`with_lock`** — at-most-one runner per key at a time (concurrency control).
+- **`with_semaphore`** — cap total concurrent runners per key (capacity control).
+- **`with_period`** — run at most once per calendar bucket (dedup / once-per-day, once-per-month, etc).
 
 ```ruby
 class RefundOrderReactor < RubyReactor::Reactor
@@ -365,6 +369,20 @@ class GeocodeReactor < RubyReactor::Reactor
     run { |args| Geocoder.lookup(args[:address]) }
   end
 end
+
+class MonthlyBillingReactor < RubyReactor::Reactor
+  input :org_id
+
+  # Run at most once per UTC month per org. Subsequent calls in the same month
+  # return RubyReactor::Skipped without executing any step. Pair with
+  # with_lock for strict at-most-one even under concurrent racers.
+  with_period(every: :month) { |inputs| "monthly_billing:#{inputs[:org_id]}" }
+
+  step :build do
+    argument :org_id, input(:org_id)
+    run { |args| Billing.generate(args[:org_id]) }
+  end
+end
 ```
 
 On contention:
@@ -372,7 +390,15 @@ On contention:
 - **Inline** (`Reactor.run`) raises `RubyReactor::Lock::AcquisitionError` / `RubyReactor::Semaphore::AcquisitionError`.
 - **Async** (Sidekiq) snoozes the job via `perform_in(delay, ...)`. Snoozes do not count against the Sidekiq retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed.
 
-See [Locks & Semaphores](documentation/locks_and_semaphores.md) for re-entrancy, auto-extend, owner semantics, snooze tuning, and operational notes.
+On dedup hits (period gate already marked), the reactor returns a `RubyReactor::Skipped` result instead — no steps run, no exception:
+
+```ruby
+result = MonthlyBillingReactor.run(org_id: 42)
+result.success?  # true (Skipped is a Success subclass)
+result.skipped?  # true on dedup hit, false otherwise
+```
+
+See [Locks, Semaphores & Periods](documentation/locks_and_semaphores.md) for re-entrancy, auto-extend, bucket semantics, owner identity, snooze tuning, and operational notes.
 
 ### Map & Parallel Execution
 
@@ -781,9 +807,9 @@ Learn how to pause and resume reactors to handle long-running processes, manual 
 ### [Testing with RSpec](documentation/testing.md)
 Comprehensive guide to testing reactors with RubyReactor's testing utilities. Learn about the `TestSubject` class for reactor execution and introspection, step mocking for isolating dependencies, testing nested and composed reactors, and custom RSpec matchers like `be_success`, `have_run_step`, and `have_retried_step`.
 
-### [Locks & Semaphores](documentation/locks_and_semaphores.md)
+### [Locks, Semaphores & Periods](documentation/locks_and_semaphores.md)
 
-Coordinate access to shared resources across processes with Redis-backed exclusive locks and concurrency-limiting semaphores. Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, snooze tuning, and the safety guarantees of the token-based semaphore implementation.
+Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), and calendar-bucketed dedup (`with_period`, returning `Skipped` results). Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, snooze tuning, the token-based semaphore safety model, and once-per-day/month/year scheduling patterns.
 
 ### Examples
 - [Order Processing](documentation/examples/order_processing.md) - Complete order processing workflow example

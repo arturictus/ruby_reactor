@@ -1,17 +1,28 @@
-# Locks & Semaphores
+# Locks, Semaphores & Periods
 
-RubyReactor ships with **distributed exclusive locks** and **distributed semaphores** backed by Redis. They let a reactor coordinate access to a shared resource across processes — without dragging in a separate locking library.
+RubyReactor ships with three Redis-backed coordination primitives — each tackling a different problem:
+
+| Primitive        | Question it answers                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| `with_lock`      | "Is anyone else **currently** running with this key?" — concurrency control.                     |
+| `with_semaphore` | "Are too many runs **currently** in flight for this key?" — capacity control.                    |
+| `with_period`    | "Has a successful run **already happened in this calendar bucket**?" — dedup / once-per-period.  |
+
+They are orthogonal and composable: a reactor can declare any combination.
 
 A typical use case:
 
 - Only one `RefundOrderReactor` should run per order at a time → exclusive lock keyed by order id.
 - Calls to a rate-limited external API should never exceed 5 concurrent requests → semaphore with `limit: 5`.
+- A monthly billing reactor should run exactly once per org per month, even if a buggy scheduler enqueues it daily → period gate keyed by org id with `every: :month`.
 
-Both primitives:
+The lock/semaphore primitives:
 
 - Are acquired before any step runs and released in an `ensure` block (so a crash, failure, or interrupt does not leak a holder).
 - Snooze (re-enqueue) instead of fail when contention is encountered inside a Sidekiq worker.
 - Carry a TTL so a crashed Ruby process cannot block the resource forever.
+
+The period primitive is different: it is **dedup**, not concurrency. It records a marker after a successful run and skips subsequent runs in the same calendar bucket.
 
 ## Table of Contents
 
@@ -23,6 +34,11 @@ Both primitives:
 - [Semaphores](#semaphores)
   - [Token model](#token-model)
   - [Release safety](#release-safety)
+- [Periods (once-per-bucket dedup)](#periods-once-per-bucket-dedup)
+  - [Bucket model](#bucket-model)
+  - [When the marker is written](#when-the-marker-is-written)
+  - [Composing with `with_lock`](#composing-with-with_lock)
+  - [The `Skipped` result](#the-skipped-result)
 - [Snooze configuration](#snooze-configuration)
 - [Inheritance](#inheritance)
 - [Observability](#observability)
@@ -146,6 +162,95 @@ The release script enforces two invariants:
 
 This means a buggy double-release, a stale token from a crashed process, or a forged release attempt cannot inflate the pool beyond its configured capacity.
 
+## Periods (once-per-bucket dedup)
+
+The period gate solves a different problem from locks and semaphores: it ensures a reactor runs **at most once per calendar bucket**, regardless of how many times its caller enqueues it.
+
+A typical scenario:
+
+> "Send the monthly billing report once a month. A scheduling bug now enqueues this reactor daily — we don't want 30 duplicate reports."
+
+```ruby
+class MonthlyBillingReactor < RubyReactor::Reactor
+  input :org_id
+
+  with_period(every: :month) { |inputs| "monthly_billing:#{inputs[:org_id]}" }
+
+  step :build do
+    argument :org_id, input(:org_id)
+    run { |args| Billing.generate(args[:org_id]) }
+  end
+end
+```
+
+After the first successful run in May 2026, every other `MonthlyBillingReactor.run(org_id: 42)` call until June 1 (UTC) returns a `RubyReactor::Skipped` result. **No steps execute.**
+
+### Bucket model
+
+`every:` accepts:
+
+- Symbols: `:minute`, `:hour`, `:day`, `:week`, `:month`, `:year` — calendar-aligned UTC buckets. Two calls at `2026-05-31 23:59 UTC` and `2026-06-01 00:01 UTC` fall into different `:month` buckets, even though they're two minutes apart.
+- Integer seconds: e.g. `every: 3600` — sliding bucket computed as `time.to_i / every`.
+
+The block returns the **base key**. The final Redis marker is `period:<base>:<bucket_id>`, e.g. `period:monthly_billing:42:2026-05`.
+
+| Symbol    | Bucket format example     | TTL stored on marker |
+| --------- | ------------------------- | -------------------- |
+| `:minute` | `2026-05-15T14-30`        | 120 s                |
+| `:hour`   | `2026-05-15T14`           | 7 200 s              |
+| `:day`    | `2026-05-15`              | 172 800 s            |
+| `:week`   | `2026-W20` (ISO week)     | 1 209 600 s          |
+| `:month`  | `2026-05`                 | ~62 days             |
+| `:year`   | `2026`                    | ~2 years             |
+
+TTL is always **twice the period length** so the marker reliably dedups the next attempt, even with clock skew across the boundary.
+
+### When the marker is written
+
+The marker is written **only after a terminal `Success`** (and after the reactor's `mark_period_on_success` runs, which the executor handles automatically). This means:
+
+- A failed run does **not** consume the bucket — the next attempt can succeed.
+- A paused run (interrupted, async-handed-off) does **not** consume the bucket until the eventual resume completes successfully.
+- A `Skipped` result does **not** re-mark the bucket (no-op).
+
+Resume paths skip the period check entirely — a paused reactor must never skip *itself* when its eventual marker appears.
+
+### Composing with `with_lock`
+
+`with_period` alone is dedup, not concurrency. Two callers that fire at exactly the same time may both see "no marker yet" and both run. That's usually fine if the work is idempotent, but if you need strict at-most-one-per-bucket, pair it with `with_lock`:
+
+```ruby
+class MonthlyBillingReactor < RubyReactor::Reactor
+  # Mutex: only one runner at a time per org.
+  with_lock(ttl: 600) { |inputs| "monthly_billing:#{inputs[:org_id]}" }
+  # Dedup: each (org, month) tuple runs only once.
+  with_period(every: :month) { |inputs| "monthly_billing:#{inputs[:org_id]}" }
+end
+```
+
+Order of evaluation per call:
+
+1. **Period check.** If marker exists, return `Skipped` immediately. No lock acquired, no steps run.
+2. **Lock acquire.** Standard concurrency control kicks in.
+3. **Run steps.**
+4. **On terminal Success: mark the period bucket.**
+5. **Release lock.**
+
+### The `Skipped` result
+
+```ruby
+result = MonthlyBillingReactor.run(org_id: 42)
+
+result.success?    # => true   (Skipped is a Success subclass)
+result.skipped?    # => true
+result.period_key  # => "period:monthly_billing:42:2026-05"
+result.reason      # => :period
+```
+
+`Skipped` deliberately satisfies `success?` so existing `if result.success? ... else ...` branches still take the right path. Code that wants to log or count duplicates can check `result.skipped?` explicitly.
+
+The reactor's context status becomes `:skipped` (rather than `:completed`), so dashboards can render dedup events distinctly.
+
 ## Snooze configuration
 
 When a Sidekiq worker hits contention it re-enqueues itself after a small delay. Three knobs on `RubyReactor.configuration` control this:
@@ -169,7 +274,7 @@ The current snooze count is tracked as a positional arg on the Sidekiq job, so i
 
 ## Inheritance
 
-Lock and semaphore config defined on a reactor are propagated to subclasses:
+Lock, semaphore, and period config defined on a reactor are propagated to subclasses:
 
 ```ruby
 class BaseRefund < RubyReactor::Reactor
@@ -181,17 +286,20 @@ class FullRefund < BaseRefund   # also locks "order:<id>"
 end
 ```
 
-A subclass can call `with_lock` / `with_semaphore` again to override the inherited configuration.
+A subclass can call `with_lock` / `with_semaphore` / `with_period` again to override the inherited configuration.
 
 ## Observability
 
 - Snooze escalation, release failures, and "release on something we did not actually hold" conditions are logged via `RubyReactor.configuration.logger.warn`.
 - The current owner of a lock is in the Redis hash `lock:<key>` under field `owner`.
 - The held-tokens set for a semaphore is `semaphore:<key>:held`. Its cardinality plus `LLEN semaphore:<key>` should always equal `limit` at rest.
+- The period marker is the plain key `period:<base>:<bucket_id>`. `TTL` on that key tells you when the bucket frees up.
+- A `Skipped` result sets context status to `:skipped` (separate from `:completed`/`:failed`).
 
 ## Limitations
 
-- **Step-level locking** is not yet supported — locks apply to the whole reactor run.
+- **Step-level locking** is not yet supported — locks apply to the whole reactor run. Same for `with_period`.
 - **Inline retries** do not increment the snooze counter (they are not Sidekiq-scheduled). If you retry inline in a loop, add your own backoff.
 - **Multi-Redis** failover is not addressed. The lock is as durable as your Redis deployment; for cross-region critical sections, consider an external locking service.
 - **Wait inside a Sidekiq worker** is intentionally disabled. If you want to keep a worker thread parked on `BLPOP`, run that reactor inline instead.
+- **`with_period` alone is not a mutex.** Concurrent racers can both run before either has written the marker. Pair with `with_lock` if you need true at-most-one-per-bucket. The period is calendar-aligned, not "N hours since last run"; if you need sliding semantics, pass an integer `every:`.
