@@ -6,16 +6,18 @@ module RubyReactor
       # rubocop:disable Metrics/BlockLength
       ::RSpec::Matchers.define :be_success do
         match do |subject|
-          subject.ensure_executed!
+          subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
           subject.success?
         end
 
         failure_message do |subject|
-          result = subject.result
+          result = subject.respond_to?(:result) ? subject.result : subject
           if result&.failure?
             format_failure_message(result)
-          else
+          elsif subject.respond_to?(:reactor_instance)
             "expected reactor to be success, but failed (Status: #{subject.reactor_instance.context.status})"
+          else
+            "expected #{subject.inspect} to be success"
           end
         end
 
@@ -62,7 +64,7 @@ module RubyReactor
 
       ::RSpec::Matchers.define :be_failure do
         match do |subject|
-          subject.ensure_executed!
+          subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
           subject.failure?
         end
 
