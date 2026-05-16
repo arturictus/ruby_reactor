@@ -1,6 +1,6 @@
 # Getting Started with RubyReactor
 
-This guide will help you get started with RubyReactor, from installation to your first reactor.
+This guide walks you through installation, configuration, and your first reactor.
 
 ## Installation
 
@@ -16,130 +16,158 @@ Or install directly:
 gem install ruby_reactor
 ```
 
+## Configuration
+
+RubyReactor uses Redis for state persistence and Sidekiq for async execution. Configure both before running any reactors:
+
+```ruby
+RubyReactor.configure do |config|
+  # Redis configuration for state persistence
+  config.storage.adapter = :redis
+  config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
+  config.storage.redis_options = { timeout: 1 }
+
+  # Sidekiq configuration for async execution
+  config.sidekiq_queue = :default
+  config.sidekiq_retry_count = 3
+
+  # Logger
+  config.logger = Logger.new($stdout)
+end
+```
+
 ## Your First Reactor
 
-Let's create a simple order processing reactor:
+Reactors are subclasses of `RubyReactor::Reactor`. Declare `input`s, define `step`s with their `argument`s and `run` block, and optionally a `returns` step:
 
 ```ruby
 require 'ruby_reactor'
 
 class OrderProcessingReactor < RubyReactor::Reactor
-  step :validate_order do
-    validate_args do
-      required(:order_id).filled(:string)
-    end
+  input :order_id do
+    required(:order_id).filled(:integer, gt?: 0)
+  end
 
-    run do |order_id|
-      # Validate the order exists and is in correct state
-      order = Order.find(order_id)
-      raise "Order not found" unless order
-      raise "Order already processed" if order.processed?
+  step :validate_order do
+    argument :order_id, input(:order_id)
+
+    run do |args, _context|
+      order = Order.find_by(id: args[:order_id])
+      return Failure("Order not found") unless order
+      return Failure("Order already processed") if order.processed?
 
       Success({ order: order })
     end
   end
 
   step :process_payment do
-    run do |order:, **|
-      # Process payment for the order
-      payment_result = PaymentService.charge(order.total, order.customer.card_token)
-      raise "Payment failed" unless payment_result.success?
+    argument :order, result(:validate_order, :order)
 
-      Success({ payment_id: payment_result.id })
+    run do |args, _context|
+      payment = PaymentService.charge(args[:order].total, args[:order].customer.card_token)
+      payment.success? ? Success({ payment_id: payment.id }) : Failure("Payment failed")
     end
   end
 
   step :update_inventory do
-    run do |order:, **|
-      # Update inventory for each item
-      order.items.each do |item|
+    argument :order, result(:validate_order, :order)
+
+    run do |args, _context|
+      args[:order].items.each do |item|
         InventoryService.decrement(item.product_id, item.quantity)
       end
-
       Success({ inventory_updated: true })
     end
   end
 
   step :send_confirmation do
-    run do |order:, payment_id:, **|
-      # Send confirmation email
-      email_result = EmailService.send_confirmation(
-        order.customer.email,
-        order_id: order.id,
-        payment_id: payment_id
-      )
+    argument :order, result(:validate_order, :order)
+    argument :payment_id, result(:process_payment, :payment_id)
 
-      Success({ confirmation_sent: email_result.success? })
+    run do |args, _context|
+      EmailService.send_confirmation(args[:order].customer.email, order: args[:order])
+      Success({ confirmation_sent: true })
     end
   end
+
+  returns :send_confirmation
 end
 ```
+
+### Run blocks always receive `(arguments, context)`
+
+Every step's `run` block receives two positional arguments: the resolved arguments hash and the execution context. Use `argument :name, source` to declare which value goes into `args[:name]`.
 
 ## Executing a Reactor
 
 ### Synchronous Execution
 
 ```ruby
-# Run the reactor synchronously
 result = OrderProcessingReactor.run(order_id: 123)
 
 if result.success?
-  puts "Order processed successfully!"
-  puts "Results: #{result.step_results}"
+  puts "Order processed: #{result.value}"
 else
   puts "Order processing failed: #{result.error}"
 end
 ```
 
+`Reactor.run` returns one of:
+
+- `RubyReactor::Success` — `result.success?` is `true`, `result.value` holds the step output for `returns` (or the full `intermediate_results` hash if no `returns` is set).
+- `RubyReactor::Failure` — `result.failure?` is `true`. Useful readers: `result.error`, `result.step_name`, `result.exception_class`, `result.backtrace`, `result.step_arguments`.
+- `RubyReactor::AsyncResult` — returned when the reactor (or a step) is async. Holds `job_id`, `execution_id`, and any `intermediate_results` available at handoff.
+- `RubyReactor::InterruptResult` — returned when an `interrupt` step pauses execution. Use `result.execution_id` and `result.correlation_id` to resume later.
+
 ### Asynchronous Execution
 
-For async execution, you need Sidekiq configured. Mark the reactor as async:
+For async execution, configure Sidekiq and either mark the reactor `async true` or mark individual steps async:
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
-  async true  # Enable full reactor async
+  async true  # Entire reactor runs in a Sidekiq worker
 
   # ... steps defined above
 end
 
-# Run asynchronously
 async_result = OrderProcessingReactor.run(order_id: 123)
-# Returns immediately with AsyncResult
-# Check status later with async_result.status
+async_result.execution_id # => UUID for looking up state later
 ```
 
-## Understanding Results
-
-RubyReactor returns detailed execution results:
+To inspect a running execution, reload it from storage:
 
 ```ruby
-result = OrderProcessingReactor.run(order_id: 123)
-
-# Check overall success
-result.success?  # => true/false
-
-# Access step results
-result.step_results[:validate_order]  # => { order: #<Order> }
-result.step_results[:process_payment] # => { payment_id: "pay_123" }
-
-# Access intermediate results
-result.intermediate_results  # => Hash of all step outputs
-
-# Check completed steps
-result.completed_steps  # => Set of completed step names
-
-# Error information (if failed)
-result.error  # => Exception that caused failure
+reactor = OrderProcessingReactor.find(async_result.execution_id)
+reactor.context.status      # => "running" | "completed" | "failed" | "paused"
+reactor.result              # Success / Failure / InterruptResult
 ```
+
+See [Async Reactors](async_reactors.md) for the full async model.
+
+## Inspecting the Context
+
+Step outputs are stored on the context, not the result object. After a sync execution you can reach them via the reactor instance:
+
+```ruby
+reactor = OrderProcessingReactor.new
+reactor.run(order_id: 123)
+
+reactor.context.intermediate_results[:validate_order]   # => { order: <Order> }
+reactor.context.intermediate_results[:process_payment]  # => { payment_id: "pay_123" }
+reactor.context.status                                  # => "completed"
+reactor.execution_trace                                 # => [{ type: :run, step: :validate_order, ... }, ...]
+```
+
+For black-box assertions in tests, use the `test_reactor` helper described in [Testing with RSpec](testing.md).
 
 ## Step Dependencies
 
-Steps can depend on each other using the `argument` method with `result()`:
+Steps depend on each other through `argument :name, result(:other_step)`. The dependency graph topologically sorts steps; circular dependencies raise `RubyReactor::Error::DependencyError`:
 
 ```ruby
 class ComplexReactor < RubyReactor::Reactor
   step :validate_order do
-    run { validate_order_logic }
+    run { |args, _ctx| validate_order_logic(args) }
   end
 
   step :check_inventory do
@@ -160,65 +188,55 @@ class ComplexReactor < RubyReactor::Reactor
 end
 ```
 
+You can also declare order without data flow using `wait_for :step_name`.
+
 ## Error Handling and Compensation
 
-RubyReactor automatically handles errors and provides compensation:
+When a step fails (returns `Failure(...)` or raises), the reactor:
+
+1. Runs the **`compensate`** block of the failing step (signature: `|error, arguments, context|`).
+2. Walks back through previously successful steps and runs each one's **`undo`** block in reverse order (signature: `|result, arguments, context|`).
+3. Returns a `Failure`.
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
-  step :validate_order do
-    run { validate_order_logic }
-  end
-
   step :process_payment do
-    run { process_payment_logic }
+    argument :order, result(:validate_order)
 
-    undo do |payment_id:, **|
-      # Undo the payment if something fails later
-      PaymentService.refund(payment_id)
+    run { |args, _ctx| PaymentService.charge(args[:order]) }
+
+    undo do |result, _args, _ctx|
+      # Runs if a later step fails
+      PaymentService.refund(result[:payment_id])
+      Success()
     end
   end
 
   step :update_inventory do
-    run { update_inventory_logic }
+    argument :order, result(:validate_order)
 
-    compensate do |order:, **|
-      # Restore inventory if something fails later
-      order.items.each do |item|
-        InventoryService.increment(item.product_id, item.quantity)
-      end
+    run { |args, _ctx| InventoryService.decrement_all(args[:order].items) }
+
+    compensate do |_error, args, _ctx|
+      # Runs only if THIS step fails
+      args[:order].items.each { |i| InventoryService.increment(i.product_id, i.quantity) }
+      Success()
     end
   end
 end
 ```
 
-If `update_inventory` fails, RubyReactor will:
-1. Run the `update_inventory` compensate block
-2. Run the `process_payment` undo block
-3. Return a failure result
+If `update_inventory` fails: its `compensate` runs, then `process_payment`'s `undo` runs.
 
-## Configuration
-
-### Sidekiq Setup (for Async)
-
-Add to your Sidekiq configuration:
-
-```ruby
-# config/sidekiq.rb
-require 'ruby_reactor/worker'
-
-# Configure RubyReactor
-RubyReactor.configure do |config|
-  config.sidekiq_queue = :default
-  config.sidekiq_retry_count = 3
-  config.logger = Logger.new('log/ruby_reactor.log')
-end
-```
-
+See [Core Concepts](core_concepts.md#compensation) for the full compensation/undo model.
 
 ## Next Steps
 
-- Learn about [async reactors](async_reactors.md)
-- Configure [retry policies](retry_configuration.md)
-- See [examples](examples/) for more patterns
-- Check the [API reference](api_reference.md) for detailed documentation
+- [Core Concepts](core_concepts.md) — Reactors, Steps, Context, Results
+- [Async Reactors](async_reactors.md) — Full and step-level async execution
+- [Retry Configuration](retry_configuration.md) — Backoff strategies and retry policies
+- [Interrupts](interrupts.md) — Pause/resume workflows
+- [Composition](composition.md) — Build complex flows from smaller reactors
+- [Data Pipelines](data_pipelines.md) — Map over collections in parallel
+- [Testing with RSpec](testing.md) — `test_reactor`, mocks, matchers
+- [Examples](examples/) — End-to-end workflows

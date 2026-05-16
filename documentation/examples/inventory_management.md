@@ -198,7 +198,6 @@ class InventoryManagementReactor < RubyReactor::Reactor
     argument :request_data, result(:validate_request)
     argument :replenishment_data, result(:check_replenishment)
 
-    idempotent true
     retries max_attempts: 3, backoff: :linear, base_delay: 5.seconds
 
     run do |args, _context|
@@ -283,7 +282,7 @@ class BulkInventoryReactor < RubyReactor::Reactor
           if result.success?
             results << { success: true, operation: op }
           else
-            results << { success: false, operation: op, error: result.error.message }
+            results << { success: false, operation: op, error: result.error.to_s }
           end
         rescue => e
           results << { success: false, operation: op, error: e.message }
@@ -629,7 +628,7 @@ RSpec.describe InventoryManagementReactor do
       )
 
       expect(result).to be_failure
-      expect(result.error.message).to include("Insufficient stock")
+      expect(result.error).to include("Insufficient stock")
     end
   end
 

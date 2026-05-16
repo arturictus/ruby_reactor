@@ -85,11 +85,12 @@ The backoff strategy for calculating delays between retry attempts.
 - `:fixed`: Same delay for each attempt
 
 ### base_delay
+
 The base delay for retry calculations. Can be a number (seconds) or ActiveSupport duration.
 
 ```ruby
-retry base_delay: 5.seconds
-retry base_delay: 300  # 5 minutes in seconds
+retries base_delay: 5.seconds
+retries base_delay: 300  # 5 minutes in seconds
 ```
 
 ## Backoff Strategies
@@ -222,23 +223,26 @@ class CustomRetryReactor < RubyReactor::Reactor
 
   step :call_external_api do
     retries max_attempts: 5, backoff: :exponential, base_delay: 1.second
-    run do
-      result = ExternalAPI.call
-      # Raise specific errors based on response
-      case result.status
+    run do |_args, _ctx|
+      response = ExternalAPI.call
+      # Build a Failure with the right retryable flag so the retry manager
+      # can short-circuit non-transient errors.
+      case response.status
       when 429  # Rate limited
-        Failure(RateLimitError.new(result) retryable: true)
+        Failure(RateLimitError.new(response), retryable: true)
       when 500  # Server error
-        Failure(ServerError.new(result) retryable: true)
-      when 400  # Bad request
-        Failure(ValidationError.new(result) retryable: false)
+        Failure(ServerError.new(response), retryable: true)
+      when 400  # Bad request - don't retry
+        Failure(ValidationError.new(response), retryable: false)
       else
-        result
+        Success(response)
       end
     end
   end
 end
 ```
+
+When a `Failure` is returned with `retryable: false`, the retry manager stops immediately and falls through to compensation. Custom error classes can also implement `retryable?` to control this from the exception side.
 
 ## Monitoring and Observability
 
@@ -326,10 +330,11 @@ RSpec.describe PaymentReactor do
 
     expect(PaymentService).to receive(:charge).exactly(3).times
 
-    result = PaymentReactor.run(card_token: "tok_123", amount: 100)
+    subject = test_reactor(PaymentReactor, card_token: "tok_123", amount: 100)
 
-    expect(result).to be_success
-    expect(result.step_results[:charge_card][:payment_id]).to eq("pay_123")
+    expect(subject).to be_success
+    expect(subject).to have_retried_step(:charge_card).times(2)
+    expect(subject.step_result(:charge_card)[:payment_id]).to eq("pay_123")
   end
 end
 ```

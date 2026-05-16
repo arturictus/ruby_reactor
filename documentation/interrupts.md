@@ -9,7 +9,7 @@ Use the `interrupt` keyword to define a pause point in your reactor.
 ```ruby
 class ReportReactor < RubyReactor::Reactor
   step :request_report do
-    run do
+    run do |_args, _ctx|
       response = HTTP.post("https://api.example.com/reports")
       Success(response.fetch(:id))
     end
@@ -46,7 +46,7 @@ class ReportReactor < RubyReactor::Reactor
     # The result of the interrupt step is the payload provided when resuming
     argument :webhook_payload, result(:wait_for_report)
 
-    run do |args|
+    run do |args, _ctx|
       Success(ReportProcessor.call(args[:webhook_payload]))
     end
   end
@@ -73,8 +73,9 @@ When a reactor encounters an `interrupt`:
 execution = ReportReactor.run(company_id: 1)
 
 if execution.paused?
-  execution.id         # => "uuid-123"
-  execution.status     # => :paused
+  execution.execution_id  # => "uuid-123"
+  execution.correlation_id # => "report-..." (if defined)
+  execution.status        # => :paused
 end
 ```
 
@@ -122,12 +123,13 @@ There are two ways to invoke continuation:
 You can cancel a paused reactor if the operation is no longer needed.
 
 ```ruby
-# Undo: Runs defined compensations for completed steps in reverse order, then deletes execution.
+# Undo: Runs defined undo/compensate blocks for completed steps in reverse order,
+# then marks the execution as cancelled.
 ReportReactor.undo("uuid-123")
 
 # Cancel: Stops execution immediately and marks the reactor as cancelled with the provided reason.
 # The context is preserved for inspection, but resumption is disabled.
-ReportReactor.cancel("uuid-123", reason: "User cancelled")
+ReportReactor.cancel(id: "uuid-123", reason: "User cancelled")
 ```
 
 ## Common Use Cases
@@ -142,7 +144,7 @@ end
 
 step :process_decision do
   argument :decision, result(:wait_for_approval)
-  run do |args|
+  run do |args, _ctx|
     if args[:decision][:approved]
       Success("Approved")
     else

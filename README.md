@@ -159,7 +159,7 @@ class UserRegistrationReactor < RubyReactor::Reactor
 
     run do |args, context|
       if args[:email] && args[:email].include?('@')
-        Success(args[:email].trim)
+        Success(args[:email].strip)
       else
         Failure("Email must contain @")
       end
@@ -191,8 +191,9 @@ class UserRegistrationReactor < RubyReactor::Reactor
       Success(user)
     end
 
-    conpensate do |error, args, context|
+    compensate do |error, args, context|
       Notify.to(args[:email])
+      Success()
     end
   end
 
@@ -200,8 +201,8 @@ class UserRegistrationReactor < RubyReactor::Reactor
     argument :email, result(:validate_email)
     wait_for :create_user
 
-    run do |args, _context| 
-      Email.sent!(args[:email], "verify your email")
+    run do |args, _context|
+      Email.send!(args[:email], "verify your email")
       Success()
     end
 

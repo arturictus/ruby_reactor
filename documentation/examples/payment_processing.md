@@ -46,15 +46,15 @@ class PaymentProcessingReactor < RubyReactor::Reactor
   # Payment processing needs careful retry configuration
   retry_defaults max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
 
-  input :amount, validate: -> do
+  input :amount do
     required(:amount).filled(:decimal, gt?: 0)
   end
 
-  input :currency, validate: -> do
+  input :currency do
     required(:currency).filled(:string, included_in?: ['USD', 'EUR', 'GBP'])
   end
 
-  input :card_token, validate: -> do
+  input :card_token do
     required(:card_token).filled(:string, format?: /^tok_/)
   end
 
@@ -119,10 +119,10 @@ class PaymentProcessingReactor < RubyReactor::Reactor
       Success({ auth_id: auth_result.id, auth_amount: amount })
     end
 
-    undo do |args, _context|
-      auth_id = args[:fraud_data][:auth_id] || args[:auth_id]
-      # Void the pre-authorization
-      PaymentGateway.void_authorization(auth_id) if auth_id
+    undo do |result, _args, _ctx|
+      # Void the pre-authorization if a later step fails
+      PaymentGateway.void_authorization(result[:auth_id]) if result[:auth_id]
+      Success()
     end
   end
 
@@ -148,10 +148,9 @@ class PaymentProcessingReactor < RubyReactor::Reactor
       Success({ charge_id: charge_result.id, charged_amount: amount })
     end
 
-    undo do |args, _context|
-      charge_id = args[:auth_data][:charge_id] || args[:charge_id]
-      # Refund the charge
-      PaymentGateway.refund(charge_id) if charge_id
+    undo do |result, _args, _ctx|
+      PaymentGateway.refund(result[:charge_id]) if result[:charge_id]
+      Success()
     end
   end
 
@@ -182,10 +181,9 @@ class PaymentProcessingReactor < RubyReactor::Reactor
       { transaction_id: transaction.id }
     end
 
-    compensate do |args, _context|
-      transaction_id = args[:charge_data][:transaction_id] || args[:transaction_id]
-      # Mark transaction as failed/refunded
-      PaymentTransaction.find_by(id: transaction_id)&.update!(status: :refunded)
+    undo do |result, _args, _ctx|
+      PaymentTransaction.find_by(id: result[:transaction_id])&.update!(status: :refunded)
+      Success()
     end
   end
 
@@ -301,7 +299,7 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
 
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 1.hour
 
-  input :subscription_id, validate: -> do
+  input :subscription_id do
     required(:subscription_id).filled(:string)
   end
 
@@ -351,97 +349,9 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
       { charge_id: charge_result.id }
     end
 
-    compensate do |args, _context|
-      charge_id = args[:validation_data][:charge_id] || args[:charge_id]
-      # Refund the subscription charge
-      PaymentGateway.refund_subscription_charge(charge_id) if charge_id
-    end
-  end
-
-  step :update_billing_record do
-    argument :validation_data, result(:validate_subscription)
-    argument :proration_data, result(:calculate_proration)
-    argument :charge_data, result(:charge_subscription)
-
-    run do |args, _context|
-      subscription = args[:validation_data][:subscription]
-      charge_id = args[:charge_data][:charge_id]
-      billing_period = args[:proration_data][:billing_period]
-
-      BillingRecord.create!(
-        subscription: subscription,
-        charge_id: charge_id,
-        billing_period: billing_period,
-        status: :paid
-      )
-
-      { billing_recorded: true }
-    end
-  end
-```
-
-### Subscription Payment Processing
-
-```ruby
-class SubscriptionPaymentReactor < RubyReactor::Reactor
-  async true
-
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 1.hour
-
-  input :subscription_id, validate: -> do
-    required(:subscription_id).filled(:string)
-  end
-
-  step :validate_subscription do
-    validate_args do
-      required(:subscription_id).filled(:string)
-    end
-
-    run do |subscription_id:|
-      subscription = Subscription.find(subscription_id)
-      raise "Subscription not found" unless subscription
-      raise "Subscription inactive" unless subscription.active?
-
-      { subscription: subscription }
-    end
-  end
-
-  step :calculate_proration do
-    argument :validation_data, result(:validate_subscription)
-
-    run do |args, _context|
-      subscription = args[:validation_data][:subscription]
-
-      # Calculate prorated amount for billing period
-      proration = BillingService.calculate_proration(subscription)
-      { proration_amount: proration.amount, billing_period: proration.period }
-    end
-  end
-
-  step :charge_subscription do
-    argument :validation_data, result(:validate_subscription)
-    argument :proration_data, result(:calculate_proration)
-
-    run do |args, _context|
-      subscription = args[:validation_data][:subscription]
-      proration_amount = args[:proration_data][:proration_amount]
-      billing_period = args[:proration_data][:billing_period]
-
-      charge_result = PaymentGateway.charge_subscription(
-        customer_id: subscription.customer.stripe_id,
-        amount: proration_amount,
-        description: "Subscription #{subscription.id} - #{billing_period}"
-      )
-
-      raise "Subscription charge failed" unless charge_result.success?
-
-      { charge_id: charge_result.id }
-    end
-
-    compensate do |args, _context|
-      charge_id = args[:validation_data][:charge_id] || args[:charge_id]
-      # Refund the subscription charge
-      PaymentGateway.refund_subscription_charge(charge_id) if charge_id
+    undo do |result, _args, _ctx|
+      PaymentGateway.refund_subscription_charge(result[:charge_id]) if result[:charge_id]
+      Success()
     end
   end
 
@@ -541,10 +451,10 @@ RSpec.describe PaymentProcessingReactor do
       allow(PaymentGateway).to receive(:charge).and_return(successful_charge)
       allow(EmailService).to receive(:send_payment_receipt).and_return(successful_email)
 
-      result = PaymentProcessingReactor.run(valid_payment_params)
+      subject = test_reactor(PaymentProcessingReactor, valid_payment_params)
 
-      expect(result).to be_success
-      expect(result.step_results[:charge_payment][:charge_id]).to be_present
+      expect(subject).to be_success
+      expect(subject.step_result(:charge_payment)[:charge_id]).to be_present
     end
   end
 
@@ -552,10 +462,10 @@ RSpec.describe PaymentProcessingReactor do
     it "blocks high-risk payments" do
       allow(FraudDetectionService).to receive(:analyze).and_return(0.9)
 
-      result = PaymentProcessingReactor.run(valid_payment_params)
+      subject = test_reactor(PaymentProcessingReactor, valid_payment_params)
 
-      expect(result).to be_failure
-      expect(result.error.message).to include("High fraud risk")
+      expect(subject).to be_failure
+      expect(subject.error).to include("High fraud risk")
     end
   end
 
@@ -569,9 +479,10 @@ RSpec.describe PaymentProcessingReactor do
 
       expect(PaymentGateway).to receive(:pre_authorize).exactly(3).times
 
-      result = PaymentProcessingReactor.run(valid_payment_params)
+      subject = test_reactor(PaymentProcessingReactor, valid_payment_params)
 
-      expect(result).to be_success
+      expect(subject).to be_success
+      expect(subject).to have_retried_step(:pre_authorize).times(2)
     end
   end
 
@@ -583,9 +494,9 @@ RSpec.describe PaymentProcessingReactor do
 
       expect(PaymentGateway).to receive(:void_authorization)
 
-      result = PaymentProcessingReactor.run(valid_payment_params)
+      subject = test_reactor(PaymentProcessingReactor, valid_payment_params)
 
-      expect(result).to be_failure
+      expect(subject).to be_failure
     end
   end
 end
