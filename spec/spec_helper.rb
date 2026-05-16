@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "ruby_reactor"
+require "ruby_reactor/rspec/matchers"
 require "sidekiq/testing"
 require "debug"
 require "fileutils"

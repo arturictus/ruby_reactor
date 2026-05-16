@@ -165,6 +165,94 @@ RSpec.describe "Locking Integration" do
     end
   end
 
+  # Our state matchers take a bare key string as their subject (e.g.
+  # `expect("order:42").to be_locked`). RuboCop's ExpectActual cop flags
+  # literal subjects, but here the literal IS the key under test.
+  # rubocop:disable RSpec/ExpectActual
+  describe "RSpec matchers" do
+    describe "be_skipped" do
+      it "matches a Skipped result returned by a step" do
+        result = StepSkipReactor.run(should_skip: true)
+
+        expect(result).to be_skipped
+        expect(result).to be_skipped.because("no work to do")
+        expect(result).to be_skipped.at_step(:second)
+      end
+
+      it "matches a Skipped result from the period gate" do
+        PeriodicReactor.run(org_id: 7)
+        result = PeriodicReactor.run(org_id: 7)
+
+        expect(result).to be_skipped.because(:period)
+      end
+
+      it "does not match a plain Success" do
+        result = StepSkipReactor.run(should_skip: false)
+        expect(result).not_to be_skipped
+      end
+    end
+
+    describe "be_locked" do
+      let(:adapter) { RubyReactor.configuration.storage_adapter }
+
+      it "matches a held lock" do
+        redis.hset("lock:order:42", "owner", "ctx-abc")
+        redis.hset("lock:order:42", "count", "1")
+
+        expect("order:42").to be_locked
+        expect("order:42").to be_locked.by("ctx-abc")
+      end
+
+      it "rejects a free key" do
+        expect("order:42").not_to be_locked
+      end
+
+      it "rejects a wrong-owner assertion" do
+        redis.hset("lock:order:42", "owner", "ctx-abc")
+        redis.hset("lock:order:42", "count", "1")
+
+        expect("order:42").not_to be_locked.by("someone-else")
+      end
+    end
+
+    describe "have_available_tokens / have_held_tokens" do
+      it "reports semaphore pool state" do
+        s = RubyReactor::Semaphore.new("api_limit", limit: 3)
+        s.acquire
+        s.acquire
+
+        expect("api_limit").to have_available_tokens(1)
+        expect("api_limit").to have_held_tokens(2)
+      end
+    end
+
+    describe "have_rate_limit_count" do
+      it "reports the current bucket count" do
+        2.times { RateLimitedReactor.run(account_id: 99) }
+
+        expect("api:99").to have_rate_limit_count(2).for(:second)
+      end
+
+      it "raises a clear error if .for(period) is missing" do
+        expect do
+          expect("api:99").to have_rate_limit_count(0)
+        end.to raise_error(ArgumentError, /\.for\(period\)/)
+      end
+    end
+
+    describe "be_period_marked" do
+      it "matches after a successful periodic run" do
+        PeriodicReactor.run(org_id: 7)
+        expect("daily_report:7").to be_period_marked.for(:day)
+      end
+
+      it "does not match before the first run" do
+        expect("daily_report:7").not_to be_period_marked.for(:day)
+      end
+    end
+  end
+  # rubocop:enable RSpec/ExpectActual
+
   describe "Skipped step result" do
     before { SkippedStepCounters.reset }
 

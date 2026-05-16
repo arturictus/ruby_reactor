@@ -205,6 +205,46 @@ module RubyReactor
       def rate_limit_check_and_increment(keys, argv)
         @redis.eval(RATE_LIMIT_SCRIPT, keys: keys, argv: argv)
       end
+
+      # Inspectors — used by RSpec matchers to assert on lock/semaphore/
+      # rate-limit/period state without leaking Redis-specific calls into
+      # test code.
+
+      # Returns { owner:, count: } for a held lock, or nil if free.
+      # `prefixed_key` is the full key (e.g. "lock:order:42").
+      def lock_info(prefixed_key)
+        return nil unless @redis.exists?(prefixed_key)
+
+        data = @redis.hgetall(prefixed_key)
+        return nil if data.empty?
+
+        { owner: data["owner"], count: data["count"].to_i }
+      end
+
+      # Returns { available:, held:, limit: } for a semaphore. `name` is the
+      # user-provided semaphore key (without the "semaphore:" prefix).
+      def semaphore_state(name)
+        prefix = "semaphore:#{name}"
+        {
+          available: @redis.llen(prefix),
+          held: @redis.scard("#{prefix}:held"),
+          limit: @redis.get("#{prefix}:init").to_i
+        }
+      end
+
+      # Current count for a rate-limit bucket. `key_base` is the user's
+      # `with_rate_limit` key, `every` is the period (symbol or seconds).
+      def rate_limit_count(key_base, every, now: Time.now.to_i)
+        period_seconds = RubyReactor::Period.period_seconds(every)
+        bucket = now / period_seconds
+        @redis.get("rate:#{key_base}:#{every}:#{bucket}").to_i
+      end
+
+      # Has a period bucket been marked? `key_base` is the user's
+      # `with_period` key, `every` is the period.
+      def period_marker?(key_base, every, now: Time.now.utc)
+        @redis.exists?(RubyReactor::Period.key(key_base, every, now: now))
+      end
     end
     # rubocop:enable Naming/PredicateMethod
   end

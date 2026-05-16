@@ -2,6 +2,7 @@
 
 module RubyReactor
   module RSpec
+    # rubocop:disable Metrics/ModuleLength
     module Matchers
       # rubocop:disable Metrics/BlockLength
       ::RSpec::Matchers.define :be_success do
@@ -251,8 +252,172 @@ module RubyReactor
         end
       end
 
+      # ---------------------------------------------------------------------
+      # Lock / Semaphore / Rate-limit / Period state matchers
+      # ---------------------------------------------------------------------
+      #
+      # These assert against the live Redis state via the configured storage
+      # adapter, so they work for any test that has actually exercised the
+      # reactor (or interacted with the primitives directly).
+
+      def self.coordination_adapter
+        RubyReactor.configuration.storage_adapter
+      end
+
+      # Distinguishes `RubyReactor::Skipped` from a plain `Success`. Works on
+      # any object with a `skipped?` predicate.
+      #
+      # Examples:
+      #   expect(result).to be_skipped
+      #   expect(result).to be_skipped.because(:period)
+      #   expect(result).to be_skipped.at_step(:second)
+      ::RSpec::Matchers.define :be_skipped do
+        match do |subject|
+          subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
+          actual = subject.respond_to?(:result) ? subject.result : subject
+          next false unless actual.respond_to?(:skipped?) && actual.skipped?
+          next false if @expected_reason && actual.reason != @expected_reason
+          next false if @expected_step && actual.step_name != @expected_step
+
+          true
+        end
+
+        chain :because do |reason|
+          @expected_reason = reason
+        end
+
+        chain :at_step do |step|
+          @expected_step = step
+        end
+
+        failure_message do |subject|
+          actual = subject.respond_to?(:result) ? subject.result : subject
+          if !actual.respond_to?(:skipped?) || !actual.skipped?
+            "expected result to be Skipped, got #{actual.class}"
+          elsif @expected_reason && actual.reason != @expected_reason
+            "expected Skipped reason #{@expected_reason.inspect}, got #{actual.reason.inspect}"
+          else
+            "expected Skipped at_step #{@expected_step.inspect}, got #{actual.step_name.inspect}"
+          end
+        end
+
+        failure_message_when_negated do
+          "expected result not to be Skipped"
+        end
+      end
+
+      # Asserts that an exclusive lock is currently held in Redis. Subject is
+      # the user-provided lock key (without the "lock:" prefix).
+      #
+      #   expect("order:42").to be_locked
+      #   expect("order:42").to be_locked.by("ctx-abc")
+      ::RSpec::Matchers.define :be_locked do
+        match do |key|
+          info = Matchers.coordination_adapter.lock_info("lock:#{key}")
+          next false unless info
+          next true unless @expected_owner
+
+          info[:owner] == @expected_owner
+        end
+
+        chain :by do |owner|
+          @expected_owner = owner
+        end
+
+        failure_message do |key|
+          info = Matchers.coordination_adapter.lock_info("lock:#{key}")
+          if info.nil?
+            "expected lock 'lock:#{key}' to be held, but it is free"
+          else
+            "expected lock 'lock:#{key}' to be held by #{@expected_owner.inspect}, " \
+              "but is held by #{info[:owner].inspect}"
+          end
+        end
+
+        failure_message_when_negated do |key|
+          info = Matchers.coordination_adapter.lock_info("lock:#{key}")
+          "expected lock 'lock:#{key}' not to be held, but is held by #{info[:owner].inspect}"
+        end
+      end
+
+      # Asserts the number of unallocated semaphore tokens. Subject is the
+      # user-provided semaphore name (without the "semaphore:" prefix).
+      #
+      #   expect("api_limit").to have_available_tokens(3)
+      ::RSpec::Matchers.define :have_available_tokens do |expected|
+        match do |name|
+          Matchers.coordination_adapter.semaphore_state(name)[:available] == expected
+        end
+
+        failure_message do |name|
+          state = Matchers.coordination_adapter.semaphore_state(name)
+          "expected semaphore '#{name}' to have #{expected} available tokens, " \
+            "got #{state[:available]} (held: #{state[:held]}, limit: #{state[:limit]})"
+        end
+      end
+
+      # Asserts the number of currently-checked-out semaphore tokens.
+      #
+      #   expect("api_limit").to have_held_tokens(2)
+      ::RSpec::Matchers.define :have_held_tokens do |expected|
+        match do |name|
+          Matchers.coordination_adapter.semaphore_state(name)[:held] == expected
+        end
+
+        failure_message do |name|
+          state = Matchers.coordination_adapter.semaphore_state(name)
+          "expected semaphore '#{name}' to have #{expected} held tokens, " \
+            "got #{state[:held]} (available: #{state[:available]}, limit: #{state[:limit]})"
+        end
+      end
+
+      # Asserts the current rate-limit counter for a (key_base, period) pair.
+      # Use `.for(period_unit)` to specify which window.
+      #
+      #   expect("stripe:42").to have_rate_limit_count(3).for(:second)
+      ::RSpec::Matchers.define :have_rate_limit_count do |expected|
+        match do |key_base|
+          raise ArgumentError, "have_rate_limit_count requires .for(period)" unless @period
+
+          Matchers.coordination_adapter.rate_limit_count(key_base, @period) == expected
+        end
+
+        chain :for do |period|
+          @period = period
+        end
+
+        failure_message do |key_base|
+          actual = Matchers.coordination_adapter.rate_limit_count(key_base, @period)
+          "expected rate-limit '#{key_base}' (#{@period}) count to be #{expected}, got #{actual}"
+        end
+      end
+
+      # Asserts that a `with_period` bucket has been marked. Use `.for(period)`.
+      #
+      #   expect("daily_report:7").to be_period_marked.for(:day)
+      ::RSpec::Matchers.define :be_period_marked do
+        match do |key_base|
+          raise ArgumentError, "be_period_marked requires .for(period)" unless @period
+
+          Matchers.coordination_adapter.period_marker?(key_base, @period)
+        end
+
+        chain :for do |period|
+          @period = period
+        end
+
+        failure_message do |key_base|
+          "expected period bucket #{RubyReactor::Period.key(key_base, @period).inspect} to be marked, but it is not"
+        end
+
+        failure_message_when_negated do |key_base|
+          "expected period bucket #{RubyReactor::Period.key(key_base, @period).inspect} not to be marked, but it is"
+        end
+      end
+
       # Add more matchers as per plan
       # rubocop:enable Metrics/BlockLength
     end
+    # rubocop:enable Metrics/ModuleLength
   end
 end
