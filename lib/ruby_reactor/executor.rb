@@ -34,9 +34,22 @@ module RubyReactor
         }
       )
       @result = nil
+      @acquired_lock = nil
+      @acquired_semaphore = nil
     end
 
     def execute
+      skipped = check_period_gate
+      if skipped
+        @result = skipped
+        update_context_status(@result)
+        save_context
+        return @result
+      end
+
+      check_rate_limit
+      acquire_locks
+
       input_validator = InputValidator.new(@reactor_class, @context)
       input_validator.validate!
 
@@ -49,18 +62,25 @@ module RubyReactor
 
       @result = @step_executor.execute_all_steps
       update_context_status(@result)
+      mark_period_on_success(@result)
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
       @result
+    rescue RubyReactor::Lock::AcquisitionError,
+           RubyReactor::Semaphore::AcquisitionError,
+           RubyReactor::RateLimit::ExceededError => e
+      raise e
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
       update_context_status(@result)
       @result
     ensure
+      release_locks
       save_context
     end
 
     def resume_execution
       @context.status = :running
+      acquire_locks
       prepare_for_resume
       save_context
 
@@ -71,15 +91,21 @@ module RubyReactor
                 end
 
       update_context_status(@result)
+      mark_period_on_success(@result)
 
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
 
       @result
+    rescue RubyReactor::Lock::AcquisitionError,
+           RubyReactor::Semaphore::AcquisitionError,
+           RubyReactor::RateLimit::ExceededError => e
+      raise e
     rescue StandardError => e
       handle_resume_error(e)
       update_context_status(@result)
       @result
     ensure
+      release_locks
       save_context
     end
 
@@ -110,12 +136,122 @@ module RubyReactor
 
     private
 
+    def acquire_locks
+      acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
+      acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+    end
+
+    # Consume one slot from each configured rate-limit window. Raises
+    # `RubyReactor::RateLimit::ExceededError` (carrying a `retry_after_seconds`
+    # hint) if any window is full. Only consulted on initial `execute`; resumes
+    # never re-check (a paused reactor must not block itself on resume).
+    def check_rate_limit
+      return unless @reactor_class.respond_to?(:rate_limit_config) && @reactor_class.rate_limit_config
+
+      config = @reactor_class.rate_limit_config
+      key_base = config[:key_proc].call(@context.inputs)
+
+      RubyReactor::RateLimit.new(key_base, limits: config[:limits]).check_and_increment!
+    end
+
+    # Returns a Skipped result if the period bucket is already marked, else nil.
+    # Only consulted on initial `execute`; resumes never re-check (a paused run
+    # must not skip itself when its own marker eventually appears).
+    def check_period_gate
+      return nil unless @reactor_class.respond_to?(:period_config) && @reactor_class.period_config
+
+      config = @reactor_class.period_config
+      key = period_key(config)
+      return nil unless RubyReactor.configuration.storage_adapter.period_seen?(key)
+
+      RubyReactor::Skipped.new(reason: :period, period_key: key)
+    end
+
+    def mark_period_on_success(result)
+      return unless @reactor_class.respond_to?(:period_config) && @reactor_class.period_config
+      return unless result.is_a?(RubyReactor::Success)
+      return if result.is_a?(RubyReactor::Skipped)
+
+      config = @reactor_class.period_config
+      ttl = RubyReactor::Period.ttl_seconds(config[:every])
+      RubyReactor.configuration.storage_adapter.period_mark(period_key(config), ttl)
+    end
+
+    def period_key(config)
+      base = config[:key_proc].call(@context.inputs)
+      RubyReactor::Period.key(base, config[:every])
+    end
+
+    def acquire_exclusive_lock
+      config = @reactor_class.lock_config
+      key = config[:key_proc].call(@context.inputs)
+
+      # Use root context ID as owner to allow re-entrancy across nested reactors
+      owner = (@context.root_context || @context).context_id
+
+      lock = RubyReactor::Lock.new(
+        key,
+        owner: owner,
+        ttl: config[:ttl],
+        wait: contention_wait(config[:wait]),
+        auto_extend: config.fetch(:auto_extend, true)
+      )
+      lock.acquire
+      @acquired_lock = lock
+    end
+
+    def acquire_semaphore
+      config = @reactor_class.semaphore_config
+      key = config[:key_proc].call(@context.inputs)
+      limit = config[:limit]
+
+      semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: contention_wait(config[:wait]))
+      semaphore.acquire
+      @acquired_semaphore = semaphore
+    end
+
+    # Inside a Sidekiq worker we'd rather snooze the job via perform_in than
+    # tie up the worker thread on a BLPOP / sleep loop. The non-blocking path
+    # fails fast and the Worker rescue branch reschedules.
+    def contention_wait(configured_wait)
+      return 0 if @context.inline_async_execution
+
+      configured_wait
+    end
+
+    def release_locks
+      release_one("semaphore", @acquired_semaphore) if @acquired_semaphore
+      @acquired_semaphore = nil
+
+      return unless @acquired_lock
+
+      release_one("lock", @acquired_lock)
+      @acquired_lock = nil
+    end
+
+    def release_one(kind, primitive)
+      released = primitive.release
+      return if released
+
+      RubyReactor.configuration.logger.warn(
+        "RubyReactor #{kind} '#{primitive.key}' was not held at release time " \
+        "(likely TTL expired or owner changed)"
+      )
+    rescue StandardError => e
+      # Never let release break the ensure chain — log and move on.
+      RubyReactor.configuration.logger.warn(
+        "RubyReactor failed to release #{kind} '#{primitive.key}': #{e.message}"
+      )
+    end
+
     def update_context_status(result)
       return unless result
 
       case result
       when RubyReactor::AsyncResult
         @context.status = :running
+      when RubyReactor::Skipped
+        @context.status = :skipped
       when RubyReactor::Success
         @context.status = :completed
       when RubyReactor::Failure
@@ -148,8 +284,15 @@ module RubyReactor
         @result = @step_executor.execute_all_steps
       else
         case result
-        when RetryQueuedResult, RubyReactor::Failure, RubyReactor::AsyncResult, RubyReactor::InterruptResult
-          # Step was requeued, failed, or handed off to async - return the result
+        # Skipped must be listed before Success (Skipped < Success) so the
+        # halt path wins over the "continue with remaining steps" path.
+        when RubyReactor::Skipped,
+             RetryQueuedResult,
+             RubyReactor::Failure,
+             RubyReactor::AsyncResult,
+             RubyReactor::InterruptResult
+          # Terminal: step was skipped, requeued, failed, paused, or handed
+          # off to async. Return the result as-is.
           @result = result
         when RubyReactor::Success
           # Step succeeded, continue with remaining steps

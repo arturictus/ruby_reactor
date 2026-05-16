@@ -6,6 +6,8 @@ require "json"
 module RubyReactor
   module Storage
     class RedisAdapter < Adapter
+      include RedisLocking
+
       def initialize(redis_config)
         super()
         @redis = Redis.new(redis_config)

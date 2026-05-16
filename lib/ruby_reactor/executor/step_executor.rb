@@ -33,6 +33,11 @@ module RubyReactor
             # If a step returns RetryQueuedResult, we need to stop and return it
             return result if result.is_a?(RetryQueuedResult)
 
+            # If a step returns Skipped, halt the reactor cleanly (no
+            # compensation). Must be checked BEFORE Failure / Success because
+            # Skipped is a Success subclass.
+            return result if result.is_a?(RubyReactor::Skipped)
+
             # If a step returns Failure, we need to stop execution and return it
             return result if result.is_a?(RubyReactor::Failure)
 

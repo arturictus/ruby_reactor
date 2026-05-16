@@ -3,11 +3,7 @@
 require "spec_helper"
 
 RSpec.describe "RubyReactor Interrupt Feature", type: :integration do
-  let(:redis) { Redis.new(url: "redis://localhost:6780") }
-
-  before do
-    redis.flushdb
-  end
+  # `redis` + `flushdb` come from spec_helper's RedisHelpers + global `before`.
 
   describe "execution flow" do
     it "pauses at interrupt step and resumes with payload" do

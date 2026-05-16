@@ -16,6 +16,8 @@ end
 
 This will give you access to the `test_reactor` helper method and all custom matchers.
 
+> For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, or `with_period`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, and `be_period_marked` matchers, plus patterns for testing async snooze and escalation.
+
 ## Basic Usage
 
 ### The `test_reactor` Helper
@@ -543,6 +545,175 @@ end
 
 ---
 
+## Testing Coordination Primitives
+
+Reactors that declare `with_lock`, `with_semaphore`, `with_rate_limit`, or `with_period` can be tested with both vanilla execution assertions and dedicated state matchers that read the live Redis state via the configured storage adapter.
+
+### Test environment requirements
+
+The matchers ship with the standard test setup — once `RubyReactor::RSpec.configure(config)` runs in your `spec_helper.rb`, they're available. They require:
+
+- A real Redis (the in-memory test mode does not back the primitives).
+- A clean Redis between tests — typically `redis.flushdb` in a `before` block — so leftover lock owners, semaphore tokens, rate-limit counters and period markers don't leak across examples.
+
+### The `Skipped` result
+
+`RubyReactor::Skipped` is a `Success` subclass returned in two cases: a `with_period` bucket has already been claimed, or a step explicitly returns `RubyReactor.Skipped(reason: "...")` to halt cleanly (no compensation runs). Use `be_skipped` to distinguish it from a plain `Success`:
+
+```ruby
+result = MonthlyReportReactor.run(org_id: 7)
+expect(result).to be_skipped                       # any Skipped
+expect(result).to be_skipped.because(:period)      # gate hit
+expect(result).to be_skipped.at_step(:second)      # step return
+```
+
+`Skipped` still satisfies `success?`, so legacy `if result.success?` callers continue to work; `result.skipped?` discriminates.
+
+### Asserting lock state
+
+```ruby
+it "releases the lock after a successful run" do
+  RefundOrderReactor.run(order_id: 42)
+
+  expect("order:42").not_to be_locked
+end
+
+it "holds the lock for the duration of a long step" do
+  thread = Thread.new { LongRefundReactor.run(order_id: 42) }
+  # Give the executor a moment to acquire
+  sleep 0.05
+
+  expect("order:42").to be_locked
+  expect("order:42").to be_locked.by(thread.value.context.context_id)
+end
+
+it "raises when contention is hit inline" do
+  redis.hset("lock:order:42", "owner", "someone_else")
+  redis.hset("lock:order:42", "count", "1")
+
+  expect { RefundOrderReactor.run(order_id: 42) }
+    .to raise_error(RubyReactor::Lock::AcquisitionError)
+end
+```
+
+The `be_locked` matcher takes the **user-provided lock key** (without the internal `lock:` prefix). Use the `.by(owner)` chain to assert ownership — typically the `context_id` of the top-level execution.
+
+### Asserting semaphore state
+
+```ruby
+it "returns the token to the pool on success" do
+  3.times { ApiCallReactor.run }
+
+  expect("api_limit").to have_available_tokens(5)
+  expect("api_limit").to have_held_tokens(0)
+end
+
+it "exhausts capacity when held externally" do
+  s = RubyReactor::Semaphore.new("api_limit", limit: 2)
+  2.times { s.acquire }
+
+  expect("api_limit").to have_available_tokens(0)
+  expect("api_limit").to have_held_tokens(2)
+
+  expect { ApiCallReactor.run }.to raise_error(RubyReactor::Semaphore::AcquisitionError)
+end
+```
+
+Both matchers take the **user-provided semaphore name** (without the `semaphore:` prefix).
+
+### Asserting rate-limit state
+
+```ruby
+it "counts each call against the per-second window" do
+  3.times { ChargeReactor.run(account_id: 42) }
+
+  expect("stripe:42").to have_rate_limit_count(3).for(:second)
+end
+
+it "snoozes inline once the window is full" do
+  3.times { ChargeReactor.run(account_id: 42) }
+
+  expect { ChargeReactor.run(account_id: 42) }
+    .to raise_error(RubyReactor::RateLimit::ExceededError) do |e|
+      expect(e.period_name).to eq("second")
+      expect(e.retry_after_seconds).to be_between(1, 1)
+    end
+end
+```
+
+`have_rate_limit_count(n).for(period)` looks at the **current** bucket for the given `period` (use the same symbol or integer seconds you passed to `with_rate_limit`). For multi-window limits, assert each window separately:
+
+```ruby
+expect("stripe:42").to have_rate_limit_count(3).for(:second)
+expect("stripe:42").to have_rate_limit_count(3).for(:minute)
+```
+
+### Asserting period markers
+
+```ruby
+it "marks the bucket after the first successful run" do
+  MonthlyReportReactor.run(org_id: 7)
+  expect("monthly_report:7").to be_period_marked.for(:month)
+end
+
+it "does not mark the bucket when the run fails" do
+  FailingMonthlyReactor.run(org_id: 7)
+  expect("monthly_report:7").not_to be_period_marked.for(:month)
+end
+
+it "skips a second call in the same bucket" do
+  MonthlyReportReactor.run(org_id: 7)
+  result = MonthlyReportReactor.run(org_id: 7)
+
+  expect(result).to be_skipped.because(:period)
+end
+```
+
+`be_period_marked.for(period)` checks the marker at the **current** bucket. To verify the marker's TTL behavior, drop to direct Redis: `redis.ttl(RubyReactor::Period.key("monthly_report:7", :month))`.
+
+### Testing async snooze behavior
+
+The Sidekiq worker rescues `Lock::AcquisitionError`, `Semaphore::AcquisitionError`, and `RateLimit::ExceededError` and reschedules via `perform_in`. To test that wiring without spinning Sidekiq:
+
+```ruby
+it "reschedules with retry_after on rate limit hits" do
+  redis.set("rate:stripe:42:second:#{Time.now.to_i}", "999")
+
+  serialized = RubyReactor::ContextSerializer.serialize(
+    RubyReactor::Context.new({ account_id: 42 }, ChargeReactor)
+  )
+
+  expect(RubyReactor::SidekiqWorkers::Worker)
+    .to receive(:perform_in)
+    .with(a_value_between(1.0, 2.0), serialized, "ChargeReactor", 1)
+
+  RubyReactor::SidekiqWorkers::Worker.new.perform(serialized, "ChargeReactor")
+end
+```
+
+For lock/semaphore the same pattern works — the `perform_in` delay is `lock_snooze_base_delay + rand(0..lock_snooze_jitter)`. Pin those knobs to deterministic values (`jitter = 0`) in tests that assert on the exact delay.
+
+### Testing snooze escalation
+
+When the snooze cap (`lock_snooze_max_attempts`) is reached, the worker stops rescheduling and marks the context as failed:
+
+```ruby
+it "marks the context as failed after the snooze cap" do
+  RubyReactor.configuration.lock_snooze_max_attempts = 3
+
+  redis.hset("lock:order:42", "owner", "other")
+  redis.hset("lock:order:42", "count", "1")
+
+  context = RubyReactor::Context.new({ order_id: 42 }, RefundOrderReactor)
+  serialized = RubyReactor::ContextSerializer.serialize(context)
+
+  expect(RubyReactor::SidekiqWorkers::Worker).not_to receive(:perform_in)
+
+  RubyReactor::SidekiqWorkers::Worker.new
+    .perform(serialized, "RefundOrderReactor", 3)
+end
+```
+
 ## Complete Examples
 
 ### Testing a Payment Workflow
@@ -810,3 +981,14 @@ end
 | `have_retried_step(name)` | Assert step was retried |
 | `.times(count)` | Chain: assert retry count |
 | `have_validation_error(field)` | Assert input validation error on field |
+| `be_skipped` | Assert result is a `RubyReactor::Skipped` (period gate or step return) |
+| `.because(reason)` | Chain: assert the skip reason matches |
+| `.at_step(name)` | Chain: assert the halting step (step-returned Skipped only) |
+| `be_locked` | Assert an exclusive lock is currently held for the given key |
+| `.by(owner)` | Chain: assert the lock owner (typically a `context_id`) |
+| `have_available_tokens(n)` | Assert `n` semaphore tokens are still in the pool |
+| `have_held_tokens(n)` | Assert `n` semaphore tokens are currently checked out |
+| `have_rate_limit_count(n)` | Assert the current rate-limit bucket count |
+| `.for(period)` | Chain (required): which window to check (`:second`, `:minute`, …, or integer seconds) |
+| `be_period_marked` | Assert a `with_period` bucket has been marked |
+| `.for(period)` | Chain (required): which bucket granularity to check |

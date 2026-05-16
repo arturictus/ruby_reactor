@@ -4,6 +4,11 @@ require "zeitwerk"
 require "pathname"
 require_relative "ruby_reactor/registry"
 require_relative "ruby_reactor/utils/code_extractor"
+require_relative "ruby_reactor/dsl/lockable" # Add this
+require_relative "ruby_reactor/lock"
+require_relative "ruby_reactor/semaphore"
+require_relative "ruby_reactor/period"
+require_relative "ruby_reactor/rate_limit"
 
 # Load dry-validation if available (for validation features)
 begin
@@ -40,8 +45,42 @@ module RubyReactor
       false
     end
 
+    def skipped?
+      false
+    end
+
     def to_h
       { success: true, value: @value }
+    end
+  end
+
+  # A "clean halt" signal. Two ways to produce one:
+  #
+  #   1. Implicitly, when a reactor's `with_period` gate finds the bucket has
+  #      already been claimed. The executor short-circuits before any step
+  #      runs.
+  #
+  #   2. Explicitly, by returning `RubyReactor.Skipped(reason: "...")` from a
+  #      step's `run` block. The reactor halts immediately — no further steps,
+  #      and crucially **no compensation** of already-completed steps. Use this
+  #      when a step discovers that the rest of the workflow is not needed
+  #      (e.g. "user already opted out", "nothing to do this round") and the
+  #      partial progress is still correct to keep.
+  #
+  # Subclass of Success so callers that only check `success?` continue to work;
+  # `skipped?` distinguishes it.
+  class Skipped < Success
+    attr_reader :reason, :period_key, :step_name
+
+    def initialize(reason: nil, period_key: nil, step_name: nil)
+      super(nil)
+      @reason = reason
+      @period_key = period_key
+      @step_name = step_name
+    end
+
+    def skipped?
+      true
     end
   end
 
@@ -103,6 +142,10 @@ module RubyReactor
 
     def retryable?
       @retryable
+    end
+
+    def skipped?
+      false
     end
 
     def invalid_payload?
@@ -269,6 +312,12 @@ module RubyReactor
 
   def self.Failure(error, **kwargs)
     Failure.new(error, **kwargs)
+  end
+
+  # Build a `Skipped` result. Return one from a step's `run` block to halt the
+  # reactor cleanly without triggering compensation of previous steps.
+  def self.Skipped(reason: nil, **kwargs)
+    Skipped.new(reason: reason, **kwargs)
   end
 
   def self.configure
