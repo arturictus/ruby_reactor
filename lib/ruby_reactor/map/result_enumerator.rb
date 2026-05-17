@@ -60,6 +60,7 @@ module RubyReactor
       end
 
       def [](index)
+        index += count if index.negative?
         return nil if index.negative? || index >= count
 
         results = @storage.retrieve_map_results_batch(
@@ -80,7 +81,7 @@ module RubyReactor
       end
 
       def last
-        self[count - 1]
+        self[-1]
       end
 
       def successes
