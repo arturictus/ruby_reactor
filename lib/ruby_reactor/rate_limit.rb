@@ -15,7 +15,7 @@ module RubyReactor
     class ExceededError < StandardError
       attr_reader :retry_after_seconds, :key_base, :limit, :period_seconds, :period_name
 
-      def initialize(message, retry_after_seconds:, key_base:, limit:, period_seconds:, period_name:)
+      def initialize(message, retry_after_seconds:, key_base:, limit:, period_seconds:, period_name:) # rubocop:disable Metrics/ParameterLists
         super(message)
         @retry_after_seconds = retry_after_seconds
         @key_base = key_base
@@ -42,7 +42,7 @@ module RubyReactor
       @limits.each do |spec|
         argv << spec[:period_seconds]
         argv << spec[:limit]
-        argv << spec[:period_seconds] * 2 # TTL: generous, auto-cleans stale buckets
+        argv << (spec[:period_seconds] * 2) # TTL: generous, auto-cleans stale buckets
       end
 
       allowed, retry_after, failed_index = adapter.rate_limit_check_and_increment(keys, argv)

@@ -2,9 +2,7 @@
 
 require "spec_helper"
 require "sidekiq/testing"
-# rubocop:disable RSpec/DescribeClass
 RSpec.describe "RubyReactor Async and Retry Integration" do
-  # rubocop:enable RSpec/DescribeClass
   before do
     Sidekiq::Testing.fake!
     Sidekiq::Worker.clear_all

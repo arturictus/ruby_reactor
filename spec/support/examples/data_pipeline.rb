@@ -255,7 +255,7 @@ class UserETLReactor < RubyReactor::Reactor
       # Separate successful and failed transformations
       # In inline execution, all results are values (no Result wrappers)
       # In async execution, we'd need to handle Result objects
-      successful_users = users.select { |u| u.is_a?(Hash) }
+      successful_users = users.grep(Hash)
       failed_users = [] # Would contain failures in async mode
 
       result = {

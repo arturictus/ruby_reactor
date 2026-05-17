@@ -91,8 +91,7 @@ RSpec.describe "Locking Integration" do
       RubyReactor.configuration.lock_snooze_jitter = 0
 
       # Stub SidekiqWorker to capture rescheduling (snooze counter starts at 1)
-      expect(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
-        .with(5.0, instance_of(String), "SimpleLockReactor", 1)
+      allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
 
       # Call the worker's perform method with a serialized context
       context = RubyReactor::Context.new({ user_id: 1 }, SimpleLockReactor)
@@ -100,6 +99,9 @@ RSpec.describe "Locking Integration" do
 
       worker = RubyReactor::SidekiqWorkers::Worker.new
       worker.perform(serialized_context, "SimpleLockReactor")
+
+      expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
+        .with(5.0, instance_of(String), "SimpleLockReactor", 1)
     end
   end
 
