@@ -18,7 +18,16 @@ module RubyReactor
       end
 
       def perform(serialized_context, reactor_class_name = nil, snooze_count = 0)
-        context = ContextSerializer.deserialize(serialized_context)
+        begin
+          context = ContextSerializer.deserialize(serialized_context)
+        rescue RubyReactor::Error::DeserializationError,
+               RubyReactor::Error::SchemaVersionError => e
+          # Permanent failures — retrying the same blob will keep failing.
+          # Mark the context as failed (best-effort) and return so Sidekiq
+          # does not burn its retry budget.
+          handle_deserialization_failure(serialized_context, reactor_class_name, e)
+          return
+        end
 
         # If reactor_class_name is provided, use it to get the reactor class
         # This handles cases where the class can't be found via const_get
@@ -109,6 +118,54 @@ module RubyReactor
       def log_infrastructure_failure(msg, exception)
         RubyReactor.configuration.logger.error("RubyReactor infrastructure failure: #{exception.message}")
         RubyReactor.configuration.logger.error("Job details: #{msg.inspect}")
+      end
+
+      def handle_deserialization_failure(serialized_context, reactor_class_name, error)
+        metadata = extract_failure_metadata(serialized_context)
+        context_id = metadata[:context_id]
+        resolved_reactor_class_name = reactor_class_name || metadata[:reactor_class_name]
+
+        RubyReactor.configuration.logger.error(
+          "RubyReactor deserialization failure for context " \
+          "#{context_id || "unknown"}: #{error.class.name}: #{error.message}"
+        )
+
+        return unless context_id && resolved_reactor_class_name
+
+        payload = build_failed_context_payload(context_id, resolved_reactor_class_name, error)
+        RubyReactor.configuration.storage_adapter.store_context(
+          context_id,
+          payload,
+          resolved_reactor_class_name
+        )
+      rescue StandardError => e
+        # Don't let a persistence failure mask the original deserialization error.
+        RubyReactor.configuration.logger.error(
+          "RubyReactor failed to persist deserialization failure: #{e.class.name}: #{e.message}"
+        )
+      end
+
+      def extract_failure_metadata(serialized_context)
+        data = JSON.parse(serialized_context)
+        {
+          context_id: data["context_id"],
+          reactor_class_name: data["reactor_class"]
+        }
+      rescue StandardError
+        {}
+      end
+
+      def build_failed_context_payload(context_id, reactor_class_name, error)
+        JSON.generate(
+          "schema_version" => ContextSerializer::SCHEMA_VERSION,
+          "context_id" => context_id,
+          "reactor_class" => reactor_class_name,
+          "status" => "failed",
+          "failure_reason" => {
+            "message" => error.message,
+            "exception_class" => error.class.name
+          }
+        )
       end
     end
   end

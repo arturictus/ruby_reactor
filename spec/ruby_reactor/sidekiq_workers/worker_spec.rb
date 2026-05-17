@@ -130,6 +130,77 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
       end
     end
 
+    context "when deserialization fails" do
+      let(:adapter) { instance_double(RubyReactor::Storage::RedisAdapter) }
+      let(:error) { RubyReactor::Error::DeserializationError.new("globalid gem missing") }
+      let(:raw_blob) do
+        JSON.generate(
+          "schema_version" => RubyReactor::ContextSerializer::SCHEMA_VERSION,
+          "context_id" => "ctx-broken",
+          "reactor_class" => "BrokenReactor"
+        )
+      end
+
+      before do
+        allow(RubyReactor::ContextSerializer).to receive(:deserialize).and_raise(error)
+        allow(RubyReactor.configuration).to receive(:storage_adapter).and_return(adapter)
+        allow(adapter).to receive(:store_context)
+        allow(RubyReactor.configuration.logger).to receive(:error)
+      end
+
+      it "does not raise and returns nil" do
+        expect { subject.perform(raw_blob) }.not_to raise_error
+        expect(subject.perform(raw_blob)).to be_nil
+      end
+
+      it "does not call the executor" do
+        expect(RubyReactor::Executor).not_to receive(:new)
+        subject.perform(raw_blob)
+      end
+
+      it "logs the failure" do
+        expect(RubyReactor.configuration.logger).to receive(:error)
+          .with(a_string_including("ctx-broken", "DeserializationError", "globalid gem missing"))
+        subject.perform(raw_blob)
+      end
+
+      it "persists a failed-status context payload" do
+        expect(adapter).to receive(:store_context) do |context_id, payload, reactor_class_name|
+          expect(context_id).to eq("ctx-broken")
+          expect(reactor_class_name).to eq("BrokenReactor")
+          parsed = JSON.parse(payload)
+          expect(parsed["status"]).to eq("failed")
+          expect(parsed["failure_reason"]["exception_class"]).to eq("RubyReactor::Error::DeserializationError")
+          expect(parsed["failure_reason"]["message"]).to include("globalid gem missing")
+        end
+
+        subject.perform(raw_blob)
+      end
+
+      it "prefers the reactor_class_name argument over the one embedded in the blob" do
+        expect(adapter).to receive(:store_context).with("ctx-broken", anything, "OverrideReactor")
+        subject.perform(raw_blob, "OverrideReactor")
+      end
+
+      it "skips persistence when context_id cannot be extracted" do
+        expect(adapter).not_to receive(:store_context)
+        subject.perform("not-json-at-all")
+      end
+
+      it "also catches SchemaVersionError" do
+        allow(RubyReactor::ContextSerializer).to receive(:deserialize)
+          .and_raise(RubyReactor::Error::SchemaVersionError.new("0.9"))
+        expect { subject.perform(raw_blob) }.not_to raise_error
+      end
+
+      it "swallows storage failures so the original error is not masked" do
+        allow(adapter).to receive(:store_context).and_raise(StandardError, "redis down")
+        expect(RubyReactor.configuration.logger).to receive(:error)
+          .with(a_string_including("failed to persist"))
+        expect { subject.perform(raw_blob) }.not_to raise_error
+      end
+    end
+
     context "with jitter configured" do
       before do
         RubyReactor.configuration.lock_snooze_jitter = 5

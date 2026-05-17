@@ -145,7 +145,7 @@ module RubyReactor
             when "Regexp"
               Regexp.new(value["source"], value["options"])
             when "GlobalID"
-              GlobalID::Locator.locate(value["gid"])
+              locate_global_id(value["gid"])
             when "Template::Element"
               RubyReactor::Template::Element.new(value["map_name"], value["path"])
             when "Template::Input"
@@ -197,6 +197,15 @@ module RubyReactor
       # rubocop:enable Metrics/CyclomaticComplexity, Metrics/MethodLength
 
       private
+
+      def locate_global_id(gid)
+        unless defined?(GlobalID::Locator)
+          raise RubyReactor::Error::DeserializationError,
+                "globalid gem is required to deserialize GlobalID values (gid: #{gid})"
+        end
+
+        GlobalID::Locator.locate(gid)
+      end
 
       def validate_size(data)
         size = data.bytesize
