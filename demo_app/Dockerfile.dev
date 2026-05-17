@@ -1,0 +1,27 @@
+# Development Dockerfile for the Rails demo_app.
+# The repo root is bind-mounted at /workspace so the demo_app Gemfile
+# resolves `gem "ruby_reactor", path: ".."` to the live gem source.
+
+ARG RUBY_VERSION=3.2.6
+FROM docker.io/library/ruby:${RUBY_VERSION}-slim
+
+ENV LANG=C.UTF-8 \
+    BUNDLE_PATH=/bundle \
+    BUNDLE_JOBS=4 \
+    BUNDLE_RETRY=3
+
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y \
+      build-essential git curl pkg-config \
+      libyaml-dev libvips sqlite3 libsqlite3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN gem install bundler --no-document
+
+WORKDIR /workspace/demo_app
+
+EXPOSE 3000
+
+# Entrypoint lives in the bind-mounted repo (so edits don't require rebuilds).
+ENTRYPOINT ["/workspace/demo_app/bin/docker-dev-entrypoint"]
+CMD ["bash"]

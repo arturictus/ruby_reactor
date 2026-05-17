@@ -1,0 +1,74 @@
+services:
+  # Redis used by the gem's own RSpec suite (spec/) — matches port 6780
+  # expected by spec/spec_helper.rb.
+  redis-test:
+    image: redis:7-alpine
+    container_name: ruby_reactor_redis_test
+    ports:
+      - "6780:6379"
+    command: redis-server --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Dedicated Redis for the demo Rails app (storage + Sidekiq).
+  demo-redis:
+    image: redis:7-alpine
+    container_name: ruby_reactor_demo_redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - demo_redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # demo_app development container — builds with the local gem source bind-mounted
+  # so edits to `lib/` are picked up immediately.
+  demo-app:
+    build:
+      context: .
+      dockerfile: demo_app/Dockerfile.dev
+    container_name: ruby_reactor_demo_app
+    depends_on:
+      demo-redis:
+        condition: service_healthy
+    environment:
+      RAILS_ENV: development
+      REDIS_URL: redis://demo-redis:6379/1
+      BUNDLE_PATH: /bundle
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/workspace
+      - bundle_cache:/bundle
+    working_dir: /workspace/demo_app
+    command: bash -c "bin/rails db:prepare && bin/rails server -b 0.0.0.0"
+
+  # Optional Sidekiq worker against the same demo redis.
+  demo-sidekiq:
+    build:
+      context: .
+      dockerfile: demo_app/Dockerfile.dev
+    container_name: ruby_reactor_demo_sidekiq
+    depends_on:
+      demo-redis:
+        condition: service_healthy
+    environment:
+      RAILS_ENV: development
+      REDIS_URL: redis://demo-redis:6379/1
+      BUNDLE_PATH: /bundle
+    volumes:
+      - .:/workspace
+      - bundle_cache:/bundle
+    working_dir: /workspace/demo_app
+    command: bundle exec sidekiq
+
+volumes:
+  demo_redis_data:
+  bundle_cache:

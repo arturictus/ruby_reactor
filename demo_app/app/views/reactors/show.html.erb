@@ -1,0 +1,15 @@
+<h1>Application Paused</h1>
+<p>The reactor (ID: <%= @reactor_id %>) is waiting for your input.</p>
+
+<h3>Please complete your bio to finish the application:</h3>
+
+<%= form_with url: reactor_path(@reactor_id), method: :patch, local: true do |f| %>
+  <div>
+    <%= f.label :bio, "Bio:" %>
+    <%= f.text_area :bio %>
+  </div>
+  
+  <div>
+    <%= f.submit "Submit & Resume Reactor" %>
+  </div>
+<% end %>

@@ -10,6 +10,19 @@
 # rspec failure tracking
 .rspec_status
 log
-# rails demo app
-demo_app/
+# rails demo app — committed for dev/CI, but ignore generated/local files
+demo_app/log/
+demo_app/tmp/
+demo_app/storage/
+demo_app/vendor/bundle/
+demo_app/.bundle/
+demo_app/node_modules/
+demo_app/public/assets/
+demo_app/spec_output*.txt
+demo_app/db/*.sqlite3
+demo_app/db/*.sqlite3-*
+demo_app/config/master.key
+demo_app/config/credentials/*.key
 .claude/settings.local.json
+demo_app/.pi/.gitignore
+demo_app/.pi/config.json

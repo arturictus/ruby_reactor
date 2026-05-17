@@ -1,0 +1,19 @@
+/.bundle/
+/.yardoc
+/_yardoc/
+/coverage/
+/doc/
+/pkg/
+/spec/reports/
+/tmp/
+
+# rspec failure tracking
+.rspec_status
+log
+ui
+# Ignore key files for decrypting credentials and more.
+/config/*.key
+
+storage/*.sqlite3
+storage/*.sqlite3-shm
+storage/*.sqlite3-wal
