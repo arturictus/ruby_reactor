@@ -3,7 +3,6 @@
 require "spec_helper"
 require "dry-validation"
 
-# rubocop:disable RSpec/DescribeClass
 RSpec.describe "Dry::Validation Integration" do
   describe "Input Validation" do
     describe "basic input validation with schema blocks" do
@@ -902,4 +901,3 @@ RSpec.describe "Dry::Validation Integration" do
     end
   end
 end
-# rubocop:enable RSpec/DescribeClass

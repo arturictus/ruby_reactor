@@ -2,9 +2,7 @@
 
 require "spec_helper"
 
-# rubocop:disable RSpec/DescribeClass
 RSpec.describe "Execution Trace Verification", type: :integration do
-  # rubocop:enable RSpec/DescribeClass
   let(:captured_output) { StringIO.new }
 
   # rubocop:disable RSpec/ExpectOutput

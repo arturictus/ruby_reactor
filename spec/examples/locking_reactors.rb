@@ -4,7 +4,7 @@ class SimpleLockReactor < RubyReactor::Reactor
   with_lock(ttl: 10) { |inputs| "user_#{inputs[:user_id]}" }
 
   step :process do
-    run do |inputs|
+    run do |_inputs|
       # Simulating work
       RubyReactor.Success(processed: true)
     end
@@ -12,17 +12,17 @@ class SimpleLockReactor < RubyReactor::Reactor
 end
 
 class NestedChildReactor < RubyReactor::Reactor
-  with_lock(ttl: 10) { |inputs| "shared_resource" }
+  with_lock(ttl: 10) { |_inputs| "shared_resource" }
 
   step :child do
-    run do |inputs|
+    run do |_inputs|
       RubyReactor.Success(child_done: true)
     end
   end
 end
 
 class NestedLockReactor < RubyReactor::Reactor
-  with_lock(ttl: 10) { |inputs| "shared_resource" }
+  with_lock(ttl: 10) { |_inputs| "shared_resource" }
 
   compose :parent, NestedChildReactor do
     # Compose automatically links contexts and uses same root_context
@@ -30,10 +30,10 @@ class NestedLockReactor < RubyReactor::Reactor
 end
 
 class SemaphoreReactor < RubyReactor::Reactor
-  with_semaphore(limit: 2, wait: 0) { |inputs| "api_limit" }
+  with_semaphore(limit: 2, wait: 0) { |_inputs| "api_limit" }
 
   step :call_api do
-    run do |inputs|
+    run do |_inputs|
       # Simulating API call
       RubyReactor.Success(api_called: true)
     end

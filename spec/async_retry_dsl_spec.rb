@@ -2,10 +2,7 @@
 
 require "spec_helper"
 
-# rubocop:disable RSpec/DescribeClass
 RSpec.describe "RubyReactor Async and Retry DSL" do
-  # rubocop:enable RSpec/DescribeClass
-
   describe "Reactor DSL extensions" do
     it "supports async class method" do
       reactor_class = Class.new(RubyReactor::Reactor) do

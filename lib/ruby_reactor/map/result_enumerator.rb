@@ -80,15 +80,15 @@ module RubyReactor
       end
 
       def last
-        self[count - 1]
+        self[-1]
       end
 
       def successes
-        lazy.select { |result| result.is_a?(RubyReactor::Success) }.map(&:value)
+        lazy.grep(RubyReactor::Success).map(&:value)
       end
 
       def failures
-        lazy.select { |result| result.is_a?(RubyReactor::Failure) }.map(&:error)
+        lazy.grep(RubyReactor::Failure).map(&:error)
       end
 
       private
