@@ -43,7 +43,7 @@ services:
       REDIS_URL: redis://demo-redis:6379/1
       BUNDLE_PATH: /bundle
     ports:
-      - "3000:3000"
+      - "3789:3000"
     volumes:
       - .:/workspace
       - bundle_cache:/bundle

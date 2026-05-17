@@ -1,86 +1,30 @@
-name: Release Gem
+name: Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'The tag to create (e.g. v0.3.0)'
-        required: true
-        type: string
+  workflow_run:
+    workflows:
+      - Ruby
+    branches:
+      - main
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
 
 jobs:
-  release:
-    name: Build and Release
+  release-please:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # allowed to push tags and create releases
-
-    services:
-      redis:
-        image: redis/redis-stack-server:latest
-        ports:
-          - 6780:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+      - name: Run release-please
+        uses: googleapis/release-please-action@v4
         with:
-          ruby-version: 3.3 # pinned to 3.3 to support unicode-emoji < 4.0 requirement
-          bundler-cache: true
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: gui/package-lock.json
-
-      - name: Install Frontend dependencies
-        working-directory: gui
-        run: npm ci
-
-      - name: Run Frontend tests
-        working-directory: gui
-        run: npm test
-
-      - name: Run tests
-        run: bundle exec rspec
-
-      - name: Run rubocop
-        run: bundle exec rubocop
-        continue-on-error: true
-
-      - name: Create and Push Tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ inputs.tag_name }}
-          git push origin ${{ inputs.tag_name }}
-
-      - name: Build Gem
-        run: |
-          gem build *.gemspec
-
-      - name: Publish to RubyGems
-        env:
-          GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
-        run: |
-          mkdir -p $HOME/.gem
-          touch $HOME/.gem/credentials
-          chmod 0600 $HOME/.gem/credentials
-          printf -- "---\n:rubygems_api_key: ${GEM_HOST_API_KEY}\n" > $HOME/.gem/credentials
-          gem push *.gem
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ inputs.tag_name }}
-          generate_release_notes: true
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json

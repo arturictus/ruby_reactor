@@ -889,6 +889,64 @@ After checking out the repo, run `bin/setup` to install dependencies. Then, run 
 
 To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
 
+### Running Redis for the test suite
+
+The gem's RSpec suite expects Redis on port `6780` (see [spec/spec_helper.rb](spec/spec_helper.rb)). Start it via Docker Compose:
+
+```bash
+docker compose up -d redis-test
+```
+
+Then run the suite:
+
+```bash
+bundle exec rspec
+```
+
+Stop it when done:
+
+```bash
+docker compose stop redis-test
+```
+
+### Running the demo Rails app
+
+The demo Rails app under [demo_app/](demo_app/) has its own Redis (port `6380`) and bind-mounts the repo so edits to `lib/` are live. Two ways to run it:
+
+**Option A — fully containerized (Redis + Rails + Sidekiq):**
+
+```bash
+docker compose up demo-redis demo-app demo-sidekiq
+```
+
+App available at <http://localhost:3789>.
+
+**Option B — Redis in Docker, Rails on host:**
+
+```bash
+docker compose up -d demo-redis
+
+cd demo_app
+bin/rails db:prepare
+REDIS_URL=redis://localhost:6380/1 bin/rails server
+# in another shell, if you need Sidekiq:
+REDIS_URL=redis://localhost:6380/1 bundle exec sidekiq
+```
+
+To run the demo app specs:
+
+```bash
+cd demo_app
+bundle exec rspec
+```
+
+Tear everything down:
+
+```bash
+docker compose down          # stop containers
+docker compose down -v       # also remove demo_redis_data + bundle_cache volumes
+```
+
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at https://github.com/arturictus/ruby_reactor. This project is intended to be a safe, welcoming space for collaboration, and contributors are expected to adhere to the [code of conduct](https://github.com/arturictus/ruby_reactor/blob/main/CODE_OF_CONDUCT.md).

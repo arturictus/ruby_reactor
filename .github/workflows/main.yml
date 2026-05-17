@@ -14,7 +14,8 @@ jobs:
     strategy:
       matrix:
         ruby:
-          - '3.2.6'
+          - '3.4.8'
+          - '4.0.4'
 
     services:
       redis:
@@ -61,7 +62,7 @@ jobs:
     - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
-        ruby-version: '3.2.6'
+        ruby-version: '3.4.8'
         bundler-cache: true
         working-directory: demo_app
     - name: Prepare database
