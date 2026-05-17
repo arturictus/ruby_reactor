@@ -80,7 +80,7 @@ module RubyReactor
       end
 
       def last
-        self[-1]
+        self[count - 1]
       end
 
       def successes

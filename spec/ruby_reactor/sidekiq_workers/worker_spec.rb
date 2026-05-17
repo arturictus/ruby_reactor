@@ -5,8 +5,17 @@ require "sidekiq/testing"
 require "ruby_reactor/sidekiq_workers/worker"
 
 RSpec.describe RubyReactor::SidekiqWorkers::Worker do
-  let(:context) { instance_double(RubyReactor::Context, context_id: "test-execution-id", reactor_class: reactor_class, inline_async_execution: true) }
-  let(:reactor_class) { double("ReactorClass", name: "TestReactor") }
+  subject(:worker) { described_class.new }
+
+  let(:reactor_class) { Class.new { def self.name = "TestReactor" } }
+  let(:context) do
+    instance_double(
+      RubyReactor::Context,
+      context_id: "test-execution-id",
+      reactor_class: reactor_class,
+      inline_async_execution: true
+    )
+  end
   let(:executor) { instance_double(RubyReactor::Executor) }
   let(:serialized_context) { "{}" }
 
@@ -23,25 +32,25 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
 
   describe "#perform" do
     it "executes the reactor" do
-      expect(executor).to receive(:resume_execution)
-      subject.perform(serialized_context)
+      allow(executor).to receive(:resume_execution)
+      worker.perform(serialized_context)
+      expect(executor).to have_received(:resume_execution)
     end
 
     context "when lock acquisition fails" do
       before do
         allow(executor).to receive(:resume_execution).and_raise(RubyReactor::Lock::AcquisitionError)
+        allow(described_class).to receive(:perform_in)
       end
 
       it "reschedules the job with the snooze counter incremented" do
-        expect(described_class).to receive(:perform_in).with(5.0, serialized_context, nil, 1)
-
-        subject.perform(serialized_context)
+        worker.perform(serialized_context)
+        expect(described_class).to have_received(:perform_in).with(5.0, serialized_context, nil, 1)
       end
 
       it "carries the snooze counter forward across reschedules" do
-        expect(described_class).to receive(:perform_in).with(5.0, serialized_context, nil, 4)
-
-        subject.perform(serialized_context, nil, 3)
+        worker.perform(serialized_context, nil, 3)
+        expect(described_class).to have_received(:perform_in).with(5.0, serialized_context, nil, 4)
       end
     end
 
@@ -49,12 +58,12 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
       before do
         allow(executor).to receive(:resume_execution)
           .and_raise(RubyReactor::Semaphore::AcquisitionError)
+        allow(described_class).to receive(:perform_in)
       end
 
       it "reschedules the job" do
-        expect(described_class).to receive(:perform_in).with(5.0, serialized_context, nil, 1)
-
-        subject.perform(serialized_context)
+        worker.perform(serialized_context)
+        expect(described_class).to have_received(:perform_in).with(5.0, serialized_context, nil, 1)
       end
     end
 
@@ -72,12 +81,12 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
 
       before do
         allow(executor).to receive(:resume_execution).and_raise(error)
+        allow(described_class).to receive(:perform_in)
       end
 
       it "uses the error's retry_after_seconds as the snooze delay" do
-        expect(described_class).to receive(:perform_in).with(2.0, serialized_context, nil, 1)
-
-        subject.perform(serialized_context)
+        worker.perform(serialized_context)
+        expect(described_class).to have_received(:perform_in).with(2.0, serialized_context, nil, 1)
       end
 
       it "floors very short retry_after at 0.1s" do
@@ -91,8 +100,8 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
         )
         allow(executor).to receive(:resume_execution).and_raise(tiny)
 
-        expect(described_class).to receive(:perform_in).with(0.1, serialized_context, nil, 1)
-        subject.perform(serialized_context)
+        worker.perform(serialized_context)
+        expect(described_class).to have_received(:perform_in).with(0.1, serialized_context, nil, 1)
       end
     end
 
@@ -109,27 +118,29 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
         allow(RubyReactor.configuration).to receive(:storage_adapter).and_return(adapter)
         allow(adapter).to receive(:store_context)
         allow(RubyReactor.configuration.logger).to receive(:warn)
+        allow(described_class).to receive(:perform_in)
       end
 
       it "does not reschedule" do
-        expect(described_class).not_to receive(:perform_in)
-        subject.perform(serialized_context, nil, 3)
+        worker.perform(serialized_context, nil, 3)
+        expect(described_class).not_to have_received(:perform_in)
       end
 
       it "marks the context as failed and persists it" do
-        expect(context).to receive(:status=).with(:failed)
-        expect(context).to receive(:failure_reason=) do |reason|
-          expect(reason).to include(
+        worker.perform(serialized_context, nil, 3)
+
+        expect(context).to have_received(:status=).with(:failed)
+        expect(context).to have_received(:failure_reason=).with(
+          hash_including(
             exception_class: "RubyReactor::Lock::AcquisitionError",
             snooze_attempts: 3
           )
-        end
-        expect(adapter).to receive(:store_context).with("test-execution-id", "{serialized}", "TestReactor")
-
-        subject.perform(serialized_context, nil, 3)
+        )
+        expect(adapter).to have_received(:store_context).with("test-execution-id", "{serialized}", "TestReactor")
       end
     end
 
+    # rubocop:disable RSpec/MultipleMemoizedHelpers
     context "when deserialization fails" do
       let(:adapter) { instance_double(RubyReactor::Storage::RedisAdapter) }
       let(:error) { RubyReactor::Error::DeserializationError.new("globalid gem missing") }
@@ -149,23 +160,24 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
       end
 
       it "does not raise and returns nil" do
-        expect { subject.perform(raw_blob) }.not_to raise_error
-        expect(subject.perform(raw_blob)).to be_nil
+        expect(worker.perform(raw_blob)).to be_nil
       end
 
       it "does not call the executor" do
-        expect(RubyReactor::Executor).not_to receive(:new)
-        subject.perform(raw_blob)
+        worker.perform(raw_blob)
+        expect(RubyReactor::Executor).not_to have_received(:new)
       end
 
       it "logs the failure" do
-        expect(RubyReactor.configuration.logger).to receive(:error)
+        worker.perform(raw_blob)
+        expect(RubyReactor.configuration.logger).to have_received(:error)
           .with(a_string_including("ctx-broken", "DeserializationError", "globalid gem missing"))
-        subject.perform(raw_blob)
       end
 
       it "persists a failed-status context payload" do
-        expect(adapter).to receive(:store_context) do |context_id, payload, reactor_class_name|
+        worker.perform(raw_blob)
+
+        expect(adapter).to have_received(:store_context) do |context_id, payload, reactor_class_name|
           expect(context_id).to eq("ctx-broken")
           expect(reactor_class_name).to eq("BrokenReactor")
           parsed = JSON.parse(payload)
@@ -173,46 +185,46 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
           expect(parsed["failure_reason"]["exception_class"]).to eq("RubyReactor::Error::DeserializationError")
           expect(parsed["failure_reason"]["message"]).to include("globalid gem missing")
         end
-
-        subject.perform(raw_blob)
       end
 
       it "prefers the reactor_class_name argument over the one embedded in the blob" do
-        expect(adapter).to receive(:store_context).with("ctx-broken", anything, "OverrideReactor")
-        subject.perform(raw_blob, "OverrideReactor")
+        worker.perform(raw_blob, "OverrideReactor")
+        expect(adapter).to have_received(:store_context).with("ctx-broken", anything, "OverrideReactor")
       end
 
       it "skips persistence when context_id cannot be extracted" do
-        expect(adapter).not_to receive(:store_context)
-        subject.perform("not-json-at-all")
+        worker.perform("not-json-at-all")
+        expect(adapter).not_to have_received(:store_context)
       end
 
       it "also catches SchemaVersionError" do
         allow(RubyReactor::ContextSerializer).to receive(:deserialize)
           .and_raise(RubyReactor::Error::SchemaVersionError.new("0.9"))
-        expect { subject.perform(raw_blob) }.not_to raise_error
+        expect { worker.perform(raw_blob) }.not_to raise_error
       end
 
       it "swallows storage failures so the original error is not masked" do
         allow(adapter).to receive(:store_context).and_raise(StandardError, "redis down")
-        expect(RubyReactor.configuration.logger).to receive(:error)
+        expect { worker.perform(raw_blob) }.not_to raise_error
+        expect(RubyReactor.configuration.logger).to have_received(:error)
           .with(a_string_including("failed to persist"))
-        expect { subject.perform(raw_blob) }.not_to raise_error
       end
     end
+
+    # rubocop:enable RSpec/MultipleMemoizedHelpers
 
     context "with jitter configured" do
       before do
         RubyReactor.configuration.lock_snooze_jitter = 5
         allow(executor).to receive(:resume_execution).and_raise(RubyReactor::Lock::AcquisitionError)
+        allow(described_class).to receive(:perform_in)
       end
 
       it "schedules within the [base, base + jitter] window" do
-        allow(described_class).to receive(:perform_in) do |delay, *_rest|
+        worker.perform(serialized_context)
+        expect(described_class).to have_received(:perform_in) do |delay, *_rest|
           expect(delay).to be_between(5.0, 10.0)
         end
-
-        subject.perform(serialized_context)
       end
     end
   end
