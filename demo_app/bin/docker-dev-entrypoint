@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -e
+
+# Ensure gems are installed against the mounted bundle cache before running
+# any command (rails server, sidekiq, rspec, bash, ...).
+bundle check >/dev/null 2>&1 || bundle install
+
+exec "$@"

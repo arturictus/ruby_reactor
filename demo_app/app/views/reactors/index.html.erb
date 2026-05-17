@@ -1,0 +1,24 @@
+<h1>Reactor Demos</h1>
+
+<h2>Form Interrupt Demo</h2>
+<p>This demo starts a reactor, which pauses to ask for user input (Bio), and then resumes.</p>
+<%= form_with url: reactors_path, method: :post, local: true do |f| %>
+  <%= f.label :user_name, "Enter your name:" %>
+  <%= f.text_field :user_name %>
+  <%= f.submit "Start Application" %>
+<% end %>
+
+<hr>
+
+<h2>Webhook Interrupt Demo</h2>
+<p>To test webhook interrupt:</p>
+<pre>
+# In rails console:
+r = WebhookInterruptReactor.run(provider_id: 123)
+puts r.context.result(:initiate_request) # => "req_123_xxxx"
+
+# Then curl:
+curl -X POST http://localhost:3000/webhooks/receive \
+  -d "request_id=REQ_ID_FROM_ABOVE" \
+  -d "status=approved"
+</pre>

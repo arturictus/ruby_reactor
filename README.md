@@ -132,22 +132,40 @@ puts result.value  # => "Hello from Ruby Reactor!"
 
 ## Web Dashboard
 
-RubyReactor comes with a built-in web dashboard to inspect reactor executions, view logs, and retry failed steps.
+RubyReactor ships with a built-in web dashboard to inspect reactor executions, view logs, and retry failed steps. The dashboard is a Rack app (a [Roda](https://roda.jeremyevans.net/) application) bundled inside the gem with its pre-compiled JS/CSS assets — no extra install or asset build step is required.
 
 ### Rails Installation
 
-Mount the dashboard engine in your `config/routes.rb`:
+Add the gem to your `Gemfile`:
+
+```ruby
+gem "ruby_reactor"
+```
+
+Then mount the dashboard in your `config/routes.rb`:
 
 ```ruby
 Rails.application.routes.draw do
   # ... other routes
-  mount RubyReactor::Web::Application => '/ruby_reactor'
+  mount RubyReactor::Web::Application => "/ruby_reactor"
 end
+```
+
+That's it — visit `/ruby_reactor` and the UI loads. `RubyReactor::Web::Application` is autoloaded by Zeitwerk on first reference, so no extra `require` is needed.
+
+### Rack / Sinatra / Standalone
+
+Because it's a plain Rack app, you can mount it anywhere `call(env)` is accepted:
+
+```ruby
+# config.ru
+require "ruby_reactor/web/application"
+run RubyReactor::Web::Application
 ```
 
 ![RubyReactor Dashboard Screenshot](documentation/images/failed_order_processing.png)
 
-You can secure the dashboard using standard Rails authentication methods (e.g., `authenticate` block with Devise).
+You can secure the dashboard using standard Rails authentication methods (e.g., wrapping the `mount` line in an `authenticate` block with Devise, or in a `constraints` block).
 
 ## Usage
 
