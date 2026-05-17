@@ -7,7 +7,7 @@ RSpec.describe InlineCompositionReactor, type: :reactor do
     expect(reactor).to be_success
     # An inline `compose do ... end` exposes the full sub-result hash to the
     # consuming step, so :final_output stringifies the whole map.
-    expect(reactor.result.value).to eq("Average is {:sum=>10, :average=>2.5}")
+    expect(reactor.result.value).to eq("Average is #{ { sum: 10, average: 2.5 }.inspect }")
   end
 
   it "runs the composed step and final_output in order" do
