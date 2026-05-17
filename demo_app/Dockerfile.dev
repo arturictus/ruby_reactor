@@ -2,7 +2,7 @@
 # The repo root is bind-mounted at /workspace so the demo_app Gemfile
 # resolves `gem "ruby_reactor", path: ".."` to the live gem source.
 
-ARG RUBY_VERSION=3.2.6
+ARG RUBY_VERSION=3.4.8
 FROM docker.io/library/ruby:${RUBY_VERSION}-slim
 
 ENV LANG=C.UTF-8 \
