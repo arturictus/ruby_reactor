@@ -1,0 +1,13 @@
+# Changelog
+
+## [0.4.0](https://github.com/arturictus/ruby_reactor/compare/ruby_reactor-v0.3.2...ruby_reactor/v0.4.0) (2026-05-17)
+
+
+### Features
+
+* `AsyncResult` returning intermediate_results ([#10](https://github.com/arturictus/ruby_reactor/issues/10)) ([0cb96d6](https://github.com/arturictus/ruby_reactor/commit/0cb96d66e88097665998601276e38e1c2249c581))
+* enhance deserialization error handling in Sidekiq worker ([#23](https://github.com/arturictus/ruby_reactor/issues/23)) ([60dde95](https://github.com/arturictus/ruby_reactor/commit/60dde95606d52cc6a9d352ad0117b4092a1ebb9d))
+* Enhance failure messages with step, reactor, redacted inputs, a… ([#11](https://github.com/arturictus/ruby_reactor/issues/11)) ([952feae](https://github.com/arturictus/ruby_reactor/commit/952feaeb6ebbe5fbe2daf470263d8e769ba64138))
+* Introduce reactor interrupt functionality, allowing pausing and… ([#13](https://github.com/arturictus/ruby_reactor/issues/13)) ([53d0861](https://github.com/arturictus/ruby_reactor/commit/53d0861f0238f0e2247e581b0a27cba2f42cfba6))
+* Rspec helpers ([#19](https://github.com/arturictus/ruby_reactor/issues/19)) ([cb71f80](https://github.com/arturictus/ruby_reactor/commit/cb71f80c0708dacf6c10c0beac88446b00f30f54))
+* Web Dashboard ([#14](https://github.com/arturictus/ruby_reactor/issues/14)) ([80255dd](https://github.com/arturictus/ruby_reactor/commit/80255dd40800af8f6ed804de9c6f151331742fd5))
