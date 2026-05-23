@@ -232,4 +232,56 @@ RSpec.describe RubyReactor::ContextSerializer do
       expect(deserialized.retry_context.next_retry_at).to be_within(1).of(original.retry_context.next_retry_at)
     end
   end
+
+  describe ".simplify_for_api failure enrichment" do
+    it "extracts code_snippet from backtrace when missing from stored failure" do
+      allow(RubyReactor::Utils::CodeExtractor).to receive(:extract).and_return([
+                                                                                 { line_number: 47, content: "    wait_for :update_product",
+                                                                                   target: false },
+                                                                                 { line_number: 48, content: '    raise "Random error triggered!"',
+                                                                                   target: true }
+                                                                               ])
+
+      payload = {
+        "_type" => "Failure",
+        "error" => "Step 'ramdomly_fail' failed after 1 attempts: Random error triggered!",
+        "step_name" => "ramdomly_fail",
+        "exception_class" => "RuntimeError",
+        "backtrace" => [
+          "/workspace/demo_app/app/reactors/ar_map_reactor.rb:48:in 'block (3 levels) in <class:ArMapReactor>'"
+        ]
+      }
+
+      simplified = described_class.simplify_for_api(payload)
+
+      expect(simplified["message"]).to eq("Step 'ramdomly_fail' failed after 1 attempts: Random error triggered!")
+      expect(simplified["file_path"]).to eq("/workspace/demo_app/app/reactors/ar_map_reactor.rb")
+      expect(simplified["line_number"]).to eq(48)
+      expect(simplified["code_snippet"]).to be_an(Array)
+      expect(simplified["code_snippet"].length).to eq(2)
+    end
+
+    it "enriches failures using demo app frames inside the workspace root" do
+      workflow_path = File.expand_path("../../demo_app/app/reactors/payment_workflow.rb", __dir__)
+      skip "demo_app reactor file not available" unless File.exist?(workflow_path)
+
+      payload = {
+        "error" => "Step 'fulfill_order' failed after 1 attempts: Failed to fulfill_order",
+        "step_name" => "fulfill_order",
+        "backtrace" => [
+          "#{RubyReactor.root}/lib/ruby_reactor.rb:314:in 'Class#new'",
+          "... [ruby-reactor-internals-redacted-trace]",
+          "#{workflow_path}:83:in 'block (2 levels) in <class:PaymentWorkflow>'"
+        ]
+      }
+
+      simplified = described_class.simplify_for_api(payload)
+
+      expect(simplified["file_path"]).to eq(workflow_path)
+      expect(simplified["line_number"]).to eq(83)
+      expect(simplified["code_snippet"]).to be_an(Array)
+      expect(simplified["code_snippet"]).not_to be_empty
+      expect(simplified["code_snippet"].any? { |line| line["target"] }).to be true
+    end
+  end
 end

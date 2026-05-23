@@ -354,6 +354,34 @@ describe('StepInspector', () => {
       expect(backtraceText.textContent).toContain('line 7');
       expect(screen.getByText(/Show Less/)).toBeInTheDocument();
     });
+
+    it('should display the source code snippet when available', () => {
+      const codeSnippetProps = {
+        ...failedProps,
+        error: {
+          ...failedProps.error,
+          file_path: '/workspace/demo_app/app/reactors/ar_map_reactor.rb',
+          line_number: 48,
+          code_snippet: [
+            { line_number: 46, content: '  def process_item', target: false },
+            { line_number: 47, content: '    item = fetch_item', target: false },
+            { line_number: 48, content: "    raise 'boom'", target: true },
+            { line_number: 49, content: '  end', target: false },
+          ],
+        },
+      };
+
+      render(<StepInspector {...codeSnippetProps} />);
+
+      expect(screen.getByText('Source Code')).toBeInTheDocument();
+      expect(screen.getByText(/ar_map_reactor.rb:48/)).toBeInTheDocument();
+      const codeBlock = document.querySelector('code.language-ruby');
+      expect(codeBlock).toBeInTheDocument();
+      expect(codeBlock?.textContent).toContain('raise');
+      expect(codeBlock?.textContent).toContain("'boom'");
+      expect(codeBlock?.textContent).toContain('process_item');
+      expect(codeBlock?.querySelectorAll('.hljs-keyword').length).toBeGreaterThan(0);
+    });
   });
 
   describe('Validation Errors', () => {

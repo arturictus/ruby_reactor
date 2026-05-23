@@ -87,5 +87,27 @@ RSpec.describe "Enhanced Error Reporting" do
       expect(message).to include("Code Snippet:")
       expect(message).to include(">   11    raise 'error'")
     end
+
+    it "extracts location from Ruby 3.x single-quoted backtrace lines" do
+      original_error = StandardError.new("Random error triggered!").tap do |e|
+        e.set_backtrace(
+          ["/workspace/demo_app/app/reactors/ar_map_reactor.rb:48:in 'block (3 levels) in <class:ArMapReactor>'"]
+        )
+      end
+
+      error = RubyReactor::Error::StepFailureError.new(
+        "Step failed",
+        step: :ramdomly_fail,
+        context: context,
+        original_error: original_error,
+        step_arguments: {}
+      )
+
+      failure = result_handler.handle_execution_error(error)
+
+      expect(failure.file_path).to eq("/workspace/demo_app/app/reactors/ar_map_reactor.rb")
+      expect(failure.line_number).to eq(48)
+      expect(failure.code_snippet).to be_an(Array)
+    end
   end
 end
