@@ -245,6 +245,23 @@ module RubyReactor
       def period_marker?(key_base, every, now: Time.now.utc)
         @redis.exists?(RubyReactor::Period.key(key_base, every, now: now))
       end
+
+      # TTL in seconds for a held lock (-2 if key does not exist).
+      def lock_ttl(prefixed_key)
+        @redis.ttl(prefixed_key)
+      end
+
+      # TTL in seconds for the current rate-limit bucket (-2 if unset).
+      def rate_limit_ttl(key_base, every, now: Time.now.to_i)
+        period_seconds = RubyReactor::Period.period_seconds(every)
+        bucket = now / period_seconds
+        @redis.ttl("rate:#{key_base}:#{every}:#{bucket}")
+      end
+
+      # TTL in seconds for a period marker (-2 if unset).
+      def period_ttl(key_base, every, now: Time.now.utc)
+        @redis.ttl(RubyReactor::Period.key(key_base, every, now: now))
+      end
     end
     # rubocop:enable Naming/PredicateMethod
   end

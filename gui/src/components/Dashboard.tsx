@@ -1,7 +1,7 @@
 import useSWR from 'swr';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, Clock, AlertCircle, CheckCircle2, Search, Filter } from 'lucide-react';
+import { Activity, Clock, AlertCircle, CheckCircle2, Search, Filter, SkipForward } from 'lucide-react';
 import { cn, apiUrl } from '../lib/utils';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
@@ -58,6 +58,7 @@ export default function Dashboard() {
               <option value="all">All Status</option>
               <option value="running">Running</option>
               <option value="completed">Completed</option>
+              <option value="skipped">Skipped</option>
               <option value="failed">Failed</option>
               <option value="cancelled">Cancelled</option>
             </select>
@@ -143,6 +144,7 @@ function StatusBadge({ status }: { status: string }) {
   const styles = {
     running: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20 shadow-[0_0_10px_rgba(99,102,241,0.15)]",
     completed: "bg-teal-500/10 text-teal-400 border-teal-500/20 shadow-[0_0_10px_rgba(20,184,166,0.15)]",
+    skipped: "bg-sky-500/10 text-sky-400 border-sky-500/20 shadow-[0_0_10px_rgba(14,165,233,0.15)]",
     failed: "bg-rose-500/10 text-rose-400 border-rose-500/20 shadow-[0_0_10px_rgba(244,63,94,0.15)]",
     cancelled: "bg-slate-800 text-slate-400 border-slate-700",
   }[status] || "bg-slate-800 text-slate-400 border-slate-700";
@@ -150,6 +152,7 @@ function StatusBadge({ status }: { status: string }) {
   const icons = {
     running: <Activity className="w-3 h-3 animate-pulse" />,
     completed: <CheckCircle2 className="w-3 h-3" />,
+    skipped: <SkipForward className="w-3 h-3" />,
     failed: <AlertCircle className="w-3 h-3" />,
     cancelled: <Clock className="w-3 h-3" />,
   }[status];

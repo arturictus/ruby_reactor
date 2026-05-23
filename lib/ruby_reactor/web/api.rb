@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "roda"
+require_relative "coordination_serializer"
 
 module RubyReactor
   module Web
@@ -38,7 +39,7 @@ module RubyReactor
               response_data = {
                 id: data[:context_id],
                 class: data[:reactor_class].to_s,
-                status: if %w[failed paused completed running].include?(data[:status].to_s)
+                status: if %w[failed paused completed running skipped].include?(data[:status].to_s)
                           data[:status].to_s
                         elsif data[:cancelled]
                           "cancelled"
@@ -57,6 +58,11 @@ module RubyReactor
                 composed_contexts: self.class.hydrate_composed_contexts(
                   data[:composed_contexts] || {},
                   data[:reactor_class]&.to_s
+                ),
+                coordination: CoordinationSerializer.build(
+                  reactor_class,
+                  inputs: data[:inputs],
+                  context_id: data[:context_id]
                 ),
                 error: data[:failure_reason]
               }

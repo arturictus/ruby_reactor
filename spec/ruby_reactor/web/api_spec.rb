@@ -54,6 +54,7 @@ RSpec.describe RubyReactor::Web::API, type: :request do
         expect(last_response.status).to eq(200)
         expect(json["status"]).to eq("completed")
         expect(json["error"]).to be_nil
+        expect(json).to have_key("coordination")
       end
     end
 

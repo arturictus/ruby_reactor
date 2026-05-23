@@ -196,7 +196,7 @@ module RubyReactor
       end
 
       def determine_status(data)
-        return data["status"] if data["status"] && %w[failed paused completed running].include?(data["status"])
+        return data["status"] if data["status"] && %w[failed paused completed running skipped].include?(data["status"])
         return "cancelled" if data["cancelled"]
         # Heuristic
         return "failed" if data["retry_count"]&.positive? && !data["current_step"].nil?

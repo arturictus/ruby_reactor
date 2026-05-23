@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { apiUrl } from '../lib/utils';
 import DagVisualizer from './DagVisualizer';
 import StepInspector from './StepInspector';
+import CoordinationPanel from './CoordinationPanel';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
@@ -49,6 +50,7 @@ export default function ReactorDetail() {
               <span className="text-sm text-slate-400">Status: <span className={`font-medium ${reactor.status === 'failed' ? 'text-red-400' :
                 reactor.status === 'completed' ? 'text-emerald-400' :
                   reactor.status === 'paused' ? 'text-amber-400' :
+                    reactor.status === 'skipped' ? 'text-sky-400' :
                     'text-slate-200'
                 }`}>{reactor.status}</span></span>
               {reactor.retry_count > 0 && (
@@ -81,13 +83,17 @@ export default function ReactorDetail() {
         </div>
       </div>
 
+      <CoordinationPanel coordination={reactor.coordination} />
+
       {reactor.status === 'failed' && reactor.error && (
         <div className="px-2">
           <div className="px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
             <div className="space-y-1 overflow-hidden">
               <h3 className="text-sm font-medium text-red-500">
-                Workflow Failed
+                {reactor.error.snooze_attempts != null
+                  ? `Coordination contention — ${reactor.error.snooze_attempts} snooze attempts exhausted`
+                  : 'Workflow Failed'}
                 {reactor.error.step_name && <span className="text-red-400"> at step <span className="font-mono bg-red-500/10 px-1 rounded">{reactor.error.step_name}</span></span>}
               </h3>
               <p className="text-xs text-red-400/80 font-mono truncate">{reactor.error.message}</p>
