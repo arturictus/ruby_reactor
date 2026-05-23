@@ -10,10 +10,17 @@ module RubyReactor
 
     def self.find(id)
       reactor_class_name = name
-      serialized_context = configuration.storage_adapter.retrieve_context(id, reactor_class_name)
-      raise Error::ValidationError, "Context '#{id}' not found" unless serialized_context
+      raw_data = configuration.storage_adapter.retrieve_context(id, reactor_class_name)
+      raise Error::ValidationError, "Context '#{id}' not found" unless raw_data
 
-      context = Context.deserialize_from_retry(serialized_context)
+      context = case raw_data
+                when String
+                  ContextSerializer.deserialize(raw_data)
+                when Hash
+                  Context.deserialize_from_retry(raw_data)
+                else
+                  raise Error::ValidationError, "Invalid context format for '#{id}'"
+                end
       new(context)
     end
 

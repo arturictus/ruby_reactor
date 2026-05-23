@@ -1,5 +1,5 @@
 import useSWR, { mutate } from 'swr';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Play, XOctagon, AlertCircle } from 'lucide-react';
 import { useState } from 'react';
 import { apiUrl } from '../lib/utils';
@@ -13,10 +13,13 @@ const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export default function ReactorDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { data: reactor, error, isLoading } = useSWR(id ? apiUrl(`/api/reactors/${id}`) : null, fetcher, { refreshInterval: 1000 });
   const [selectedStep, setSelectedStep] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
 
-  const handleAction = async (action: 'retry' | 'cancel') => {
+  const handleAction = async (action: 'cancel') => {
     if (!id) return;
     try {
       await fetch(apiUrl(`/api/reactors/${id}/${action}`), { method: 'POST' });
@@ -26,14 +29,34 @@ export default function ReactorDetail() {
     }
   };
 
+  const handleRetry = async () => {
+    if (!id || reactor?.status !== 'failed' || isRetrying) return;
+
+    setIsRetrying(true);
+    setRetryError(null);
+
+    try {
+      const response = await fetch(apiUrl(`/api/reactors/${id}/retry`), { method: 'POST' });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok || !payload.id) {
+        setRetryError(payload.error || 'Failed to retry execution');
+        return;
+      }
+
+      navigate(`/reactors/${payload.id}`);
+    } catch (e) {
+      setRetryError('Failed to retry execution');
+      console.error('Failed to retry', e);
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
 
 
   if (error) return <div className="p-4 text-red-500 bg-red-500/10 border border-red-500/20 rounded-lg">Failed to load reactor</div>;
   if (isLoading) return <div className="p-4 text-slate-500 animate-pulse">Loading reactor details...</div>;
-
-  if (reactor?.status === 'failed') {
-    console.log('ReactorDetail: reactor is failed. Error:', reactor.error);
-  }
 
   return (
     <div className="space-y-6 h-[calc(100vh-8rem)] flex flex-col relative">
@@ -67,11 +90,16 @@ export default function ReactorDetail() {
         </div>
 
         <div className="flex items-center gap-2 ml-auto">
+          {retryError && (
+            <span className="text-xs text-red-400 max-w-xs truncate" title={retryError}>
+              {retryError}
+            </span>
+          )}
 
           <button
-            onClick={() => handleAction('retry')}
+            onClick={handleRetry}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow-lg shadow-indigo-500/20 text-sm font-medium transition-all hover:-translate-y-0.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={reactor.status === 'running'}
+            disabled={reactor.status !== 'failed' || isRetrying}
           >
             <Play className="w-4 h-4" />
             Retry Execution

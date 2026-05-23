@@ -72,7 +72,43 @@ module RubyReactor
 
             # POST /api/reactors/:id/retry
             r.post "retry" do
-              { success: true, message: "Retry scheduled" }
+              data = RubyReactor::Configuration.instance.storage_adapter.find_context_by_id(reactor_id)
+              unless data
+                response.status = 404
+                next { error: "Reactor not found" }
+              end
+
+              deserialized = ContextSerializer.deserialize_value(data)
+              unless self.class.reactor_status(deserialized) == "failed"
+                response.status = 422
+                next { error: "Reactor can only be retried when failed" }
+              end
+
+              reactor_class_name = deserialized[:reactor_class].to_s
+              reactor_class = Context.resolve_reactor_class(reactor_class_name)
+              unless reactor_class
+                response.status = 422
+                next { error: "Reactor class '#{reactor_class_name}' not found" }
+              end
+
+              begin
+                inputs = self.class.extract_retry_inputs(deserialized)
+                result = reactor_class.run(inputs)
+                new_id = result.execution_id
+
+                new_reactor = reactor_class.find(new_id)
+                new_reactor.context.retried_from_id = reactor_id
+                new_reactor.context.retry_count = (deserialized[:retry_count] || 0) + 1
+                new_reactor.send(:save_context)
+
+                { success: true, id: new_id }
+              rescue RubyReactor::Error::ValidationError => e
+                response.status = 422
+                { error: e.message }
+              rescue StandardError => e
+                response.status = 500
+                { error: e.message }
+              end
             end
 
             # POST /api/reactors/:id/cancel
@@ -111,6 +147,23 @@ module RubyReactor
             end
           end
         end
+      end
+
+      def self.reactor_status(data)
+        if %w[failed paused completed running skipped].include?(data[:status].to_s)
+          data[:status].to_s
+        elsif data[:cancelled]
+          "cancelled"
+        else
+          data[:current_step] ? "running" : "completed"
+        end
+      end
+
+      def self.extract_retry_inputs(data)
+        inputs = data[:inputs] || {}
+        return {} unless inputs.is_a?(Hash)
+
+        inputs.transform_keys(&:to_sym)
       end
 
       def self.build_structure(reactor_class)

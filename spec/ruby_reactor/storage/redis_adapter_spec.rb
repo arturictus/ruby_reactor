@@ -129,6 +129,39 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
         failure: { "step_name" => "step1", "exception_class" => "RuntimeError" }
       )
     end
+
+    it "includes retried top-level runs but excludes nested child contexts" do
+      nested_id = "ctx-nested"
+      retried_id = "ctx-retried"
+      reactor_class = "MyReactor"
+
+      redis_client.set(
+        "reactor:MyReactor:context:#{nested_id}",
+        {
+          "context_id" => nested_id,
+          "reactor_class" => reactor_class,
+          "started_at" => Time.now.to_s,
+          "parent_context_id" => "ctx-parent"
+        }.to_json
+      )
+
+      redis_client.set(
+        "reactor:MyReactor:context:#{retried_id}",
+        {
+          "context_id" => retried_id,
+          "reactor_class" => reactor_class,
+          "started_at" => Time.now.to_s,
+          "retried_from_id" => "ctx-failed",
+          "retry_count" => 1,
+          "status" => "running"
+        }.to_json
+      )
+
+      result = adapter.scan_reactors(pattern: "reactor:*:context:*", count: 10)
+
+      expect(result.map { |item| item[:id] }).to include(retried_id)
+      expect(result.map { |item| item[:id] }).not_to include(nested_id)
+    end
   end
 
   describe "#find_context_by_id" do
