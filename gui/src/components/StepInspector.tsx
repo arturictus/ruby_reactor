@@ -262,21 +262,19 @@ export default function StepInspector({
                             {item.status === 'executed' ? <CheckCircle className="w-3 h-3" /> : <Box className="w-3 h-3" />}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className={`font-medium text-sm ${item.status === 'executed' ? 'text-slate-300' : 'text-slate-500'
-                                }`}>
-                                {item.step_name}
-                              </span>
-                              <span className="text-[10px] uppercase font-mono tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 flex items-center gap-1.5">
-                                {item.type && (
-                                  <span className={`font-bold ${item.type === 'compensate' ? 'text-amber-400' : 'text-indigo-400'}`}>
-                                    {item.type}
-                                  </span>
-                                )}
-                                <span className="opacity-50">|</span>
-                                {item.status}
-                              </span>
-                            </div>
+                            <span className={`font-medium text-sm block ${item.status === 'executed' ? 'text-slate-300' : 'text-slate-500'
+                              }`}>
+                              {item.step_name}
+                            </span>
+                            <span className="text-[10px] uppercase font-mono tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 inline-flex items-center gap-1.5 mt-1">
+                              {item.type && (
+                                <span className={`font-bold ${item.type === 'compensate' ? 'text-amber-400' : 'text-indigo-400'}`}>
+                                  {item.type}
+                                </span>
+                              )}
+                              <span className="opacity-50">|</span>
+                              {item.status}
+                            </span>
                             {item.status === 'executed' && item.result && (
                               <div className="mt-2 bg-black/30 rounded border border-white/5 p-2 font-mono text-xs text-slate-400 overflow-x-auto">
                                 {JSON.stringify(item.result, null, 2)}
