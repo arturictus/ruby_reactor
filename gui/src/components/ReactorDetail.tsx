@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { ChevronLeft, Play, XOctagon, AlertCircle } from 'lucide-react';
 import { useState } from 'react';
 import { apiUrl } from '../lib/utils';
+import { classRoute } from '../lib/reactors';
 import DagVisualizer from './DagVisualizer';
 import StepInspector from './StepInspector';
 import CoordinationPanel from './CoordinationPanel';
@@ -38,7 +39,10 @@ export default function ReactorDetail() {
     <div className="space-y-6 h-[calc(100vh-8rem)] flex flex-col relative">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-6 shrink-0">
         <div className="flex items-center gap-4">
-          <Link to="/" className="p-2 hover:bg-white/5 rounded-full text-slate-400 hover:text-white transition-colors">
+          <Link
+            to={reactor.class ? classRoute(reactor.class) : '/'}
+            className="p-2 hover:bg-white/5 rounded-full text-slate-400 hover:text-white transition-colors"
+          >
             <ChevronLeft className="w-5 h-5" />
           </Link>
           <div>

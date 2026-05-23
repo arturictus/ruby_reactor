@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import CoordinationPanel, { CoordinationData } from '../CoordinationPanel';
+import CoordinationPanel, { type CoordinationData } from '../CoordinationPanel';
 
 describe('CoordinationPanel', () => {
   it('renders nothing when coordination is empty', () => {
