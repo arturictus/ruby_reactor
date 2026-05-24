@@ -75,7 +75,7 @@ module RubyReactor
       @result
     ensure
       release_locks
-      save_context
+      save_context if persist_context?
     end
 
     def resume_execution
@@ -132,6 +132,12 @@ module RubyReactor
       # Serialize context
       serialized_context = ContextSerializer.serialize(@context)
       storage.store_context(@context.context_id, serialized_context, reactor_class_name)
+    end
+
+    def persist_context?
+      @context.status.to_s != "pending" ||
+        @context.execution_trace.any? ||
+        @context.intermediate_results.any?
     end
 
     private

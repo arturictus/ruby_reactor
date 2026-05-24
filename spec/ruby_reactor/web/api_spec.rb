@@ -79,6 +79,27 @@ RSpec.describe RubyReactor::Web::API, type: :request do
         expect(sub_context["intermediate_results"]["inner_step"]).to eq(11)
       end
     end
+
+    context "when reactor never started executing" do
+      it "returns status 'pending' instead of inferring completed" do
+        context = RubyReactor::Context.new({ should_fail: false }, ApiTestReactor)
+        serialized = RubyReactor::ContextSerializer.serialize(context)
+        RubyReactor.configuration.storage_adapter.store_context(
+          context.context_id,
+          serialized,
+          "ApiTestReactor"
+        )
+
+        get "/reactors/#{context.context_id}"
+
+        json = JSON.parse(last_response.body)
+
+        expect(last_response.status).to eq(200)
+        expect(json["status"]).to eq("pending")
+        expect(json["intermediate_results"]).to eq({})
+        expect(json["steps"]).to eq([])
+      end
+    end
   end
 
   describe "GET /reactors" do

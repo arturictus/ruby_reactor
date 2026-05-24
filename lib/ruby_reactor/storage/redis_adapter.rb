@@ -196,13 +196,20 @@ module RubyReactor
       end
 
       def determine_status(data)
-        return data["status"] if data["status"] && %w[failed paused completed running skipped].include?(data["status"])
+        status = data["status"].to_s
+        return status if status && %w[failed paused completed running skipped pending].include?(status)
         return "cancelled" if data["cancelled"]
         # Heuristic
         return "failed" if data["retry_count"]&.positive? && !data["current_step"].nil?
-        return "completed" unless data["current_step"]
+        return "running" if data["current_step"]
+        return "completed" if execution_evidence?(data)
 
-        "running"
+        "pending"
+      end
+
+      def execution_evidence?(data)
+        (data["execution_trace"] || []).any? ||
+          (data["intermediate_results"] || {}).any?
       end
 
       def store_map_element_context_id(map_id, context_id, reactor_class_name)

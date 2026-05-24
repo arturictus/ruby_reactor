@@ -325,51 +325,40 @@ namespace :demo do
     end
 
     puts "\n=== LockDemoReactor ==="
-    puts "Requires Sidekiq for async runs. Open dashboard URLs while process_refund is sleeping."
+    puts "Sync prefix (prepare + verify) runs inline; process_refund hands off to Sidekiq."
+    puts "Requires Sidekiq. Open dashboard URLs while the worker holds the lock during process_refund."
 
     run_coordination_reactor(
-      "Refund in progress (exclusive lock held)",
+      "Refund in progress (sync prefix, worker holds lock during process_refund)",
       LockDemoReactor,
-      { order_id: "demo_order_1", hold_seconds: 30 }
+      { order_id: "demo_order_1", hold_seconds: 10 }
     )
 
     run_coordination_reactor(
-      "Concurrent refund on same order (async snooze on contention)",
+      "Concurrent refund on same order (worker snoozes on lock contention)",
       LockDemoReactor,
-      { order_id: "demo_order_1", hold_seconds: 30 }
-    )
-
-    run_coordination_reactor(
-      "Inline lock contention (Lock::AcquisitionError)",
-      LockInlineContentionDemoReactor,
-      { order_id: "contention_order" }
+      { order_id: "demo_order_1", hold_seconds: 10 }
     )
 
     puts "\n=== SemaphoreDemoReactor ==="
-    puts "Launch three async calls to saturate the payment_gateway pool (limit: 2)."
+    puts "Full-async pipeline (validate → charge → record). Launch three jobs to saturate the pool (limit: 2)."
 
     run_coordination_reactor(
       "Gateway call 1",
       SemaphoreDemoReactor,
-      { request_id: "req_a", hold_seconds: 30 }
+      { request_id: "req_a", hold_seconds: 10 }
     )
 
     run_coordination_reactor(
       "Gateway call 2",
       SemaphoreDemoReactor,
-      { request_id: "req_b", hold_seconds: 30 }
+      { request_id: "req_b", hold_seconds: 10 }
     )
 
     run_coordination_reactor(
       "Gateway call 3 (over capacity, async snooze)",
       SemaphoreDemoReactor,
-      { request_id: "req_c", hold_seconds: 30 }
-    )
-
-    run_coordination_reactor(
-      "Inline semaphore exhaustion (Semaphore::AcquisitionError)",
-      SemaphoreInlineContentionDemoReactor,
-      { request_id: "req_blocked" }
+      { request_id: "req_c", hold_seconds: 10 }
     )
 
     puts "\n=== RateLimitDemoReactor ==="

@@ -78,6 +78,7 @@ export default function ReactorDetail() {
                 reactor.status === 'completed' ? 'text-emerald-400' :
                   reactor.status === 'paused' ? 'text-amber-400' :
                     reactor.status === 'skipped' ? 'text-sky-400' :
+                      reactor.status === 'pending' ? 'text-slate-400' :
                     'text-slate-200'
                 }`}>{reactor.status}</span></span>
               {reactor.retry_count > 0 && (

@@ -36,16 +36,12 @@ module RubyReactor
 
               structure = self.class.build_structure(reactor_class) if reactor_class.respond_to?(:steps)
 
+              api_status = self.class.reactor_status(data)
+
               response_data = {
                 id: data[:context_id],
                 class: data[:reactor_class].to_s,
-                status: if %w[failed paused completed running skipped].include?(data[:status].to_s)
-                          data[:status].to_s
-                        elsif data[:cancelled]
-                          "cancelled"
-                        else
-                          (data[:current_step] ? "running" : "completed")
-                        end,
+                status: api_status,
                 current_step: data[:current_step].to_s,
                 retry_count: data[:retry_count] || 0,
                 undo_stack: data[:undo_stack] || [],
@@ -150,13 +146,18 @@ module RubyReactor
       end
 
       def self.reactor_status(data)
-        if %w[failed paused completed running skipped].include?(data[:status].to_s)
-          data[:status].to_s
-        elsif data[:cancelled]
-          "cancelled"
-        else
-          data[:current_step] ? "running" : "completed"
-        end
+        status = data[:status].to_s
+        return status if %w[failed paused completed running skipped pending].include?(status)
+        return "cancelled" if data[:cancelled]
+        return "running" if data[:current_step]
+        return "completed" if execution_evidence?(data)
+
+        "pending"
+      end
+
+      def self.execution_evidence?(data)
+        (data[:execution_trace] || []).any? ||
+          (data[:intermediate_results] || {}).any?
       end
 
       def self.extract_retry_inputs(data)

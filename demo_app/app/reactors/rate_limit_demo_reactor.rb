@@ -10,6 +10,7 @@ class RateLimitDemoReactor < RubyReactor::Reactor
   end
 
   with_rate_limit(limit: 3, period: :second) { |inputs| "api:#{inputs[:account_id]}" }
+  async true
 
   step :call_external_api do
     argument :account_id, input(:account_id)
