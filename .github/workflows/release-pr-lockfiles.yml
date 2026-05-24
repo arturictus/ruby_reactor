@@ -1,0 +1,53 @@
+name: Refresh Release PR Lockfiles
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh-lockfiles:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(join(github.event.pull_request.labels.*.name, ','), 'autorelease: pending')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out release PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4.8'
+          bundler-cache: true
+
+      - name: Refresh root lockfile
+        run: bundle lock
+
+      - name: Refresh demo app lockfile
+        working-directory: demo_app
+        run: bundle lock
+
+      - name: Commit updated lockfiles
+        run: |
+          if git diff --quiet -- Gemfile.lock demo_app/Gemfile.lock; then
+            echo "No lockfile changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Gemfile.lock demo_app/Gemfile.lock
+          git commit -m "chore: refresh release lockfiles"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
