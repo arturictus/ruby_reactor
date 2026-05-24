@@ -23,6 +23,7 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     outputs:
+      prs_created: ${{ steps.release.outputs.prs_created }}
       release_created: ${{ steps.release.outputs.release_created }}
       release_sha: ${{ steps.release.outputs.sha }}
       version: ${{ steps.release.outputs.version }}
@@ -34,6 +35,45 @@ jobs:
         with:
           config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  refresh-release-pr-lockfiles:
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out release PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: release-please--branches--main--components--ruby_reactor
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4.8'
+          bundler-cache: true
+
+      - name: Refresh root lockfile
+        run: bundle lock
+
+      - name: Refresh demo app lockfile
+        working-directory: demo_app
+        run: bundle lock
+
+      - name: Commit updated lockfiles
+        run: |
+          if git diff --quiet -- Gemfile.lock demo_app/Gemfile.lock; then
+            echo "No lockfile changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Gemfile.lock demo_app/Gemfile.lock
+          git commit -m "chore: refresh release lockfiles"
+          git push origin HEAD:release-please--branches--main--components--ruby_reactor
 
   publish-gem:
     needs: release-please
