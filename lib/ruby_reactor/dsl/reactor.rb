@@ -152,12 +152,21 @@ module RubyReactor
         # Entry point for running the reactor
         def run(inputs = {})
           reactor = new
-          reactor.run(inputs)
+          result = reactor.run(inputs)
+          attach_execution_id!(result, reactor.context.context_id)
         end
 
         def call(inputs = {})
           run(inputs)
         end
+
+        def attach_execution_id!(result, execution_id)
+          return result if result.respond_to?(:execution_id) && result.execution_id
+
+          result.define_singleton_method(:execution_id) { execution_id }
+          result
+        end
+        private :attach_execution_id!
       end
     end
   end

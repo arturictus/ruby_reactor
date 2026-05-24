@@ -38,6 +38,8 @@ services:
     depends_on:
       demo-redis:
         condition: service_healthy
+      demo-sidekiq:
+        condition: service_healthy
     environment:
       RAILS_ENV: development
       REDIS_URL: redis://demo-redis:6379/1
@@ -68,6 +70,12 @@ services:
       - bundle_cache:/bundle
     working_dir: /workspace/demo_app
     command: bundle exec sidekiq
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q sidekiq /proc/1/cmdline"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
 volumes:
   demo_redis_data:

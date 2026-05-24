@@ -43,7 +43,7 @@ class ArMapReactorNotFail < RubyReactor::Reactor
       end
     end
 
-    step :ramdomly_fail do
+    step :randomly_fail do
       wait_for :update_product
       run do
         raise "Random error triggered!" if rand > 0.5

@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, History, ChevronLeft, CheckCircle, ChevronDown, ChevronUp, Play } from 'lucide-react';
 import { apiUrl } from '../lib/utils';
+import FailureCodeSnippet from './FailureCodeSnippet';
+import { normalizeFailureReason } from '../lib/failures';
 
 
 
@@ -153,6 +155,8 @@ export default function StepInspector({
 
   const lastEvent = stepEvents[stepEvents.length - 1];
   const stepArgs = lastEvent?.arguments || (isFailedStep ? resolvedData?.context?.failure_reason?.step_arguments : {});
+  const failureReason = normalizeFailureReason(resolvedData?.context?.failure_reason);
+  const codeSnippet = failureReason?.code_snippet;
 
   // Calculate combined undo history (executed + pending) recursively
   const groupedUndoHistory = useMemo(() => {
@@ -258,21 +262,19 @@ export default function StepInspector({
                             {item.status === 'executed' ? <CheckCircle className="w-3 h-3" /> : <Box className="w-3 h-3" />}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className={`font-medium text-sm ${item.status === 'executed' ? 'text-slate-300' : 'text-slate-500'
-                                }`}>
-                                {item.step_name}
-                              </span>
-                              <span className="text-[10px] uppercase font-mono tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 flex items-center gap-1.5">
-                                {item.type && (
-                                  <span className={`font-bold ${item.type === 'compensate' ? 'text-amber-400' : 'text-indigo-400'}`}>
-                                    {item.type}
-                                  </span>
-                                )}
-                                <span className="opacity-50">|</span>
-                                {item.status}
-                              </span>
-                            </div>
+                            <span className={`font-medium text-sm block ${item.status === 'executed' ? 'text-slate-300' : 'text-slate-500'
+                              }`}>
+                              {item.step_name}
+                            </span>
+                            <span className="text-[10px] uppercase font-mono tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 inline-flex items-center gap-1.5 mt-1">
+                              {item.type && (
+                                <span className={`font-bold ${item.type === 'compensate' ? 'text-amber-400' : 'text-indigo-400'}`}>
+                                  {item.type}
+                                </span>
+                              )}
+                              <span className="opacity-50">|</span>
+                              {item.status}
+                            </span>
                             {item.status === 'executed' && item.result && (
                               <div className="mt-2 bg-black/30 rounded border border-white/5 p-2 font-mono text-xs text-slate-400 overflow-x-auto">
                                 {JSON.stringify(item.result, null, 2)}
@@ -373,27 +375,29 @@ export default function StepInspector({
         )}
 
         {/* Error Section */}
-        {isFailedStep && resolvedData?.context?.failure_reason && (
-          <div>
+        {isFailedStep && failureReason && (
+          <div className="space-y-4">
             <h3 className="text-sm font-medium text-red-500 mb-3 flex items-center gap-2">
               <AlertCircle className="w-4 h-4" />
               Failure Details
             </h3>
             <div className="bg-red-500/10 rounded-lg p-4 font-mono text-xs border border-red-500/20 text-red-300 overflow-x-auto space-y-2">
               <div className="flex flex-col gap-1">
-                {resolvedData.context.failure_reason.exception_class && (
+                {failureReason.exception_class && (
                   <span className="text-[10px] uppercase font-bold tracking-wider text-red-400 opacity-70">
-                    {resolvedData.context.failure_reason.exception_class}
+                    {failureReason.exception_class}
                   </span>
                 )}
-                <div className="font-bold text-sm leading-relaxed">{resolvedData.context.failure_reason.message}</div>
+                <div className="font-bold text-sm leading-relaxed">
+                  {failureReason.message || failureReason.error}
+                </div>
               </div>
 
-              {resolvedData.context.failure_reason.validation_errors && (
+              {failureReason.validation_errors && (
                 <div className="pt-3 mt-3 border-t border-red-500/10">
                   <span className="text-[10px] uppercase font-bold tracking-widest text-red-400/50 mb-2 block">Validation Errors</span>
                   <div className="space-y-2 bg-red-950/20 rounded p-2">
-                    {Object.entries(resolvedData.context.failure_reason.validation_errors).map(([field, messages]: [string, any]) => (
+                    {Object.entries(failureReason.validation_errors).map(([field, messages]: [string, any]) => (
                       <div key={field} className="flex flex-col">
                         <span className="font-bold text-red-400 text-xs">{field}:</span>
                         <div className="pl-2">
@@ -410,34 +414,42 @@ export default function StepInspector({
                   </div>
                 </div>
               )}
-
-              {resolvedData.context.failure_reason.backtrace && (
-                <div className="pt-3 mt-3 border-t border-red-500/10">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] uppercase font-bold tracking-widest text-red-400/50">Stack Trace</span>
-                    <button
-                      onClick={() => setShowFullBacktrace(!showFullBacktrace)}
-                      className="flex items-center gap-1 text-[10px] font-bold text-red-400/70 hover:text-red-400 transition-colors uppercase tracking-wider"
-                    >
-                      {showFullBacktrace ? (
-                        <><ChevronUp className="w-3 h-3" /> Show Less</>
-                      ) : (
-                        <><ChevronDown className="w-3 h-3" /> Show More ({resolvedData.context.failure_reason.backtrace.length} lines)</>
-                      )}
-                    </button>
-                  </div>
-                  <div className="text-red-400/70 whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto custom-scrollbar">
-                    {showFullBacktrace
-                      ? resolvedData.context.failure_reason.backtrace.join('\n')
-                      : resolvedData.context.failure_reason.backtrace.slice(0, 5).join('\n')
-                    }
-                    {!showFullBacktrace && resolvedData.context.failure_reason.backtrace.length > 5 && (
-                      <div className="mt-1 text-red-400/30 italic">... and {resolvedData.context.failure_reason.backtrace.length - 5} more lines</div>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
+
+            {codeSnippet && codeSnippet.length > 0 && (
+              <FailureCodeSnippet
+                snippet={codeSnippet}
+                filePath={failureReason.file_path}
+                lineNumber={failureReason.line_number}
+              />
+            )}
+
+            {failureReason.backtrace && (
+              <div className="bg-red-500/10 rounded-lg p-4 font-mono text-xs border border-red-500/20 text-red-300 overflow-x-auto">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] uppercase font-bold tracking-widest text-red-400/50">Stack Trace</span>
+                  <button
+                    onClick={() => setShowFullBacktrace(!showFullBacktrace)}
+                    className="flex items-center gap-1 text-[10px] font-bold text-red-400/70 hover:text-red-400 transition-colors uppercase tracking-wider"
+                  >
+                    {showFullBacktrace ? (
+                      <><ChevronUp className="w-3 h-3" /> Show Less</>
+                    ) : (
+                      <><ChevronDown className="w-3 h-3" /> Show More ({failureReason.backtrace.length} lines)</>
+                    )}
+                  </button>
+                </div>
+                <div className="text-red-400/70 whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto custom-scrollbar">
+                  {showFullBacktrace
+                    ? failureReason.backtrace.join('\n')
+                    : failureReason.backtrace.slice(0, 5).join('\n')
+                  }
+                  {!showFullBacktrace && failureReason.backtrace.length > 5 && (
+                    <div className="mt-1 text-red-400/30 italic">... and {failureReason.backtrace.length - 5} more lines</div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

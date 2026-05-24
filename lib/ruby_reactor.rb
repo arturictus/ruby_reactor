@@ -238,13 +238,14 @@ module RubyReactor
       return backtrace if ENV["RUBY_REACTOR_DEBUG"] == "true"
       return backtrace if backtrace.nil? || backtrace.empty?
 
-      root_path = RubyReactor.root.to_s
+      internal_prefix = RubyReactor.internal_lib_path
       filtered = []
       filtered << backtrace.first
 
       internal_block = false
       backtrace[1..]&.each do |line|
-        if line.start_with?(root_path)
+        file_path, = RubyReactor::Utils::BacktraceLocation.parse(line)
+        if file_path&.start_with?(internal_prefix)
           unless internal_block
             filtered << "... [ruby-reactor-internals-redacted-trace]"
             internal_block = true
@@ -330,5 +331,9 @@ module RubyReactor
 
   def self.root
     Pathname.new(File.expand_path("..", __dir__))
+  end
+
+  def self.internal_lib_path
+    File.join(root.to_s, "lib")
   end
 end

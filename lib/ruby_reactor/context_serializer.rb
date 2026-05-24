@@ -181,18 +181,62 @@ module RubyReactor
       def simplify_for_api(value)
         case value
         when Hash
-          value.each_with_object({}) do |(k, v), hash|
+          simplified = value.each_with_object({}) do |(k, v), hash|
             hash[k.to_s] = simplify_for_api(v)
           end
+          enrich_failure_for_api(simplified)
         when Array
           value.map { |v| simplify_for_api(v) }
         when Success, Failure, Context
-          simplify_for_api(value.to_h)
+          enrich_failure_for_api(simplify_for_api(value.to_h))
         when Symbol
           value.to_s
         else
           value
         end
+      end
+
+      def enrich_failure_for_api(hash)
+        return hash unless hash.is_a?(Hash)
+        return hash unless failure_payload?(hash)
+
+        hash = flatten_typed_failure(hash) if hash["_type"] == "Failure"
+
+        if hash["code_snippet"].is_a?(Array) && !hash["code_snippet"].empty?
+          return hash
+        end
+
+        file_path, line_number = resolve_failure_location(hash)
+        return hash unless file_path && line_number
+
+        snippet = RubyReactor::Utils::CodeExtractor.extract(file_path, line_number)
+        return hash unless snippet
+
+        normalized_snippet = snippet.map { |line| line.transform_keys(&:to_s) }
+
+        hash.merge(
+          "file_path" => file_path,
+          "line_number" => line_number,
+          "code_snippet" => normalized_snippet
+        )
+      end
+
+      def failure_payload?(hash)
+        hash["_type"] == "Failure" || (hash.key?("step_name") && hash["backtrace"].is_a?(Array))
+      end
+
+      def flatten_typed_failure(hash)
+        flattened = hash.dup
+        flattened.delete("_type")
+        flattened.merge("message" => hash["error"] || hash["message"])
+      end
+
+      def resolve_failure_location(hash)
+        file_path = hash["file_path"]
+        line_number = hash["line_number"]
+        return [file_path, line_number] if file_path && line_number
+
+        RubyReactor::Utils::BacktraceLocation.extract(hash["backtrace"])
       end
       # rubocop:enable Metrics/CyclomaticComplexity, Metrics/MethodLength
 

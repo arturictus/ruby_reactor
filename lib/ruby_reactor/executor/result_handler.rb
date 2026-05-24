@@ -189,18 +189,7 @@ module RubyReactor
       end
 
       def extract_location(backtrace)
-        return [nil, nil] unless backtrace && !backtrace.empty?
-
-        # Filter out internal reactor frames if needed, or just take the first one
-        # For now, let's take the first line of the backtrace which should be the error source
-        # But we might want to skip our own internal frames if we want to point to user code
-        # Let's start with the top frame, assuming backtrace is already correct (from original error)
-
-        first_line = backtrace.first
-        match = first_line.match(/^(.+?):(\d+)(?::in `.*')?$/)
-        return [nil, nil] unless match
-
-        [match[1], match[2].to_i]
+        RubyReactor::Utils::BacktraceLocation.extract(backtrace)
       end
     end
   end

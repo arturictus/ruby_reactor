@@ -54,6 +54,7 @@ RSpec.describe RubyReactor::Web::API, type: :request do
         expect(last_response.status).to eq(200)
         expect(json["status"]).to eq("completed")
         expect(json["error"]).to be_nil
+        expect(json).to have_key("coordination")
       end
     end
 
@@ -76,6 +77,27 @@ RSpec.describe RubyReactor::Web::API, type: :request do
         expect(sub_context).not_to be_nil
         expect(sub_context["intermediate_results"]).to have_key("inner_step")
         expect(sub_context["intermediate_results"]["inner_step"]).to eq(11)
+      end
+    end
+
+    context "when reactor never started executing" do
+      it "returns status 'pending' instead of inferring completed" do
+        context = RubyReactor::Context.new({ should_fail: false }, ApiTestReactor)
+        serialized = RubyReactor::ContextSerializer.serialize(context)
+        RubyReactor.configuration.storage_adapter.store_context(
+          context.context_id,
+          serialized,
+          "ApiTestReactor"
+        )
+
+        get "/reactors/#{context.context_id}"
+
+        json = JSON.parse(last_response.body)
+
+        expect(last_response.status).to eq(200)
+        expect(json["status"]).to eq("pending")
+        expect(json["intermediate_results"]).to eq({})
+        expect(json["steps"]).to eq([])
       end
     end
   end
@@ -101,6 +123,76 @@ RSpec.describe RubyReactor::Web::API, type: :request do
 
       expect(failed_item["status"]).to eq("failed")
       expect(success_item["status"]).to eq("completed")
+    end
+  end
+
+  describe "POST /reactors/:id/retry" do
+    it "starts a new execution with the same inputs when reactor failed" do
+      reactor = reactor_class.new
+      reactor.run(should_fail: true)
+      context_id = reactor.context.context_id
+
+      post "/reactors/#{context_id}/retry"
+
+      json = JSON.parse(last_response.body)
+
+      expect(last_response.status).to eq(200)
+      expect(json["success"]).to be true
+      expect(json["id"]).not_to eq(context_id)
+
+      retried = reactor_class.find(json["id"])
+      expect(retried.context.inputs).to eq({ should_fail: true })
+      expect(retried.context.parent_context_id).to be_nil
+      expect(retried.context.retried_from_id).to eq(context_id)
+      expect(retried.context.retry_count).to eq(1)
+    end
+
+    it "returns 422 when reactor is not failed" do
+      reactor = reactor_class.new
+      reactor.run(should_fail: false)
+      context_id = reactor.context.context_id
+
+      post "/reactors/#{context_id}/retry"
+
+      json = JSON.parse(last_response.body)
+
+      expect(last_response.status).to eq(422)
+      expect(json["error"]).to eq("Reactor can only be retried when failed")
+    end
+
+    it "retries FormInterruptReactor with the same inputs" do
+      reactor = FormInterruptReactorReproduction.new
+      reactor.run(user_name: "Alice", fail_at: :prepare_application)
+      context_id = reactor.context.context_id
+
+      post "/reactors/#{context_id}/retry"
+
+      json = JSON.parse(last_response.body)
+
+      expect(last_response.status).to eq(200)
+      expect(json["id"]).not_to eq(context_id)
+
+      retried = FormInterruptReactorReproduction.find(json["id"])
+      expect(retried.context.inputs).to eq({ user_name: "Alice", fail_at: :prepare_application })
+      expect(retried.context.parent_context_id).to be_nil
+      expect(retried.context.retried_from_id).to eq(context_id)
+    end
+
+    it "includes retried executions in the reactor list" do
+      reactor = reactor_class.new
+      reactor.run(should_fail: true)
+      context_id = reactor.context.context_id
+
+      post "/reactors/#{context_id}/retry"
+      retried_id = JSON.parse(last_response.body)["id"]
+
+      get "/reactors"
+
+      json = JSON.parse(last_response.body)
+      retried_item = json.find { |item| item["id"] == retried_id }
+
+      expect(retried_item).not_to be_nil
+      expect(retried_item["class"]).to eq("ApiTestReactor")
     end
   end
 end

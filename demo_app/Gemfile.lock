@@ -1,7 +1,7 @@
 PATH
   remote: ..
   specs:
-    ruby_reactor (0.3.2)
+    ruby_reactor (0.4.0)
       dry-validation (~> 1.10)
       redis (~> 5.0)
       roda (~> 3.0)
@@ -88,7 +88,6 @@ GEM
     ast (2.4.3)
     base64 (0.3.0)
     bcrypt_pbkdf (1.1.2)
-    bcrypt_pbkdf (1.1.2-arm64-darwin)
     bigdecimal (4.0.0)
     bindex (0.8.1)
     bootsnap (1.19.0)

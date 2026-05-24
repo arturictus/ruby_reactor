@@ -345,6 +345,18 @@ RSpec.describe "Locking Integration" do
       expect(error.key_base).to eq("api:1")
     end
 
+    it "does not persist an orphan context when the window is full" do
+      3.times { RateLimitedReactor.run(account_id: 99) }
+
+      adapter = RubyReactor.configuration.storage_adapter
+      before_ids = adapter.scan_reactors.map { |r| r[:id] }
+
+      capture_rate_limit_error { RateLimitedReactor.run(account_id: 99) }
+
+      after_ids = adapter.scan_reactors.map { |r| r[:id] }
+      expect(after_ids - before_ids).to be_empty
+    end
+
     it "isolates buckets per key" do
       3.times { RateLimitedReactor.run(account_id: 1) }
       result = RateLimitedReactor.run(account_id: 2)
