@@ -103,7 +103,7 @@ module RubyReactor
           {
             configured: { limit: config[:limit], wait: config[:wait] },
             key: nil,
-            key_error: error.message
+            key_error: e.message
           }
         end
 
@@ -146,7 +146,7 @@ module RubyReactor
               end
             },
             key: nil,
-            key_error: error.message
+            key_error: e.message
           }
         end
 
@@ -171,7 +171,7 @@ module RubyReactor
             configured: { every: config[:every].to_s },
             key: nil,
             bucket_key: nil,
-            key_error: error.message
+            key_error: e.message
           }
         end
       end
