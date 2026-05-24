@@ -226,7 +226,9 @@ module RubyReactor
       end
 
       def flatten_typed_failure(hash)
-        hash.except("_type").merge("message" => hash["error"] || hash["message"])
+        flattened = hash.dup
+        flattened.delete("_type")
+        flattened.merge("message" => hash["error"] || hash["message"])
       end
 
       def resolve_failure_location(hash)

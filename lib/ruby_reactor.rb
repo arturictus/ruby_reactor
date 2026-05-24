@@ -334,6 +334,6 @@ module RubyReactor
   end
 
   def self.internal_lib_path
-    File.join(root.to_s, "lib", "ruby_reactor")
+    File.join(root.to_s, "lib")
   end
 end

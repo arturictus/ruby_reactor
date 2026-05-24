@@ -88,7 +88,7 @@ export default function Dashboard() {
                     <td className="px-6 py-4">
                       <Link
                         to={classRoute(row.className)}
-                        className="flex items-center gap-2 text-slate-200 font-medium group-hover:text-indigo-400 transition-colors"
+                        className="relative flex items-center gap-2 text-slate-200 font-medium group-hover:text-indigo-400 transition-colors"
                       >
                         <span className="absolute -left-2 w-1 h-0 group-hover:h-4 bg-indigo-500 rounded-full transition-all duration-300 opacity-0 group-hover:opacity-100"></span>
                         {row.className}

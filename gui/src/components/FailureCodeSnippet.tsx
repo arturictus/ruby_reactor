@@ -1,11 +1,15 @@
 import { useMemo } from 'react';
 import { Code } from 'lucide-react';
 import hljs from 'highlight.js/lib/core';
+import javascript from 'highlight.js/lib/languages/javascript';
 import ruby from 'highlight.js/lib/languages/ruby';
+import typescript from 'highlight.js/lib/languages/typescript';
 import 'highlight.js/styles/github-dark.min.css';
 import { type CodeSnippetLine } from '../lib/failures';
 
+hljs.registerLanguage('javascript', javascript);
 hljs.registerLanguage('ruby', ruby);
+hljs.registerLanguage('typescript', typescript);
 
 interface FailureCodeSnippetProps {
   snippet: CodeSnippetLine[];
