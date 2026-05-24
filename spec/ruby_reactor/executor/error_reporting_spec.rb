@@ -97,7 +97,7 @@ RSpec.describe "Enhanced Error Reporting" do
 
       error = RubyReactor::Error::StepFailureError.new(
         "Step failed",
-        step: :ramdomly_fail,
+        step: :randomly_fail,
         context: context,
         original_error: original_error,
         step_arguments: {}

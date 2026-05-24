@@ -244,8 +244,8 @@ RSpec.describe RubyReactor::ContextSerializer do
 
       payload = {
         "_type" => "Failure",
-        "error" => "Step 'ramdomly_fail' failed after 1 attempts: Random error triggered!",
-        "step_name" => "ramdomly_fail",
+        "error" => "Step 'randomly_fail' failed after 1 attempts: Random error triggered!",
+        "step_name" => "randomly_fail",
         "exception_class" => "RuntimeError",
         "backtrace" => [
           "/workspace/demo_app/app/reactors/ar_map_reactor.rb:48:in 'block (3 levels) in <class:ArMapReactor>'"
@@ -254,7 +254,7 @@ RSpec.describe RubyReactor::ContextSerializer do
 
       simplified = described_class.simplify_for_api(payload)
 
-      expect(simplified["message"]).to eq("Step 'ramdomly_fail' failed after 1 attempts: Random error triggered!")
+      expect(simplified["message"]).to eq("Step 'randomly_fail' failed after 1 attempts: Random error triggered!")
       expect(simplified["file_path"]).to eq("/workspace/demo_app/app/reactors/ar_map_reactor.rb")
       expect(simplified["line_number"]).to eq(48)
       expect(simplified["code_snippet"]).to be_an(Array)
