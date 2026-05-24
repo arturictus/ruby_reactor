@@ -235,7 +235,7 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination] do
     puts "excuting all reactors"
   end
 
@@ -296,5 +296,104 @@ namespace :demo do
 
     ArMapReactor.run(filter: {stock: 1})
     ArMapReactorNotFail.run(filter: {stock: 1})
+  end
+
+  desc "Run coordination demo reactors (locks, semaphores, rate limits, periods)"
+  task coordination: [:environment, :flush_redis] do
+    def run_coordination_reactor(name, reactor_class, params)
+      puts "\n>>> Running #{name}: #{reactor_class.name}(#{params.inspect})"
+      result = reactor_class.call(params)
+
+      if result.is_a?(RubyReactor::AsyncResult)
+        puts "⏳ ASYNC: Reactor started asynchronously."
+        puts "   Execution ID: #{result.execution_id}"
+        puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
+      elsif result.respond_to?(:skipped?) && result.skipped?
+        puts "⏭️  SKIPPED: #{result.reason.inspect}"
+        puts "   Execution ID: #{result.execution_id}" if result.respond_to?(:execution_id)
+        puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}" if result.respond_to?(:execution_id)
+      elsif result.success?
+        puts "✅ SUCCESS: #{result.value.inspect}"
+        if result.respond_to?(:execution_id) && result.execution_id
+          puts "   Execution ID: #{result.execution_id}"
+          puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
+        end
+      else
+        err_msg = result.respond_to?(:error) ? result.error : result.inspect
+        puts "❌ FAILURE: #{err_msg}"
+      end
+    end
+
+    puts "\n=== LockDemoReactor ==="
+    puts "Requires Sidekiq for async runs. Open dashboard URLs while process_refund is sleeping."
+
+    run_coordination_reactor(
+      "Refund in progress (exclusive lock held)",
+      LockDemoReactor,
+      { order_id: "demo_order_1", hold_seconds: 30 }
+    )
+
+    run_coordination_reactor(
+      "Concurrent refund on same order (async snooze on contention)",
+      LockDemoReactor,
+      { order_id: "demo_order_1", hold_seconds: 30 }
+    )
+
+    run_coordination_reactor(
+      "Inline lock contention (Lock::AcquisitionError)",
+      LockInlineContentionDemoReactor,
+      { order_id: "contention_order" }
+    )
+
+    puts "\n=== SemaphoreDemoReactor ==="
+    puts "Launch three async calls to saturate the payment_gateway pool (limit: 2)."
+
+    run_coordination_reactor(
+      "Gateway call 1",
+      SemaphoreDemoReactor,
+      { request_id: "req_a", hold_seconds: 30 }
+    )
+
+    run_coordination_reactor(
+      "Gateway call 2",
+      SemaphoreDemoReactor,
+      { request_id: "req_b", hold_seconds: 30 }
+    )
+
+    run_coordination_reactor(
+      "Gateway call 3 (over capacity, async snooze)",
+      SemaphoreDemoReactor,
+      { request_id: "req_c", hold_seconds: 30 }
+    )
+
+    run_coordination_reactor(
+      "Inline semaphore exhaustion (Semaphore::AcquisitionError)",
+      SemaphoreInlineContentionDemoReactor,
+      { request_id: "req_blocked" }
+    )
+
+    puts "\n=== RateLimitDemoReactor ==="
+
+    run_coordination_reactor(
+      "Burst of 4 calls (3 allowed, 4th exceeds per-second limit)",
+      RateLimitBurstDemoReactor,
+      { account_id: "demo_account" }
+    )
+
+    puts "\n=== PeriodDemoReactor ==="
+
+    run_coordination_reactor(
+      "First run marks the daily bucket",
+      PeriodDemoReactor,
+      { org_id: "demo_org" }
+    )
+
+    run_coordination_reactor(
+      "Second run skipped (period dedup)",
+      PeriodDemoReactor,
+      { org_id: "demo_org" }
+    )
+
+    puts "\n✅ COORDINATION DEMO COMPLETE"
   end
 end
