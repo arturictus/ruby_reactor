@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/arturictus/ruby_reactor/compare/v0.4.0...v0.4.1) (2026-05-25)
+
+
+### Bug Fixes
+
+* trigger release pipeline ([#29](https://github.com/arturictus/ruby_reactor/issues/29)) ([862478b](https://github.com/arturictus/ruby_reactor/commit/862478b3d0811b00e920119057bf4c1bfb1808af))
+* trigger release workflows ([#31](https://github.com/arturictus/ruby_reactor/issues/31)) ([ed44dcd](https://github.com/arturictus/ruby_reactor/commit/ed44dcd00e3288e2fab99f9794821943dacc1d4b))
+
 ## [0.4.0](https://github.com/arturictus/ruby_reactor/compare/ruby_reactor-v0.3.2...ruby_reactor/v0.4.0) (2026-05-17)
 
 
