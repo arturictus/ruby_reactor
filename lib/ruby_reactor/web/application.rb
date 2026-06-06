@@ -20,8 +20,9 @@ module RubyReactor
         # Ensure trailing slash for base href to support relative assets (base: './')
         href = base_path.end_with?("/") ? base_path : "#{base_path}/"
 
+        teley_url = ENV["TELEY_URL"] || "http://localhost:5754"
         # Inject config and base tag
-        content.sub!("<head>", "<head><base href='#{href}'><script>window.RUBY_REACTOR_BASE = '#{base_path}';</script>")
+        content.sub!("<head>", "<head><base href='#{href}'><script>window.RUBY_REACTOR_BASE = '#{base_path}'; window.TELEY_URL = '#{teley_url}';</script>")
         content
       rescue Errno::ENOENT
         "UI not built. Please run `rake build:ui`"

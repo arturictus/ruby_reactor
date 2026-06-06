@@ -21,12 +21,54 @@ RUN node -e ' \
   fs.writeFileSync(file, content, "utf8"); \
 '
 
-# Patch app/pages/live/[roomId].vue to support default_token fallback
+# Patch app/pages/live/[roomId].vue to support default_token fallback and trace filtering by search query
 RUN node -e ' \
   const fs = require("fs"); \
   const file = "app/pages/live/[roomId].vue"; \
   let content = fs.readFileSync(file, "utf8"); \
   content = content.replace("const token = (route.query.token as string) || \x27\x27;", "const token = (route.query.token as string) || \x27default_token\x27;"); \
+  content = content.replace(/\:traces="traces"/g, "\:traces=\"displayedTraces\""); \
+  const newWatch = `import { getDb } from "../../database/index";\n\
+import type { Trace } from "../../shared/parsers/types";\n\
+\n\
+const displayedTraces = ref<Trace[]>([]);\n\
+\n\
+async function findTraceByContextId(contextId: string) {\n\
+  try {\n\
+    const database = getDb();\n\
+    const span = await database.spans.filter(s => s.attributes?.["reactor.context_id"] === contextId).first();\n\
+    return span ? span.trace_id : null;\n\
+  } catch (err) {\n\
+    console.error("Error scanning spans for context ID:", err);\n\
+    return null;\n\
+  }\n\
+}\n\
+\n\
+watch(\n\
+  [() => traces.value, () => route.query.search],\n\
+  async ([newTraces, searchVal]) => {\n\
+    if (searchVal) {\n\
+      const targetTraceId = await findTraceByContextId(searchVal as string);\n\
+      if (targetTraceId) {\n\
+        selectedTraceId.value = targetTraceId;\n\
+        displayedTraces.value = newTraces.filter(t => t.trace_id === targetTraceId);\n\
+      } else {\n\
+        displayedTraces.value = [];\n\
+        selectedTraceId.value = null;\n\
+      }\n\
+    } else {\n\
+      displayedTraces.value = newTraces;\n\
+      const newTrace = newTraces[0];\n\
+      if (newTrace && selectedTraceId.value !== newTrace.trace_id) {\n\
+        selectedTraceId.value = newTrace.trace_id;\n\
+      } else if (!newTrace) {\n\
+        selectedTraceId.value = null;\n\
+      }\n\
+    }\n\
+  },\n\
+  { immediate: true, deep: true }\n\
+);`; \
+  content = content.replace(/\/\/ Auto-select newest trace[\s\S]*?\}\s*,\s*\);/, newWatch); \
   fs.writeFileSync(file, content, "utf8"); \
 '
 

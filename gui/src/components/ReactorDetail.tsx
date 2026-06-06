@@ -18,6 +18,7 @@ export default function ReactorDetail() {
   const [selectedStep, setSelectedStep] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'dag' | 'traces'>('dag');
 
   const handleAction = async (action: 'cancel') => {
     if (!id) return;
@@ -136,17 +137,65 @@ export default function ReactorDetail() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
-        <div className="lg:col-span-2 h-full">
-          <DagVisualizer
-            structure={reactor.structure}
-            steps={reactor.steps}
-            selectedStep={selectedStep}
-            onStepSelect={setSelectedStep}
-            reactorStatus={reactor.status}
-            error={reactor.error}
-            results={reactor.intermediate_results}
-            composedContexts={reactor.composed_contexts}
-          />
+        <div className="lg:col-span-2 h-full flex flex-col">
+          <div className="flex items-center gap-4 border-b border-slate-800 pb-2 mb-4 shrink-0">
+            <button
+              onClick={() => setActiveTab('dag')}
+              className={`pb-2 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+                activeTab === 'dag'
+                  ? 'border-indigo-500 text-white'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              Execution DAG
+            </button>
+            <button
+              onClick={() => setActiveTab('traces')}
+              className={`pb-2 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+                activeTab === 'traces'
+                  ? 'border-indigo-500 text-white'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              OTel Traces (Teley)
+            </button>
+          </div>
+
+          <div className="flex-1 min-h-0">
+            {activeTab === 'dag' ? (
+              <DagVisualizer
+                structure={reactor.structure}
+                steps={reactor.steps}
+                selectedStep={selectedStep}
+                onStepSelect={setSelectedStep}
+                reactorStatus={reactor.status}
+                error={reactor.error}
+                results={reactor.intermediate_results}
+                composedContexts={reactor.composed_contexts}
+              />
+            ) : (
+              <div className="h-full flex flex-col gap-4">
+                 <div className="flex items-center justify-between text-xs text-slate-400 bg-slate-900/50 border border-slate-800 px-4 py-2.5 rounded-lg">
+                  <span>
+                    💡 Showing OpenTelemetry traces for this execution.
+                  </span>
+                  <a
+                    href={`${window.TELEY_URL || 'http://localhost:5754'}/live/ruby_reactor_session?search=${id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-indigo-400 hover:underline hover:text-indigo-300 font-medium"
+                  >
+                    Open in new tab ↗
+                  </a>
+                </div>
+                <iframe
+                  src={`${window.TELEY_URL || 'http://localhost:5754'}/live/ruby_reactor_session?search=${id}`}
+                  className="w-full flex-1 border border-slate-800 rounded-lg bg-slate-900"
+                  title="Teley Traces"
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="h-full">
