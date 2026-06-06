@@ -29,6 +29,7 @@ RSpec.describe RubyReactor::Map::Dispatcher do
     let(:parent_context) do
       instance_double(RubyReactor::Context,
                       context_id: "ctx_123",
+                      middlewares: nil,
                       reactor_class: class_double(RubyReactor::Reactor, name: "TestReactor"))
     end
 

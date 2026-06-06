@@ -208,6 +208,8 @@ module RubyReactor
 
         def prepare_async_execution(context, map_id, count)
           storage = RubyReactor.configuration.storage_adapter
+          middlewares = context.middlewares || Executor.middlewares_for(context.reactor_class)
+          middlewares.on(:before_async_enqueue, context)
           serialized_context = ContextSerializer.serialize(context)
           storage.store_context(context.context_id, serialized_context, context.reactor_class.name)
           storage.set_map_counter(map_id, count, context.reactor_class.name)

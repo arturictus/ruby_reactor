@@ -3,8 +3,9 @@
 module RubyReactor
   class Executor
     class RetryManager
-      def initialize(context)
+      def initialize(context, middlewares = nil)
         @context = context
+        @middlewares = middlewares || context.middlewares || Executor.middlewares_for(context.reactor_class)
       end
 
       def execute_with_retry(step_config, reactor_class)
@@ -111,6 +112,15 @@ module RubyReactor
       end
 
       def handle_retryable_failure(step_config, reactor_class, result)
+        attempt_number = @context.retry_context.attempts_for_step(step_config.name)
+        @middlewares.on(
+          :retry_attempt,
+          step_config.name,
+          attempt_number,
+          result.error,
+          @context
+        )
+
         # Check if we should requeue (async retry)
         is_async = reactor_class.async? || step_config.async? ||
                    @context.root_context&.reactor_class&.async? ||

@@ -19,3 +19,8 @@ gem "rubocop-rspec", "~> 3.8"
 gem "dry-validation", "~> 1.10"
 
 gem "globalid", "~> 1.0"
+
+group :development, :test do
+  gem "opentelemetry-api"
+  gem "opentelemetry-sdk"
+end

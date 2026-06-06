@@ -202,9 +202,7 @@ module RubyReactor
 
         hash = flatten_typed_failure(hash) if hash["_type"] == "Failure"
 
-        if hash["code_snippet"].is_a?(Array) && !hash["code_snippet"].empty?
-          return hash
-        end
+        return hash if hash["code_snippet"].is_a?(Array) && !hash["code_snippet"].empty?
 
         file_path, line_number = resolve_failure_location(hash)
         return hash unless file_path && line_number

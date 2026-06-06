@@ -8,7 +8,8 @@ module RubyReactor
     include Singleton
 
     attr_writer :sidekiq_queue, :sidekiq_retry_count, :logger, :async_router,
-                :lock_snooze_base_delay, :lock_snooze_jitter, :lock_snooze_max_attempts
+                :lock_snooze_base_delay, :lock_snooze_jitter, :lock_snooze_max_attempts,
+                :middlewares
 
     def sidekiq_queue
       @sidekiq_queue ||= :default
@@ -53,6 +54,10 @@ module RubyReactor
                            else
                              raise "Unknown storage adapter: #{storage.adapter}"
                            end
+    end
+
+    def middlewares
+      @middlewares ||= []
     end
   end
 end

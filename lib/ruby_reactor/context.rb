@@ -5,7 +5,8 @@ module RubyReactor
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
                   :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack,
                   :parent_context, :root_context, :composed_contexts, :context_id, :map_operations, :map_metadata,
-                  :cancelled, :cancellation_reason, :parent_context_id, :retried_from_id, :status, :failure_reason
+                  :cancelled, :cancellation_reason, :parent_context_id, :retried_from_id, :status, :failure_reason,
+                  :middlewares
 
     def initialize(inputs = {}, reactor_class = nil)
       @context_id = SecureRandom.uuid

@@ -18,6 +18,7 @@ RSpec.describe RubyReactor::Step::MapStep do
                     inline_async_execution: false,
                     intermediate_results: {},
                     composed_contexts: {},
+                    middlewares: nil,
                     reactor_class: double(name: "TestReactor"))
   end
 

@@ -235,12 +235,11 @@ RSpec.describe RubyReactor::ContextSerializer do
 
   describe ".simplify_for_api failure enrichment" do
     it "extracts code_snippet from backtrace when missing from stored failure" do
-      allow(RubyReactor::Utils::CodeExtractor).to receive(:extract).and_return([
-                                                                                 { line_number: 47, content: "    wait_for :update_product",
-                                                                                   target: false },
-                                                                                 { line_number: 48, content: '    raise "Random error triggered!"',
-                                                                                   target: true }
-                                                                               ])
+      mock_snippet = [
+        { line_number: 47, content: "    wait_for :update_product", target: false },
+        { line_number: 48, content: '    raise "Random error triggered!"', target: true }
+      ]
+      allow(RubyReactor::Utils::CodeExtractor).to receive(:extract).and_return(mock_snippet)
 
       payload = {
         "_type" => "Failure",
