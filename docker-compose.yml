@@ -44,6 +44,9 @@ services:
       RAILS_ENV: development
       REDIS_URL: redis://demo-redis:6379/1
       BUNDLE_PATH: /bundle
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://teley:3000/r/ruby_reactor_session
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/json
     ports:
       - "3789:3000"
     volumes:
@@ -65,6 +68,9 @@ services:
       RAILS_ENV: development
       REDIS_URL: redis://demo-redis:6379/1
       BUNDLE_PATH: /bundle
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://teley:3000/r/ruby_reactor_session
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/json
     volumes:
       - .:/workspace
       - bundle_cache:/bundle
@@ -77,6 +83,17 @@ services:
       retries: 5
       start_period: 60s
 
+  # Teley trace viewer service
+  teley:
+    build:
+      context: ./teley
+    container_name: ruby_reactor_teley
+    ports:
+      - "5754:3000"
+    volumes:
+      - teley_data:/app/.data
+
 volumes:
   demo_redis_data:
   bundle_cache:
+  teley_data:

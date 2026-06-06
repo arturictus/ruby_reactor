@@ -53,6 +53,8 @@ module RubyReactor
 
         reactor_class_name = context_to_serialize.reactor_class.name
 
+        @middlewares.on(:before_async_enqueue, context_to_serialize)
+
         serialized_context = ContextSerializer.serialize(context_to_serialize)
 
         if @context.map_metadata

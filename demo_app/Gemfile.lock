@@ -156,6 +156,20 @@ GEM
       raabro (~> 1.4)
     globalid (1.3.0)
       activesupport (>= 6.1)
+    google-protobuf (4.35.0)
+      bigdecimal
+      rake (~> 13.3)
+    google-protobuf (4.35.0-aarch64-linux-gnu)
+      bigdecimal
+      rake (~> 13.3)
+    google-protobuf (4.35.0-arm64-darwin)
+      bigdecimal
+      rake (~> 13.3)
+    google-protobuf (4.35.0-x86_64-linux-gnu)
+      bigdecimal
+      rake (~> 13.3)
+    googleapis-common-protos-types (1.23.0)
+      google-protobuf (~> 4.26)
     i18n (1.14.7)
       concurrent-ruby (~> 1.0)
     image_processing (1.14.0)
@@ -228,6 +242,27 @@ GEM
       racc (~> 1.4)
     nokogiri (1.18.10-x86_64-linux-gnu)
       racc (~> 1.4)
+    opentelemetry-api (1.10.0)
+      logger
+    opentelemetry-common (0.25.0)
+      opentelemetry-api (~> 1.0)
+    opentelemetry-exporter-otlp (0.34.0)
+      google-protobuf (>= 3.18)
+      googleapis-common-protos-types (~> 1.3)
+      opentelemetry-api (~> 1.1)
+      opentelemetry-common (~> 0.20)
+      opentelemetry-sdk (~> 1.10)
+      opentelemetry-semantic_conventions
+    opentelemetry-registry (0.6.0)
+      opentelemetry-api (~> 1.1)
+    opentelemetry-sdk (1.12.0)
+      logger
+      opentelemetry-api (~> 1.1)
+      opentelemetry-common (~> 0.20)
+      opentelemetry-registry (~> 0.2)
+      opentelemetry-semantic_conventions
+    opentelemetry-semantic_conventions (1.39.0)
+      opentelemetry-api (~> 1.0)
     ostruct (0.6.3)
     parallel (1.27.0)
     parser (3.3.10.0)
@@ -431,6 +466,9 @@ DEPENDENCIES
   importmap-rails
   jbuilder
   kamal
+  opentelemetry-api
+  opentelemetry-exporter-otlp
+  opentelemetry-sdk
   propshaft
   puma (>= 5.0)
   rails (~> 8.1.0)

@@ -66,3 +66,7 @@ gem "sidekiq"
 # Redis is needed for sidekiq and reactor storage
 gem "redis"
 gem "connection_pool", "< 3.0"
+
+gem "opentelemetry-api"
+gem "opentelemetry-sdk"
+gem "opentelemetry-exporter-otlp"

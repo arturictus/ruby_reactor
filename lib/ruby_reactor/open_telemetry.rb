@@ -22,16 +22,6 @@ module RubyReactor
       ensure_opentelemetry_loaded!
       parent_ctx = extract_context(context)
 
-      # If this is a resume (status is not pending), do not start a new reactor span.
-      # Just attach the extracted propagated context (if we are on a different thread/process
-      # where there is no active trace context) so that any step spans run under it.
-      if context.status.to_s != "pending"
-        if parent_ctx && !::OpenTelemetry::Trace.current_span.recording?
-          @reactor_token = ::OpenTelemetry::Context.attach(parent_ctx)
-        end
-        return
-      end
-
       tracer = ::OpenTelemetry.tracer_provider.tracer("ruby_reactor")
 
       redact_keys = if context.reactor_class.respond_to?(:inputs)
@@ -48,6 +38,10 @@ module RubyReactor
       inputs.each do |k, v|
         val = redact_keys.include?(k.to_sym) ? "[REDACTED]" : safe_value(v)
         attributes["reactor.inputs.#{k}"] = val
+      end
+
+      if context.status.to_s != "pending"
+        attributes["reactor.resumed"] = true
       end
 
       @reactor_span = tracer.start_span(reactor_name, attributes: attributes, with_parent: parent_ctx || ::OpenTelemetry::Context.current)
@@ -100,7 +94,13 @@ module RubyReactor
         attributes["step.arguments.#{k}"] = val
       end
 
-      span = tracer.start_span("step.#{step_name}", attributes: attributes)
+      parent_context = if @reactor_span
+                         ::OpenTelemetry::Trace.context_with_span(@reactor_span)
+                       else
+                         ::OpenTelemetry::Context.current
+                       end
+
+      span = tracer.start_span("step.#{step_name}", attributes: attributes, with_parent: parent_context)
       token = ::OpenTelemetry::Context.attach(::OpenTelemetry::Trace.context_with_span(span))
 
       @step_spans[step_name] = span
@@ -218,9 +218,25 @@ module RubyReactor
       return nil unless defined?(::OpenTelemetry)
 
       tc = fetch_trace_context(context)
-      return nil if tc.nil?
+      if tc.nil?
+        RubyReactor.configuration.logger.debug("OTEL: No trace context found in context/storage for #{context.context_id}")
+        return nil
+      end
+      RubyReactor.configuration.logger.debug("OTEL: Stored trace context hash is: #{tc.inspect}")
 
-      ::OpenTelemetry.propagation.extract(tc)
+      tc = tc.transform_keys(&:to_s) if tc.respond_to?(:transform_keys)
+      extracted = ::OpenTelemetry.propagation.extract(tc)
+      if extracted
+        span = ::OpenTelemetry::Trace.current_span(extracted)
+        if span && span.context.valid?
+          RubyReactor.configuration.logger.debug("OTEL: Extracted valid parent trace ID: #{span.context.hex_trace_id} for #{context.context_id}")
+        else
+          RubyReactor.configuration.logger.debug("OTEL: Extracted parent context is invalid for #{context.context_id}")
+        end
+      else
+        RubyReactor.configuration.logger.debug("OTEL: Extraction returned nil for #{context.context_id}")
+      end
+      extracted
     rescue StandardError => e
       RubyReactor.configuration.logger.warn("Telemetry context extraction failed: #{e.message}")
       nil

@@ -1,6 +1,6 @@
 namespace :demo do
-  desc "flush redis"
   
+  desc "flush redis"
   task flush_redis: :environment do
     puts "Fushing redis at #{RubyReactor.configuration.storage.redis_url}"
     Redis.new(url: RubyReactor.configuration.storage.redis_url).flushdb
@@ -302,25 +302,31 @@ namespace :demo do
   task coordination: [:environment, :flush_redis] do
     def run_coordination_reactor(name, reactor_class, params)
       puts "\n>>> Running #{name}: #{reactor_class.name}(#{params.inspect})"
-      result = reactor_class.call(params)
+      begin
+        result = reactor_class.call(params)
 
-      if result.is_a?(RubyReactor::AsyncResult)
-        puts "⏳ ASYNC: Reactor started asynchronously."
-        puts "   Execution ID: #{result.execution_id}"
-        puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
-      elsif result.respond_to?(:skipped?) && result.skipped?
-        puts "⏭️  SKIPPED: #{result.reason.inspect}"
-        puts "   Execution ID: #{result.execution_id}" if result.respond_to?(:execution_id)
-        puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}" if result.respond_to?(:execution_id)
-      elsif result.success?
-        puts "✅ SUCCESS: #{result.value.inspect}"
-        if result.respond_to?(:execution_id) && result.execution_id
+        if result.is_a?(RubyReactor::AsyncResult)
+          puts "⏳ ASYNC: Reactor started asynchronously."
           puts "   Execution ID: #{result.execution_id}"
           puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
+        elsif result.respond_to?(:skipped?) && result.skipped?
+          puts "⏭️  SKIPPED: #{result.reason.inspect}"
+          puts "   Execution ID: #{result.execution_id}" if result.respond_to?(:execution_id)
+          puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}" if result.respond_to?(:execution_id)
+        elsif result.success?
+          puts "✅ SUCCESS: #{result.value.inspect}"
+          if result.respond_to?(:execution_id) && result.execution_id
+            puts "   Execution ID: #{result.execution_id}"
+            puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
+          end
+        else
+          err_msg = result.respond_to?(:error) ? result.error : result.inspect
+          puts "❌ FAILURE: #{err_msg}"
         end
-      else
-        err_msg = result.respond_to?(:error) ? result.error : result.inspect
-        puts "❌ FAILURE: #{err_msg}"
+      rescue RubyReactor::Lock::AcquisitionError,
+             RubyReactor::Semaphore::AcquisitionError,
+             RubyReactor::RateLimit::ExceededError => e
+        puts "❌ FAILURE: #{e.class.name} - #{e.message}"
       end
     end
 

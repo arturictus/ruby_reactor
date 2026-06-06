@@ -312,18 +312,24 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
 
         spans = exporter.finished_spans
         reactor_spans = spans.select { |s| s.name == "TelemetryAsyncStepReactor" }
-        expect(reactor_spans.size).to eq(1)
-        reactor_span = reactor_spans.first
+        expect(reactor_spans.size).to eq(2) # 1 for main thread, 1 for Sidekiq resume
 
-        step_spans = spans.select do |s|
-          s.name == "step.async_step" && s.parent_span_id == reactor_span.span_id
-        end
+        invalid_id = ::OpenTelemetry::Trace::INVALID_SPAN_ID
+        main_reactor_span = reactor_spans.find { |s| s.parent_span_id == invalid_id }
+        resumed_reactor_span = reactor_spans.find { |s| s.parent_span_id != invalid_id }
 
-        expect(step_spans.size).to eq(1)
-        step_span = step_spans.first
+        expect(main_reactor_span).not_to be_nil
+        expect(resumed_reactor_span).not_to be_nil
 
-        # Verify child span nested under the root reactor span across serialization/Sidekiq queueing
-        expect(step_span.parent_span_id).to eq(reactor_span.span_id)
+        step_spans = spans.select { |s| s.name == "step.async_step" }
+        expect(step_spans.size).to eq(2) # 1 on main thread, 1 on Sidekiq thread
+
+        main_step = step_spans.find { |s| s.parent_span_id == main_reactor_span.span_id }
+        sidekiq_step = step_spans.find { |s| s.parent_span_id == resumed_reactor_span.span_id }
+
+        expect(main_step).not_to be_nil
+        expect(sidekiq_step).not_to be_nil
+        expect(resumed_reactor_span.parent_span_id).to eq(main_step.span_id)
       end
     end
   end
