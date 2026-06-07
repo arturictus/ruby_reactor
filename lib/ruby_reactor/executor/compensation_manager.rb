@@ -51,61 +51,89 @@ module RubyReactor
 
       private
 
+      def middlewares
+        @context.middlewares || RubyReactor::MiddlewareRunner.new([])
+      end
+
       def compensate_step(step_config, error, arguments)
-        compensate_result = if step_config.compensate_block
-                              step_config.compensate_block.call(error, arguments, @context)
-                            elsif step_config.has_impl?
-                              step_config.impl.compensate(error, arguments, @context)
-                            else
-                              RubyReactor.Success() # Default compensation
-                            end
+        middlewares.on(:start_compensation, step_config.name, error, arguments, @context)
+        begin
+          compensate_result = if step_config.compensate_block
+                                step_config.compensate_block.call(error, arguments, @context)
+                              elsif step_config.has_impl?
+                                step_config.impl.compensate(error, arguments, @context)
+                              else
+                                RubyReactor.Success() # Default compensation
+                              end
 
-        # Ensure we have a value to log
-        logged_result = if compensate_result.respond_to?(:value)
-                          compensate_result.value
-                        elsif compensate_result.respond_to?(:error)
-                          compensate_result.error
-                        else
-                          compensate_result
-                        end
+          # Ensure we have a value to log
+          logged_result = if compensate_result.respond_to?(:value)
+                            compensate_result.value
+                          elsif compensate_result.respond_to?(:error)
+                            compensate_result.error
+                          else
+                            compensate_result
+                          end
 
-        @context.execution_trace << {
-          type: :compensate,
-          step: step_config.name,
-          timestamp: Time.now,
-          result: logged_result,
-          arguments: arguments
-        }
-        @undo_trace << { type: :compensation, step: step_config.name, error: error, arguments: arguments }
-        compensate_result
+          @context.execution_trace << {
+            type: :compensate,
+            step: step_config.name,
+            timestamp: Time.now,
+            result: logged_result,
+            arguments: arguments
+          }
+          @undo_trace << { type: :compensation, step: step_config.name, error: error, arguments: arguments }
+
+          if compensate_result.is_a?(RubyReactor::Failure)
+            middlewares.on(:failed_compensation, step_config.name, compensate_result, @context)
+          else
+            middlewares.on(:complete_compensation, step_config.name, compensate_result, @context)
+          end
+
+          compensate_result
+        rescue StandardError => e
+          middlewares.on(:failed_compensation, step_config.name, e, @context)
+          raise e
+        end
       end
 
       def undo_step(step_config, result, arguments)
-        undo_result = if step_config.undo_block
-                        step_config.undo_block.call(result.value, arguments, @context)
-                      elsif step_config.has_impl?
-                        step_config.impl.undo(result.value, arguments, @context)
-                      else
-                        RubyReactor.Success()
-                      end
-
-        # Ensure we have a value to log (if it's a Success/Failure object, get the value or error)
-        logged_result = if undo_result.respond_to?(:value)
-                          undo_result.value
-                        elsif undo_result.respond_to?(:error)
-                          undo_result.error
+        middlewares.on(:start_undo, step_config.name, result, arguments, @context)
+        begin
+          undo_result = if step_config.undo_block
+                          step_config.undo_block.call(result.value, arguments, @context)
+                        elsif step_config.has_impl?
+                          step_config.impl.undo(result.value, arguments, @context)
                         else
-                          undo_result
+                          RubyReactor.Success()
                         end
 
-        @context.execution_trace << { type: :undo, step: step_config.name, timestamp: Time.now, result: logged_result,
-                                      arguments: arguments }
-        undo_result
-      rescue StandardError => e
-        # Log undo failure but don't halt the rollback process
-        @context.execution_trace << { type: :undo_failure, step: step_config.name, timestamp: Time.now,
-                                      error: e.message }
-        RubyReactor.Failure(e)
+          # Ensure we have a value to log (if it's a Success/Failure object, get the value or error)
+          logged_result = if undo_result.respond_to?(:value)
+                            undo_result.value
+                          elsif undo_result.respond_to?(:error)
+                            undo_result.error
+                          else
+                            undo_result
+                          end
+
+          @context.execution_trace << { type: :undo, step: step_config.name, timestamp: Time.now, result: logged_result,
+                                        arguments: arguments }
+
+          if undo_result.is_a?(RubyReactor::Failure)
+            middlewares.on(:failed_undo, step_config.name, undo_result, @context)
+          else
+            middlewares.on(:complete_undo, step_config.name, undo_result, @context)
+          end
+
+          undo_result
+        rescue StandardError => e
+          middlewares.on(:failed_undo, step_config.name, e, @context)
+          # Log undo failure but don't halt the rollback process
+          @context.execution_trace << { type: :undo_failure, step: step_config.name, timestamp: Time.now,
+                                        error: e.message }
+          RubyReactor.Failure(e)
+        end
       end
     end
   end

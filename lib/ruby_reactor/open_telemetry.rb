@@ -14,6 +14,10 @@ module RubyReactor
       super
       @step_spans = {}
       @step_tokens = {}
+      @compensation_spans = {}
+      @compensation_tokens = {}
+      @undo_spans = {}
+      @undo_tokens = {}
       @reactor_span = nil
       @reactor_token = nil
     end
@@ -54,6 +58,14 @@ module RubyReactor
 
       span = @reactor_span
       @reactor_span = nil
+
+      @step_spans.clear
+      @step_tokens.clear
+      @compensation_spans.clear
+      @compensation_tokens.clear
+      @undo_spans.clear
+      @undo_tokens.clear
+
       return unless span
 
       map_reactor_result_status(span, result, context)
@@ -66,6 +78,14 @@ module RubyReactor
 
       span = @reactor_span
       @reactor_span = nil
+
+      @step_spans.clear
+      @step_tokens.clear
+      @compensation_spans.clear
+      @compensation_tokens.clear
+      @undo_spans.clear
+      @undo_tokens.clear
+
       return unless span
 
       if error.is_a?(Exception)
@@ -145,6 +165,152 @@ module RubyReactor
                        "error.message" => error.respond_to?(:message) ? error.message : error.to_s,
                        "error.class" => error.is_a?(Exception) ? error.class.name : "RubyReactor::Failure"
                      })
+    end
+
+    def on_start_compensation(step_name, error, arguments, context)
+      ensure_opentelemetry_loaded!
+
+      # Finish step span if it is still open, as compensation happens after the step execution has failed
+      if (step_span = @step_spans.delete(step_name))
+        step_token = @step_tokens.delete(step_name)
+        ::OpenTelemetry::Context.detach(step_token) if step_token
+
+        if error.is_a?(Exception)
+          step_span.status = ::OpenTelemetry::Trace::Status.error(error.message)
+          step_span.record_exception(error)
+        else
+          map_step_result_status(step_span, error)
+        end
+        step_span.finish
+      end
+
+      tracer = ::OpenTelemetry.tracer_provider.tracer("ruby_reactor")
+
+      redact_keys = if context.reactor_class.respond_to?(:inputs)
+                      context.reactor_class.inputs.select do |_, c|
+                        c[:redact]
+                      end.keys
+                    else
+                      []
+                    end
+      attributes = { "step.name" => step_name.to_s }
+      arguments.each do |k, v|
+        val = redact_keys.include?(k.to_sym) ? "[REDACTED]" : safe_value(v)
+        attributes["step.arguments.#{k}"] = val
+      end
+
+      if error.is_a?(Exception)
+        attributes["compensation.trigger_error.class"] = error.class.name
+        attributes["compensation.trigger_error.message"] = error.message
+      else
+        attributes["compensation.trigger_error.message"] = error.to_s
+      end
+
+      parent_context = if @reactor_span
+                         ::OpenTelemetry::Trace.context_with_span(@reactor_span)
+                       else
+                         ::OpenTelemetry::Context.current
+                       end
+
+      span = tracer.start_span("compensate.#{step_name}", attributes: attributes, with_parent: parent_context)
+      token = ::OpenTelemetry::Context.attach(::OpenTelemetry::Trace.context_with_span(span))
+
+      @compensation_spans[step_name] = span
+      @compensation_tokens[step_name] = token
+    end
+
+    def on_complete_compensation(step_name, result, _context)
+      token = @compensation_tokens.delete(step_name)
+      ::OpenTelemetry::Context.detach(token) if token
+
+      span = @compensation_spans.delete(step_name)
+      return unless span
+
+      map_compensation_result_status(span, result)
+      span.finish
+    end
+
+    def on_failed_compensation(step_name, error, _context)
+      token = @compensation_tokens.delete(step_name)
+      ::OpenTelemetry::Context.detach(token) if token
+
+      span = @compensation_spans.delete(step_name)
+      return unless span
+
+      span.set_attribute("compensation.status", "failed")
+      if error.is_a?(Exception)
+        span.status = ::OpenTelemetry::Trace::Status.error(error.message)
+        span.record_exception(error)
+        span.set_attribute("error.message", error.message)
+        span.set_attribute("error.class", error.class.name)
+      else
+        map_compensation_result_status(span, error)
+      end
+      span.finish
+    end
+
+    def on_start_undo(step_name, step_result, arguments, context)
+      ensure_opentelemetry_loaded!
+      tracer = ::OpenTelemetry.tracer_provider.tracer("ruby_reactor")
+
+      redact_keys = if context.reactor_class.respond_to?(:inputs)
+                      context.reactor_class.inputs.select do |_, c|
+                        c[:redact]
+                      end.keys
+                    else
+                      []
+                    end
+      attributes = { "step.name" => step_name.to_s }
+      arguments.each do |k, v|
+        val = redact_keys.include?(k.to_sym) ? "[REDACTED]" : safe_value(v)
+        attributes["step.arguments.#{k}"] = val
+      end
+
+      if step_result.respond_to?(:value)
+        attributes["undo.original_result.value"] = safe_value(step_result.value)
+      end
+
+      parent_context = if @reactor_span
+                         ::OpenTelemetry::Trace.context_with_span(@reactor_span)
+                       else
+                         ::OpenTelemetry::Context.current
+                       end
+
+      span = tracer.start_span("undo.#{step_name}", attributes: attributes, with_parent: parent_context)
+      token = ::OpenTelemetry::Context.attach(::OpenTelemetry::Trace.context_with_span(span))
+
+      @undo_spans[step_name] = span
+      @undo_tokens[step_name] = token
+    end
+
+    def on_complete_undo(step_name, result, _context)
+      token = @undo_tokens.delete(step_name)
+      ::OpenTelemetry::Context.detach(token) if token
+
+      span = @undo_spans.delete(step_name)
+      return unless span
+
+      map_undo_result_status(span, result)
+      span.finish
+    end
+
+    def on_failed_undo(step_name, error, _context)
+      token = @undo_tokens.delete(step_name)
+      ::OpenTelemetry::Context.detach(token) if token
+
+      span = @undo_spans.delete(step_name)
+      return unless span
+
+      span.set_attribute("undo.status", "failed")
+      if error.is_a?(Exception)
+        span.status = ::OpenTelemetry::Trace::Status.error(error.message)
+        span.record_exception(error)
+        span.set_attribute("error.message", error.message)
+        span.set_attribute("error.class", error.class.name)
+      else
+        map_undo_result_status(span, error)
+      end
+      span.finish
     end
 
     def on_before_async_enqueue(context)
@@ -350,6 +516,48 @@ module RubyReactor
         span.set_attribute("error.class", result.exception_class.to_s) if result.exception_class
         span.set_attribute("error.message", msg)
         span.set_attribute("step.validation_errors", safe_value(result.validation_errors)) if result.validation_errors
+      end
+    end
+
+    def map_compensation_result_status(span, result)
+      return unless result
+
+      case result
+      when RubyReactor::Success
+        if result.skipped?
+          span.set_attribute("compensation.status", "skipped")
+          span.set_attribute("compensation.skipped_reason", result.reason.to_s)
+        else
+          span.set_attribute("compensation.status", "completed")
+          span.status = ::OpenTelemetry::Trace::Status.ok
+        end
+      when RubyReactor::Failure
+        span.set_attribute("compensation.status", "failed")
+        msg = result.error.respond_to?(:message) ? result.error.message : result.error.to_s
+        span.status = ::OpenTelemetry::Trace::Status.error(msg)
+        span.set_attribute("error.class", result.exception_class.to_s) if result.exception_class
+        span.set_attribute("error.message", msg)
+      end
+    end
+
+    def map_undo_result_status(span, result)
+      return unless result
+
+      case result
+      when RubyReactor::Success
+        if result.skipped?
+          span.set_attribute("undo.status", "skipped")
+          span.set_attribute("undo.skipped_reason", result.reason.to_s)
+        else
+          span.set_attribute("undo.status", "completed")
+          span.status = ::OpenTelemetry::Trace::Status.ok
+        end
+      when RubyReactor::Failure
+        span.set_attribute("undo.status", "failed")
+        msg = result.error.respond_to?(:message) ? result.error.message : result.error.to_s
+        span.status = ::OpenTelemetry::Trace::Status.error(msg)
+        span.set_attribute("error.class", result.exception_class.to_s) if result.exception_class
+        span.set_attribute("error.message", msg)
       end
     end
   end

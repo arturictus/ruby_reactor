@@ -109,6 +109,40 @@ class TelemetryAsyncStepReactor < RubyReactor::Reactor
   end
 end
 
+class TelemetryInlineCompensateReactor < RubyReactor::Reactor
+  step :failing_step do
+    run { raise "step failed" }
+    compensate { |error, arguments, context| RubyReactor.Success("compensated inline") }
+  end
+end
+
+class TelemetryInlineUndoReactor < RubyReactor::Reactor
+  step :first_step do
+    run { RubyReactor.Success(42) }
+    undo { |result, arguments, context| RubyReactor.Success("undone inline") }
+  end
+  step :second_step do
+    run { raise "force rollback" }
+  end
+end
+
+class TelemetryFailingCompensateReactor < RubyReactor::Reactor
+  step :failing_step do
+    run { raise "step failed" }
+    compensate { |error, arguments, context| raise "compensation failed" }
+  end
+end
+
+class TelemetryFailingUndoReactor < RubyReactor::Reactor
+  step :first_step do
+    run { RubyReactor.Success(42) }
+    undo { |result, arguments, context| raise "undo failed" }
+  end
+  step :second_step do
+    run { raise "force rollback" }
+  end
+end
+
 RSpec.describe "RubyReactor OpenTelemetry Tracing" do
   let(:provider) { OpenTelemetry::SDK::Trace::TracerProvider.new }
   let(:exporter) { OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new }
@@ -331,6 +365,73 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
         expect(sidekiq_step).not_to be_nil
         expect(resumed_reactor_span.parent_span_id).to eq(main_step.span_id)
       end
+    end
+  end
+
+  describe "Compensation and Undo Tracing" do
+    it "traces successful compensations under the reactor span" do
+      reactor = TelemetryInlineCompensateReactor.new
+      reactor.run
+
+      spans = exporter.finished_spans
+      reactor_span = spans.find { |s| s.name == "TelemetryInlineCompensateReactor" }
+      compensate_span = spans.find { |s| s.name == "compensate.failing_step" }
+
+      expect(reactor_span).not_to be_nil
+      expect(compensate_span).not_to be_nil
+      expect(compensate_span.parent_span_id).to eq(reactor_span.span_id)
+      expect(compensate_span.status.code).to eq(::OpenTelemetry::Trace::Status::OK)
+      expect(compensate_span.attributes["compensation.status"]).to eq("completed")
+      expect(compensate_span.attributes["compensation.trigger_error.message"]).to eq("step failed")
+    end
+
+    it "traces failed compensations with error status" do
+      reactor = TelemetryFailingCompensateReactor.new
+      result = reactor.run
+      expect(result).to be_a(RubyReactor::Failure)
+
+      spans = exporter.finished_spans
+      reactor_span = spans.find { |s| s.name == "TelemetryFailingCompensateReactor" }
+      compensate_span = spans.find { |s| s.name == "compensate.failing_step" }
+
+      expect(reactor_span).not_to be_nil
+      expect(compensate_span).not_to be_nil
+      expect(compensate_span.parent_span_id).to eq(reactor_span.span_id)
+      expect(compensate_span.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
+      expect(compensate_span.attributes["compensation.status"]).to eq("failed")
+      expect(compensate_span.attributes["error.message"]).to eq("compensation failed")
+    end
+
+    it "traces successful undos under the reactor span during rollback" do
+      reactor = TelemetryInlineUndoReactor.new
+      reactor.run
+
+      spans = exporter.finished_spans
+      reactor_span = spans.find { |s| s.name == "TelemetryInlineUndoReactor" }
+      undo_span = spans.find { |s| s.name == "undo.first_step" }
+
+      expect(reactor_span).not_to be_nil
+      expect(undo_span).not_to be_nil
+      expect(undo_span.parent_span_id).to eq(reactor_span.span_id)
+      expect(undo_span.status.code).to eq(::OpenTelemetry::Trace::Status::OK)
+      expect(undo_span.attributes["undo.status"]).to eq("completed")
+      expect(undo_span.attributes["undo.original_result.value"]).to eq("42")
+    end
+
+    it "traces failed undos with error status during rollback" do
+      reactor = TelemetryFailingUndoReactor.new
+      reactor.run
+
+      spans = exporter.finished_spans
+      reactor_span = spans.find { |s| s.name == "TelemetryFailingUndoReactor" }
+      undo_span = spans.find { |s| s.name == "undo.first_step" }
+
+      expect(reactor_span).not_to be_nil
+      expect(undo_span).not_to be_nil
+      expect(undo_span.parent_span_id).to eq(reactor_span.span_id)
+      expect(undo_span.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
+      expect(undo_span.attributes["undo.status"]).to eq("failed")
+      expect(undo_span.attributes["error.message"]).to eq("undo failed")
     end
   end
 end
