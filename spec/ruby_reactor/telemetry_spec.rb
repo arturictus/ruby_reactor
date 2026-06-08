@@ -120,6 +120,26 @@ class TelemetryMapReactor < RubyReactor::Reactor
   end
 end
 
+class TelemetryMapFailElement < RubyReactor::Reactor
+  input :item
+  step :boom do
+    run { RubyReactor.Failure("map element boom") }
+  end
+end
+
+class TelemetryAsyncMapRollbackReactor < RubyReactor::Reactor
+  input :items
+  step :prep do
+    run { RubyReactor.Success("prepared") }
+    undo { |_result, _args, _context| RubyReactor.Success("prep undone") }
+  end
+  map :failing_map, TelemetryMapFailElement do
+    async true
+    source input(:items)
+    argument :item, element(:failing_map)
+  end
+end
+
 class TelemetryAsyncStepReactor < RubyReactor::Reactor
   input :value
   step :async_step do
@@ -428,6 +448,27 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
         expect(sidekiq_step.parent_span_id).to eq(resumed_reactor_span.span_id)
         expect(resumed_reactor_span.parent_span_id).to eq(main_reactor_span.span_id)
       end
+    end
+  end
+
+  describe "Async Map Failure Rollback Nesting" do
+    it "nests rollback undo spans under a reactor span instead of orphaning them" do
+      Sidekiq::Testing.inline! do
+        TelemetryAsyncMapRollbackReactor.new.run(items: [1, 2])
+      end
+
+      spans = exporter.finished_spans
+      undo_span = spans.find { |s| s.name == "undo.prep" }
+      expect(undo_span).not_to be_nil
+
+      # The undo span must not be a root/orphan span.
+      invalid_id = ::OpenTelemetry::Trace::INVALID_SPAN_ID
+      expect(undo_span.parent_span_id).not_to eq(invalid_id)
+
+      # Its parent must be one of the reactor spans (the rollback now runs under
+      # a reactor span emitted by the map failure resume path).
+      reactor_span_ids = spans.select { |s| s.name == "TelemetryAsyncMapRollbackReactor" }.map(&:span_id)
+      expect(reactor_span_ids).to include(undo_span.parent_span_id)
     end
   end
 

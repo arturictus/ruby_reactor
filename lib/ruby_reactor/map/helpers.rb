@@ -74,9 +74,22 @@ module RubyReactor
             error.set_backtrace(final_result.error.backtrace)
           end
 
-          failure_response = executor.result_handler.handle_execution_error(error)
-          # Manually update context status since we're not running executor loop
-          executor.send(:update_context_status, failure_response)
+          # Bracket the rollback with reactor lifecycle events so that
+          # compensation/undo spans nest under a reactor span (and stay attached
+          # to the originating trace), mirroring the success path's
+          # resume_execution. Without this, rollback runs in the collector worker
+          # with no active reactor span and the undo/compensation spans orphan.
+          executor.middlewares.on(:start_reactor, parent_context.reactor_class.name, parent_context.inputs,
+                                   parent_context)
+          failure_response = nil
+          begin
+            failure_response = executor.result_handler.handle_execution_error(error)
+            # Manually update context status since we're not running executor loop
+            executor.send(:update_context_status, failure_response)
+          ensure
+            executor.middlewares.on(:failed_reactor, parent_context.reactor_class.name, failure_response,
+                                    parent_context)
+          end
         else
           parent_context.set_result(step_name_sym, final_result.value)
 
