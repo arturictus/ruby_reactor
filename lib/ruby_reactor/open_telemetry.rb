@@ -134,7 +134,18 @@ module RubyReactor
       span = @step_spans.delete(step_name)
       return unless span
 
-      map_step_result_status(span, result)
+      if result.is_a?(RubyReactor::AsyncResult)
+        # The step was handed off to a background worker; the run block did not
+        # execute here. Rename the span so it is not confused with the real
+        # execution span emitted later under the resumed reactor span.
+        span.name = "step.#{step_name}.enqueue" if span.respond_to?(:name=)
+        span.set_attribute("step.async", true)
+        span.set_attribute("step.status", "handed_off")
+        span.set_attribute("step.async_job_id", result.job_id.to_s) if result.respond_to?(:job_id) && result.job_id
+        span.status = ::OpenTelemetry::Trace::Status.ok
+      else
+        map_step_result_status(span, result)
+      end
       span.finish
     end
 
