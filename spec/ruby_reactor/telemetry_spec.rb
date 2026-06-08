@@ -151,6 +151,9 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
   before do
     provider.add_span_processor(processor)
     allow(OpenTelemetry).to receive(:tracer_provider).and_return(provider)
+    allow(OpenTelemetry).to receive(:propagation).and_return(
+      OpenTelemetry::Trace::Propagation::TraceContext.text_map_propagator
+    )
 
     RubyReactor.configure do |config|
       config.middlewares = [RubyReactor::OpenTelemetry]
@@ -363,7 +366,7 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
 
         expect(main_step).not_to be_nil
         expect(sidekiq_step).not_to be_nil
-        expect(resumed_reactor_span.parent_span_id).to eq(main_step.span_id)
+        expect(resumed_reactor_span.parent_span_id).to eq(main_reactor_span.span_id)
       end
     end
   end

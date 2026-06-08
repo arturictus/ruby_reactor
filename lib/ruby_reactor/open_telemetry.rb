@@ -316,8 +316,17 @@ module RubyReactor
     def on_before_async_enqueue(context)
       return unless defined?(::OpenTelemetry)
 
+      existing_tc = context.private_data[:trace_context] || context.private_data["trace_context"]
+      return if existing_tc && !existing_tc.empty?
+
       carrier = {}
-      ::OpenTelemetry.propagation.inject(carrier)
+      ctx = if @reactor_span
+              ::OpenTelemetry::Trace.context_with_span(@reactor_span)
+            else
+              ::OpenTelemetry::Context.current
+            end
+
+      ::OpenTelemetry.propagation.inject(carrier, context: ctx)
       context.private_data[:trace_context] = carrier unless carrier.empty?
     rescue StandardError => e
       RubyReactor.configuration.logger.warn("Telemetry context injection failed: #{e.message}")
