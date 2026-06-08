@@ -70,6 +70,27 @@ class TelemetryRetryReactor < RubyReactor::Reactor
   end
 end
 
+class TelemetryAsyncRetryStep
+  @attempts = 0
+  class << self
+    attr_accessor :attempts
+
+    def run(_arguments, _context)
+      @attempts += 1
+      return RubyReactor.Failure("transient async error") if @attempts < 2
+
+      RubyReactor.Success("async success after retry")
+    end
+  end
+end
+
+class TelemetryAsyncRetryReactor < RubyReactor::Reactor
+  step :flaky_async, TelemetryAsyncRetryStep do
+    async true
+    retries max_attempts: 3, base_delay: 0
+  end
+end
+
 class TelemetryInnerReactor < RubyReactor::Reactor
   step :inner_step do
     run do |_inputs|
@@ -292,6 +313,40 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
     end
   end
 
+  describe "Async Retry Telemetry" do
+    it "marks a failed-but-requeued attempt span as ERROR without failing the reactor span" do
+      TelemetryAsyncRetryStep.attempts = 0
+
+      Sidekiq::Testing.inline! do
+        TelemetryAsyncRetryReactor.new.run(value: 1)
+      end
+
+      spans = exporter.finished_spans
+      flaky_spans = spans.select { |s| s.name == "step.flaky_async" }
+
+      # The attempt that failed and was requeued is recorded as an error span,
+      # annotated as a retry. OTel span status does not propagate, so this does
+      # not fail the reactor span.
+      requeued = flaky_spans.find { |s| s.attributes["step.status"] == "failed_will_retry" }
+      expect(requeued).not_to be_nil
+      expect(requeued.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
+      expect(requeued.attributes["retry.will_retry"]).to eq(true)
+      expect(requeued.attributes["error.message"]).to eq("transient async error")
+
+      # The retried attempt eventually succeeds.
+      succeeded = flaky_spans.find { |s| s.attributes["step.status"] == "completed" }
+      expect(succeeded).not_to be_nil
+      expect(succeeded.status.code).to eq(::OpenTelemetry::Trace::Status::OK)
+
+      # The reactor as a whole succeeds despite the transient failure.
+      reactor_spans = spans.select { |s| s.name == "TelemetryAsyncRetryReactor" }
+      expect(reactor_spans).not_to be_empty
+      reactor_spans.each do |rs|
+        expect(rs.status.code).not_to eq(::OpenTelemetry::Trace::Status::ERROR)
+      end
+    end
+  end
+
   describe "Sync Composed Nesting" do
     it "perfectly nests outer step, inner reactor, and inner step spans" do
       reactor = TelemetryOuterReactor.new
@@ -358,14 +413,19 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
         expect(main_reactor_span).not_to be_nil
         expect(resumed_reactor_span).not_to be_nil
 
-        step_spans = spans.select { |s| s.name == "step.async_step" }
-        expect(step_spans.size).to eq(2) # 1 on main thread, 1 on Sidekiq thread
-
-        main_step = step_spans.find { |s| s.parent_span_id == main_reactor_span.span_id }
-        sidekiq_step = step_spans.find { |s| s.parent_span_id == resumed_reactor_span.span_id }
+        # The main thread only hands the step off to the worker; that span is
+        # renamed to "step.async_step.enqueue" and tagged as handed off. The
+        # real execution happens once, on the Sidekiq thread, as "step.async_step".
+        main_step = spans.find { |s| s.name == "step.async_step.enqueue" }
+        sidekiq_step = spans.find { |s| s.name == "step.async_step" }
 
         expect(main_step).not_to be_nil
+        expect(main_step.parent_span_id).to eq(main_reactor_span.span_id)
+        expect(main_step.attributes["step.status"]).to eq("handed_off")
+        expect(main_step.attributes["step.async"]).to eq(true)
+
         expect(sidekiq_step).not_to be_nil
+        expect(sidekiq_step.parent_span_id).to eq(resumed_reactor_span.span_id)
         expect(resumed_reactor_span.parent_span_id).to eq(main_reactor_span.span_id)
       end
     end

@@ -14,6 +14,7 @@ module RubyReactor
       super
       @step_spans = {}
       @step_tokens = {}
+      @retry_errors = {}
       @compensation_spans = {}
       @compensation_tokens = {}
       @undo_spans = {}
@@ -61,6 +62,7 @@ module RubyReactor
 
       @step_spans.clear
       @step_tokens.clear
+      @retry_errors.clear
       @compensation_spans.clear
       @compensation_tokens.clear
       @undo_spans.clear
@@ -81,6 +83,7 @@ module RubyReactor
 
       @step_spans.clear
       @step_tokens.clear
+      @retry_errors.clear
       @compensation_spans.clear
       @compensation_tokens.clear
       @undo_spans.clear
@@ -131,6 +134,8 @@ module RubyReactor
       token = @step_tokens.delete(step_name)
       ::OpenTelemetry::Context.detach(token) if token
 
+      retry_error = @retry_errors.delete(step_name)
+
       span = @step_spans.delete(step_name)
       return unless span
 
@@ -143,6 +148,12 @@ module RubyReactor
         span.set_attribute("step.status", "handed_off")
         span.set_attribute("step.async_job_id", result.job_id.to_s) if result.respond_to?(:job_id) && result.job_id
         span.status = ::OpenTelemetry::Trace::Status.ok
+      elsif result.is_a?(RubyReactor::RetryQueuedResult)
+        # This attempt failed and was requeued for an async retry. The span
+        # represents a single failed attempt, so it is marked as an error.
+        # OTel span status does not propagate to the parent, so the reactor
+        # (and the overall trace) stays healthy if a later retry succeeds.
+        map_retry_queued_status(span, result, retry_error)
       else
         map_step_result_status(span, result)
       end
@@ -152,6 +163,7 @@ module RubyReactor
     def on_failed_step(step_name, error, _context)
       token = @step_tokens.delete(step_name)
       ::OpenTelemetry::Context.detach(token) if token
+      @retry_errors.delete(step_name)
 
       span = @step_spans.delete(step_name)
       return unless span
@@ -167,6 +179,11 @@ module RubyReactor
 
     def on_retry_attempt(step_name, attempt, error, _context)
       return unless defined?(::OpenTelemetry)
+
+      # Remember the error that triggered this attempt so we can annotate the
+      # span if the step is requeued for an async retry (RetryQueuedResult does
+      # not carry the error itself).
+      @retry_errors[step_name] = error
 
       span = @step_spans[step_name]
       return unless span
@@ -515,6 +532,30 @@ module RubyReactor
           span.set_attribute("reactor.validation_errors", safe_value(result.validation_errors))
         end
       end
+    end
+
+    def map_retry_queued_status(span, result, error)
+      span.set_attribute("step.status", "failed_will_retry")
+      span.set_attribute("retry.will_retry", true)
+      span.set_attribute("retry.attempt", result.attempt_number.to_i) if result.respond_to?(:attempt_number)
+      if result.respond_to?(:next_retry_at) && result.next_retry_at
+        span.set_attribute("retry.next_retry_at", result.next_retry_at.to_s)
+      end
+
+      msg = if error.respond_to?(:message)
+              error.message
+            elsif error
+              error.to_s
+            else
+              "Step failed; retry queued"
+            end
+      span.status = ::OpenTelemetry::Trace::Status.error(msg)
+
+      if error.is_a?(Exception)
+        span.record_exception(error)
+        span.set_attribute("error.class", error.class.name)
+      end
+      span.set_attribute("error.message", msg)
     end
 
     def map_step_result_status(span, result)
