@@ -184,6 +184,38 @@ class TelemetryFailingUndoReactor < RubyReactor::Reactor
   end
 end
 
+# Element whose step fails on early attempts (tracked via retry_context so it
+# survives async requeues) and then succeeds.
+class TelemetryAsyncMapRetryElement < RubyReactor::Reactor
+  input :item
+  input :fail_until
+  step :el_step do
+    argument :val, input(:item)
+    argument :fail_until, input(:fail_until)
+    retries max_attempts: 5, base_delay: 0
+    run do |args, context|
+      attempt = context.retry_context.attempts_for_step(:el_step)
+      if attempt < args[:fail_until]
+        RubyReactor.Failure("map element attempt #{attempt} failed")
+      else
+        RubyReactor.Success(args[:val].to_i * 10)
+      end
+    end
+  end
+  returns :el_step
+end
+
+class TelemetryAsyncMapRetryReactor < RubyReactor::Reactor
+  input :items
+  input :fail_until_attempt
+  map :mapped, TelemetryAsyncMapRetryElement do
+    source input(:items)
+    argument :item, element(:mapped)
+    argument :fail_until, input(:fail_until_attempt)
+    async true, batch_size: 1
+  end
+end
+
 RSpec.describe "RubyReactor OpenTelemetry Tracing" do
   let(:provider) { OpenTelemetry::SDK::Trace::TracerProvider.new }
   let(:exporter) { OpenTelemetry::SDK::Trace::Export::InMemorySpanExporter.new }
@@ -364,6 +396,70 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
       reactor_spans.each do |rs|
         expect(rs.status.code).not_to eq(::OpenTelemetry::Trace::Status::ERROR)
       end
+    end
+
+    # Under real async execution (fake! + drain, i.e. how production Sidekiq
+    # behaves) the worker attempt that requeues the step finishes its executor
+    # with a RetryQueuedResult, so on_complete_reactor receives it. (Under
+    # inline! the requeue runs synchronously and collapses to Success, which is
+    # why the test above does not exercise this path.)
+    it "marks the reactor span of a requeued attempt as ERROR while the final attempt stays OK" do
+      TelemetryAsyncRetryStep.attempts = 0
+
+      TelemetryAsyncRetryReactor.new.run
+      5.times do
+        RubyReactor::SidekiqWorkers::Worker.drain
+        break if RubyReactor::SidekiqWorkers::Worker.jobs.empty?
+      end
+
+      spans = exporter.finished_spans
+      reactor_spans = spans.select { |s| s.name == "TelemetryAsyncRetryReactor" }
+
+      requeued = reactor_spans.find { |s| s.attributes["reactor.status"] == "failed_will_retry" }
+      expect(requeued).not_to be_nil
+      expect(requeued.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
+      expect(requeued.attributes["retry.will_retry"]).to eq(true)
+      expect(requeued.attributes["retry.step_name"]).to eq("flaky_async")
+
+      completed = reactor_spans.find { |s| s.attributes["reactor.status"] == "completed" }
+      expect(completed).not_to be_nil
+      expect(completed.status.code).to eq(::OpenTelemetry::Trace::Status::OK)
+    end
+  end
+
+  describe "Async Map Element Retry Telemetry" do
+    it "traces a requeued async map element attempt as ERROR and the successful attempt as OK" do
+      TelemetryAsyncMapRetryReactor.new.run(items: [3], fail_until_attempt: 2)
+      8.times do
+        RubyReactor::SidekiqWorkers::MapElementWorker.drain
+        RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+        break if RubyReactor::SidekiqWorkers::MapElementWorker.jobs.empty? &&
+                 RubyReactor::SidekiqWorkers::MapCollectorWorker.jobs.empty?
+      end
+
+      spans = exporter.finished_spans
+
+      # The element step span for the failed-but-requeued attempt is marked ERROR
+      # with the failed_will_retry annotation (same treatment as step-level async
+      # retries).
+      step_spans = spans.select { |s| s.name == "step.el_step" }
+      requeued_step = step_spans.find { |s| s.attributes["step.status"] == "failed_will_retry" }
+      expect(requeued_step).not_to be_nil
+      expect(requeued_step.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
+      expect(requeued_step.attributes["retry.will_retry"]).to eq(true)
+
+      # The element reactor span for that requeued attempt is likewise ERROR /
+      # failed_will_retry, since it represents a single failed attempt.
+      element_spans = spans.select { |s| s.name == "TelemetryAsyncMapRetryElement" }
+      requeued_element = element_spans.find { |s| s.attributes["reactor.status"] == "failed_will_retry" }
+      expect(requeued_element).not_to be_nil
+      expect(requeued_element.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
+      expect(requeued_element.attributes["retry.will_retry"]).to eq(true)
+
+      # The retried attempt eventually succeeds; that element reactor span is OK.
+      completed_element = element_spans.find { |s| s.attributes["reactor.status"] == "completed" }
+      expect(completed_element).not_to be_nil
+      expect(completed_element.status.code).to eq(::OpenTelemetry::Trace::Status::OK)
     end
   end
 

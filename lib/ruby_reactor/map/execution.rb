@@ -82,6 +82,13 @@ module RubyReactor
       end
 
       def self.store_result(result, index, options)
+        if result.is_a?(RubyReactor::AsyncResult) || result.is_a?(RubyReactor::RetryQueuedResult)
+          raise RubyReactor::Error::ValidationError,
+                "Async map element execution requires `batch_size:` on the map step. The single-worker " \
+                "async map path runs elements synchronously and cannot handle an element that hands off " \
+                "(async step) or requeues (async retry). Add `batch_size:` to enable per-element workers."
+        end
+
         value = result.success? ? result.value : { _error: result.error }
         options[:storage].store_map_result(
           options[:map_id], index, ContextSerializer.serialize_value(value), options[:parent_reactor_class_name],

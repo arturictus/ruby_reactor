@@ -42,7 +42,7 @@ module RubyReactor
     def self.perform_map_element_in(delay, map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                     strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
                                     batch_size: nil, serialized_context: nil)
-      RubyReactor::SidekiqWorkers::MapElementWorker.perform_in(
+      job_id = RubyReactor::SidekiqWorkers::MapElementWorker.perform_in(
         delay,
         {
           "map_id" => map_id,
@@ -58,6 +58,9 @@ module RubyReactor
           "serialized_context" => serialized_context
         }
       )
+      # Return an AsyncResult so RetryManager#handle_async_retry recognises the
+      # element was successfully requeued and yields a RetryQueuedResult.
+      RubyReactor::AsyncResult.new(job_id: job_id)
     end
     # rubocop:enable Metrics/ParameterLists
 

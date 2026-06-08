@@ -70,7 +70,16 @@ module RubyReactor
 
       return unless span
 
-      map_reactor_result_status(span, result, context)
+      if result.is_a?(RubyReactor::RetryQueuedResult)
+        # This execution attempt failed and was requeued for an async retry
+        # (e.g. an async step or async map element). The reactor span therefore
+        # represents one failed attempt; mark it ERROR (status does not
+        # propagate to the parent, so a later successful attempt keeps the
+        # overall trace healthy).
+        map_reactor_retry_queued_status(span, result)
+      else
+        map_reactor_result_status(span, result, context)
+      end
       span.finish
     end
 
@@ -94,6 +103,8 @@ module RubyReactor
       if error.is_a?(Exception)
         span.status = ::OpenTelemetry::Trace::Status.error(error.message)
         span.record_exception(error)
+      elsif error.is_a?(RubyReactor::RetryQueuedResult)
+        map_reactor_retry_queued_status(span, error)
       else
         map_reactor_result_status(span, error, context)
       end
@@ -532,6 +543,23 @@ module RubyReactor
           span.set_attribute("reactor.validation_errors", safe_value(result.validation_errors))
         end
       end
+    end
+
+    def map_reactor_retry_queued_status(span, result)
+      span.set_attribute("reactor.status", "failed_will_retry")
+      span.set_attribute("retry.will_retry", true)
+      span.set_attribute("retry.step_name", result.step_name.to_s) if result.respond_to?(:step_name) && result.step_name
+      span.set_attribute("retry.attempt", result.attempt_number.to_i) if result.respond_to?(:attempt_number)
+      if result.respond_to?(:next_retry_at) && result.next_retry_at
+        span.set_attribute("retry.next_retry_at", result.next_retry_at.to_s)
+      end
+
+      msg = if result.respond_to?(:step_name) && result.step_name
+              "Reactor execution requeued: step '#{result.step_name}' will retry"
+            else
+              "Reactor execution requeued for retry"
+            end
+      span.status = ::OpenTelemetry::Trace::Status.error(msg)
     end
 
     def map_retry_queued_status(span, result, error)
