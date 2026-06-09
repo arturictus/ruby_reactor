@@ -157,11 +157,25 @@ class TeleyJsonExporter
   end
 end
 
+# Teley computes a trace's duration per OTLP payload (it does not aggregate a
+# trace's spans across separate posts) and the live viewer replaces the trace on
+# every update. A SimpleSpanProcessor exports one span per post, so the timeline
+# ends up reflecting only the last span that happened to arrive (often a tiny
+# async map element span) instead of the whole run -- the "total" collapses to a
+# couple of ms.
+#
+# Use a BatchSpanProcessor so a run's spans are flushed together in a single
+# payload, letting Teley aggregate start/end across them into the real total
+# execution time. The short schedule delay keeps the demo responsive.
+ENV["OTEL_BSP_SCHEDULE_DELAY"] ||= "2000" # ms
+ENV["OTEL_BSP_MAX_QUEUE_SIZE"] ||= "8192"
+ENV["OTEL_BSP_MAX_EXPORT_BATCH_SIZE"] ||= "2048"
+
 OpenTelemetry::SDK.configure do |c|
   c.service_name = "demo_app"
-  
+
   # Register the custom Teley OTLP/JSON exporter
   exporter = TeleyJsonExporter.new(endpoint: ENV["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"])
-  processor = OpenTelemetry::SDK::Trace::Export::SimpleSpanProcessor.new(exporter)
+  processor = OpenTelemetry::SDK::Trace::Export::BatchSpanProcessor.new(exporter)
   c.add_span_processor(processor)
 end

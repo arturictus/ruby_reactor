@@ -128,13 +128,12 @@ module RubyReactor
         attributes["step.arguments.#{k}"] = val
       end
 
-      parent_context = if @reactor_span
-                         ::OpenTelemetry::Trace.context_with_span(@reactor_span)
-                       else
-                         ::OpenTelemetry::Context.current
-                       end
-
-      span = tracer.start_span("step.#{step_name}", attributes: attributes, with_parent: parent_context)
+      # Nest under the current OpenTelemetry context rather than forcing the
+      # reactor span as the parent. Steps run sequentially, so the current span
+      # is the reactor span (or an enclosing step/element span for composed and
+      # mapped reactors); honouring it keeps the trace hierarchy intact instead
+      # of flattening every span directly under the reactor.
+      span = tracer.start_span("step.#{step_name}", attributes: attributes)
       token = ::OpenTelemetry::Context.attach(::OpenTelemetry::Trace.context_with_span(span))
 
       @step_spans[step_name] = span
@@ -358,14 +357,13 @@ module RubyReactor
       existing_tc = context.private_data[:trace_context] || context.private_data["trace_context"]
       return if existing_tc && !existing_tc.empty?
 
+      # Inject the *current* context (the active step span at enqueue time) rather
+      # than forcing the reactor span. This keeps the resumed/async execution
+      # nested under the step that handed it off, so the step span (and the
+      # reactor span above it) reflect the total execution time of the async work
+      # in the trace waterfall instead of being flattened into a sibling.
       carrier = {}
-      ctx = if @reactor_span
-              ::OpenTelemetry::Trace.context_with_span(@reactor_span)
-            else
-              ::OpenTelemetry::Context.current
-            end
-
-      ::OpenTelemetry.propagation.inject(carrier, context: ctx)
+      ::OpenTelemetry.propagation.inject(carrier)
       context.private_data[:trace_context] = carrier unless carrier.empty?
     rescue StandardError => e
       RubyReactor.configuration.logger.warn("Telemetry context injection failed: #{e.message}")

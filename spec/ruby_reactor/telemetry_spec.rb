@@ -542,7 +542,11 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
 
         expect(sidekiq_step).not_to be_nil
         expect(sidekiq_step.parent_span_id).to eq(resumed_reactor_span.span_id)
-        expect(resumed_reactor_span.parent_span_id).to eq(main_reactor_span.span_id)
+
+        # The resumed reactor span nests under the enqueue step span (not flattened
+        # directly under the reactor), so the step that handed the work off reflects
+        # the total execution time of the async work in the trace waterfall.
+        expect(resumed_reactor_span.parent_span_id).to eq(main_step.span_id)
       end
     end
   end
