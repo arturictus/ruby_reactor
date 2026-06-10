@@ -272,18 +272,6 @@ module RubyReactor
             strict_ordering: strict_ordering, timeout: 3600
           )
         end
-
-        def queue_single_worker(map_id:, arguments:, context:, reactor_class_info:, step_name:)
-          inputs = { source: arguments[:source], mappings: arguments[:argument_mappings] || {} }
-          serialized_inputs = ContextSerializer.serialize_value(inputs)
-
-          RubyReactor.configuration.async_router.perform_map_execution_async(
-            map_id: map_id, serialized_inputs: serialized_inputs,
-            reactor_class_info: reactor_class_info, strict_ordering: arguments[:strict_ordering],
-            parent_context_id: context.context_id, parent_reactor_class_name: context.reactor_class.name,
-            step_name: step_name.to_s, fail_fast: arguments[:fail_fast].nil? || arguments[:fail_fast]
-          )
-        end
       end
     end
   end

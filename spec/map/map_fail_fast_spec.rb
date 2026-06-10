@@ -368,15 +368,11 @@ RSpec.describe "Map fail_fast Option" do
 
       # Drain Sidekiq jobs
       # We need to drain multiple times/types because:
-      # 1. MapExecutionWorker acts as the "Manager" dispatching batches
-      # 2. MapElementWorker executes the individual elements
-      # 3. MapCollectorWorker waits for results
+      # 1. MapElementWorker executes the individual elements
+      # 2. MapCollectorWorker waits for results
 
       # Main Worker
       RubyReactor::SidekiqWorkers::Worker.drain
-
-      # Initial dispatch
-      RubyReactor::SidekiqWorkers::MapExecutionWorker.drain
 
       # Process elements (Batches)
       RubyReactor::SidekiqWorkers::MapElementWorker.drain

@@ -432,7 +432,6 @@ module RubyReactor
           worker_classes = [
             RubyReactor::SidekiqWorkers::Worker,
             RubyReactor::SidekiqWorkers::MapElementWorker,
-            RubyReactor::SidekiqWorkers::MapExecutionWorker,
             RubyReactor::SidekiqWorkers::MapCollectorWorker
           ]
 
