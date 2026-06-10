@@ -89,6 +89,34 @@ map :bulk_import do
 end
 ```
 
+### Async Without `batch_size`
+
+`batch_size` is optional. When you enable `async true` without it, RubyReactor
+defaults the batch size to the full source size and fans out **one Sidekiq
+worker per element** immediately. Every element runs through the same
+per-element path — so elements whose sub-reactor contains async steps or async
+retries are handled correctly — and a collector aggregates the outcomes into a
+`ResultEnumerator`.
+
+```ruby
+map :process_items do
+  source input(:items)
+  argument :item, element(:process_items)
+
+  # No batch_size: every element gets its own worker, enqueued at once
+  async true
+
+  step :process do
+    # ...
+  end
+end
+```
+
+This is convenient for small or fixed-size collections, but it provides **no
+back pressure** — all element jobs are enqueued simultaneously. For large or
+database-backed sources, set a `batch_size` to enable the back-pressure
+mechanism described below.
+
 ### Back Pressure & Resource Management
 
 When `async true` is used with a `batch_size`, RubyReactor implements an intelligent **back pressure** mechanism. Instead of flooding Redis and Sidekiq with millions of jobs immediately (which is the standard behavior for many background job systems), the system processes data in controlled chunks.

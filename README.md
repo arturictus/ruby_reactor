@@ -475,6 +475,8 @@ end
 
 By using `async true` with `batch_size`, the system applies **Back Pressure** to efficiently manage resources. [Read more about Back Pressure & Resource Management](documentation/data_pipelines.md#back-pressure--resource-management).
 
+`batch_size` is optional: with `async true` alone, RubyReactor fans out one worker per element (defaulting the batch size to the full source size) and aggregates the outcomes into a `ResultEnumerator` — convenient for small collections, but with no back pressure. See [Async Without `batch_size`](documentation/data_pipelines.md#async-without-batch_size).
+
 #### Map with Dynamic Source (ActiveRecord)
 
 You can use a block for `source` to dynamically fetch data, such as from ActiveRecord queries. The result is wrapped in a `ResultEnumerator` for easy access to successes and failures.
