@@ -54,6 +54,11 @@ group :development, :test do
   gem "rubocop-rails-omakase", require: false
 
   gem "rspec-rails"
+
+  # Reactor execution (and drained Sidekiq workers) writes to the database
+  # outside the example's transaction, so transactional fixtures cannot roll
+  # those rows back. Use DatabaseCleaner with truncation to reset between examples.
+  gem "database_cleaner-active_record"
 end
 
 group :development do
