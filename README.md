@@ -861,6 +861,10 @@ Comprehensive guide to testing reactors with RubyReactor's testing utilities. Le
 
 Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), and calendar-bucketed dedup (`with_period`, returning `Skipped` results). Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, and once-per-day/month/year scheduling patterns.
 
+### [Middlewares & OpenTelemetry](documentation/middlewares.md)
+
+Hook into the execution lifecycle with observer middlewares. Covers the full set of lifecycle events (reactor, step, retry, compensation/undo, async hand-off, locks/semaphores), writing and registering custom middlewares (global and per-reactor), and the built-in `RubyReactor::OpenTelemetry` tracing middleware — span structure, input/argument redaction, distributed trace propagation across async/retry boundaries, and custom exporters.
+
 ### Examples
 - [Order Processing](documentation/examples/order_processing.md) - Complete order processing workflow example
 - [Payment Processing](documentation/examples/payment_processing.md) - Payment handling with compensation
@@ -873,7 +877,7 @@ Coordinate access to shared resources across processes with Redis-backed primiti
 - [X] `map` step to iterate over arrays in parallel
 - [X] `compose` special step to execute reactors as step
 - [X] `interrupt` to pause and resume reactors
-- [ ] Middlewares
+- [X] Middlewares
 - [ ] Async ruby to parallelize same level steps
 - [x] Web dashboard to inspect reactor results and errors
 - [ ] Multiple storage adapters
@@ -882,7 +886,7 @@ Coordinate access to shared resources across processes with Redis-backed primiti
 - [ ] Multiple Async adapters
   - [X] Sidekiq
   - [ ] ActiveJob
-- [ ] OpenTelemetry support
+- [X] OpenTelemetry support
 - [X] locks
 
 ## Development
