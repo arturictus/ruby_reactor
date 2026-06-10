@@ -59,8 +59,8 @@ module RubyReactor
         # Resume parent execution
         resume_parent_execution(parent_context, step_name, final_result, storage)
       rescue StandardError => e
-        puts "COLLECTOR CRASH: #{e.message}"
-        puts e.backtrace
+        RubyReactor.configuration.logger.error("Map collector crashed: #{e.message}")
+        RubyReactor.configuration.logger.error(e.backtrace.join("\n")) if e.backtrace
         raise e
       end
 
@@ -74,8 +74,8 @@ module RubyReactor
             collected = collect_block.call(results)
             RubyReactor::Success(collected)
           rescue StandardError => e
-            puts "COLLECTOR INNER EXCEPTION: #{e.message}"
-            puts e.backtrace
+            RubyReactor.configuration.logger.error("Map collect block raised: #{e.message}")
+            RubyReactor.configuration.logger.error(e.backtrace.join("\n")) if e.backtrace
             RubyReactor::Failure(e)
           end
         else
