@@ -430,25 +430,12 @@ module RubyReactor
       return nil unless defined?(::OpenTelemetry)
 
       tc = fetch_trace_context(context)
-      if tc.nil?
-        RubyReactor.configuration.logger.debug("OTEL: No trace context found in context/storage for #{context.context_id}")
-        return nil
-      end
-      RubyReactor.configuration.logger.debug("OTEL: Stored trace context hash is: #{tc.inspect}")
+      return nil if tc.nil?
 
+      # Stored carriers may have symbol keys (e.g. after a round-trip through a
+      # serializer); the propagator expects string keys.
       tc = tc.transform_keys(&:to_s) if tc.respond_to?(:transform_keys)
-      extracted = ::OpenTelemetry.propagation.extract(tc)
-      if extracted
-        span = ::OpenTelemetry::Trace.current_span(extracted)
-        if span && span.context.valid?
-          RubyReactor.configuration.logger.debug("OTEL: Extracted valid parent trace ID: #{span.context.hex_trace_id} for #{context.context_id}")
-        else
-          RubyReactor.configuration.logger.debug("OTEL: Extracted parent context is invalid for #{context.context_id}")
-        end
-      else
-        RubyReactor.configuration.logger.debug("OTEL: Extraction returned nil for #{context.context_id}")
-      end
-      extracted
+      ::OpenTelemetry.propagation.extract(tc)
     rescue StandardError => e
       RubyReactor.configuration.logger.warn("Telemetry context extraction failed: #{e.message}")
       nil

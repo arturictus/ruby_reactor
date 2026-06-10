@@ -48,9 +48,6 @@ module RubyReactor
                                  @context.root_context || @context
                                end
 
-        puts "SERIALIZING CONTEXT: #{context_to_serialize.reactor_class.name}"
-        puts "INPUTS KEYS: #{context_to_serialize.inputs.keys}" if context_to_serialize.respond_to?(:inputs)
-
         reactor_class_name = context_to_serialize.reactor_class.name
 
         @middlewares.on(:before_async_enqueue, context_to_serialize)
