@@ -68,7 +68,8 @@ module RubyReactor
             parent_reactor_class_name: map_args[:parent_reactor_class_name],
             step_name: map_args[:step_name],
             batch_size: map_args[:batch_size],
-            serialized_context: serialized_context
+            serialized_context: serialized_context,
+            fail_fast: map_args[:fail_fast]
           )
         else
           configuration.async_router.perform_in(delay, serialized_context, reactor_class_name)

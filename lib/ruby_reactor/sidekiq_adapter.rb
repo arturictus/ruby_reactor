@@ -41,7 +41,7 @@ module RubyReactor
 
     def self.perform_map_element_in(delay, map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                     strict_ordering:, parent_context_id:, parent_reactor_class_name:, step_name:,
-                                    batch_size: nil, serialized_context: nil)
+                                    batch_size: nil, serialized_context: nil, fail_fast: nil)
       job_id = RubyReactor::SidekiqWorkers::MapElementWorker.perform_in(
         delay,
         {
@@ -55,7 +55,8 @@ module RubyReactor
           "parent_reactor_class_name" => parent_reactor_class_name,
           "step_name" => step_name,
           "batch_size" => batch_size,
-          "serialized_context" => serialized_context
+          "serialized_context" => serialized_context,
+          "fail_fast" => fail_fast
         }
       )
       # Return an AsyncResult so RetryManager#handle_async_retry recognises the

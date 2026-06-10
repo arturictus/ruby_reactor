@@ -78,13 +78,17 @@ RSpec.describe "Map Async Retry Behavior" do
       RubyReactor::SidekiqWorkers::MapElementWorker.drain
       RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
 
-      # A fully-failed async map surfaces the per-element errors in the stored
-      # map results (the same way batch_size maps do); after the retries are
-      # exhausted each element stores an `_error` entry.
       context_id = reactor.context.context_id
       storage = RubyReactor.configuration.storage_adapter
       context_data = storage.retrieve_context(context_id, AsyncRetryMapReactorV2.name)
 
+      # With fail_fast (the default) the exhausted-retry failure propagates to the
+      # parent reactor: the collector marks the parent context as failed.
+      context = RubyReactor::Context.deserialize_from_retry(context_data)
+      expect(context.status).to eq("failed")
+      expect(context.failure_reason.error).to include("failed after 5 attempts")
+
+      # The per-element error is also recorded in the stored map results.
       map_id = context_data["map_operations"]["processed"]
       map_results = storage.retrieve_map_results(map_id, AsyncRetryMapReactorV2.name)
       errors = map_results.select { |v| v.is_a?(Hash) && v["_error"] }
