@@ -64,7 +64,11 @@ class TeleyJsonExporter
       req["Content-Type"] = "application/json"
       req.body = JSON.generate(payload)
 
-      Net::HTTP.start(@uri.hostname, @uri.port, use_ssl: @uri.scheme == "https") do |http|
+      # Bound the request so a hung/unreachable Teley can't stall the
+      # BatchSpanProcessor export thread (and back up the span queue) forever.
+      http_timeout = timeout || 10
+      Net::HTTP.start(@uri.hostname, @uri.port, use_ssl: @uri.scheme == "https",
+                                                open_timeout: http_timeout, read_timeout: http_timeout) do |http|
         http.request(req)
       end
       OpenTelemetry::SDK::Trace::Export::SUCCESS
