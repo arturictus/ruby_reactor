@@ -51,8 +51,9 @@ RSpec.describe "Map Async Retry Behavior" do
 
       expect(result).to be_a(RubyReactor::AsyncResult)
 
-      # Drain workers to process elements and retries
-      RubyReactor::SidekiqWorkers::MapExecutionWorker.drain
+      # No batch_size now runs through the same per-element path as batch_size
+      # maps (batch_size defaults to the full source size), so drain the element
+      # and collector workers; retries requeue MapElementWorker jobs.
       RubyReactor::SidekiqWorkers::MapElementWorker.drain
       RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
 
@@ -61,7 +62,11 @@ RSpec.describe "Map Async Retry Behavior" do
       storage = RubyReactor.configuration.storage_adapter
       context = storage.retrieve_context(context_id, AsyncRetryMapReactorV2.name)
 
-      expect(context["intermediate_results"]["processed"]).to eq(%w[HELLO WORLD])
+      result_data = context["intermediate_results"]["processed"]
+      expect(result_data["_type"]).to eq("Map::ResultEnumerator")
+
+      enumerator = RubyReactor::ContextSerializer.deserialize_value(result_data)
+      expect(enumerator.to_a.map(&:value)).to eq(%w[HELLO WORLD])
     end
 
     it "fails after max retries in async mode" do
@@ -70,84 +75,17 @@ RSpec.describe "Map Async Retry Behavior" do
 
       expect(result).to be_a(RubyReactor::AsyncResult)
 
-      # Drain workers
-      RubyReactor::SidekiqWorkers::MapExecutionWorker.drain
       RubyReactor::SidekiqWorkers::MapElementWorker.drain
       RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
 
-      # Retrieve final result (should be failure)
-      # context_id = reactor.context.context_id
-      # storage = RubyReactor.configuration.storage_adapter
-      # context = storage.retrieve_context(context_id, AsyncRetryMapReactorV2.name)
-
-      # The context might not have the error directly if it failed fast?
-      # If fail_fast is true (default), the map result stored in intermediate_results might be missing or partial?
-      # Or the reactor execution itself failed?
-      # If the map failed, the collector would have marked the step as failed.
-      # But we need to check how the failure is propagated.
-      # For async map, the collector stores the result.
-
-      # If fail_fast is true, the first failure triggers collection with error.
-      # Let's check intermediate_results.
-      # Wait, if map failed, the step "processed" failed.
-      # The reactor result should be failure.
-      # But we can't get reactor result easily from context?
-      # We can check if the step "processed" is in intermediate_results?
-      # Or check if there is an error in the context?
-
-      # Actually, let's check if the collector job stored the failure.
-      # The collector worker calls `Executor.resume_execution` or similar?
-      # No, `MapCollectorWorker` calls `Map::Collector.collect`.
-      # `Map::Collector` stores the result in `intermediate_results` or calls `resume_execution`.
-
-      # If we want to check the final result of the reactor, we might need to look at how `SidekiqAdapter` handles
-      # the final result?
-      # Usually, the final result is returned to the caller if sync, but here it's async.
-      # The caller (us) only has the initial AsyncResult.
-
-      # We can check the context state.
-      # Or we can check if the map result in storage has errors.
-
-      # Let's verify that the map result contains the error.
-      # The collector should have processed it.
-
-      # Check intermediate_results for "processed"
-      # If it failed, it might not be there, or it might be a Failure object?
-      # Context serialization handles Failure objects?
-
-      # Let's assume the test wants to verify failure.
-      # We can check that retries were exhausted.
-
-      # Also, since we are using `WorkerMock`, maybe we can spy on it?
-      # But `WorkerMock` just delegates to Sidekiq workers here.
-
-      # Let's check the context for the error.
-      # If the map step failed, the reactor execution failed.
-      # The context might have `state: :failed`? (If such thing exists)
-
-      # Let's just check that we got the expected failure in the map results storage if possible,
-      # Retrieve final result (should be failure)
+      # A fully-failed async map surfaces the per-element errors in the stored
+      # map results (the same way batch_size maps do); after the retries are
+      # exhausted each element stores an `_error` entry.
       context_id = reactor.context.context_id
       storage = RubyReactor.configuration.storage_adapter
       context_data = storage.retrieve_context(context_id, AsyncRetryMapReactorV2.name)
 
-      # When an async map fails (without fail_fast: false), the reactor context itself should be marked as failed
-      context = RubyReactor::Context.deserialize_from_retry(context_data)
-      expect(context.status).to eq("failed")
-      expect(context.failure_reason.error).to include("failed after 5 attempts")
-
-      # Get map_id from child_contexts in the stored context data
-      # context_data["composed_contexts"] or similar?
-      # Actually, map operations are stored in "map_operations" in context
-      # Let's check context structure
-      # context_data["map_operations"] should contain map_id
-      # Let's check Context#map_operations usage.
-      # It seems it stores map_id by step name.
-
-      map_ops = context_data["map_operations"]
-
-      map_id = map_ops["processed"]
-
+      map_id = context_data["map_operations"]["processed"]
       map_results = storage.retrieve_map_results(map_id, AsyncRetryMapReactorV2.name)
       errors = map_results.select { |v| v.is_a?(Hash) && v["_error"] }
       expect(errors).not_to be_empty
