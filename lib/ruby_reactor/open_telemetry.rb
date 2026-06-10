@@ -354,14 +354,20 @@ module RubyReactor
     def on_before_async_enqueue(context)
       return unless defined?(::OpenTelemetry)
 
-      existing_tc = context.private_data[:trace_context] || context.private_data["trace_context"]
-      return if existing_tc && !existing_tc.empty?
-
       # Inject the *current* context (the active step span at enqueue time) rather
       # than forcing the reactor span. This keeps the resumed/async execution
       # nested under the step that handed it off, so the step span (and the
       # reactor span above it) reflect the total execution time of the async work
       # in the trace waterfall instead of being flattened into a sibling.
+      #
+      # Re-inject on every handoff, including chained handoffs from an
+      # already-resumed context (async step -> async retry -> ...), so each
+      # subsequent job nests under the span that is active *now* rather than being
+      # pinned to the first step that ever handed off. Only keep any previously
+      # stored carrier when there is no valid span to inject, so we never overwrite
+      # a good parent with an empty/invalid one.
+      return unless ::OpenTelemetry::Trace.current_span.context.valid?
+
       carrier = {}
       ::OpenTelemetry.propagation.inject(carrier)
       context.private_data[:trace_context] = carrier unless carrier.empty?
