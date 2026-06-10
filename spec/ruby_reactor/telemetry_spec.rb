@@ -153,14 +153,14 @@ end
 class TelemetryInlineCompensateReactor < RubyReactor::Reactor
   step :failing_step do
     run { raise "step failed" }
-    compensate { |error, arguments, context| RubyReactor.Success("compensated inline") }
+    compensate { |_error, _arguments, _context| RubyReactor.Success("compensated inline") }
   end
 end
 
 class TelemetryInlineUndoReactor < RubyReactor::Reactor
   step :first_step do
     run { RubyReactor.Success(42) }
-    undo { |result, arguments, context| RubyReactor.Success("undone inline") }
+    undo { |_result, _arguments, _context| RubyReactor.Success("undone inline") }
   end
   step :second_step do
     run { raise "force rollback" }
@@ -170,14 +170,14 @@ end
 class TelemetryFailingCompensateReactor < RubyReactor::Reactor
   step :failing_step do
     run { raise "step failed" }
-    compensate { |error, arguments, context| raise "compensation failed" }
+    compensate { |_error, _arguments, _context| raise "compensation failed" }
   end
 end
 
 class TelemetryFailingUndoReactor < RubyReactor::Reactor
   step :first_step do
     run { RubyReactor.Success(42) }
-    undo { |result, arguments, context| raise "undo failed" }
+    undo { |_result, _arguments, _context| raise "undo failed" }
   end
   step :second_step do
     run { raise "force rollback" }
@@ -223,10 +223,7 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
 
   before do
     provider.add_span_processor(processor)
-    allow(OpenTelemetry).to receive(:tracer_provider).and_return(provider)
-    allow(OpenTelemetry).to receive(:propagation).and_return(
-      OpenTelemetry::Trace::Propagation::TraceContext.text_map_propagator
-    )
+    allow(OpenTelemetry).to receive_messages(tracer_provider: provider, propagation: OpenTelemetry::Trace::Propagation::TraceContext.text_map_propagator)
 
     RubyReactor.configure do |config|
       config.middlewares = [RubyReactor::OpenTelemetry]
@@ -381,20 +378,20 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
       # not fail the reactor span.
       requeued = flaky_spans.find { |s| s.attributes["step.status"] == "failed_will_retry" }
       expect(requeued).not_to be_nil
-      expect(requeued.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
-      expect(requeued.attributes["retry.will_retry"]).to eq(true)
+      expect(requeued.status.code).to eq(OpenTelemetry::Trace::Status::ERROR)
+      expect(requeued.attributes["retry.will_retry"]).to be(true)
       expect(requeued.attributes["error.message"]).to eq("transient async error")
 
       # The retried attempt eventually succeeds.
       succeeded = flaky_spans.find { |s| s.attributes["step.status"] == "completed" }
       expect(succeeded).not_to be_nil
-      expect(succeeded.status.code).to eq(::OpenTelemetry::Trace::Status::OK)
+      expect(succeeded.status.code).to eq(OpenTelemetry::Trace::Status::OK)
 
       # The reactor as a whole succeeds despite the transient failure.
       reactor_spans = spans.select { |s| s.name == "TelemetryAsyncRetryReactor" }
       expect(reactor_spans).not_to be_empty
       reactor_spans.each do |rs|
-        expect(rs.status.code).not_to eq(::OpenTelemetry::Trace::Status::ERROR)
+        expect(rs.status.code).not_to eq(OpenTelemetry::Trace::Status::ERROR)
       end
     end
 
@@ -417,13 +414,13 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
 
       requeued = reactor_spans.find { |s| s.attributes["reactor.status"] == "failed_will_retry" }
       expect(requeued).not_to be_nil
-      expect(requeued.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
-      expect(requeued.attributes["retry.will_retry"]).to eq(true)
+      expect(requeued.status.code).to eq(OpenTelemetry::Trace::Status::ERROR)
+      expect(requeued.attributes["retry.will_retry"]).to be(true)
       expect(requeued.attributes["retry.step_name"]).to eq("flaky_async")
 
       completed = reactor_spans.find { |s| s.attributes["reactor.status"] == "completed" }
       expect(completed).not_to be_nil
-      expect(completed.status.code).to eq(::OpenTelemetry::Trace::Status::OK)
+      expect(completed.status.code).to eq(OpenTelemetry::Trace::Status::OK)
     end
   end
 
@@ -445,21 +442,21 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
       step_spans = spans.select { |s| s.name == "step.el_step" }
       requeued_step = step_spans.find { |s| s.attributes["step.status"] == "failed_will_retry" }
       expect(requeued_step).not_to be_nil
-      expect(requeued_step.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
-      expect(requeued_step.attributes["retry.will_retry"]).to eq(true)
+      expect(requeued_step.status.code).to eq(OpenTelemetry::Trace::Status::ERROR)
+      expect(requeued_step.attributes["retry.will_retry"]).to be(true)
 
       # The element reactor span for that requeued attempt is likewise ERROR /
       # failed_will_retry, since it represents a single failed attempt.
       element_spans = spans.select { |s| s.name == "TelemetryAsyncMapRetryElement" }
       requeued_element = element_spans.find { |s| s.attributes["reactor.status"] == "failed_will_retry" }
       expect(requeued_element).not_to be_nil
-      expect(requeued_element.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
-      expect(requeued_element.attributes["retry.will_retry"]).to eq(true)
+      expect(requeued_element.status.code).to eq(OpenTelemetry::Trace::Status::ERROR)
+      expect(requeued_element.attributes["retry.will_retry"]).to be(true)
 
       # The retried attempt eventually succeeds; that element reactor span is OK.
       completed_element = element_spans.find { |s| s.attributes["reactor.status"] == "completed" }
       expect(completed_element).not_to be_nil
-      expect(completed_element.status.code).to eq(::OpenTelemetry::Trace::Status::OK)
+      expect(completed_element.status.code).to eq(OpenTelemetry::Trace::Status::OK)
     end
   end
 
@@ -522,7 +519,7 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
         reactor_spans = spans.select { |s| s.name == "TelemetryAsyncStepReactor" }
         expect(reactor_spans.size).to eq(2) # 1 for main thread, 1 for Sidekiq resume
 
-        invalid_id = ::OpenTelemetry::Trace::INVALID_SPAN_ID
+        invalid_id = OpenTelemetry::Trace::INVALID_SPAN_ID
         main_reactor_span = reactor_spans.find { |s| s.parent_span_id == invalid_id }
         resumed_reactor_span = reactor_spans.find { |s| s.parent_span_id != invalid_id }
 
@@ -538,7 +535,7 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
         expect(main_step).not_to be_nil
         expect(main_step.parent_span_id).to eq(main_reactor_span.span_id)
         expect(main_step.attributes["step.status"]).to eq("handed_off")
-        expect(main_step.attributes["step.async"]).to eq(true)
+        expect(main_step.attributes["step.async"]).to be(true)
 
         expect(sidekiq_step).not_to be_nil
         expect(sidekiq_step.parent_span_id).to eq(resumed_reactor_span.span_id)
@@ -562,7 +559,7 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
       expect(undo_span).not_to be_nil
 
       # The undo span must not be a root/orphan span.
-      invalid_id = ::OpenTelemetry::Trace::INVALID_SPAN_ID
+      invalid_id = OpenTelemetry::Trace::INVALID_SPAN_ID
       expect(undo_span.parent_span_id).not_to eq(invalid_id)
 
       # Its parent must be one of the reactor spans (the rollback now runs under
@@ -584,7 +581,7 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
       expect(reactor_span).not_to be_nil
       expect(compensate_span).not_to be_nil
       expect(compensate_span.parent_span_id).to eq(reactor_span.span_id)
-      expect(compensate_span.status.code).to eq(::OpenTelemetry::Trace::Status::OK)
+      expect(compensate_span.status.code).to eq(OpenTelemetry::Trace::Status::OK)
       expect(compensate_span.attributes["compensation.status"]).to eq("completed")
       expect(compensate_span.attributes["compensation.trigger_error.message"]).to eq("step failed")
     end
@@ -601,7 +598,7 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
       expect(reactor_span).not_to be_nil
       expect(compensate_span).not_to be_nil
       expect(compensate_span.parent_span_id).to eq(reactor_span.span_id)
-      expect(compensate_span.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
+      expect(compensate_span.status.code).to eq(OpenTelemetry::Trace::Status::ERROR)
       expect(compensate_span.attributes["compensation.status"]).to eq("failed")
       expect(compensate_span.attributes["error.message"]).to eq("compensation failed")
     end
@@ -617,7 +614,7 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
       expect(reactor_span).not_to be_nil
       expect(undo_span).not_to be_nil
       expect(undo_span.parent_span_id).to eq(reactor_span.span_id)
-      expect(undo_span.status.code).to eq(::OpenTelemetry::Trace::Status::OK)
+      expect(undo_span.status.code).to eq(OpenTelemetry::Trace::Status::OK)
       expect(undo_span.attributes["undo.status"]).to eq("completed")
       expect(undo_span.attributes["undo.original_result.value"]).to eq("42")
     end
@@ -633,7 +630,7 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
       expect(reactor_span).not_to be_nil
       expect(undo_span).not_to be_nil
       expect(undo_span.parent_span_id).to eq(reactor_span.span_id)
-      expect(undo_span.status.code).to eq(::OpenTelemetry::Trace::Status::ERROR)
+      expect(undo_span.status.code).to eq(OpenTelemetry::Trace::Status::ERROR)
       expect(undo_span.attributes["undo.status"]).to eq("failed")
       expect(undo_span.attributes["error.message"]).to eq("undo failed")
     end

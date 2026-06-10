@@ -45,9 +45,7 @@ module RubyReactor
         attributes["reactor.inputs.#{k}"] = val
       end
 
-      if context.status.to_s != "pending"
-        attributes["reactor.resumed"] = true
-      end
+      attributes["reactor.resumed"] = true if context.status.to_s != "pending"
 
       @reactor_span = tracer.start_span(reactor_name, attributes: attributes, with_parent: parent_ctx || ::OpenTelemetry::Context.current)
       @reactor_token = ::OpenTelemetry::Context.attach(::OpenTelemetry::Trace.context_with_span(@reactor_span))
@@ -205,7 +203,7 @@ module RubyReactor
                      })
     end
 
-    def on_start_compensation(step_name, error, arguments, context)
+    def on_start_compensation(step_name, error, arguments, context) # rubocop:disable Metrics/MethodLength
       ensure_opentelemetry_loaded!
 
       # Finish step span if it is still open, as compensation happens after the step execution has failed
@@ -304,9 +302,7 @@ module RubyReactor
         attributes["step.arguments.#{k}"] = val
       end
 
-      if step_result.respond_to?(:value)
-        attributes["undo.original_result.value"] = safe_value(step_result.value)
-      end
+      attributes["undo.original_result.value"] = safe_value(step_result.value) if step_result.respond_to?(:value)
 
       parent_context = if @reactor_span
                          ::OpenTelemetry::Trace.context_with_span(@reactor_span)

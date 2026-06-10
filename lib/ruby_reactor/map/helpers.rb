@@ -52,7 +52,7 @@ module RubyReactor
       end
 
       # Resumes parent reactor execution after map completion
-      def resume_parent_execution(parent_context, step_name, final_result, storage)
+      def resume_parent_execution(parent_context, step_name, final_result, storage) # rubocop:disable Metrics/MethodLength
         executor = RubyReactor::Executor.new(parent_context.reactor_class, {}, parent_context)
         step_name_sym = step_name.to_sym
 
@@ -80,7 +80,7 @@ module RubyReactor
           # resume_execution. Without this, rollback runs in the collector worker
           # with no active reactor span and the undo/compensation spans orphan.
           executor.middlewares.on(:start_reactor, parent_context.reactor_class.name, parent_context.inputs,
-                                   parent_context)
+                                  parent_context)
           failure_response = nil
           begin
             failure_response = executor.result_handler.handle_execution_error(error)
