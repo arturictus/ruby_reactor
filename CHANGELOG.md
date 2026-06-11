@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/arturictus/ruby_reactor/compare/v0.4.1...v0.5.0) (2026-06-11)
+
+
+### Features
+
+* Middlewares & OpenTelemetry ([#32](https://github.com/arturictus/ruby_reactor/issues/32)) ([a9e10ce](https://github.com/arturictus/ruby_reactor/commit/a9e10ceb6fa6381ead57a5905931343f8d1182d1))
+
 ## [0.4.1](https://github.com/arturictus/ruby_reactor/compare/v0.4.0...v0.4.1) (2026-05-25)
 
 
