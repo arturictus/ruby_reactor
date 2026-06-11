@@ -123,8 +123,12 @@ module RubyReactor
           @return_step
         end
 
-        def middleware(middleware_class)
-          middlewares << middleware_class
+        def middleware(middleware_class, **options)
+          middlewares << if options.empty?
+                           middleware_class
+                         else
+                           [middleware_class, options]
+                         end
         end
 
         def validate_inputs(inputs_hash)

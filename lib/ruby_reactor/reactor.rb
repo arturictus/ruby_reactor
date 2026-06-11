@@ -105,6 +105,7 @@ module RubyReactor
       if self.class.async? && !@context.inline_async_execution
         # For async reactors, queue a job for the whole reactor
         @context.status = :running
+        Executor.middlewares_for(self.class).on(:before_async_enqueue, @context)
         save_context
 
         serialized_context = ContextSerializer.serialize(@context)

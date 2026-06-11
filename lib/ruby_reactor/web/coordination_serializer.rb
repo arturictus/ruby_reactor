@@ -122,32 +122,26 @@ module RubyReactor
           end
 
           {
-            configured: {
-              limits: config[:limits].map do |window|
-                {
-                  name: window[:name],
-                  limit: window[:limit],
-                  period_seconds: window[:period_seconds]
-                }
-              end
-            },
+            configured: { limits: map_limits(config[:limits]) },
             key: key,
             state: windows
           }
         rescue StandardError => e
           {
-            configured: {
-              limits: config[:limits]&.map do |window|
-                {
-                  name: window[:name],
-                  limit: window[:limit],
-                  period_seconds: window[:period_seconds]
-                }
-              end
-            },
+            configured: { limits: map_limits(config[:limits]) },
             key: nil,
             key_error: e.message
           }
+        end
+
+        def map_limits(limits)
+          Array(limits).map do |window|
+            {
+              name: window[:name],
+              limit: window[:limit],
+              period_seconds: window[:period_seconds]
+            }
+          end
         end
 
         def build_period(config, inputs, adapter)

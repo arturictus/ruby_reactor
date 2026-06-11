@@ -3,8 +3,9 @@
 module RubyReactor
   class Executor
     class RetryManager
-      def initialize(context)
+      def initialize(context, middlewares = nil)
         @context = context
+        @middlewares = middlewares || context.middlewares || Executor.middlewares_for(context.reactor_class)
       end
 
       def execute_with_retry(step_config, reactor_class)
@@ -47,10 +48,9 @@ module RubyReactor
                                  @context.root_context || @context
                                end
 
-        puts "SERIALIZING CONTEXT: #{context_to_serialize.reactor_class.name}"
-        puts "INPUTS KEYS: #{context_to_serialize.inputs.keys}" if context_to_serialize.respond_to?(:inputs)
-
         reactor_class_name = context_to_serialize.reactor_class.name
+
+        @middlewares.on(:before_async_enqueue, context_to_serialize)
 
         serialized_context = ContextSerializer.serialize(context_to_serialize)
 
@@ -68,7 +68,8 @@ module RubyReactor
             parent_reactor_class_name: map_args[:parent_reactor_class_name],
             step_name: map_args[:step_name],
             batch_size: map_args[:batch_size],
-            serialized_context: serialized_context
+            serialized_context: serialized_context,
+            fail_fast: map_args[:fail_fast]
           )
         else
           configuration.async_router.perform_in(delay, serialized_context, reactor_class_name)
@@ -111,6 +112,15 @@ module RubyReactor
       end
 
       def handle_retryable_failure(step_config, reactor_class, result)
+        attempt_number = @context.retry_context.attempts_for_step(step_config.name)
+        @middlewares.on(
+          :retry_attempt,
+          step_config.name,
+          attempt_number,
+          result.error,
+          @context
+        )
+
         # Check if we should requeue (async retry)
         is_async = reactor_class.async? || step_config.async? ||
                    @context.root_context&.reactor_class&.async? ||

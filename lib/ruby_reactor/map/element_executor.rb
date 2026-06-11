@@ -9,6 +9,12 @@ module RubyReactor
         arguments = arguments.transform_keys(&:to_sym)
 
         context = hydrate_or_create_context(arguments)
+        # The element already runs inside its own background worker, so any async
+        # steps (and async retries) must execute inline here rather than handing
+        # off to a detached Worker that would escape map result/counter tracking.
+        # This mirrors SidekiqWorkers::Worker, which sets the same flag.
+        context.inline_async_execution = true
+
         storage = RubyReactor.configuration.storage_adapter
         storage.store_map_element_context_id(arguments[:map_id], context.context_id,
                                              arguments[:parent_reactor_class_name])
@@ -18,7 +24,15 @@ module RubyReactor
         executor = Executor.new(context.reactor_class, {}, context)
         arguments[:serialized_context] ? executor.resume_execution : executor.execute
 
-        handle_result(executor.result, arguments, context, storage, executor)
+        result = executor.result
+
+        # An async retry requeued this element as a fresh MapElementWorker job, so
+        # it is not finished yet. Do not store a result, decrement the completion
+        # counter, or trigger the next batch — the requeued job will do that when
+        # the element ultimately succeeds or exhausts its retries.
+        return if result.is_a?(RetryQueuedResult)
+
+        handle_result(result, arguments, context, storage, executor)
         finalize_execution(arguments, storage)
       end
 

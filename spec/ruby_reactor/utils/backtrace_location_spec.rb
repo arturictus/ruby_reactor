@@ -43,7 +43,8 @@ RSpec.describe RubyReactor::Utils::BacktraceLocation do
       backtrace = [
         "#{RubyReactor.root}/lib/ruby_reactor.rb:314:in 'Class#new'",
         "... [ruby-reactor-internals-redacted-trace]",
-        "#{RubyReactor.root}/demo_app/app/reactors/payment_workflow.rb:83:in 'block (2 levels) in <class:PaymentWorkflow>'"
+        "#{RubyReactor.root}/demo_app/app/reactors/payment_workflow.rb:83:in " \
+        "'block (2 levels) in <class:PaymentWorkflow>'"
       ]
 
       expect(described_class.extract(backtrace)).to eq(
@@ -54,7 +55,8 @@ RSpec.describe RubyReactor::Utils::BacktraceLocation do
     it "treats only gem lib paths as internal" do
       expect(described_class.internal_path?("#{RubyReactor.root}/lib/ruby_reactor/executor.rb")).to be true
       expect(described_class.internal_path?("#{RubyReactor.root}/lib/ruby_reactor.rb")).to be true
-      expect(described_class.internal_path?("#{RubyReactor.root}/demo_app/app/reactors/payment_workflow.rb")).to be false
+      path = "#{RubyReactor.root}/demo_app/app/reactors/payment_workflow.rb"
+      expect(described_class.internal_path?(path)).to be false
     end
   end
 end

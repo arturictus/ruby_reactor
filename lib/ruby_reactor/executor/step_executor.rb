@@ -10,6 +10,7 @@ module RubyReactor
         @retry_manager = managers[:retry_manager]
         @result_handler = managers[:result_handler]
         @compensation_manager = managers[:compensation_manager]
+        @middlewares = managers[:middlewares] || context.middlewares || Executor.middlewares_for(reactor_class)
       end
 
       def execute_all_steps
@@ -61,12 +62,28 @@ module RubyReactor
           return RubyReactor.Success(@context.get_result(step_config.name))
         end
 
-        if step_config.interrupt?
-          handle_interrupt_step(step_config)
-        elsif step_config.async? && !@context.inline_async_execution
-          handle_async_step(step_config)
-        else
-          execute_step_with_retry(step_config)
+        resolved_arguments = resolve_arguments(step_config)
+
+        @middlewares.on(:start_step, step_config.name, resolved_arguments, @context)
+        completed = false
+        begin
+          result = if step_config.interrupt?
+                     handle_interrupt_step(step_config)
+                   elsif step_config.async? && !@context.inline_async_execution
+                     handle_async_step(step_config)
+                   else
+                     execute_step_with_retry(step_config, resolved_arguments)
+                   end
+          completed = true
+          if result.is_a?(RubyReactor::Failure)
+            @middlewares.on(:failed_step, step_config.name, result, @context)
+          else
+            @middlewares.on(:complete_step, step_config.name, result, @context)
+          end
+          result
+        rescue Exception => e # rubocop:disable Lint/RescueException
+          @middlewares.on(:failed_step, step_config.name, e, @context) unless completed
+          raise
         end
       end
 
@@ -95,24 +112,22 @@ module RubyReactor
         )
       end
 
-      def execute_step_with_retry(step_config)
+      def execute_step_with_retry(step_config, resolved_arguments = nil)
+        resolved_arguments ||= resolve_arguments(step_config)
         result = @retry_manager.execute_with_retry(step_config, @reactor_class) do
-          safe_execute_step_sync(step_config)
+          safe_execute_step_sync(step_config, resolved_arguments)
         end
 
         unless result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::AsyncResult)
-          resolved_arguments = resolve_arguments(step_config)
           @result_handler.handle_step_result(step_config, result, resolved_arguments)
         end
 
         result
       end
 
-      def safe_execute_step_sync(step_config)
-        resolved_arguments = {}
-        execute_step_sync_without_result_handling(step_config) do |args|
-          resolved_arguments = args
-        end
+      def safe_execute_step_sync(step_config, resolved_arguments = nil)
+        resolved_arguments ||= resolve_arguments(step_config)
+        execute_step_sync_without_result_handling(step_config, resolved_arguments)
       rescue StandardError => e
         # Identify redacted inputs
         redact_inputs = @reactor_class.inputs.select { |_, config| config[:redact] }.keys
@@ -127,7 +142,7 @@ module RubyReactor
         )
       end
 
-      def execute_step_sync(step_config)
+      def execute_step_sync(step_config, resolved_arguments = nil)
         @context.with_step(step_config.name) do
           # Check conditions and guards
           unless step_config.should_run?(@context)
@@ -136,7 +151,7 @@ module RubyReactor
           end
 
           # Resolve arguments
-          resolved_arguments = resolve_arguments(step_config)
+          resolved_arguments ||= resolve_arguments(step_config)
 
           # Validate arguments if validator is defined
           validate_step_arguments(step_config, resolved_arguments)
@@ -150,7 +165,7 @@ module RubyReactor
       end
 
       # Execute step without handling the result (used during retries)
-      def execute_step_sync_without_result_handling(step_config)
+      def execute_step_sync_without_result_handling(step_config, resolved_arguments = nil)
         @context.with_step(step_config.name) do
           # Check conditions and guards
           unless step_config.should_run?(@context)
@@ -159,7 +174,7 @@ module RubyReactor
           end
 
           # Resolve arguments
-          resolved_arguments = resolve_arguments(step_config)
+          resolved_arguments ||= resolve_arguments(step_config)
 
           yield resolved_arguments if block_given?
 
@@ -180,6 +195,9 @@ module RubyReactor
         # Use root context if available to ensure we serialize the full tree
         context_to_serialize = @context.root_context || @context
         reactor_class_name = context_to_serialize.reactor_class.name
+
+        # Inject OTel context before serialization
+        @middlewares.on(:before_async_enqueue, context_to_serialize)
 
         serialized_context = ContextSerializer.serialize(context_to_serialize)
 

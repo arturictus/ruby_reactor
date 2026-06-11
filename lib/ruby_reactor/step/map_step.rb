@@ -183,31 +183,35 @@ module RubyReactor
           )
         end
 
-        def dispatch_async_map(map_id, arguments, context, reactor_class_info, step_name)
-          if arguments[:batch_size]
-            # Use new Dispatcher with Backpressure
-            RubyReactor::Map::Dispatcher.perform(
-              map_id: map_id,
-              parent_context_id: context.context_id,
-              parent_reactor_class_name: context.reactor_class.name,
-              source: arguments[:source],
-              batch_size: arguments[:batch_size],
-              step_name: step_name,
-              argument_mappings: arguments[:argument_mappings],
-              strict_ordering: arguments[:strict_ordering],
-              mapped_reactor_class: arguments[:mapped_reactor_class],
-              fail_fast: arguments[:fail_fast].nil? || arguments[:fail_fast]
-            )
-            queue_collector(map_id, context, step_name, arguments[:strict_ordering])
-            "map:#{map_id}"
-          else
-            queue_single_worker(map_id: map_id, arguments: arguments, context: context,
-                                reactor_class_info: reactor_class_info, step_name: step_name)
-          end
+        def dispatch_async_map(map_id, arguments, context, _reactor_class_info, step_name)
+          # Every async map runs through the per-element Dispatcher path. When no
+          # batch_size is given we default to the full source size (one fan-out
+          # batch), so there is a single execution path: each element runs in its
+          # own worker, with the map counter/collector tracking completion. This
+          # lets elements with async steps or async retries hand off correctly
+          # instead of being forced to run synchronously in a single worker.
+          batch_size = arguments[:batch_size] || arguments[:source].size
+
+          RubyReactor::Map::Dispatcher.perform(
+            map_id: map_id,
+            parent_context_id: context.context_id,
+            parent_reactor_class_name: context.reactor_class.name,
+            source: arguments[:source],
+            batch_size: batch_size,
+            step_name: step_name,
+            argument_mappings: arguments[:argument_mappings],
+            strict_ordering: arguments[:strict_ordering],
+            mapped_reactor_class: arguments[:mapped_reactor_class],
+            fail_fast: arguments[:fail_fast].nil? || arguments[:fail_fast]
+          )
+          queue_collector(map_id, context, step_name, arguments[:strict_ordering])
+          "map:#{map_id}"
         end
 
         def prepare_async_execution(context, map_id, count)
           storage = RubyReactor.configuration.storage_adapter
+          middlewares = context.middlewares || Executor.middlewares_for(context.reactor_class)
+          middlewares.on(:before_async_enqueue, context)
           serialized_context = ContextSerializer.serialize(context)
           storage.store_context(context.context_id, serialized_context, context.reactor_class.name)
           storage.set_map_counter(map_id, count, context.reactor_class.name)
@@ -266,18 +270,6 @@ module RubyReactor
             parent_context_id: context.context_id, map_id: map_id,
             parent_reactor_class_name: context.reactor_class.name, step_name: step_name.to_s,
             strict_ordering: strict_ordering, timeout: 3600
-          )
-        end
-
-        def queue_single_worker(map_id:, arguments:, context:, reactor_class_info:, step_name:)
-          inputs = { source: arguments[:source], mappings: arguments[:argument_mappings] || {} }
-          serialized_inputs = ContextSerializer.serialize_value(inputs)
-
-          RubyReactor.configuration.async_router.perform_map_execution_async(
-            map_id: map_id, serialized_inputs: serialized_inputs,
-            reactor_class_info: reactor_class_info, strict_ordering: arguments[:strict_ordering],
-            parent_context_id: context.context_id, parent_reactor_class_name: context.reactor_class.name,
-            step_name: step_name.to_s, fail_fast: arguments[:fail_fast].nil? || arguments[:fail_fast]
           )
         end
       end

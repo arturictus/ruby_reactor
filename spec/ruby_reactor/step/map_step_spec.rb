@@ -18,6 +18,7 @@ RSpec.describe RubyReactor::Step::MapStep do
                     inline_async_execution: false,
                     intermediate_results: {},
                     composed_contexts: {},
+                    middlewares: nil,
                     reactor_class: double(name: "TestReactor"))
   end
 
@@ -30,7 +31,6 @@ RSpec.describe RubyReactor::Step::MapStep do
     allow(RubyReactor.configuration).to receive(:async_router).and_return(async_router)
     allow(async_router).to receive(:perform_map_element_async)
     allow(async_router).to receive(:perform_map_collection_async)
-    allow(async_router).to receive(:perform_map_execution_async)
 
     allow(context).to receive(:serialize_for_retry).and_return({
                                                                  context_id: "test-context-id",

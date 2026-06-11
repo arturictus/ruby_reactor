@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "English"
 require_relative "executor/input_validator"
 require_relative "executor/graph_manager"
 require_relative "executor/retry_manager"
@@ -8,16 +9,19 @@ require_relative "executor/result_handler"
 require_relative "executor/step_executor"
 
 module RubyReactor
+  # rubocop:disable Metrics/ClassLength
   class Executor
     attr_reader :reactor_class, :context, :dependency_graph, :compensation_manager, :retry_manager, :result_handler,
-                :step_executor, :result
+                :step_executor, :result, :middlewares
 
     def initialize(reactor_class, inputs = {}, context = nil)
       @reactor_class = reactor_class
       @context = context || Context.new(inputs, reactor_class)
+      @middlewares = Executor.middlewares_for(reactor_class)
+      @context.middlewares = @middlewares
       @dependency_graph = DependencyGraph.new
       @compensation_manager = CompensationManager.new(@context)
-      @retry_manager = RetryManager.new(@context)
+      @retry_manager = RetryManager.new(@context, @middlewares)
       @result_handler = ResultHandler.new(
         context: @context,
         compensation_manager: @compensation_manager,
@@ -30,7 +34,8 @@ module RubyReactor
         managers: {
           retry_manager: @retry_manager,
           result_handler: @result_handler,
-          compensation_manager: @compensation_manager
+          compensation_manager: @compensation_manager,
+          middlewares: @middlewares
         }
       )
       @result = nil
@@ -38,17 +43,44 @@ module RubyReactor
       @acquired_semaphore = nil
     end
 
-    def execute
+    def self.resolve_middlewares(reactor_class)
+      global_list = Array(RubyReactor.configuration.middlewares)
+      reactor_list = if reactor_class.respond_to?(:middlewares)
+                       Array(reactor_class.middlewares)
+                     else
+                       []
+                     end
+
+      (global_list + reactor_list).map do |mw|
+        if mw.is_a?(Class)
+          mw.new
+        elsif mw.is_a?(Array) && mw.first.is_a?(Class)
+          klass, opts = mw
+          klass.new(**(opts || {}))
+        else
+          mw
+        end
+      end
+    end
+
+    def self.middlewares_for(reactor_class)
+      RubyReactor::MiddlewareRunner.new(resolve_middlewares(reactor_class))
+    end
+
+    def execute # rubocop:disable Metrics/MethodLength
+      middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
+      completed = false
+
       skipped = check_period_gate
       if skipped
         @result = skipped
         update_context_status(@result)
         save_context
+        completed = true
         return @result
       end
 
-      check_rate_limit
-      acquire_locks
+      acquire_locks_with_telemetry
 
       input_validator = InputValidator.new(@reactor_class, @context)
       input_validator.validate!
@@ -64,6 +96,7 @@ module RubyReactor
       update_context_status(@result)
       mark_period_on_success(@result)
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
+      completed = true
       @result
     rescue RubyReactor::Lock::AcquisitionError,
            RubyReactor::Semaphore::AcquisitionError,
@@ -72,41 +105,60 @@ module RubyReactor
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
       update_context_status(@result)
+      completed = true
       @result
     ensure
       release_locks
       save_context if persist_context?
+
+      if completed
+        middlewares.on(:complete_reactor, reactor_class.name, @result, @context)
+      else
+        middlewares.on(:failed_reactor, reactor_class.name, $ERROR_INFO, @context)
+      end
     end
 
     def resume_execution
-      @context.status = :running
-      acquire_locks
-      prepare_for_resume
-      save_context
+      middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
+      completed = false
+      begin
+        @context.status = :running
+        acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
+        acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+        prepare_for_resume
+        save_context
 
-      @result = if @context.current_step
-                  execute_current_step_and_continue
-                else
-                  execute_remaining_steps
-                end
+        @result = if @context.current_step
+                    execute_current_step_and_continue
+                  else
+                    execute_remaining_steps
+                  end
 
-      update_context_status(@result)
-      mark_period_on_success(@result)
+        update_context_status(@result)
+        mark_period_on_success(@result)
 
-      handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
+        handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
+        completed = true
+        @result
+      rescue RubyReactor::Lock::AcquisitionError,
+             RubyReactor::Semaphore::AcquisitionError,
+             RubyReactor::RateLimit::ExceededError
+        raise
+      rescue StandardError => e
+        handle_resume_error(e)
+        update_context_status(@result)
+        completed = true
+        @result
+      ensure
+        release_locks
+        save_context
 
-      @result
-    rescue RubyReactor::Lock::AcquisitionError,
-           RubyReactor::Semaphore::AcquisitionError,
-           RubyReactor::RateLimit::ExceededError => e
-      raise e
-    rescue StandardError => e
-      handle_resume_error(e)
-      update_context_status(@result)
-      @result
-    ensure
-      release_locks
-      save_context
+        if completed
+          middlewares.on(:complete_reactor, reactor_class.name, @result, @context)
+        else
+          middlewares.on(:failed_reactor, reactor_class.name, $ERROR_INFO, @context)
+        end
+      end
     end
 
     def undo_all
@@ -143,8 +195,13 @@ module RubyReactor
     private
 
     def acquire_locks
+      check_rate_limit
       acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
       acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+    end
+
+    def acquire_locks_with_telemetry
+      acquire_locks
     end
 
     # Consume one slot from each configured rate-limit window. Raises
@@ -202,8 +259,14 @@ module RubyReactor
         wait: contention_wait(config[:wait]),
         auto_extend: config.fetch(:auto_extend, true)
       )
-      lock.acquire
-      @acquired_lock = lock
+      begin
+        lock.acquire
+        @acquired_lock = lock
+        middlewares.on(:lock_acquired, key, @context)
+      rescue RubyReactor::Lock::AcquisitionError => e
+        middlewares.on(:lock_failed, key, e, @context)
+        raise
+      end
     end
 
     def acquire_semaphore
@@ -212,8 +275,14 @@ module RubyReactor
       limit = config[:limit]
 
       semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: contention_wait(config[:wait]))
-      semaphore.acquire
-      @acquired_semaphore = semaphore
+      begin
+        semaphore.acquire
+        @acquired_semaphore = semaphore
+        middlewares.on(:semaphore_acquired, key, limit, @context)
+      rescue RubyReactor::Semaphore::AcquisitionError => e
+        middlewares.on(:semaphore_failed, key, limit, e, @context)
+        raise
+      end
     end
 
     # Inside a Sidekiq worker we'd rather snooze the job via perform_in than
@@ -226,13 +295,19 @@ module RubyReactor
     end
 
     def release_locks
-      release_one("semaphore", @acquired_semaphore) if @acquired_semaphore
+      if @acquired_semaphore
+        key = @acquired_semaphore.key
+        release_one("semaphore", @acquired_semaphore)
+        middlewares.on(:semaphore_released, key, @context)
+      end
       @acquired_semaphore = nil
 
       return unless @acquired_lock
 
+      key = @acquired_lock.key
       release_one("lock", @acquired_lock)
       @acquired_lock = nil
+      middlewares.on(:lock_released, key, @context)
     end
 
     def release_one(kind, primitive)
@@ -332,4 +407,5 @@ module RubyReactor
       )
     end
   end
+  # rubocop:enable Metrics/ClassLength
 end

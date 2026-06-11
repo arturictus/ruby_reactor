@@ -35,7 +35,9 @@ RSpec.describe MapDemoReactor, type: :reactor do
   end
 
   it "produces stringified async_map results" do
-    expect(reactor.step_result(:async_map)).to match_array(["Result: 16", "Result: 25"])
+    # Async maps aggregate their elements lazily into a ResultEnumerator
+    # (the same representation batch_size maps use), so unwrap the values.
+    expect(reactor.step_result(:async_map).map(&:value)).to match_array(["Result: 16", "Result: 25"])
   end
 
   context "when an inner step fails inside inline_map" do

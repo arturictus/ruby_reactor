@@ -14,6 +14,7 @@ AllCops:
     - db/**/*
     - config/**/*
     - demo_app/**/*
+    - .ruby-lsp/**/*
 
 Style/StringLiterals:
   EnforcedStyle: double_quotes

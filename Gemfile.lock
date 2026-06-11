@@ -85,6 +85,20 @@ GEM
     lint_roller (1.1.0)
     logger (1.7.0)
     minitest (5.26.2)
+    opentelemetry-api (1.10.0)
+      logger
+    opentelemetry-common (0.25.0)
+      opentelemetry-api (~> 1.0)
+    opentelemetry-registry (0.6.0)
+      opentelemetry-api (~> 1.1)
+    opentelemetry-sdk (1.12.0)
+      logger
+      opentelemetry-api (~> 1.1)
+      opentelemetry-common (~> 0.20)
+      opentelemetry-registry (~> 0.2)
+      opentelemetry-semantic_conventions
+    opentelemetry-semantic_conventions (1.37.1)
+      opentelemetry-api (~> 1.0)
     parallel (1.27.0)
     parser (3.3.10.0)
       ast (~> 2.4.1)
@@ -176,6 +190,8 @@ DEPENDENCIES
   debug (~> 1.8)
   dry-validation (~> 1.10)
   globalid (~> 1.0)
+  opentelemetry-api
+  opentelemetry-sdk
   rack-test
   rake (~> 13.0)
   rspec (~> 3.0)

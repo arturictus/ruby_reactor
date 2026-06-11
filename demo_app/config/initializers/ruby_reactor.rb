@@ -10,4 +10,7 @@ RubyReactor.configure do |config|
   
   # Logger configuration
   config.logger = Logger.new($stdout)
+
+  # Register OpenTelemetry middleware
+  config.middlewares = [RubyReactor::OpenTelemetry]
 end
