@@ -33,7 +33,10 @@ module RubyReactor
         when Error::StepFailureError
           handle_step_failure_error(error)
         when Error::InputValidationError
-          # Preserve validation errors as-is for proper error handling
+          # Unified validation failure shape (inputs, step args, step output).
+          # Roll back any completed steps so saga semantics hold for mid-reactor
+          # validation failures (a no-op for input validation at reactor start).
+          @compensation_manager.rollback_completed_steps
           RubyReactor.Failure(error, validation_errors: error.field_errors)
         when Error::Base
           # Other errors need rollback
@@ -174,18 +177,13 @@ module RubyReactor
         error.respond_to?(:exception_class) ? error.exception_class : nil
       end
 
-      def validate_step_output(step_config, value, resolved_arguments = {})
+      def validate_step_output(step_config, value, _resolved_arguments = {})
         return unless step_config.output_validator
 
         output_validation_result = step_config.output_validator.call(value)
         return if output_validation_result.success?
 
-        raise Error::StepFailureError.new(
-          "Step '#{step_config.name}' output validation failed: #{output_validation_result.error.message}",
-          step: step_config.name,
-          context: @context,
-          step_arguments: resolved_arguments
-        )
+        raise output_validation_result.error
       end
 
       def extract_location(backtrace)

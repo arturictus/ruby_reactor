@@ -1,8 +1,6 @@
 class WebhookInterruptReactor < RubyReactor::Reactor
   input :provider_id
-  input :fail_at, optional: true do
-    optional(:fail_at).maybe(:symbol)
-  end
+  input :fail_at, :symbol, optional: true
 
   step :async_step_before do
     async true
@@ -41,7 +39,7 @@ class WebhookInterruptReactor < RubyReactor::Reactor
     correlation_id do |context|
       context.result(:initiate_request)
     end
-    validate do
+    validate_payload do
       required(:status).filled(:string)
     end
   end

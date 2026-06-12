@@ -20,17 +20,23 @@ module RubyReactor
         @conditions = []
         @guards = []
         @dependencies = []
+        @arg_validations = []
+        @validate_args_input = nil
         @args_validator = nil
         @output_validator = nil
         @async = false
         @retry_config = {}
       end
 
-      def argument(name, source, transform: nil)
+      def argument(name, source, type = nil, transform: nil, **predicates)
         @arguments[name] = {
           source: source,
           transform: transform
         }
+
+        return unless type || predicates.any?
+
+        @arg_validations << [name, type, false, predicates]
       end
 
       def run(&block)
@@ -57,20 +63,26 @@ module RubyReactor
         @dependencies.concat(step_names)
       end
 
+      # Cross-field rules over the whole resolved argument hash. Composes with
+      # per-argument inline validations declared via `argument`; the block (or
+      # pre-built schema) is applied last and wins on conflicts.
       def validate_args(schema_or_validator = nil, &block)
-        if block_given?
-          @args_validator = build_input_validator(block)
-        elsif schema_or_validator
-          @args_validator = build_input_validator(schema_or_validator)
-        end
+        @validate_args_input = block || schema_or_validator
       end
 
-      def validate_output(schema_or_validator = nil, &block)
-        if block_given?
-          @output_validator = build_input_validator(block)
-        elsif schema_or_validator
-          @output_validator = build_input_validator(schema_or_validator)
-        end
+      # Scalar-aware output validation.
+      #   validate_output :integer, gteq?: 0   # single value
+      #   validate_output do ... end            # hash output
+      #   validate_output SomeSchema            # pre-built schema
+      def validate_output(type = nil, **predicates, &block)
+        @output_validator =
+          if block
+            create_input_validator(block)
+          elsif type.is_a?(Symbol) || type.is_a?(Module) || predicates.any?
+            build_scalar_validator(type, predicates)
+          elsif type
+            create_input_validator(type)
+          end
       end
 
       def async(async = true)
@@ -96,39 +108,13 @@ module RubyReactor
           conditions: @conditions,
           guards: @guards,
           dependencies: @dependencies,
-          args_validator: @args_validator,
+          args_validator: @args_validator || build_args_validator(@arg_validations, @validate_args_input),
           output_validator: @output_validator,
           async: @async,
           retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)
-      end
-
-      private
-
-      def build_input_validator(schema_or_block)
-        check_dry_validation_available!
-
-        schema = case schema_or_block
-                 when Proc
-                   build_validation_schema(&schema_or_block)
-                 else
-                   schema_or_block
-                 end
-
-        RubyReactor::Validation::InputValidator.new(schema)
-      end
-
-      def build_validation_schema(&block)
-        RubyReactor::Validation::SchemaBuilder.build_from_block(&block)
-      end
-
-      def check_dry_validation_available!
-        return if defined?(Dry::Schema)
-
-        raise LoadError,
-              "dry-validation gem is required for validation features. Add 'gem \"dry-validation\"' to your Gemfile."
       end
     end
 

@@ -1,8 +1,6 @@
 class FormInterruptReactor < RubyReactor::Reactor
   input :user_name
-  input :fail_at, optional: true do
-    optional(:fail_at).maybe(:symbol)
-  end
+  input :fail_at, :symbol, optional: true
 
   step :prepare_application do
     argument :user_name, input(:user_name)
@@ -46,7 +44,7 @@ class FormInterruptReactor < RubyReactor::Reactor
     correlation_id do |context|
       context.result(:prepare_application)[:application_id]
     end
-    validate do
+    validate_payload do
       required(:bio).filled(:string)
     end
   end
@@ -64,7 +62,7 @@ class FormInterruptReactor < RubyReactor::Reactor
 
     max_attempts 2
 
-    validate do
+    validate_payload do
       required(:user).filled(:string)
       required(:approved).filled(:bool)
     end

@@ -513,26 +513,73 @@ end
 
 ### Input Validation
 
-RubyReactor integrates with dry-validation for input validation:
+RubyReactor integrates with dry-validation for input validation. A single
+`input` method escalates from a bare declaration to a full nested schema.
+Name and optionality are declared once.
+
+**Form 0 — declaration only** (no validation, value passes through as-is):
+
+```ruby
+input :user
+input :payload, redact: true
+```
+
+**Form 1 — inline scalar** (the common case). The type is an optional
+positional; any keyword ending in `?` is a dry-schema predicate:
+
+```ruby
+input :name,  :string,  min_size?: 2
+input :email, :string,  format?: /\A[^@\s]+@[^@\s]+\z/
+input :age,   :integer, gteq?: 18
+
+# optional: true flips required(...).filled -> optional(...).maybe
+input :bio,   :string,  optional: true, max_size?: 100
+```
+
+**Form 1b — class / module** maps to a `type?` instance check:
+
+```ruby
+input :user,  User                 # required(:user).filled(type?: User)
+input :items, Array, min_size?: 1  # instance check + predicate
+```
+
+**Form 2 — macro block** for nested / complex schemas. The block receives the
+input's macro (already bound to the name and optionality), and because it is a
+block argument your class constants and helpers stay reachable:
+
+```ruby
+EMAIL = /\A[^@\s]+@[^@\s]+\z/
+
+input :order do |i|
+  i.hash do
+    required(:customer).hash do
+      required(:email).filled(:string, format?: EMAIL)
+    end
+    required(:items).each do
+      schema { required(:product_id).filled(:string) }
+    end
+  end
+end
+```
+
+**Form 3 — pre-built schema / contract** (also the home for coercing dry-types):
+
+```ruby
+UserSchema = Dry::Schema.Params do
+  required(:user).hash { required(:email).filled(:string) }
+end
+
+input :user, validate: UserSchema
+```
+
+Putting the inline forms together:
 
 ```ruby
 class ValidatedUserReactor < RubyReactor::Reactor
-  input :name do
-    required(:name).filled(:string, min_size?: 2)
-  end
-
-  input :email do
-    required(:email).filled(:string)
-  end
-
-  input :age do
-    required(:age).filled(:integer, gteq?: 18)
-  end
-
-  # Optional inputs
-  input :bio, optional: true do
-    optional(:bio).maybe(:string, max_size?: 100)
-  end
+  input :name,  :string,  min_size?: 2
+  input :email, :string
+  input :age,   :integer, gteq?: 18
+  input :bio,   :string,  optional: true, max_size?: 100
 
   step :create_profile do
     argument :name, input(:name)
@@ -571,6 +618,62 @@ result = ValidatedUserReactor.run(
 )
 ```
 
+All validation failures — inputs, step arguments, step output, and interrupt
+payloads — surface uniformly as a `RubyReactor::Error::InputValidationError`
+with a `field_errors` hash:
+
+```ruby
+result = ValidatedUserReactor.run(name: "A")
+result.error                       # => RubyReactor::Error::InputValidationError
+result.error.field_errors[:name]   # => "size cannot be less than 2"
+```
+
+### Step Argument & Output Validation
+
+Arguments can be validated inline using the same forms as `input`. Inline rules
+compose with a `validate_args` block (used for cross-field rules):
+
+```ruby
+step :charge do
+  argument :amount,   input(:amount),   :decimal, gt?: 0
+  argument :currency, input(:currency), :string,  included_in?: %w[USD EUR GBP]
+  argument :user,     input(:user),     User              # type? instance check
+
+  # Optional cross-field block (composes with the inline rules above)
+  validate_args do
+    required(:amount).filled(:decimal, lt?: 10_000)
+  end
+
+  run { |args, _| charge!(args) }
+end
+```
+
+Output validation is scalar-aware — pass a type/predicates for a single value,
+or a block for a hash output:
+
+```ruby
+validate_output :integer, gteq?: 0   # scalar return value
+validate_output do                   # hash return value
+  required(:id).filled(:string)
+end
+```
+
+### Interrupt Payload Validation
+
+Validate the payload supplied on resume with `validate_payload` (the older
+`validate` is kept as a deprecated alias):
+
+```ruby
+interrupt :await_approval do
+  wait_for :submit_request
+
+  validate_payload do
+    required(:approved).filled(:bool)
+    optional(:note).maybe(:string)
+  end
+end
+```
+
 ### Complex Workflows with Dependencies
 
 Steps can depend on results from multiple other steps:
@@ -578,7 +681,7 @@ Steps can depend on results from multiple other steps:
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
   input :user_id
-  input :product_ids, validate: ->(ids) { ids.is_a?(Array) && ids.any? }
+  input :product_ids, Array, min_size?: 1
 
   step :validate_user do
     argument :user_id, input(:user_id)

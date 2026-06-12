@@ -1,30 +1,14 @@
 # frozen_string_literal: true
 
 class OrderProcessingReactor < RubyReactor::Reactor
-  input :order_id do
-    required(:order_id).filled(:string)
-  end
-
-  input :product_id do
-    required(:product_id).filled(:string)
-  end
-
-  input :quantity do
-    required(:quantity).filled(:integer, gt?: 0)
-  end
-
-  input :amount do
-    required(:amount).filled(:integer, gt?: 0.0)
-  end
+  input :order_id, :string
+  input :product_id, :string
+  input :quantity, :integer, gt?: 0
+  input :amount, :integer, gt?: 0.0
 
   # Optional inputs for testing failure scenarios
-  input :fail_at, optional: true do
-    optional(:fail_at).maybe(:symbol)
-  end
-
-  input :success_at_retry, optional: true do
-    optional(:success_at_retry).maybe(:integer, gt?: 0)
-  end
+  input :fail_at, :symbol, optional: true
+  input :success_at_retry, :integer, optional: true, gt?: 0
 
   class ValidationError < StandardError; end
   class InventoryError < StandardError; end
