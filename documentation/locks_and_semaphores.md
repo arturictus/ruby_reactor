@@ -39,6 +39,7 @@ The period primitive is different: it is **dedup**, not concurrency. It records 
 - [Rate Limits](#rate-limits)
   - [Single window](#single-window)
   - [Multi-window quotas](#multi-window-quotas)
+  - [Named global limits](#named-global-limits)
   - [Algorithm & atomicity](#algorithm--atomicity)
   - [Smart snooze on async](#smart-snooze-on-async)
 - [Periods (once-per-bucket dedup)](#periods-once-per-bucket-dedup)
@@ -225,6 +226,53 @@ rescue RubyReactor::RateLimit::ExceededError => e
   e.key_base             # => "stripe:42"
 end
 ```
+
+### Named global limits
+
+The inline forms above scope a limit to one reactor, with a per-call key base from the block. When **several reactors call the same external service**, you usually want them to share a single quota instead. Register the limit once in `RubyReactor.configure` and reference it by name:
+
+```ruby
+RubyReactor.configure do |config|
+  config.rate_limits.register(:stripe, limits: { second: 3, minute: 100 })
+  config.rate_limits.register(:twilio, limit: 10, period: :second)
+end
+```
+
+`register` takes the **same window arguments** as the inline DSL — a single window (`limit:` + `period:`) or layered windows (`limits:`). Then in any reactor:
+
+```ruby
+class ChargeReactor < RubyReactor::Reactor
+  input :account_id
+
+  with_rate_limit(:stripe)
+
+  step :charge do
+    argument :account_id, input(:account_id)
+    run { |args| Stripe.charge(args[:account_id]) }
+  end
+end
+
+class RefundReactor < RubyReactor::Reactor
+  input :charge_id
+
+  with_rate_limit(:stripe)   # same :stripe bucket — shares the quota with ChargeReactor
+
+  step :refund do
+    argument :charge_id, input(:charge_id)
+    run { |args| Stripe.refund(args[:charge_id]) }
+  end
+end
+```
+
+Key points:
+
+- **The name is the key base.** A named limit uses the name itself (`"stripe"`) as the Redis key base, so every reactor referencing `:stripe` throttles against **one shared bucket** — exactly what you want for a global API quota. (Counters live at `rate:stripe:<period_name>:<bucket_id>`.)
+- **Name-only.** `with_rate_limit(:stripe)` takes no `limit:`/`period:`/`limits:` and no key block — those come from the registry. Passing both raises `ArgumentError`.
+- **Lazy resolution.** The name is resolved from the registry at run time, not at class load, so `configure` and reactor definitions can load in any order.
+- **Unknown names fail loud.** Referencing a name that was never registered raises `RubyReactor::RateLimitRegistry::UnknownLimitError` (a configuration error that propagates out of `run`, not swallowed into a step failure).
+- **Same enforcement path.** Named and inline limits both run through the same counter check, so multi-window semantics, the `ExceededError`, and async snooze behave identically (see below).
+
+Use the inline block form instead when you need a **per-entity** key (e.g. one quota *per account*) rather than a single shared bucket.
 
 ### Algorithm & atomicity
 

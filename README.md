@@ -110,6 +110,10 @@ RubyReactor.configure do |config|
   config.lock_snooze_jitter = 5
   config.lock_snooze_max_attempts = 20
 
+  # Named rate limits shared across reactors. Reference them with
+  # `with_rate_limit(:stripe)`. See Locks, Semaphores, Rate Limits & Periods.
+  config.rate_limits.register(:stripe, limits: { second: 3, minute: 100 })
+
   # Logger configuration
   config.logger = Logger.new($stdout)
 end
@@ -361,7 +365,7 @@ Coordinate across processes with Redis-backed primitives:
 
 - **`with_lock`** — at-most-one runner per key at a time (concurrency control).
 - **`with_semaphore`** — cap total concurrent runners per key (capacity control).
-- **`with_rate_limit`** — fixed-window rate limit, single or multi-window ("3/sec AND 100/min").
+- **`with_rate_limit`** — fixed-window rate limit, single or multi-window ("3/sec AND 100/min"). Inline per-reactor, or reference a named limit registered once in `RubyReactor.configure` and shared across reactors.
 - **`with_period`** — run at most once per calendar bucket (dedup / once-per-day, once-per-month, etc).
 
 ```ruby
@@ -420,6 +424,28 @@ class ChargeReactor < RubyReactor::Reactor
   end
 end
 ```
+
+**Named global limits.** When several reactors hit the same external service, register the limit once and reference it by name. The name is the shared key base, so every reactor throttles against one bucket:
+
+```ruby
+RubyReactor.configure do |config|
+  config.rate_limits.register(:stripe, limits: { second: 3, minute: 100 })
+  config.rate_limits.register(:twilio, limit: 10, period: :second)
+end
+
+class ChargeReactor < RubyReactor::Reactor
+  input :account_id
+
+  with_rate_limit(:stripe)   # shared :stripe quota across every reactor
+
+  step :charge do
+    argument :account_id, input(:account_id)
+    run { |args| Stripe.charge(args[:account_id]) }
+  end
+end
+```
+
+Referencing an unregistered name raises `RubyReactor::RateLimitRegistry::UnknownLimitError`. Named limits hit the same enforcement path as inline ones, so async snooze behavior is identical.
 
 On contention:
 
