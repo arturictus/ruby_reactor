@@ -269,7 +269,7 @@ Key points:
 - **The name is the key base.** A named limit uses the name itself (`"stripe"`) as the Redis key base, so every reactor referencing `:stripe` throttles against **one shared bucket** — exactly what you want for a global API quota. (Counters live at `rate:stripe:<period_name>:<bucket_id>`.)
 - **Name-only.** `with_rate_limit(:stripe)` takes no `limit:`/`period:`/`limits:` and no key block — those come from the registry. Passing both raises `ArgumentError`.
 - **Lazy resolution.** The name is resolved from the registry at run time, not at class load, so `configure` and reactor definitions can load in any order.
-- **Unknown names fail loud.** Referencing a name that was never registered raises `RubyReactor::RateLimitRegistry::UnknownLimitError` (a configuration error that propagates out of `run`, not swallowed into a step failure).
+- **Unknown names fail loud.** Referencing a name that was never registered raises `RubyReactor::RateLimitRegistry::UnknownLimitError` (a configuration error that propagates out of `run`, not swallowed into a step failure). In a Sidekiq worker this is treated as permanent: the context is marked `:failed` immediately — no snooze, no Sidekiq retry burn.
 - **Same enforcement path.** Named and inline limits both run through the same counter check, so multi-window semantics, the `ExceededError`, and async snooze behave identically (see below).
 
 Use the inline block form instead when you need a **per-entity** key (e.g. one quota *per account*) rather than a single shared bucket.
@@ -296,6 +296,8 @@ This shares the existing snooze cap (`lock_snooze_max_attempts`). After the cap 
 | Sidekiq async | Snoozes `perform_in(retry_after + jitter, ...)`. Does not burn Sidekiq retry budget. Counted against `lock_snooze_max_attempts`.      |
 
 The rate-limit check happens **before** lock/semaphore acquisition: a job that would be rate-limited never grabs a mutex.
+
+Like the period gate, the rate limit applies to the **first execution** only — the inline call for sync reactors, the first worker pass for async reactors. Genuine resumes (interrupt continue, async step handoff, retry requeue) never re-check: a paused reactor must not throttle itself on the way back in.
 
 ## Periods (once-per-bucket dedup)
 
@@ -348,7 +350,7 @@ The marker is written **only after a terminal `Success`** (and after the reactor
 - A paused run (interrupted, async-handed-off) does **not** consume the bucket until the eventual resume completes successfully.
 - A `Skipped` result does **not** re-mark the bucket (no-op).
 
-Resume paths skip the period check entirely — a paused reactor must never skip *itself* when its eventual marker appears.
+The gate applies to the **first execution** only — for sync reactors that's the inline call; for async reactors it's the first worker pass. Genuine resumes (interrupt continue, async step handoff, retry requeue) skip the period check entirely — a paused reactor must never skip *itself* when its eventual marker appears.
 
 ### Composing with `with_lock`
 
@@ -365,11 +367,14 @@ end
 
 Order of evaluation per call:
 
-1. **Period check.** If marker exists, return `Skipped` immediately. No lock acquired, no steps run.
+1. **Period check (fast path).** If marker exists, return `Skipped` immediately. No lock acquired, no steps run.
 2. **Lock acquire.** Standard concurrency control kicks in.
-3. **Run steps.**
-4. **On terminal Success: mark the period bucket.**
-5. **Release lock.**
+3. **Period re-check (under the lock).** Closes the race where two callers both pass step 1 and then serialize on the lock: by the time the loser acquires it, the winner has marked the bucket, so the loser returns `Skipped` instead of re-running the work. The lock is still released normally on this path.
+4. **Run steps.**
+5. **On terminal Success: mark the period bucket.**
+6. **Release lock.**
+
+With the under-lock re-check, `with_lock` + `with_period` gives **strict at-most-one-per-bucket**: the marker dedups, the lock serializes, and the re-check seals the gap between them.
 
 ### The `Skipped` result
 
@@ -503,5 +508,5 @@ A subclass can call `with_lock` / `with_semaphore` / `with_rate_limit` / `with_p
 - **Inline retries** do not increment the snooze counter (they are not Sidekiq-scheduled). If you retry inline in a loop, add your own backoff.
 - **Multi-Redis** failover is not addressed. The lock is as durable as your Redis deployment; for cross-region critical sections, consider an external locking service.
 - **Wait inside a Sidekiq worker** is intentionally disabled. If you want to keep a worker thread parked on `BLPOP`, run that reactor inline instead.
-- **`with_period` alone is not a mutex.** Concurrent racers can both run before either has written the marker. Pair with `with_lock` if you need true at-most-one-per-bucket. The period is calendar-aligned, not "N hours since last run"; if you need sliding semantics, pass an integer `every:`.
+- **`with_period` alone is not a mutex.** Concurrent racers can both run before either has written the marker. Pair with `with_lock` if you need true at-most-one-per-bucket (the gate is re-checked under the lock, so the pairing is strict). The period is calendar-aligned, not "N hours since last run"; if you need sliding semantics, pass an integer `every:`.
 - **`with_rate_limit` is fixed-window.** Up to 2× the limit can run across a single window boundary. For strict pacing, use a token-bucket-style external rate limiter or stack a tighter `with_rate_limit(limit: 1, period: <interval>)` for serialized requests.

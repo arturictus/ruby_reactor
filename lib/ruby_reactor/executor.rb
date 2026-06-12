@@ -71,16 +71,21 @@ module RubyReactor
       middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
       completed = false
 
-      skipped = check_period_gate
-      if skipped
-        @result = skipped
-        update_context_status(@result)
-        save_context
+      if (skipped = check_period_gate)
         completed = true
-        return @result
+        return finalize_skipped(skipped)
       end
 
       acquire_locks_with_telemetry
+
+      # Re-check the period gate now that we hold the lock. The pre-lock check
+      # is a fast path; this one closes the race where two callers both passed
+      # it and then serialized on the lock — without it the second caller would
+      # re-run work the first already marked. (No-op when no lock is configured.)
+      if (skipped = check_period_gate)
+        completed = true
+        return finalize_skipped(skipped)
+      end
 
       input_validator = InputValidator.new(@reactor_class, @context)
       input_validator.validate!
@@ -122,10 +127,30 @@ module RubyReactor
     def resume_execution # rubocop:disable Metrics/MethodLength
       middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
       completed = false
+      # A fresh async reactor run reaches the worker through resume_execution
+      # (it never calls execute), so the period and rate-limit gates that live
+      # in execute must be applied here too. Genuine resumes (a step already ran
+      # or we paused mid-flight, so current_step is set) must NOT re-gate: a
+      # paused reactor must not throttle or skip itself on the way back in.
+      first_run = first_execution?
       begin
         @context.status = :running
-        acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
-        acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+
+        if first_run && (skipped = check_period_gate)
+          completed = true
+          return finalize_skipped(skipped)
+        end
+        check_rate_limit if first_run
+
+        acquire_concurrency_primitives
+
+        # Post-lock re-check (see execute) — closes the period race for the
+        # first run of a locked async reactor.
+        if first_run && (skipped = check_period_gate)
+          completed = true
+          return finalize_skipped(skipped)
+        end
+
         prepare_for_resume
         save_context
 
@@ -198,6 +223,10 @@ module RubyReactor
 
     def acquire_locks
       check_rate_limit
+      acquire_concurrency_primitives
+    end
+
+    def acquire_concurrency_primitives
       acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
       acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
     end
@@ -208,8 +237,10 @@ module RubyReactor
 
     # Consume one slot from each configured rate-limit window. Raises
     # `RubyReactor::RateLimit::ExceededError` (carrying a `retry_after_seconds`
-    # hint) if any window is full. Only consulted on initial `execute`; resumes
-    # never re-check (a paused reactor must not block itself on resume).
+    # hint) if any window is full. Consulted on the first execution only —
+    # `execute` for sync reactors, the first `resume_execution` pass for async
+    # reactors. Genuine resumes never re-check (a paused reactor must not block
+    # itself on resume).
     def check_rate_limit
       return unless @reactor_class.respond_to?(:rate_limit_config) && @reactor_class.rate_limit_config
 
@@ -228,9 +259,27 @@ module RubyReactor
       RubyReactor::RateLimit.new(key_base, limits: limits).check_and_increment!
     end
 
+    # True when nothing has run yet for this context — the very first execution
+    # of the reactor, including an async reactor's first worker pass. A genuine
+    # resume (paused, async-handed-off, or retried step) always records a
+    # `current_step` before serializing, so it is never mistaken for a first run.
+    def first_execution?
+      @context.current_step.nil? && @context.intermediate_results.empty?
+    end
+
+    # Record and persist a Skipped result, then return it. Shared by the
+    # pre-lock and post-lock period gates in both execute and resume.
+    def finalize_skipped(skipped)
+      @result = skipped
+      update_context_status(@result)
+      save_context
+      @result
+    end
+
     # Returns a Skipped result if the period bucket is already marked, else nil.
-    # Only consulted on initial `execute`; resumes never re-check (a paused run
-    # must not skip itself when its own marker eventually appears).
+    # Consulted before AND after lock acquisition on a first execution; genuine
+    # resumes never re-check (a paused run must not skip itself when its own
+    # marker eventually appears).
     def check_period_gate
       return nil unless @reactor_class.respond_to?(:period_config) && @reactor_class.period_config
 

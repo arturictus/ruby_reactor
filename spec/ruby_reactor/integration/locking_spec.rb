@@ -158,6 +158,29 @@ RSpec.describe "Locking Integration" do
       expect(PeriodicCounters.locked_runs).to eq(1)
     end
 
+    it "re-checks the period gate after lock acquisition (racer wrote the marker while we contended)" do
+      adapter = RubyReactor.configuration.storage_adapter
+      marker_key = RubyReactor::Period.key("locked_periodic:9", :day)
+
+      # Simulate the race: both callers pass the pre-lock gate (no marker yet),
+      # then serialize on the lock. By the time WE hold the lock, the winner
+      # has completed and marked the bucket. Without the post-lock re-check
+      # this run would execute the steps a second time.
+      allow(adapter).to receive(:lock_acquire).and_wrap_original do |m, *args|
+        acquired = m.call(*args)
+        adapter.period_mark(marker_key, 3600) if acquired
+        acquired
+      end
+
+      result = LockedPeriodicReactor.run(id: 9)
+
+      expect(result).to be_a(RubyReactor::Skipped)
+      expect(result.reason).to eq(:period)
+      expect(PeriodicCounters.locked_runs).to eq(0)
+      # The lock must still be released on the skip path.
+      expect(redis.exists?("lock:locked_periodic:9")).to be false
+    end
+
     it "uses TTL = 2x the period length" do
       PeriodicReactor.run(org_id: 7)
       bucket_key = RubyReactor::Period.key("daily_report:7", :day)
@@ -476,6 +499,104 @@ RSpec.describe "Locking Integration" do
         expect do
           NamedRateLimitedReactor.run(account_id: 1)
         end.to raise_error(RubyReactor::RateLimitRegistry::UnknownLimitError, /Unknown rate limit :stripe/)
+      end
+    end
+  end
+
+  # An async reactor's FIRST run reaches the worker through resume_execution
+  # (it never calls Executor#execute), so the period and rate-limit gates must
+  # be enforced there too — but only on first runs, never on genuine resumes.
+  describe "Async first-run gating (worker resume path)" do
+    let(:worker) { RubyReactor::SidekiqWorkers::Worker.new }
+
+    def fresh_serialized_context(reactor_class, inputs)
+      context = RubyReactor::Context.new(inputs, reactor_class)
+      RubyReactor::ContextSerializer.serialize(context)
+    end
+
+    before do
+      PeriodicCounters.reset
+      RateLimitCounters.reset
+      RubyReactor.configuration.lock_snooze_jitter = 0
+    end
+
+    describe "period gate" do
+      it "runs the first worker pass and marks the bucket" do
+        worker.perform(fresh_serialized_context(PeriodicReactor, { org_id: 70 }), "PeriodicReactor")
+
+        expect(PeriodicCounters.runs).to eq(1)
+        expect(redis.exists?(RubyReactor::Period.key("daily_report:70", :day))).to be true
+      end
+
+      it "skips a fresh worker pass when the bucket is already marked" do
+        allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+        PeriodicReactor.run(org_id: 71)
+        PeriodicCounters.reset
+
+        executor = worker.perform(fresh_serialized_context(PeriodicReactor, { org_id: 71 }), "PeriodicReactor")
+
+        expect(executor.result).to be_a(RubyReactor::Skipped)
+        expect(PeriodicCounters.runs).to eq(0)
+        expect(RubyReactor::SidekiqWorkers::Worker).not_to have_received(:perform_in)
+      end
+
+      it "does not re-check the gate on a genuine resume (a paused run must not skip itself)" do
+        PeriodicReactor.run(org_id: 72) # marks the bucket
+        PeriodicCounters.reset
+
+        # Resume mid-flight: current_step set, as every pause/handoff path does.
+        context = RubyReactor::Context.new({ org_id: 72 }, PeriodicReactor)
+        context.current_step = :build_report
+        worker.perform(RubyReactor::ContextSerializer.serialize(context), "PeriodicReactor")
+
+        expect(PeriodicCounters.runs).to eq(1)
+      end
+    end
+
+    describe "rate limit" do
+      it "consumes a slot on the first worker pass" do
+        worker.perform(fresh_serialized_context(RateLimitedReactor, { account_id: 80 }), "RateLimitedReactor")
+
+        expect(RateLimitCounters.runs).to eq(1)
+      end
+
+      it "snoozes a fresh worker pass when the window is full, using the retry_after hint" do
+        allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+        3.times { RateLimitedReactor.run(account_id: 81) }
+        RateLimitCounters.reset
+
+        worker.perform(fresh_serialized_context(RateLimitedReactor, { account_id: 81 }), "RateLimitedReactor")
+
+        expect(RateLimitCounters.runs).to eq(0)
+        expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
+          .with(a_value >= 0.1, instance_of(String), "RateLimitedReactor", 1)
+      end
+
+      it "does not re-check the limit on a genuine resume (a paused run must not throttle itself)" do
+        allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+        3.times { RateLimitedReactor.run(account_id: 82) } # window now full
+        RateLimitCounters.reset
+
+        context = RubyReactor::Context.new({ account_id: 82 }, RateLimitedReactor)
+        context.current_step = :call_api
+        worker.perform(RubyReactor::ContextSerializer.serialize(context), "RateLimitedReactor")
+
+        expect(RateLimitCounters.runs).to eq(1)
+        expect(RubyReactor::SidekiqWorkers::Worker).not_to have_received(:perform_in)
+      end
+
+      it "marks the context failed immediately on an unknown named limit (no snooze, no Sidekiq retry)" do
+        allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+        RubyReactor.configuration.instance_variable_set(:@rate_limits, RubyReactor::RateLimitRegistry.new)
+
+        context = RubyReactor::Context.new({}, NamedRateLimitedReactor)
+        serialized = RubyReactor::ContextSerializer.serialize(context)
+
+        expect { worker.perform(serialized, "NamedRateLimitedReactor") }.not_to raise_error
+
+        reloaded = NamedRateLimitedReactor.find(context.context_id)
+        expect(reloaded.context.status.to_s).to eq("failed")
+        expect(RubyReactor::SidekiqWorkers::Worker).not_to have_received(:perform_in)
       end
     end
   end
