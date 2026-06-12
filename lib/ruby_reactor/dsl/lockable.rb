@@ -86,43 +86,34 @@ module RubyReactor
         #     limits: { second: 3, minute: 100, hour: 5000 }
         #   ) { |i| "stripe:#{i[:account_id]}" }
         #
+        # @example Named global limit (registered in `RubyReactor.configure`)
+        #   with_rate_limit(:stripe)
+        #
+        # @param name [Symbol] reference a rate limit registered via
+        #   `config.rate_limits.register`. When given, the limit is shared
+        #   across every reactor using that name (the name is the key base);
+        #   no `limit:`/`period:`/`limits:` or block is accepted.
         # @param limit [Integer] requests per period (single-window form)
         # @param period [Symbol, Integer] :second / :minute / :hour / :day /
         #   :week / :month / :year, or integer seconds (single-window form)
         # @param limits [Hash{Symbol,Integer => Integer}] mapping of period
         #   unit to limit (multi-window form)
-        # @yield [inputs] Block returning the rate-limit key base.
-        def with_rate_limit(limit: nil, period: nil, limits: nil, &block)
-          normalized = normalize_rate_limit_args(limit, period, limits)
+        # @yield [inputs] Block returning the rate-limit key base (inline forms).
+        def with_rate_limit(name = nil, limit: nil, period: nil, limits: nil, &block)
+          if name
+            if limit || period || limits || block
+              raise ArgumentError, "with_rate_limit(:#{name}) references a registered limit; " \
+                                   "do not also pass :limit/:period/:limits or a block"
+            end
+
+            @rate_limit_config = { name: name.to_sym }
+            return
+          end
 
           @rate_limit_config = {
-            limits: normalized,
+            limits: RubyReactor::RateLimit.normalize_specs(limit: limit, period: period, limits: limits),
             key_proc: block
           }
-        end
-
-        private
-
-        def normalize_rate_limit_args(limit, period, limits)
-          if limits
-            raise ArgumentError, "with_rate_limit: use either :limits, or :limit + :period, not both" if limit || period
-
-            limits.map do |period_key, limit_val|
-              {
-                period_seconds: RubyReactor::Period.period_seconds(period_key),
-                limit: Integer(limit_val),
-                name: period_key.to_s
-              }
-            end
-          elsif limit && period
-            [{
-              period_seconds: RubyReactor::Period.period_seconds(period),
-              limit: Integer(limit),
-              name: period.to_s
-            }]
-          else
-            raise ArgumentError, "with_rate_limit requires :limit + :period, or :limits"
-          end
         end
       end
     end

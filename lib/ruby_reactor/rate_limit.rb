@@ -25,6 +25,34 @@ module RubyReactor
       end
     end
 
+    # Normalize the user-facing window args into the internal spec array that
+    # `RateLimit#initialize` expects. Shared by the reactor DSL (`with_rate_limit`)
+    # and the global registry (`config.rate_limits.register`).
+    #
+    # Accepts either a single window (`limit:` + `period:`) or a hash of windows
+    # (`limits:`). Returns Array<Hash{period_seconds:, limit:, name:}>.
+    def self.normalize_specs(limit: nil, period: nil, limits: nil)
+      if limits
+        raise ArgumentError, "rate limit: use either :limits, or :limit + :period, not both" if limit || period
+
+        limits.map do |period_key, limit_val|
+          {
+            period_seconds: RubyReactor::Period.period_seconds(period_key),
+            limit: Integer(limit_val),
+            name: period_key.to_s
+          }
+        end
+      elsif limit && period
+        [{
+          period_seconds: RubyReactor::Period.period_seconds(period),
+          limit: Integer(limit),
+          name: period.to_s
+        }]
+      else
+        raise ArgumentError, "rate limit requires :limit + :period, or :limits"
+      end
+    end
+
     attr_reader :key_base, :limits
 
     # @param key_base [String] caller-provided key (e.g. "stripe:account_42")

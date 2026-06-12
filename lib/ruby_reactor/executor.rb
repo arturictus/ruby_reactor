@@ -100,7 +100,8 @@ module RubyReactor
       @result
     rescue RubyReactor::Lock::AcquisitionError,
            RubyReactor::Semaphore::AcquisitionError,
-           RubyReactor::RateLimit::ExceededError => e
+           RubyReactor::RateLimit::ExceededError,
+           RubyReactor::RateLimitRegistry::UnknownLimitError => e
       raise e
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
@@ -118,7 +119,7 @@ module RubyReactor
       end
     end
 
-    def resume_execution
+    def resume_execution # rubocop:disable Metrics/MethodLength
       middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
       completed = false
       begin
@@ -142,7 +143,8 @@ module RubyReactor
         @result
       rescue RubyReactor::Lock::AcquisitionError,
              RubyReactor::Semaphore::AcquisitionError,
-             RubyReactor::RateLimit::ExceededError
+             RubyReactor::RateLimit::ExceededError,
+             RubyReactor::RateLimitRegistry::UnknownLimitError
         raise
       rescue StandardError => e
         handle_resume_error(e)
@@ -212,9 +214,18 @@ module RubyReactor
       return unless @reactor_class.respond_to?(:rate_limit_config) && @reactor_class.rate_limit_config
 
       config = @reactor_class.rate_limit_config
-      key_base = config[:key_proc].call(@context.inputs)
 
-      RubyReactor::RateLimit.new(key_base, limits: config[:limits]).check_and_increment!
+      if config[:name]
+        # Named global limit: the name is the shared key base and the windows
+        # come from the registry (resolved lazily so config order doesn't matter).
+        key_base = config[:name].to_s
+        limits = RubyReactor.configuration.rate_limits.fetch(config[:name])
+      else
+        key_base = config[:key_proc].call(@context.inputs)
+        limits = config[:limits]
+      end
+
+      RubyReactor::RateLimit.new(key_base, limits: limits).check_and_increment!
     end
 
     # Returns a Skipped result if the period bucket is already marked, else nil.

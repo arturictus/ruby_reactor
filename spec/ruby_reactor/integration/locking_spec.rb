@@ -422,6 +422,62 @@ RSpec.describe "Locking Integration" do
         expect(after).to eq(before)
       end
     end
+
+    describe "named global limits" do
+      before do
+        RubyReactor.configure do |config|
+          config.rate_limits.register(:stripe, limit: 3, period: :second)
+        end
+      end
+
+      it "resolves windows from the registry and allows up to `limit` calls" do
+        3.times do
+          expect(NamedRateLimitedReactor.run(account_id: 1)).to be_success
+        end
+        expect(RateLimitCounters.runs).to eq(3)
+      end
+
+      it "uses the name as the shared key base" do
+        NamedRateLimitedReactor.run(account_id: 1)
+
+        error = capture_rate_limit_error do
+          4.times { NamedRateLimitedReactor.run(account_id: 1) }
+        end
+
+        expect(error).to be_a(RubyReactor::RateLimit::ExceededError)
+        expect(error.key_base).to eq("stripe")
+        expect(error.limit).to eq(3)
+      end
+
+      it "shares one bucket across different reactors using the same name" do
+        2.times { NamedRateLimitedReactor.run(account_id: 1) }
+        # Same :stripe quota, so only one slot remains for the other reactor.
+        expect(OtherNamedRateLimitedReactor.run(account_id: 2)).to be_success
+
+        error = capture_rate_limit_error { OtherNamedRateLimitedReactor.run(account_id: 3) }
+        expect(error).to be_a(RubyReactor::RateLimit::ExceededError)
+      end
+
+      it "supports the multi-window `limits:` form" do
+        RubyReactor.configure do |config|
+          config.rate_limits.register(:stripe, limits: { second: 2, minute: 5 })
+        end
+
+        2.times { expect(NamedRateLimitedReactor.run(account_id: 1)).to be_success }
+
+        error = capture_rate_limit_error { NamedRateLimitedReactor.run(account_id: 1) }
+        expect(error.period_name).to eq("second")
+        expect(error.limit).to eq(2)
+      end
+
+      it "raises a clear error when the name is not registered" do
+        RubyReactor.configuration.instance_variable_set(:@rate_limits, RubyReactor::RateLimitRegistry.new)
+
+        expect do
+          NamedRateLimitedReactor.run(account_id: 1)
+        end.to raise_error(RubyReactor::RateLimitRegistry::UnknownLimitError, /Unknown rate limit :stripe/)
+      end
+    end
   end
 
   describe "Semaphores" do
