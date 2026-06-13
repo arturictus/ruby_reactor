@@ -4,7 +4,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
   input :order_id, :string
   input :product_id, :string
   input :quantity, :integer, gt?: 0
-  input :amount, :integer, gt?: 0.0
+  input :amount, :integer, gt?: 0
 
   # Optional inputs for testing failure scenarios
   input :fail_at, :symbol, optional: true
