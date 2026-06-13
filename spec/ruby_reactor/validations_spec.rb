@@ -1084,4 +1084,114 @@ RSpec.describe "Dry::Validation Integration" do
       expect(reactor.run({})).to be_a(RubyReactor::Success)
     end
   end
+
+  describe "Validation failure attribution and saga semantics" do
+    it "stamps step_name and step_arguments on an argument validation failure" do
+      reactor = Class.new(RubyReactor::Reactor) do
+        input :amount
+
+        step :charge do
+          argument :amount, input(:amount), :integer, gteq?: 1
+          run { |_args, _| Success(:charged) }
+        end
+      end
+
+      result = reactor.run(amount: 0)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+      expect(result.step_name).to eq(:charge)
+      expect(result.step_arguments).to eq(amount: 0)
+      expect(result.validation_errors[:amount]).to include("must be greater than or equal to 1")
+    end
+
+    it "stamps step_name on an output validation failure" do
+      reactor = Class.new(RubyReactor::Reactor) do
+        step :produce do
+          run { |_args, _| Success(-3) }
+          validate_output :integer, gteq?: 0
+        end
+        returns :produce
+      end
+
+      result = reactor.run({})
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.step_name).to eq(:produce)
+    end
+
+    it "leaves step_name nil for reactor-level input validation failures" do
+      reactor = Class.new(RubyReactor::Reactor) do
+        input :age, :integer, gteq?: 18
+
+        step :noop do
+          run { |_args, _| Success(:ok) }
+        end
+      end
+
+      result = reactor.run(age: 12)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.step_name).to be_nil
+      expect(result.validation_errors[:age]).not_to be_nil
+    end
+
+    it "compensates the failing step and rolls back prior steps on output validation failure" do
+      events = []
+
+      reactor = Class.new(RubyReactor::Reactor) do
+        step :first do
+          run { |_args, _| Success(:first_done) }
+          undo do |_value, _arguments, _ctx|
+            events << :first_undone
+            Success(:undone)
+          end
+        end
+
+        step :bad_output do
+          wait_for :first
+          run { |_args, _| Success(-1) }
+          validate_output :integer, gteq?: 0
+          compensate do |_error, _arguments, _ctx|
+            events << :bad_output_compensated
+            Success(:compensated)
+          end
+        end
+      end
+
+      result = reactor.run({})
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+      # The failing step's own compensation ran (its side effect is not
+      # orphaned), and the completed prior step was rolled back.
+      expect(events).to eq(%i[bad_output_compensated first_undone])
+    end
+
+    it "rolls back prior steps on a mid-reactor argument validation failure" do
+      events = []
+
+      reactor = Class.new(RubyReactor::Reactor) do
+        step :first do
+          run { |_args, _| Success(:first_done) }
+          undo do |_value, _arguments, _ctx|
+            events << :first_undone
+            Success(:undone)
+          end
+        end
+
+        step :second do
+          wait_for :first
+          argument :amount, value(-1), :integer, gteq?: 0
+          run { |_args, _| Success(:never) }
+        end
+      end
+
+      result = reactor.run({})
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.step_name).to eq(:second)
+      expect(events).to eq(%i[first_undone])
+    end
+  end
 end

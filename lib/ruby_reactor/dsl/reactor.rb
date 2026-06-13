@@ -178,7 +178,9 @@ module RubyReactor
             RubyReactor.Success(inputs_hash)
           else
             error = RubyReactor::Error::InputValidationError.new(errors)
-            RubyReactor.Failure(error)
+            # Same shape as executor-built validation failures: expose the
+            # structured field errors on the Failure itself.
+            RubyReactor.Failure(error, validation_errors: errors, reactor_name: name)
           end
         end
 

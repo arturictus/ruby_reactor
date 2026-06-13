@@ -182,6 +182,8 @@ end
 # References a named limit registered in the global config. Two reactors point
 # at the same `:stripe` name to exercise the shared global bucket.
 class NamedRateLimitedReactor < RubyReactor::Reactor
+  input :account_id, optional: true
+
   with_rate_limit(:stripe)
 
   step :call_api do
@@ -193,6 +195,8 @@ class NamedRateLimitedReactor < RubyReactor::Reactor
 end
 
 class OtherNamedRateLimitedReactor < RubyReactor::Reactor
+  input :account_id, optional: true
+
   with_rate_limit(:stripe)
 
   step :call_api do

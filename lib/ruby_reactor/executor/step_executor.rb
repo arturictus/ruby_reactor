@@ -244,7 +244,12 @@ module RubyReactor
         validation_result = step_config.args_validator.call(resolved_arguments)
         return if validation_result.success?
 
-        raise validation_result.error
+        # Stamp step attribution so the resulting Failure can say WHERE the
+        # validation failed, not just what was invalid.
+        error = validation_result.error
+        error.step_name = step_config.name
+        error.step_arguments = resolved_arguments
+        raise error
       end
 
       def resolve_arguments(step_config)

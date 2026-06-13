@@ -76,6 +76,12 @@ module RubyReactor
         return finalize_skipped(skipped)
       end
 
+      # Validate inputs BEFORE consuming a rate-limit slot or grabbing a
+      # lock/semaphore: a run that can never start must not burn quota or
+      # briefly block other callers.
+      input_validator = InputValidator.new(@reactor_class, @context)
+      input_validator.validate!
+
       acquire_locks_with_telemetry
 
       # Re-check the period gate now that we hold the lock. The pre-lock check
@@ -86,9 +92,6 @@ module RubyReactor
         completed = true
         return finalize_skipped(skipped)
       end
-
-      input_validator = InputValidator.new(@reactor_class, @context)
-      input_validator.validate!
 
       @context.status = :running
       save_context

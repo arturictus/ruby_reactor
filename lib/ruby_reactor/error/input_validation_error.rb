@@ -4,6 +4,10 @@ module RubyReactor
   module Error
     class InputValidationError < Base
       attr_reader :field_errors
+      # Step attribution, set at the raise site when the failure happened at a
+      # step boundary (argument or output validation) rather than at reactor
+      # input validation. Nil for reactor-level input failures.
+      attr_accessor :step_name, :step_arguments
 
       def initialize(field_errors)
         @field_errors = field_errors

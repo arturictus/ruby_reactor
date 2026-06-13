@@ -388,6 +388,30 @@ RSpec.describe "Locking Integration" do
       expect(RateLimitCounters.runs).to eq(4)
     end
 
+    it "does not consume a slot (or grab a lock) when input validation fails" do
+      reactor = Class.new(RubyReactor::Reactor) do
+        input :account_id, :integer
+        with_lock(ttl: 10) { |i| "validated:#{i[:account_id]}" }
+        with_rate_limit(limit: 3, period: :second) { |i| "validated_api:#{i[:account_id]}" }
+
+        step :call_api do
+          run { |_inputs| RubyReactor.Success(ok: true) }
+        end
+      end
+
+      adapter = RubyReactor.configuration.storage_adapter
+      allow(adapter).to receive(:lock_acquire).and_call_original
+
+      # Drive the executor directly: this is the layer that orders
+      # validation vs. gating (Reactor.run also pre-validates above it).
+      result = RubyReactor::Executor.new(reactor, { account_id: "nope" }).execute
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+      expect(adapter.rate_limit_count("validated_api:nope", :second)).to eq(0)
+      expect(adapter).not_to have_received(:lock_acquire)
+    end
+
     it "does not consume a slot when the window is full" do
       3.times { RateLimitedReactor.run(account_id: 1) }
 
