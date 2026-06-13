@@ -21,6 +21,16 @@ RSpec.describe WebhookInterruptReactor, type: :reactor do
     expect(reactor).to be_failure
   end
 
+  it "fails the reactor when the payload fails validate_payload (default max_attempts: 1)" do
+    # :status is required by validate_payload. This interrupt uses the default
+    # max_attempts of 1, so a single invalid payload exhausts the budget:
+    # the reactor compensates and is marked failed rather than staying paused.
+    reactor.resume(payload: {})
+
+    expect(reactor).to be_failure
+    expect(reactor).not_to be_paused
+  end
+
   context "when initiate_request fails" do
     subject(:reactor) do
       test_reactor(described_class, { provider_id: "x", fail_at: :initiate_request })

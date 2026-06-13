@@ -60,6 +60,10 @@ module RubyReactor
           # budget or appear as an error in dashboards. After the configured
           # cap is reached we escalate by marking the reactor as failed.
           handle_snooze(serialized_context, reactor_class_name, context, snooze_count, e)
+        rescue RubyReactor::RateLimitRegistry::UnknownLimitError => e
+          # Permanent configuration error — snoozing or retrying the same job
+          # will keep failing. Mark the context failed immediately.
+          escalate_snooze(context, snooze_count, e)
         end
       end
 

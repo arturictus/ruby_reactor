@@ -178,3 +178,31 @@ class MultiWindowRateLimitedReactor < RubyReactor::Reactor
     end
   end
 end
+
+# References a named limit registered in the global config. Two reactors point
+# at the same `:stripe` name to exercise the shared global bucket.
+class NamedRateLimitedReactor < RubyReactor::Reactor
+  input :account_id, optional: true
+
+  with_rate_limit(:stripe)
+
+  step :call_api do
+    run do |_inputs|
+      RateLimitCounters.runs += 1
+      RubyReactor.Success(ok: true)
+    end
+  end
+end
+
+class OtherNamedRateLimitedReactor < RubyReactor::Reactor
+  input :account_id, optional: true
+
+  with_rate_limit(:stripe)
+
+  step :call_api do
+    run do |_inputs|
+      RateLimitCounters.runs += 1
+      RubyReactor.Success(ok: true)
+    end
+  end
+end

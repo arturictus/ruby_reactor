@@ -413,10 +413,8 @@ RSpec.describe "Dry::Validation Integration" do
           )
 
           expect(result).to be_a(RubyReactor::Failure)
-          expect(result.error).to be_a(String)
-          expect(result.error).to include("argument validation failed")
-          expect(result.error).to include("amount")
-          expect(result.error).to include("must be greater than 0")
+          expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+          expect(result.error.field_errors[:amount]).to include("must be greater than 0")
         end
 
         it "fails with unsupported currency" do
@@ -427,10 +425,8 @@ RSpec.describe "Dry::Validation Integration" do
           )
 
           expect(result).to be_a(RubyReactor::Failure)
-          expect(result.error).to be_a(String)
-          expect(result.error).to include("argument validation failed")
-          expect(result.error).to include("currency")
-          expect(result.error).to include("must be one of")
+          expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+          expect(result.error.field_errors[:currency]).to include("must be one of")
         end
 
         it "fails with short card token" do
@@ -441,10 +437,8 @@ RSpec.describe "Dry::Validation Integration" do
           )
 
           expect(result).to be_a(RubyReactor::Failure)
-          expect(result.error).to be_a(String)
-          expect(result.error).to include("argument validation failed")
-          expect(result.error).to include("card_token")
-          expect(result.error).to include("size cannot be less than 10")
+          expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+          expect(result.error.field_errors[:card_token]).to include("size cannot be less than 10")
         end
       end
     end
@@ -546,10 +540,8 @@ RSpec.describe "Dry::Validation Integration" do
           )
 
           expect(result).to be_a(RubyReactor::Failure)
-          expect(result.error).to be_a(String)
-          expect(result.error).to include("argument validation failed")
-          expect(result.error).to include("sku")
-          expect(result.error).to include("is in invalid format")
+          expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+          expect(result.error.field_errors[:"product_data[sku]"]).to include("is in invalid format")
         end
 
         it "fails with invalid warehouse ID format" do
@@ -565,10 +557,8 @@ RSpec.describe "Dry::Validation Integration" do
           )
 
           expect(result).to be_a(RubyReactor::Failure)
-          expect(result.error).to be_a(String)
-          expect(result.error).to include("argument validation failed")
-          expect(result.error).to include("warehouse_id")
-          expect(result.error).to include("is in invalid format")
+          expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+          expect(result.error.field_errors[:warehouse_id]).to include("is in invalid format")
         end
 
         it "fails with negative price" do
@@ -584,10 +574,8 @@ RSpec.describe "Dry::Validation Integration" do
           )
 
           expect(result).to be_a(RubyReactor::Failure)
-          expect(result.error).to be_a(String)
-          expect(result.error).to include("argument validation failed")
-          expect(result.error).to include("price")
-          expect(result.error).to include("must be greater than 0")
+          expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+          expect(result.error.field_errors[:"product_data[price]"]).to include("must be greater than 0")
         end
       end
     end
@@ -689,10 +677,8 @@ RSpec.describe "Dry::Validation Integration" do
           )
 
           expect(result).to be_a(RubyReactor::Failure)
-          expect(result.error).to be_a(String)
-          expect(result.error).to include("argument validation failed")
-          expect(result.error).to include("guests")
-          expect(result.error).to include("must be less than or equal to 10")
+          expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+          expect(result.error.field_errors[:"booking[guests]"]).to include("must be less than or equal to 10")
         end
       end
     end
@@ -793,8 +779,8 @@ RSpec.describe "Dry::Validation Integration" do
 
           result = invalid_output_reactor.run({})
           expect(result).to be_a(RubyReactor::Failure)
-          expect(result.error).to be_a(String)
-          expect(result.error).to include("output validation failed")
+          expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+          expect(result.error.field_errors).not_to be_empty
         end
       end
     end
@@ -898,6 +884,314 @@ RSpec.describe "Dry::Validation Integration" do
         expect(error_keys).to include("data[preferences][0][key]")
         expect(error_keys).to include("data[preferences][1][value]")
       end
+    end
+  end
+
+  describe "Layered input DSL" do
+    describe "Form 0 — declaration only" do
+      let(:reactor) do
+        Class.new(RubyReactor::Reactor) do
+          input :user
+          input :note, description: "free-form"
+
+          step :echo do
+            argument :user, input(:user)
+            run { |args, _| Success(args[:user]) }
+          end
+          returns :echo
+        end
+      end
+
+      it "registers no validator and passes the value through (including nil)" do
+        expect(reactor.input_validations).to be_empty
+        expect(reactor.run(user: nil, note: "n").value).to be_nil
+        expect(reactor.run(user: { id: 1 }, note: "n").value).to eq({ id: 1 })
+      end
+    end
+
+    describe "Form 1 — inline scalar" do
+      let(:reactor) do
+        Class.new(RubyReactor::Reactor) do
+          input :name, :string, min_size?: 2
+          input :age, :integer, gteq?: 18
+          input :bio, :string, optional: true, max_size?: 5
+
+          step :build do
+            argument :name, input(:name)
+            argument :age, input(:age)
+            run { |args, _| Success(args) }
+          end
+          returns :build
+        end
+      end
+
+      it "passes valid scalars" do
+        result = reactor.run(name: "Al", age: 20)
+        expect(result).to be_a(RubyReactor::Success)
+      end
+
+      it "fails when a predicate is violated" do
+        result = reactor.run(name: "A", age: 20)
+        expect(result).to be_a(RubyReactor::Failure)
+        expect(result.error.field_errors[:name]).to include("size cannot be less than 2")
+      end
+
+      it "fails on the type" do
+        result = reactor.run(name: "Al", age: "old")
+        expect(result).to be_a(RubyReactor::Failure)
+        expect(result.error.field_errors[:age]).to be_a(String)
+      end
+
+      it "treats optional: true as optional + maybe" do
+        expect(reactor.run(name: "Al", age: 20)).to be_a(RubyReactor::Success)
+        expect(reactor.run(name: "Al", age: 20, bio: "toolong")).to be_a(RubyReactor::Failure)
+      end
+    end
+
+    describe "Form 1b — class / module instance check" do
+      let(:klass) { Struct.new(:id) }
+      let(:reactor) do
+        domain = klass
+        Class.new(RubyReactor::Reactor) do
+          input :record, domain
+
+          step :build do
+            argument :record, input(:record)
+            run { |args, _| Success(args[:record]) }
+          end
+          returns :build
+        end
+      end
+
+      it "passes an instance" do
+        expect(reactor.run(record: klass.new(1))).to be_a(RubyReactor::Success)
+      end
+
+      it "fails a non-instance with a readable message" do
+        result = reactor.run(record: "nope")
+        expect(result).to be_a(RubyReactor::Failure)
+        expect(result.error.field_errors[:record]).to match(/must be/)
+      end
+    end
+
+    describe "Form 2 — macro block with |i|" do
+      let(:reactor) do
+        email = /\A[^@\s]+@[^@\s]+\z/
+        Class.new(RubyReactor::Reactor) do
+          input :order do |i|
+            i.hash do
+              required(:customer).hash do
+                required(:email).filled(:string, format?: email)
+              end
+              optional(:coupon).maybe(:string)
+            end
+          end
+
+          step :build do
+            argument :order, input(:order)
+            run { |args, _| Success(args[:order]) }
+          end
+          returns :build
+        end
+      end
+
+      it "validates nested structures" do
+        ok = reactor.run(order: { customer: { email: "a@b.com" } })
+        expect(ok).to be_a(RubyReactor::Success)
+
+        bad = reactor.run(order: { customer: { email: "nope" } })
+        expect(bad).to be_a(RubyReactor::Failure)
+        expect(bad.error.field_errors.keys.map(&:to_s)).to include("order[customer][email]")
+      end
+    end
+  end
+
+  describe "Inline argument validation" do
+    let(:reactor) do
+      Class.new(RubyReactor::Reactor) do
+        input :amount
+        input :currency
+
+        step :charge do
+          argument :amount, input(:amount), :integer, gt?: 0
+          argument :currency, input(:currency), :string, included_in?: %w[USD EUR]
+
+          run { |args, _| Success(args) }
+        end
+        returns :charge
+      end
+    end
+
+    it "passes when inline rules hold" do
+      expect(reactor.run(amount: 10, currency: "USD")).to be_a(RubyReactor::Success)
+    end
+
+    it "fails with a unified InputValidationError" do
+      result = reactor.run(amount: 0, currency: "USD")
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+      expect(result.error.field_errors[:amount]).to include("must be greater than 0")
+    end
+
+    it "composes inline rules with a validate_args block" do
+      composed = Class.new(RubyReactor::Reactor) do
+        input :amount
+        input :note
+
+        step :charge do
+          argument :amount, input(:amount), :integer, gt?: 0
+          argument :note, input(:note)
+
+          validate_args do
+            required(:note).filled(:string, min_size?: 2)
+          end
+
+          run { |args, _| Success(args) }
+        end
+        returns :charge
+      end
+
+      expect(composed.run(amount: 5, note: "ok")).to be_a(RubyReactor::Success)
+      expect(composed.run(amount: 5, note: "x")).to be_a(RubyReactor::Failure)
+      expect(composed.run(amount: 0, note: "ok")).to be_a(RubyReactor::Failure)
+    end
+  end
+
+  describe "Scalar-aware validate_output" do
+    it "validates a scalar return value" do
+      reactor = Class.new(RubyReactor::Reactor) do
+        step :produce do
+          run { |_args, _| Success(-3) }
+          validate_output :integer, gteq?: 0
+        end
+        returns :produce
+      end
+
+      result = reactor.run({})
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+    end
+
+    it "passes a valid scalar output" do
+      reactor = Class.new(RubyReactor::Reactor) do
+        step :produce do
+          run { |_args, _| Success(7) }
+          validate_output :integer, gteq?: 0
+        end
+        returns :produce
+      end
+
+      expect(reactor.run({})).to be_a(RubyReactor::Success)
+    end
+  end
+
+  describe "Validation failure attribution and saga semantics" do
+    it "stamps step_name and step_arguments on an argument validation failure" do
+      reactor = Class.new(RubyReactor::Reactor) do
+        input :amount
+
+        step :charge do
+          argument :amount, input(:amount), :integer, gteq?: 1
+          run { |_args, _| Success(:charged) }
+        end
+      end
+
+      result = reactor.run(amount: 0)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+      expect(result.step_name).to eq(:charge)
+      expect(result.step_arguments).to eq(amount: 0)
+      expect(result.validation_errors[:amount]).to include("must be greater than or equal to 1")
+    end
+
+    it "stamps step_name on an output validation failure" do
+      reactor = Class.new(RubyReactor::Reactor) do
+        step :produce do
+          run { |_args, _| Success(-3) }
+          validate_output :integer, gteq?: 0
+        end
+        returns :produce
+      end
+
+      result = reactor.run({})
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.step_name).to eq(:produce)
+    end
+
+    it "leaves step_name nil for reactor-level input validation failures" do
+      reactor = Class.new(RubyReactor::Reactor) do
+        input :age, :integer, gteq?: 18
+
+        step :noop do
+          run { |_args, _| Success(:ok) }
+        end
+      end
+
+      result = reactor.run(age: 12)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.step_name).to be_nil
+      expect(result.validation_errors[:age]).not_to be_nil
+    end
+
+    it "compensates the failing step and rolls back prior steps on output validation failure" do
+      events = []
+
+      reactor = Class.new(RubyReactor::Reactor) do
+        step :first do
+          run { |_args, _| Success(:first_done) }
+          undo do |_value, _arguments, _ctx|
+            events << :first_undone
+            Success(:undone)
+          end
+        end
+
+        step :bad_output do
+          wait_for :first
+          run { |_args, _| Success(-1) }
+          validate_output :integer, gteq?: 0
+          compensate do |_error, _arguments, _ctx|
+            events << :bad_output_compensated
+            Success(:compensated)
+          end
+        end
+      end
+
+      result = reactor.run({})
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error).to be_a(RubyReactor::Error::InputValidationError)
+      # The failing step's own compensation ran (its side effect is not
+      # orphaned), and the completed prior step was rolled back.
+      expect(events).to eq(%i[bad_output_compensated first_undone])
+    end
+
+    it "rolls back prior steps on a mid-reactor argument validation failure" do
+      events = []
+
+      reactor = Class.new(RubyReactor::Reactor) do
+        step :first do
+          run { |_args, _| Success(:first_done) }
+          undo do |_value, _arguments, _ctx|
+            events << :first_undone
+            Success(:undone)
+          end
+        end
+
+        step :second do
+          wait_for :first
+          argument :amount, value(-1), :integer, gteq?: 0
+          run { |_args, _| Success(:never) }
+        end
+      end
+
+      result = reactor.run({})
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.step_name).to eq(:second)
+      expect(events).to eq(%i[first_undone])
     end
   end
 end

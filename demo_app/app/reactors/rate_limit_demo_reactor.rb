@@ -1,13 +1,8 @@
 # frozen_string_literal: true
 
 class RateLimitDemoReactor < RubyReactor::Reactor
-  input :account_id do
-    required(:account_id).filled(:string)
-  end
-
-  input :hold_seconds, optional: true do
-    optional(:hold_seconds).maybe(:integer, gteq?: 0)
-  end
+  input :account_id, :string
+  input :hold_seconds, :integer, optional: true, gteq?: 0
 
   with_rate_limit(limit: 3, period: :second) { |inputs| "api:#{inputs[:account_id]}" }
   async true

@@ -1,9 +1,7 @@
 # frozen_string_literal: true
 
 class RateLimitBurstDemoReactor < RubyReactor::Reactor
-  input :account_id do
-    required(:account_id).filled(:string)
-  end
+  input :account_id, :string
 
   step :burst_calls do
     argument :account_id, input(:account_id)

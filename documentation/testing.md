@@ -648,6 +648,22 @@ expect("stripe:42").to have_rate_limit_count(3).for(:second)
 expect("stripe:42").to have_rate_limit_count(3).for(:minute)
 ```
 
+For a **named global limit** (`with_rate_limit(:stripe)`), the key base is the name itself, so assert against that — register the limit first:
+
+```ruby
+before do
+  RubyReactor.configure do |config|
+    config.rate_limits.register(:stripe, limit: 3, period: :second)
+  end
+end
+
+it "shares one bucket across reactors" do
+  3.times { ChargeReactor.run(account_id: 42) }
+
+  expect("stripe").to have_rate_limit_count(3).for(:second)
+end
+```
+
 ### Asserting period markers
 
 ```ruby

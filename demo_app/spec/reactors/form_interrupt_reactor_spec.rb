@@ -18,6 +18,17 @@ RSpec.describe FormInterruptReactor, type: :reactor do
     expect(final[:additional_info]).to eq("A bio")
   end
 
+  it "rejects a resume payload that fails validate_payload and stays resumable" do
+    # bio is required by validate_payload on :wait_for_user_input.
+    reactor.resume(step: :wait_for_user_input, payload: {})
+
+    expect(reactor).to be_paused
+
+    reactor.resume(step: :wait_for_user_input, payload: { bio: "A bio" })
+    reactor.resume(step: :wait_for_approval, payload: { user: "admin", approved: true })
+    expect(reactor).to be_success
+  end
+
   context "when prepare_application fails up front" do
     subject(:reactor) do
       test_reactor(described_class, { user_name: "Alice", fail_at: :prepare_application })

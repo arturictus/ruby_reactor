@@ -3,13 +3,8 @@
 class SemaphoreDemoReactor < RubyReactor::Reactor
   async true
 
-  input :request_id do
-    required(:request_id).filled(:string)
-  end
-
-  input :hold_seconds, optional: true do
-    optional(:hold_seconds).maybe(:integer, gteq?: 0)
-  end
+  input :request_id, :string
+  input :hold_seconds, :integer, optional: true, gteq?: 0
 
   with_semaphore(limit: 2, wait: 0) { |_inputs| "payment_gateway" }
 

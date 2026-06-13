@@ -19,7 +19,10 @@ module RubyReactor
 
       def failure(errors)
         error = RubyReactor::Error::InputValidationError.new(errors)
-        RubyReactor.Failure(error)
+        # Carry the structured field errors on the Failure itself so every
+        # validation failure shape (reactor inputs via `run`, step args, step
+        # output) exposes `validation_errors` uniformly.
+        RubyReactor.Failure(error, validation_errors: errors)
       end
     end
   end

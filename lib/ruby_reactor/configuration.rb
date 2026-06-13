@@ -59,5 +59,12 @@ module RubyReactor
     def middlewares
       @middlewares ||= []
     end
+
+    # Registry of named rate limits shared across reactors. Configure entries
+    # with `config.rate_limits.register(:name, ...)` and reference them from a
+    # reactor via `with_rate_limit(:name)`.
+    def rate_limits
+      @rate_limits ||= RubyReactor::RateLimitRegistry.new
+    end
   end
 end

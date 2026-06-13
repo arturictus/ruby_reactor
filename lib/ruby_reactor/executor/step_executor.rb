@@ -128,6 +128,10 @@ module RubyReactor
       def safe_execute_step_sync(step_config, resolved_arguments = nil)
         resolved_arguments ||= resolve_arguments(step_config)
         execute_step_sync_without_result_handling(step_config, resolved_arguments)
+      rescue Error::InputValidationError
+        # Validation failures are not retryable and must surface as a structured
+        # InputValidationError (with field_errors), so let them propagate.
+        raise
       rescue StandardError => e
         # Identify redacted inputs
         redact_inputs = @reactor_class.inputs.select { |_, config| config[:redact] }.keys
@@ -240,11 +244,12 @@ module RubyReactor
         validation_result = step_config.args_validator.call(resolved_arguments)
         return if validation_result.success?
 
-        raise Error::StepFailureError.new(
-          "Step '#{step_config.name}' argument validation failed: #{validation_result.error.message}",
-          step: step_config.name,
-          context: @context
-        )
+        # Stamp step attribution so the resulting Failure can say WHERE the
+        # validation failed, not just what was invalid.
+        error = validation_result.error
+        error.step_name = step_config.name
+        error.step_arguments = resolved_arguments
+        raise error
       end
 
       def resolve_arguments(step_config)

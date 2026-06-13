@@ -33,8 +33,11 @@ module RubyReactor
         when Error::StepFailureError
           handle_step_failure_error(error)
         when Error::InputValidationError
-          # Preserve validation errors as-is for proper error handling
-          RubyReactor.Failure(error, validation_errors: error.field_errors)
+          # Unified validation failure shape (inputs, step args, step output).
+          # Roll back any completed steps so saga semantics hold for mid-reactor
+          # validation failures (a no-op for input validation at reactor start).
+          @compensation_manager.rollback_completed_steps
+          build_validation_failure(error)
         when Error::Base
           # Other errors need rollback
           @compensation_manager.rollback_completed_steps
@@ -55,6 +58,25 @@ module RubyReactor
       end
 
       private
+
+      # Failure for a validation error (reactor inputs, step arguments, or
+      # step output), carrying both the structured field errors and the step/
+      # reactor attribution stamped at the raise site (nil step_name for
+      # reactor-level input failures).
+      def build_validation_failure(error)
+        redact_inputs = []
+        redact_inputs = @context.reactor_class.inputs.select { |_, c| c[:redact] }.keys if @context.reactor_class
+
+        RubyReactor.Failure(
+          error,
+          validation_errors: error.field_errors,
+          step_name: error.step_name,
+          step_arguments: error.step_arguments || {},
+          inputs: @context.inputs,
+          redact_inputs: redact_inputs,
+          reactor_name: @context.reactor_class&.name
+        )
+      end
 
       # A step returned `RubyReactor.Skipped(...)`. Halt cleanly: record the
       # event in the trace, do NOT push to the undo stack (so existing
@@ -180,12 +202,17 @@ module RubyReactor
         output_validation_result = step_config.output_validator.call(value)
         return if output_validation_result.success?
 
-        raise Error::StepFailureError.new(
-          "Step '#{step_config.name}' output validation failed: #{output_validation_result.error.message}",
-          step: step_config.name,
-          context: @context,
-          step_arguments: resolved_arguments
-        )
+        error = output_validation_result.error
+        error.step_name = step_config.name
+        error.step_arguments = resolved_arguments
+
+        # The step DID run — its side effect exists even though its output is
+        # invalid. Treat it like a step failure: run the step's own
+        # compensation and roll back prior steps, so the side effect is not
+        # orphaned. Then surface the structured validation error (the later
+        # rollback in handle_execution_error is a no-op — stack already clear).
+        @compensation_manager.handle_step_failure(step_config, error, resolved_arguments)
+        raise error
       end
 
       def extract_location(backtrace)

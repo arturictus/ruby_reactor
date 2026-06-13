@@ -1,9 +1,7 @@
 # frozen_string_literal: true
 
 class PeriodDemoReactor < RubyReactor::Reactor
-  input :org_id do
-    required(:org_id).filled(:string)
-  end
+  input :org_id, :string
 
   with_period(every: :day) { |inputs| "daily_report:#{inputs[:org_id]}" }
 

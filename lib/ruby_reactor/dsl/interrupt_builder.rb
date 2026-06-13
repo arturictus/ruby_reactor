@@ -23,9 +23,25 @@ module RubyReactor
         @timeout_config = { duration: seconds, strategy: strategy }
       end
 
-      def validate(&block)
+      # Validate the resume payload. Accepts a block (schema DSL) or a pre-built
+      # dry-schema. Payloads are multi-field hashes, so the block stays primary.
+      def validate_payload(schema = nil, &block)
         check_dry_validation_available!
-        @validation_schema = build_validation_schema(&block)
+        @validation_schema =
+          if block
+            build_validation_schema(&block)
+          elsif schema
+            RubyReactor::Validation::SchemaBuilder.schema_for(schema)
+          end
+      end
+
+      # Deprecated alias for {#validate_payload}.
+      def validate(schema = nil, &block)
+        unless @warned_validate
+          @warned_validate = true
+          warn "[RubyReactor] DEPRECATION: interrupt `validate` is deprecated; use `validate_payload` instead."
+        end
+        validate_payload(schema, &block)
       end
 
       def build

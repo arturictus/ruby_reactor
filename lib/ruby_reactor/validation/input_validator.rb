@@ -5,14 +5,16 @@ require "dry-validation"
 module RubyReactor
   module Validation
     class InputValidator < Base
-      attr_reader :schema
+      attr_reader :schema, :wrap_key
 
-      def initialize(schema)
+      def initialize(schema, wrap_key: nil)
         super()
         @schema = schema
+        @wrap_key = wrap_key
       end
 
       def call(data)
+        data = { @wrap_key => data } if @wrap_key
         result = schema.call(data)
 
         if result.success?

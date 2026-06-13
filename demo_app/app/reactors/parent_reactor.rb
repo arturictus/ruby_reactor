@@ -1,10 +1,6 @@
 class ParentReactor < RubyReactor::Reactor
-  input :a do
-    required(:a).filled(:integer)
-  end
-  input :b do
-    required(:b).filled(:integer)
-  end
+  input :a, :integer
+  input :b, :integer
   input :fail_at_reactor, optional: true
   input :fail_at_step, optional: true
 

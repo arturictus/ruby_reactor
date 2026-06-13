@@ -1,9 +1,7 @@
 # frozen_string_literal: true
 
 class LockVerifyChildReactor < RubyReactor::Reactor
-  input :order_id do
-    required(:order_id).filled(:string)
-  end
+  input :order_id, :string
 
   with_lock(ttl: 120) { |inputs| "order:#{inputs[:order_id]}" }
 

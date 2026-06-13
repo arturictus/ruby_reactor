@@ -1,13 +1,8 @@
 # frozen_string_literal: true
 
 class LockDemoReactor < RubyReactor::Reactor
-  input :order_id do
-    required(:order_id).filled(:string)
-  end
-
-  input :hold_seconds, optional: true do
-    optional(:hold_seconds).maybe(:integer, gteq?: 0)
-  end
+  input :order_id, :string
+  input :hold_seconds, :integer, optional: true, gteq?: 0
 
   with_lock(ttl: 120) { |inputs| "order:#{inputs[:order_id]}" }
 

@@ -1,7 +1,5 @@
 class ArMapReactorNotFail < RubyReactor::Reactor
-  input :filter do
-    required(:filter).filled(:hash)
-  end
+  input :filter, :hash
 
   map :prepare_products do
     argument :filter, input(:filter)

@@ -62,8 +62,8 @@ module RubyReactor
         end
 
         # rubocop:disable Metrics/ParameterLists
-        def input(name, transform: nil, description: nil, validate: nil, optional: false, redact: false,
-                  &validation_block)
+        def input(name, type = nil, transform: nil, description: nil, validate: nil, optional: false, redact: false,
+                  **predicates, &block)
           # rubocop:enable Metrics/ParameterLists
           inputs[name] = {
             transform: transform,
@@ -72,12 +72,41 @@ module RubyReactor
             redact: redact
           }
 
-          # Handle validation
-          return unless validate || validation_block
-
-          validator = create_input_validator(validation_block || validate)
-          input_validations[name] = validator
+          validator = build_input_validator_for(name, type, optional, validate, predicates, &block)
+          input_validations[name] = validator if validator
         end
+
+        # Dispatch across the layered `input` forms:
+        #   Form 3 — pre-built schema / contract (`validate:`)
+        #   Form 2 — block bound to the value macro (`do |i| ... end`)
+        #   legacy — single-key schema block (`do required(:name)... end`)
+        #   Form 1 / 1b — inline scalar or class type
+        #   Form 0 — declaration only (no validator)
+        def build_input_validator_for(name, type, optional, validate, predicates, &block)
+          if validate
+            create_input_validator(validate)
+          elsif block
+            if block.arity.nonzero?
+              build_macro_validator(name, optional, &block)
+            else
+              warn_deprecated_input_block
+              create_input_validator(block)
+            end
+          elsif type || predicates.any?
+            build_inline_validator(name, type, optional, predicates)
+          end
+        end
+        private :build_input_validator_for
+
+        def warn_deprecated_input_block
+          return if @warned_input_block
+
+          @warned_input_block = true
+          warn "[RubyReactor] DEPRECATION: the single-key `input :name do required(:name)... end` block is " \
+               "deprecated. Use the inline form (`input :name, :string, min_size?: 2`) or the macro block " \
+               "(`input :name do |i| ... end`) instead."
+        end
+        private :warn_deprecated_input_block
 
         def step(name, impl = nil, &block)
           builder = RubyReactor::Dsl::StepBuilder.new(name, impl, self)
@@ -149,7 +178,9 @@ module RubyReactor
             RubyReactor.Success(inputs_hash)
           else
             error = RubyReactor::Error::InputValidationError.new(errors)
-            RubyReactor.Failure(error)
+            # Same shape as executor-built validation failures: expose the
+            # structured field errors on the Failure itself.
+            RubyReactor.Failure(error, validation_errors: errors, reactor_name: name)
           end
         end
 

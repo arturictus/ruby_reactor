@@ -99,6 +99,10 @@ RSpec.configure do |config|
     RubyReactor.configuration.lock_snooze_jitter = 5
     RubyReactor.configuration.lock_snooze_max_attempts = 20
 
+    # Fresh named rate-limit registry so a `config.rate_limits.register` in
+    # one example can't leak a shared quota into the next.
+    RubyReactor.configuration.instance_variable_set(:@rate_limits, RubyReactor::RateLimitRegistry.new)
+
     # Reset spec-fixture counters used by lock/period/rate-limit/skip specs.
     %i[PeriodicCounters RateLimitCounters SkippedStepCounters].each do |const|
       Object.const_get(const).reset if Object.const_defined?(const)
