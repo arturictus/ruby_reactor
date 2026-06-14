@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/arturictus/ruby_reactor/compare/v0.5.0...v0.5.1) (2026-06-14)
+
+
+### Features
+
+* streamline input validation DSL and enhance error handling ([#35](https://github.com/arturictus/ruby_reactor/issues/35)) ([e32f3ec](https://github.com/arturictus/ruby_reactor/commit/e32f3ec91d87cf7a5060558ee705089f1dc76ca6))
+
 ## [0.5.0](https://github.com/arturictus/ruby_reactor/compare/v0.4.1...v0.5.0) (2026-06-11)
 
 

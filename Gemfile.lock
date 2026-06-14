@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    ruby_reactor (0.5.0)
+    ruby_reactor (0.5.1)
       dry-validation (~> 1.10)
       redis (~> 5.0)
       roda (~> 3.0)
