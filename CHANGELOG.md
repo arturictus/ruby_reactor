@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/arturictus/ruby_reactor/compare/v0.5.1...v0.5.2) (2026-06-14)
+
+
+### Features
+
+* Nonce lock ([#26](https://github.com/arturictus/ruby_reactor/issues/26)) ([5925cac](https://github.com/arturictus/ruby_reactor/commit/5925cac7af93f59be6c0a8a98ab020f96080f60b))
+
 ## [0.5.1](https://github.com/arturictus/ruby_reactor/compare/v0.5.0...v0.5.1) (2026-06-14)
 
 
