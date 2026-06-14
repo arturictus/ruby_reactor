@@ -58,6 +58,28 @@ RSpec.describe "OrderedLock Integration" do
       expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
     end
 
+    it "snoozes a waiting nonce at the base delay, not the poison-pill window" do
+      # Regression: the WaitError carries a poison-pill-derived `retry_after`
+      # (here ~60s). It must NOT be used as the re-poll interval — a live
+      # blocker finishes in milliseconds, so the successor has to re-poll fast.
+      RubyReactor.configuration.lock_snooze_base_delay = 0.01
+      RubyReactor.configuration.lock_snooze_jitter = 0
+
+      OrderedReactor.run(account_id: 11, thing: :first)  # nonce 1
+      OrderedReactor.run(account_id: 11, thing: :second) # nonce 2
+
+      second = RubyReactor::SidekiqWorkers::Worker.jobs.last
+      RubyReactor::SidekiqWorkers::Worker.jobs.clear
+
+      delays = []
+      allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in) do |delay, *_|
+        delays << delay
+      end
+      RubyReactor::SidekiqWorkers::Worker.new.perform(*second["args"])
+
+      expect(delays).to contain_exactly(0.01)
+    end
+
     it "executes in nonce order when drained in submission order" do
       OrderedReactor.run(account_id: 7, thing: 1)
       OrderedReactor.run(account_id: 7, thing: 2)

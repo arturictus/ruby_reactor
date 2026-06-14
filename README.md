@@ -112,8 +112,9 @@ RubyReactor.configure do |config|
   # Lock/semaphore/rate-limit/ordered-lock contention snooze behavior for
   # async reactors. When a Sidekiq worker cannot acquire a primitive it
   # re-enqueues itself with `lock_snooze_base_delay + rand(0..lock_snooze_jitter)`
-  # seconds (rate-limit and ordered-lock instead use a `retry_after_seconds`
-  # hint from the error), up to `lock_snooze_max_attempts` times before
+  # seconds (rate-limit uses a precise `retry_after_seconds` hint from the error;
+  # ordered-lock waits re-poll at the base delay so a successor catches its
+  # blocker finishing fast), up to `lock_snooze_max_attempts` times before
   # marking the context :failed. Defaults: 5 / 5 / 20. Set max_attempts to
   # :infinity to never give up.
   config.lock_snooze_base_delay = 5
@@ -489,7 +490,7 @@ Referencing an unregistered name raises `RubyReactor::RateLimitRegistry::Unknown
 On contention:
 
 - **Inline** (`Reactor.run`) raises `RubyReactor::Lock::AcquisitionError` / `RubyReactor::Semaphore::AcquisitionError` / `RubyReactor::RateLimit::ExceededError` / `RubyReactor::OrderedLock::WaitError`.
-- **Async** (Sidekiq) snoozes the job via `perform_in(delay, ...)`. For rate limits and ordered-locks the delay uses the error's `retry_after_seconds` hint (precise wakeup); for locks/semaphores it's `lock_snooze_base_delay + jitter`. Snoozes do not count against the Sidekiq retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed.
+- **Async** (Sidekiq) snoozes the job via `perform_in(delay, ...)`. For rate limits the delay uses the error's `retry_after_seconds` hint (precise wakeup — the bucket roll time is known exactly); for locks, semaphores, and ordered-lock waits it's `lock_snooze_base_delay + jitter` (a short re-poll, since a held lock or a live blocker nonce typically clears in milliseconds). Snoozes do not count against the Sidekiq retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed (ordered-lock waits bypass the cap — see the ordered-lock docs).
 
 On dedup hits (period gate already marked), the reactor returns a `RubyReactor::Skipped` result instead — no steps run, no exception:
 

@@ -101,15 +101,30 @@ module RubyReactor
       # (RateLimit::ExceededError carries the time until the bucket rolls);
       # otherwise fall back to the configured base + jitter for lock/semaphore
       # contention which has no precise hint.
+      #
+      # OrderedLock::WaitError is deliberately excluded from the hint path: its
+      # `retry_after_seconds` is the poison-pill window (the upper bound before
+      # a *dead* blocker is force-advanced), NOT how long the *live* blocker
+      # will take — which is usually milliseconds. Snoozing for the full window
+      # would make every out-of-order nonce sleep up to poison_pill_timeout even
+      # though its blocker finishes immediately, collapsing throughput. Re-poll
+      # at the base delay instead; poison auto-advance still clears a genuinely
+      # dead blocker on a later gate.
       def compute_snooze_delay(config, error)
         jitter = config.lock_snooze_jitter.to_f
         jitter_amount = jitter.positive? ? rand(0.0..jitter) : 0.0
 
-        if error.respond_to?(:retry_after_seconds) && error.retry_after_seconds
+        if hinted_retry?(error)
           [error.retry_after_seconds.to_f, 0.1].max + jitter_amount
         else
           config.lock_snooze_base_delay.to_f + jitter_amount
         end
+      end
+
+      def hinted_retry?(error)
+        return false if error.is_a?(RubyReactor::OrderedLock::WaitError)
+
+        error.respond_to?(:retry_after_seconds) && error.retry_after_seconds
       end
 
       def escalate_snooze(context, snooze_count, error)

@@ -228,20 +228,26 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
       end
 
       before do
+        RubyReactor.configuration.lock_snooze_base_delay = 0.5
+        RubyReactor.configuration.lock_snooze_jitter = 0
         allow(executor).to receive(:resume_execution).and_raise(error)
         allow(described_class).to receive(:perform_in)
       end
 
-      it "snoozes using the error's retry_after_seconds" do
+      it "snoozes at the base delay, NOT the poison-pill retry_after" do
+        # retry_after_seconds (3s here) is the poison-pill window — the upper
+        # bound before a dead blocker is force-advanced, not how long a live
+        # blocker takes. Using it as the re-poll interval would make every
+        # out-of-order nonce sleep the full window. Re-poll at the base delay.
         worker.perform(serialized_context)
-        expect(described_class).to have_received(:perform_in).with(3.0, serialized_context, nil, 1)
+        expect(described_class).to have_received(:perform_in).with(0.5, serialized_context, nil, 1)
       end
 
       it "bypasses the snooze cap — keeps rescheduling past lock_snooze_max_attempts" do
         RubyReactor.configuration.lock_snooze_max_attempts = 3
         # Above the cap; for Lock/Semaphore this would escalate. WaitError must reschedule.
         worker.perform(serialized_context, nil, 99)
-        expect(described_class).to have_received(:perform_in).with(3.0, serialized_context, nil, 100)
+        expect(described_class).to have_received(:perform_in).with(0.5, serialized_context, nil, 100)
       end
 
       it "does NOT mark the context as failed even past the cap" do
