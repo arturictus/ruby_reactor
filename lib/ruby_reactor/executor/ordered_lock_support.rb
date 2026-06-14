@@ -14,6 +14,10 @@ module RubyReactor
       # advance.
       THREAD_LOCAL_ACTIVE_KEYS = :ruby_reactor_active_ordered_locks
 
+      # Minimum interval between liveness heartbeats; protects very small
+      # poison_pill_timeouts (mirrors Lock::MIN_EXTEND_INTERVAL).
+      HEARTBEAT_MIN_INTERVAL = 1.0
+
       def self.active_keys
         Thread.current[THREAD_LOCAL_ACTIVE_KEYS] ||= []
       end
@@ -81,6 +85,12 @@ module RubyReactor
         return unless info
 
         OrderedLockSupport.active_keys << info[:key]
+
+        # Only a run that will actually execute steps needs a heartbeat. A
+        # short-circuiting run (stale batch / strict chain skip) does no work
+        # and terminally advances immediately, so starting a thread for it is
+        # pointless churn.
+        start_ordered_lock_heartbeat(info) unless @ordered_lock_stale_batch || @ordered_lock_chain_skip
       end
 
       def fresh_ordered_lock_start?
@@ -157,6 +167,11 @@ module RubyReactor
       # in `ensure` even if `enter_ordered_lock_scope` never pushed (gate
       # raised, or no ordered_lock configured).
       def leave_ordered_lock_scope
+        # Stop (and join) the heartbeat BEFORE advancing: the advance HDELs this
+        # nonce's assigned_at, and a heartbeat racing that HDEL could restamp it.
+        # The HEARTBEAT_SCRIPT's hexists guard makes a late restamp a harmless
+        # no-op, but joining first keeps the ordering deterministic.
+        stop_ordered_lock_heartbeat
         advance_ordered_lock_if_terminal
         info = ordered_lock_info
         return unless info
@@ -164,6 +179,53 @@ module RubyReactor
         stack = OrderedLockSupport.active_keys
         idx = stack.rindex(info[:key])
         stack.delete_at(idx) if idx
+      end
+
+      # Background thread that restamps this nonce's assigned_at every pp/3
+      # seconds (floored at HEARTBEAT_MIN_INTERVAL) while its steps run, so a
+      # legitimately slow blocker is not poison-passed by a successor. Mirrors
+      # the Lock auto-extend thread. The thread sleeps FIRST, so a job that
+      # finishes faster than one interval never touches Redis.
+      def start_ordered_lock_heartbeat(info)
+        return if @ordered_lock_heartbeat_running
+
+        pp = info[:poison_pill_timeout].to_f
+        interval = [pp / 3.0, HEARTBEAT_MIN_INTERVAL].max
+        @ordered_lock_heartbeat_running = true
+        lock = OrderedLock.new(
+          info.fetch(:key), nonce: info.fetch(:nonce), epoch: info.fetch(:epoch)
+        )
+
+        @ordered_lock_heartbeat = Thread.new do
+          while @ordered_lock_heartbeat_running
+            sleep interval
+            break unless @ordered_lock_heartbeat_running
+
+            begin
+              lock.heartbeat!
+            rescue StandardError => e
+              RubyReactor.configuration.logger.warn(
+                "RubyReactor ordered_lock heartbeat failed for '#{info[:key]}' " \
+                "nonce #{info[:nonce]}: #{e.message}"
+              )
+              break
+            end
+          end
+        end
+      end
+
+      def stop_ordered_lock_heartbeat
+        return unless @ordered_lock_heartbeat_running
+
+        @ordered_lock_heartbeat_running = false
+        thread = @ordered_lock_heartbeat
+        @ordered_lock_heartbeat = nil
+        return unless thread
+
+        thread.wakeup if thread.alive?
+        thread.join(0.1)
+      rescue StandardError
+        # Best-effort shutdown; never let heartbeat teardown break the ensure chain.
       end
 
       # Advance the cursor when this run reached a *terminal* status.

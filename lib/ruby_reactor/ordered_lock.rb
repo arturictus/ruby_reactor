@@ -108,6 +108,17 @@ module RubyReactor
       adapter.ordered_lock_advance(@key, nonce: @nonce, failed: failed, epoch: @epoch.to_i, ttl: @ttl)
     end
 
+    # Restamp this nonce's `assigned_at` to "now" while its steps execute, so a
+    # successor does not poison-advance past a blocker that is merely slow (not
+    # dead). Called on an interval by a background heartbeat thread for the
+    # duration of step execution. No-op if the nonce's timer was already deleted
+    # by a terminal advance, or if the batch has gone stale (epoch fence).
+    def heartbeat!
+      return unless @nonce
+
+      adapter.ordered_lock_heartbeat(@key, nonce: @nonce, epoch: @epoch.to_i)
+    end
+
     # Read-only inspection. `{ next:, last_completed:, in_flight: [...] }`.
     def self.peek(key)
       RubyReactor.configuration.storage_adapter.ordered_lock_peek(key)

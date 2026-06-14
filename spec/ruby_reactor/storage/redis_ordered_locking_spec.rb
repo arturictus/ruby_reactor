@@ -123,6 +123,39 @@ RSpec.describe RubyReactor::Storage::RedisOrderedLocking do
     end
   end
 
+  describe "#ordered_lock_heartbeat (running-blocker liveness)" do
+    before { 2.times { adapter.ordered_lock_assign(key, now: 1000) } } # nonces 1, 2
+
+    it "restamps a running blocker so a successor does not poison-pass it" do
+      # Nonce 1 passed its gate at 1000 and is running long steps. Without a
+      # heartbeat, at 1100 its timer (1000) is 100s old > pp 60 and nonce 2
+      # poison-passes it. A heartbeat at 1090 keeps it alive.
+      restamped = adapter.ordered_lock_heartbeat(key, nonce: 1, now: 1090)
+      expect(restamped).to eq(1)
+
+      state, _retry, last = adapter.ordered_lock_can_proceed(
+        key, nonce: 2, poison_pill_timeout: 60, now: 1100
+      )
+      expect(state).to eq("wait")
+      expect(last).to eq(0)
+    end
+
+    it "does not resurrect a timer a terminal advance already deleted" do
+      adapter.ordered_lock_advance(key, nonce: 1) # advances cursor, hdels nonce 1
+      _next_k, _last_k, at_k = adapter.ordered_lock_keys(key)
+      expect(redis.hexists(at_k, "1")).to be(false)
+
+      expect(adapter.ordered_lock_heartbeat(key, nonce: 1, now: 1100)).to eq(0)
+      expect(redis.hexists(at_k, "1")).to be(false)
+    end
+
+    it "is fenced out when the caller's epoch no longer matches (stale batch)" do
+      _n, epoch = adapter.ordered_lock_assign("hbkey", now: 1000)
+      # A heartbeat carrying a stale epoch must not touch the live batch.
+      expect(adapter.ordered_lock_heartbeat("hbkey", nonce: 1, epoch: epoch + 99, now: 1050)).to eq(0)
+    end
+  end
+
   describe "#ordered_lock_skip hardening" do
     it "is a no-op on a fully drained batch (does not resurrect a TTL-less cursor)" do
       adapter.ordered_lock_assign(key)

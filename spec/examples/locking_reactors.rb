@@ -193,6 +193,23 @@ class OrderedReactor < RubyReactor::Reactor
   end
 end
 
+# Ordered-lock reactor with a step that runs longer than one heartbeat
+# interval (poison_pill_timeout 3 -> interval 1.0s). Used to prove the
+# background heartbeat restamps assigned_at while steps execute, so a slow
+# blocker is not poison-passed. Sync so the test drives it without a worker.
+class HeartbeatOrderedReactor < RubyReactor::Reactor
+  with_ordered_lock(poison_pill_timeout: 3) { |inputs| "hb_orders:#{inputs[:account_id]}" }
+
+  input :account_id
+
+  step :slow do
+    run do |_args|
+      sleep 1.3
+      RubyReactor.Success(done: true)
+    end
+  end
+end
+
 # Non-async ordered-lock reactor. Runs inline via `Reactor.run` -> sync
 # `Executor#execute`, exercising the path that must still advance the cursor
 # (and pop the thread-local active key) in its `ensure`.

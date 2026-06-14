@@ -236,6 +236,35 @@ module RubyReactor
         return last
       LUA
 
+      # Liveness restamp for a nonce that is actively executing its steps. The
+      # CAN_PROCEED heartbeat only fires when a job runs its gate; a blocker that
+      # passed the gate and is now running long steps never re-gates, so without
+      # this a successor would poison-advance past a still-running blocker once
+      # its steps outlast poison_pill_timeout — a silent ordering violation. A
+      # background thread calls this every pp/3 seconds while steps run.
+      #
+      # Guards: epoch-fenced (a stale-batch straggler must not touch the current
+      # batch) and hexists-guarded (never resurrect a timer a terminal advance
+      # already deleted — if we were already poison-passed, stay passed).
+      HEARTBEAT_SCRIPT = <<~LUA
+        local at_key    = KEYS[1]
+        local epoch_key = KEYS[2]
+        local my        = ARGV[1]
+        local now       = ARGV[2]
+        local my_epoch  = tonumber(ARGV[3] or '0')
+
+        local cur_epoch = tonumber(redis.call('get', epoch_key) or '0')
+        if my_epoch > 0 and my_epoch ~= cur_epoch then
+          return 0
+        end
+
+        if redis.call('hexists', at_key, my) == 1 then
+          redis.call('hset', at_key, my, now)
+          return 1
+        end
+        return 0
+      LUA
+
       SKIP_SCRIPT = <<~LUA
         local next_key = KEYS[1]
         local last_key = KEYS[2]
@@ -301,6 +330,16 @@ module RubyReactor
 
       def ordered_lock_skip(key, nonce:)
         @redis.eval(SKIP_SCRIPT, keys: ordered_lock_keys(key), argv: [nonce.to_i]).to_i
+      end
+
+      # Restamp a running nonce's assigned_at to keep it from being poison-passed
+      # while its steps execute. Returns 1 if restamped, 0 if fenced (stale
+      # epoch) or the timer was already gone. `now` is injectable for testing.
+      def ordered_lock_heartbeat(key, nonce:, epoch: 0, now: Time.now.to_i)
+        _next_k, _last_k, at_k, _fail_k, epoch_k = ordered_lock_keys(key)
+        @redis.eval(
+          HEARTBEAT_SCRIPT, keys: [at_k, epoch_k], argv: [nonce.to_i, now.to_i, epoch.to_i]
+        ).to_i
       end
 
       def ordered_lock_reset(key)

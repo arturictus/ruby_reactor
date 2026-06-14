@@ -94,6 +94,18 @@ RSpec.describe "OrderedLock Integration" do
     end
   end
 
+  describe "running-blocker heartbeat" do
+    it "restamps assigned_at while a slow step runs so it is not poison-passed" do
+      # The step sleeps 1.3s > the 1.0s heartbeat interval (pp 3 / 3), so the
+      # background thread must fire at least one restamp during execution.
+      allow(adapter).to receive(:ordered_lock_heartbeat).and_call_original
+
+      HeartbeatOrderedReactor.run(account_id: 1)
+
+      expect(adapter).to have_received(:ordered_lock_heartbeat).at_least(:once)
+    end
+  end
+
   describe "strict mode (default: true)" do
     before do
       RubyReactor.configuration.lock_snooze_base_delay = 0.01
