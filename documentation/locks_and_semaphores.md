@@ -474,6 +474,8 @@ A common smell to avoid: returning `Skipped` from a step that has just done **pa
 
 `with_ordered_lock` enforces strict per-key transaction ordering. When you fan a stream of work out across an async worker pool, normal queues give no order guarantee — two workers can pop neighbouring jobs and run them in whichever order the scheduler picks. The ordered-lock primitive fixes that with a monotonically increasing nonce that is **assigned at enqueue time** (synchronously inside `Reactor.run`, before `perform_async` is called) and a strict `last_completed + 1` gate at execute time.
 
+> **Use only on `async` reactors.** The gate's only "wait" mechanism is the Sidekiq worker rescuing `OrderedLock::WaitError` and snoozing via `perform_in`. A **synchronous** reactor (no `async`) has no worker to snooze it: a nonce assigned out of order raises `OrderedLock::WaitError` straight to the caller of `Reactor.run`. Single-threaded sequential sync calls happen to be fine (each nonce is always `last_completed + 1` by the time it runs), but **concurrent sync `Reactor.run` calls on the same key will raise** to whichever caller is out of order. If you need ordering, mark the reactor `async`.
+
 ```ruby
 class ApplyTransactionReactor < RubyReactor::Reactor
   async
