@@ -7,6 +7,7 @@ module RubyReactor
   module Storage
     class RedisAdapter < Adapter
       include RedisLocking
+      include RedisOrderedLocking
 
       def initialize(redis_config)
         super()

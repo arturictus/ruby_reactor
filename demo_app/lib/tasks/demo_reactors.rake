@@ -235,8 +235,104 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock] do
     puts "excuting all reactors"
+  end
+
+  desc "OrderedLock — strict transaction ordering via with_ordered_lock"
+  task ordered_lock: [:environment, :flush_redis] do
+    require "sidekiq/testing"
+    Sidekiq::Testing.fake!
+
+    LedgerTransactionReactor::Ledger.reset!
+
+    account_id = "acct_#{SecureRandom.hex(3)}"
+    submissions = [
+      { amount: 100, type: "credit" },
+      { amount: 25,  type: "debit" },
+      { amount: 50,  type: "credit" },
+      { amount: 10,  type: "debit" },
+      { amount: 200, type: "credit" }
+    ]
+
+    puts "\n=== Submitting #{submissions.size} transactions for #{account_id} ==="
+    submissions.each_with_index do |tx, i|
+      result = LedgerTransactionReactor.call(account_id: account_id, transaction: tx)
+      puts "  [submit #{i + 1}] #{tx.inspect} → execution_id=#{result.try(:execution_id) || "(sync)"}"
+    end
+
+    adapter = RubyReactor.configuration.storage_adapter
+    state = adapter.ordered_lock_peek("ledger:#{account_id}")
+    puts "\n→ ordered_lock state right after submit: #{state.inspect}"
+
+    puts "\n=== Draining workers ==="
+    RubyReactor::SidekiqWorkers::Worker.drain
+
+    puts "\n=== Ledger after drain ==="
+    LedgerTransactionReactor::Ledger.for(account_id).each_with_index do |entry, i|
+      puts "  [applied #{i + 1}] nonce=#{entry[:nonce]} #{entry[:type]} #{entry[:amount]}"
+    end
+
+    state = adapter.ordered_lock_peek("ledger:#{account_id}")
+    puts "\n→ ordered_lock state after drain (expect all zero — counters GC'd): #{state.inspect}"
+
+    nonces = LedgerTransactionReactor::Ledger.for(account_id).map { |e| e[:nonce] }
+    if nonces == nonces.sort && nonces == (1..submissions.size).to_a
+      puts "\n✅ SUCCESS: transactions applied in strict order #{nonces.inspect}"
+    else
+      puts "\n❌ FAIL: nonces out of order — got #{nonces.inspect}"
+    end
+
+    puts "\n=== Submitting a second batch to demonstrate counter reset ==="
+    second_batch = [
+      { amount: 1, type: "credit" },
+      { amount: 2, type: "debit" }
+    ]
+    second_batch.each { |tx| LedgerTransactionReactor.call(account_id: account_id, transaction: tx) }
+    RubyReactor::SidekiqWorkers::Worker.drain
+
+    new_nonces = LedgerTransactionReactor::Ledger.for(account_id)
+                                                 .last(second_batch.size)
+                                                 .map { |e| e[:nonce] }
+    puts "→ second batch nonces (expect 1..#{second_batch.size}): #{new_nonces.inspect}"
+  end
+
+  desc "Exclusive lock — at-most-one runner per key via with_lock"
+  task exclusive_lock: [:environment, :flush_redis] do
+    require "sidekiq/testing"
+    Sidekiq::Testing.fake!
+
+    RefundLockReactor::Log.reset!
+    RubyReactor.configuration.lock_snooze_base_delay = 0.05
+    RubyReactor.configuration.lock_snooze_jitter = 0
+
+    same_order = "order_#{SecureRandom.hex(3)}"
+    other_order = "order_#{SecureRandom.hex(3)}"
+
+    puts "\n=== Submitting 3 refunds for #{same_order} (must serialize) ==="
+    3.times { |i| RefundLockReactor.call(order_id: same_order, amount: (i + 1) * 10, delay: 0.05) }
+
+    puts "=== Submitting 1 refund for #{other_order} (runs in parallel) ==="
+    RefundLockReactor.call(order_id: other_order, amount: 999, delay: 0.05)
+
+    RubyReactor::SidekiqWorkers::Worker.drain
+
+    same_order_entries = RefundLockReactor::Log.entries.select { |e| e[:order_id] == same_order }
+    other_order_entries = RefundLockReactor::Log.entries.select { |e| e[:order_id] == other_order }
+
+    puts "\n=== Refunds applied to #{same_order} ==="
+    same_order_entries.each_with_index { |e, i| puts "  [#{i + 1}] amount=#{e[:amount]} at=#{e[:at]}" }
+
+    puts "\n=== Refunds applied to #{other_order} ==="
+    other_order_entries.each_with_index { |e, i| puts "  [#{i + 1}] amount=#{e[:amount]} at=#{e[:at]}" }
+
+    serialized = same_order_entries.each_cons(2).all? { |a, b| b[:at] >= a[:at] }
+    if same_order_entries.size == 3 && serialized
+      puts "\n✅ SUCCESS: 3 refunds serialized on '#{same_order}', and '#{other_order}' ran independently"
+    else
+      puts "\n❌ FAIL: got #{same_order_entries.size} refunds for '#{same_order}', " \
+           "serialized=#{serialized}"
+    end
   end
 
   desc "User ETL reactor"

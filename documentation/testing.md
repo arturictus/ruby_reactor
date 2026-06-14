@@ -16,7 +16,7 @@ end
 
 This will give you access to the `test_reactor` helper method and all custom matchers.
 
-> For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, or `with_period`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, and `be_period_marked` matchers, plus patterns for testing async snooze and escalation.
+> For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, or `with_ordered_lock`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, `be_period_marked`, `have_ordered_lock_next`, `have_ordered_lock_last_completed`, `have_ordered_lock_in_flight`, and `be_ordered_lock_drained` matchers, plus patterns for testing async snooze and escalation.
 
 ## Basic Usage
 
@@ -547,51 +547,58 @@ end
 
 ## Testing Coordination Primitives
 
-Reactors that declare `with_lock`, `with_semaphore`, `with_rate_limit`, or `with_period` can be tested with both vanilla execution assertions and dedicated state matchers that read the live Redis state via the configured storage adapter.
+Reactors that declare `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, or `with_ordered_lock` can be tested with both vanilla execution assertions and dedicated state matchers that read the live Redis state via the configured storage adapter.
 
 ### Test environment requirements
 
 The matchers ship with the standard test setup — once `RubyReactor::RSpec.configure(config)` runs in your `spec_helper.rb`, they're available. They require:
 
 - A real Redis (the in-memory test mode does not back the primitives).
-- A clean Redis between tests — typically `redis.flushdb` in a `before` block — so leftover lock owners, semaphore tokens, rate-limit counters and period markers don't leak across examples.
+- The `type: :reactor` tag on the example group. It enables Sidekiq fake mode, wipes the storage adapter between examples (so leftover lock owners, semaphore tokens, rate-limit counters and period markers don't leak), resets the snooze knobs, and includes the async-job helpers (`drain_async_jobs`, `pending_async_jobs`) described below.
+
+```ruby
+RSpec.describe RefundOrderReactor, type: :reactor do
+  # `test_reactor`, the state matchers, and the async-job helpers are all in scope here.
+end
+```
+
+All execution in these examples goes through the `test_reactor` helper — never reach into `RubyReactor::SidekiqWorkers::Worker` directly. For async reactors, `test_reactor` processes the queued jobs for you by default; pass `process_jobs: false` when you need to inspect or drive the queue yourself.
 
 ### The `Skipped` result
 
 `RubyReactor::Skipped` is a `Success` subclass returned in two cases: a `with_period` bucket has already been claimed, or a step explicitly returns `RubyReactor.Skipped(reason: "...")` to halt cleanly (no compensation runs). Use `be_skipped` to distinguish it from a plain `Success`:
 
 ```ruby
-result = MonthlyReportReactor.run(org_id: 7)
-expect(result).to be_skipped                       # any Skipped
-expect(result).to be_skipped.because(:period)      # gate hit
-expect(result).to be_skipped.at_step(:second)      # step return
+expect(test_reactor(MonthlyReportReactor, org_id: 7)).to be_skipped                  # any Skipped
+expect(test_reactor(MonthlyReportReactor, org_id: 7)).to be_skipped.because(:period) # gate hit
+expect(test_reactor(SyncReactor, foo: 1)).to be_skipped.at_step(:second)             # step return
 ```
 
-`Skipped` still satisfies `success?`, so legacy `if result.success?` callers continue to work; `result.skipped?` discriminates.
+`Skipped` still satisfies `success?`, so legacy `if result.success?` callers continue to work; the matcher reads `subject.result` and discriminates on `skipped?`.
 
 ### Asserting lock state
 
 ```ruby
 it "releases the lock after a successful run" do
-  RefundOrderReactor.run(order_id: 42)
+  test_reactor(RefundOrderReactor, order_id: 42).run
 
   expect("order:42").not_to be_locked
 end
 
 it "holds the lock for the duration of a long step" do
-  thread = Thread.new { LongRefundReactor.run(order_id: 42) }
+  thread = Thread.new { test_reactor(LongRefundReactor, order_id: 42).run }
   # Give the executor a moment to acquire
   sleep 0.05
 
   expect("order:42").to be_locked
-  expect("order:42").to be_locked.by(thread.value.context.context_id)
+  expect("order:42").to be_locked.by(thread.value.reactor_instance.context.context_id)
 end
 
 it "raises when contention is hit inline" do
   redis.hset("lock:order:42", "owner", "someone_else")
   redis.hset("lock:order:42", "count", "1")
 
-  expect { RefundOrderReactor.run(order_id: 42) }
+  expect { test_reactor(RefundOrderReactor, order_id: 42).run }
     .to raise_error(RubyReactor::Lock::AcquisitionError)
 end
 ```
@@ -602,7 +609,7 @@ The `be_locked` matcher takes the **user-provided lock key** (without the intern
 
 ```ruby
 it "returns the token to the pool on success" do
-  3.times { ApiCallReactor.run }
+  3.times { test_reactor(ApiCallReactor, {}).run }
 
   expect("api_limit").to have_available_tokens(5)
   expect("api_limit").to have_held_tokens(0)
@@ -615,7 +622,7 @@ it "exhausts capacity when held externally" do
   expect("api_limit").to have_available_tokens(0)
   expect("api_limit").to have_held_tokens(2)
 
-  expect { ApiCallReactor.run }.to raise_error(RubyReactor::Semaphore::AcquisitionError)
+  expect { test_reactor(ApiCallReactor, {}).run }.to raise_error(RubyReactor::Semaphore::AcquisitionError)
 end
 ```
 
@@ -625,15 +632,15 @@ Both matchers take the **user-provided semaphore name** (without the `semaphore:
 
 ```ruby
 it "counts each call against the per-second window" do
-  3.times { ChargeReactor.run(account_id: 42) }
+  3.times { test_reactor(ChargeReactor, account_id: 42).run }
 
   expect("stripe:42").to have_rate_limit_count(3).for(:second)
 end
 
-it "snoozes inline once the window is full" do
-  3.times { ChargeReactor.run(account_id: 42) }
+it "raises inline once the window is full" do
+  3.times { test_reactor(ChargeReactor, account_id: 42).run }
 
-  expect { ChargeReactor.run(account_id: 42) }
+  expect { test_reactor(ChargeReactor, account_id: 42).run }
     .to raise_error(RubyReactor::RateLimit::ExceededError) do |e|
       expect(e.period_name).to eq("second")
       expect(e.retry_after_seconds).to be_between(1, 1)
@@ -668,65 +675,138 @@ end
 
 ```ruby
 it "marks the bucket after the first successful run" do
-  MonthlyReportReactor.run(org_id: 7)
+  test_reactor(MonthlyReportReactor, org_id: 7).run
   expect("monthly_report:7").to be_period_marked.for(:month)
 end
 
 it "does not mark the bucket when the run fails" do
-  FailingMonthlyReactor.run(org_id: 7)
+  test_reactor(FailingMonthlyReactor, org_id: 7).run
   expect("monthly_report:7").not_to be_period_marked.for(:month)
 end
 
 it "skips a second call in the same bucket" do
-  MonthlyReportReactor.run(org_id: 7)
-  result = MonthlyReportReactor.run(org_id: 7)
+  test_reactor(MonthlyReportReactor, org_id: 7).run
 
-  expect(result).to be_skipped.because(:period)
+  expect(test_reactor(MonthlyReportReactor, org_id: 7)).to be_skipped.because(:period)
 end
 ```
 
 `be_period_marked.for(period)` checks the marker at the **current** bucket. To verify the marker's TTL behavior, drop to direct Redis: `redis.ttl(RubyReactor::Period.key("monthly_report:7", :month))`.
 
-### Testing async snooze behavior
+### Asserting ordered-lock state
 
-The Sidekiq worker rescues `Lock::AcquisitionError`, `Semaphore::AcquisitionError`, and `RateLimit::ExceededError` and reschedules via `perform_in`. To test that wiring without spinning Sidekiq:
+`with_ordered_lock` exposes its counters through four matchers, all taking the **user-provided ordered-lock key** as their subject (no prefix). They all read live Redis via `RubyReactor::OrderedLock.peek(key)` under the hood.
+
+`OrderedReactor` here is `async`, so its work runs through queued Sidekiq jobs. Pass `process_jobs: false` to `test_reactor` when you want to assign nonces without running the jobs, then drive the queue with `drain_async_jobs` (run everything to completion) or `pending_async_jobs` (perform individual jobs out of order).
 
 ```ruby
-it "reschedules with retry_after on rate limit hits" do
-  redis.set("rate:stripe:42:second:#{Time.now.to_i}", "999")
+it "assigns nonces in caller order" do
+  # process_jobs: false enqueues without running, so the nonces stay in-flight.
+  3.times { |i| test_reactor(OrderedReactor, { account_id: 1, thing: i + 1 }, process_jobs: false).run }
 
-  serialized = RubyReactor::ContextSerializer.serialize(
-    RubyReactor::Context.new({ account_id: 42 }, ChargeReactor)
-  )
+  expect("orders:1").to have_ordered_lock_next(3)
+  expect("orders:1").to have_ordered_lock_last_completed(0)
+  expect("orders:1").to have_ordered_lock_in_flight(1, 2, 3)
+end
 
-  expect(RubyReactor::SidekiqWorkers::Worker)
-    .to receive(:perform_in)
-    .with(a_value_between(1.0, 2.0), serialized, "ChargeReactor", 1)
+it "advances the cursor as workers complete" do
+  3.times { |i| test_reactor(OrderedReactor, { account_id: 1, thing: i + 1 }, process_jobs: false).run }
+  drain_async_jobs
 
-  RubyReactor::SidekiqWorkers::Worker.new.perform(serialized, "ChargeReactor")
+  expect("orders:1").to be_ordered_lock_drained
+end
+
+it "keeps blocked nonces in-flight while the gate rejects them" do
+  RubyReactor.configuration.lock_snooze_base_delay = 0.01
+  RubyReactor.configuration.lock_snooze_jitter = 0
+  RubyReactor.configuration.lock_snooze_max_attempts = 2
+
+  test_reactor(OrderedReactor, { account_id: 9, thing: 1 }, process_jobs: false).run
+  test_reactor(OrderedReactor, { account_id: 9, thing: 2 }, process_jobs: false).run
+
+  # Perform only nonce 2 — nonce 1 never runs, so the gate must reject nonce 2.
+  blocked = pending_async_jobs.last
+  blocked.perform!
+
+  expect("orders:9").to have_ordered_lock_last_completed(0)
+  expect("orders:9").to have_ordered_lock_in_flight(1, 2)
 end
 ```
 
-For lock/semaphore the same pattern works — the `perform_in` delay is `lock_snooze_base_delay + rand(0..lock_snooze_jitter)`. Pin those knobs to deterministic values (`jitter = 0`) in tests that assert on the exact delay.
+Matcher reference:
+
+| Matcher                                 | Asserts                                                          |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| `have_ordered_lock_next(n)`             | `INCR` target — the highest assigned nonce.                      |
+| `have_ordered_lock_last_completed(n)`   | The cursor — last nonce that has advanced terminally.            |
+| `have_ordered_lock_in_flight(*nonces)`  | Exact (order-insensitive) set of nonces still in `assigned_at`.  |
+| `be_ordered_lock_drained`               | All three counters at zero / GC'd. Use after a successful drain. |
+
+After a clean drain, all three Redis keys are deleted by the Lua advance script and `peek` returns `{ next: 0, last_completed: 0, in_flight: [] }` — `be_ordered_lock_drained` exists so you don't have to remember that.
+
+To test the poison-pill timeout, manipulate the `assigned_at` hash directly or stub `Time.now`:
+
+```ruby
+it "auto-advances past a blocker after poison_pill_timeout" do
+  Timecop.freeze(Time.at(1000)) do
+    test_reactor(OrderedReactor, { account_id: 5, thing: 1 }, process_jobs: false).run
+  end
+  Timecop.freeze(Time.at(2000)) do
+    # poison_pill_timeout in the example reactor is 60s; blocker is 1000s old.
+    state, _retry_after, _last = adapter.ordered_lock_can_proceed(
+      "orders:5", nonce: 2, poison_pill_timeout: 60
+    )
+    expect(state).to eq("poison_advance")
+  end
+end
+```
+
+### Testing async snooze behavior
+
+When an `async` reactor hits contention (a held lock or an exhausted semaphore), its queued job reschedules itself with a snooze delay instead of failing. Drive this through `test_reactor` with `process_jobs: false`, then perform the queued job with `pending_async_jobs`:
+
+```ruby
+it "reschedules with a snooze delay when the lock is held" do
+  RubyReactor.configuration.lock_snooze_base_delay = 5
+  RubyReactor.configuration.lock_snooze_jitter = 0
+
+  # Hold the lock so the reactor's job can't acquire it.
+  redis.hset("lock:order:42", "owner", "other")
+  redis.hset("lock:order:42", "count", "1")
+
+  subject = test_reactor(AsyncRefundReactor, { order_id: 42 }, process_jobs: false).run
+  job = pending_async_jobs.first
+
+  # The next snooze re-enqueues the same job with an incremented attempt count.
+  expect(RubyReactor::SidekiqWorkers::Worker)
+    .to receive(:perform_in)
+    .with(5.0, *job.args, 1)
+
+  job.perform!
+end
+```
+
+The `perform_in` delay is `lock_snooze_base_delay + rand(0..lock_snooze_jitter)`. Pin those knobs to deterministic values (`jitter = 0`) in tests that assert on the exact delay.
 
 ### Testing snooze escalation
 
-When the snooze cap (`lock_snooze_max_attempts`) is reached, the worker stops rescheduling and marks the context as failed:
+When the snooze cap (`lock_snooze_max_attempts`) is reached, the job stops rescheduling and the context is marked failed. With `test_reactor`'s default job processing, `drain_async_jobs` runs every snooze through to that cap, so you can assert on the subject directly:
 
 ```ruby
 it "marks the context as failed after the snooze cap" do
   RubyReactor.configuration.lock_snooze_max_attempts = 3
+  RubyReactor.configuration.lock_snooze_base_delay = 0.01
+  RubyReactor.configuration.lock_snooze_jitter = 0
 
+  # Hold the lock for good so every snooze attempt fails to acquire.
   redis.hset("lock:order:42", "owner", "other")
   redis.hset("lock:order:42", "count", "1")
 
-  context = RubyReactor::Context.new({ order_id: 42 }, RefundOrderReactor)
-  serialized = RubyReactor::ContextSerializer.serialize(context)
+  # test_reactor drains the queued snoozes for us; after the cap the job gives up.
+  subject = test_reactor(AsyncRefundReactor, order_id: 42)
 
-  expect(RubyReactor::SidekiqWorkers::Worker).not_to receive(:perform_in)
-
-  RubyReactor::SidekiqWorkers::Worker.new
-    .perform(serialized, "RefundOrderReactor", 3)
+  expect(subject).to be_failure
+  expect(pending_async_jobs).to be_empty
 end
 ```
 

@@ -41,6 +41,7 @@ module RubyReactor
       end
 
       def build
+        warn_if_child_has_ordered_lock!
         dependencies = extract_dependencies_from_mappings
 
         step_config = {
@@ -77,6 +78,25 @@ module RubyReactor
       end
 
       private
+
+      # Composed children bypass `Reactor#run`, so `assign_ordered_lock_nonce!`
+      # never fires for them — their `with_ordered_lock` declaration is silently
+      # ignored. Surface this at class load so users don't expect ordering
+      # enforcement that isn't happening. Nested ordered-lock sequences must be
+      # invoked as top-level `Reactor.run` to participate.
+      def warn_if_child_has_ordered_lock!
+        return unless @composed_reactor_class
+        return unless @composed_reactor_class.respond_to?(:ordered_lock_config)
+        return unless @composed_reactor_class.ordered_lock_config
+
+        parent_name = @reactor&.name || "<anonymous>"
+        child_name = @composed_reactor_class.name || "<anonymous>"
+        RubyReactor.configuration.logger.warn(
+          "RubyReactor: `with_ordered_lock` on #{child_name} is ignored when " \
+          "composed by #{parent_name}##{@name}. Nested ordered-lock sequences " \
+          "are independent and must run via top-level `Reactor.run` to be enforced."
+        )
+      end
 
       def ensure_composed_reactor_class!
         raise ArgumentError, "No block provided for inline compose" unless @composed_reactor_class

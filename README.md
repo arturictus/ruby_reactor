@@ -24,7 +24,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 - **Compensation**: Automatic rollback of completed steps when a failure occurs.
 - **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
-- **Distributed Locks, Semaphores, Rate Limits & Periods**: Coordinate across processes with Redis-backed primitives — exclusive locks for at-most-one-runner, semaphores for capacity caps, fixed-window rate limits for external APIs (single or multi-window like "3/sec AND 100/min"), and `with_period` to dedup reactors to once per calendar bucket (once per day/month/year/etc). Async jobs snooze on contention with smart `retry_after` instead of consuming retry budget.
+- **Distributed Locks, Semaphores, Rate Limits, Periods & Ordered Locks**: Coordinate across processes with Redis-backed primitives — exclusive locks for at-most-one-runner, semaphores for capacity caps, fixed-window rate limits for external APIs (single or multi-window like "3/sec AND 100/min"), `with_period` to dedup reactors to once per calendar bucket, and `with_ordered_lock` for strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Async jobs snooze on contention with smart `retry_after` instead of consuming retry budget.
 
 ## Comparison
 
@@ -58,7 +58,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
     - [Full Reactor Async](#full-reactor-async)
     - [Step-Level Async](#step-level-async)
   - [Interrupts (Pause & Resume)](#interrupts-pause--resume)
-  - [Locks & Semaphores](#locks--semaphores)
+  - [Locks, Semaphores & Ordered Locks](#locks-semaphores--ordered-locks)
   - [Map & Parallel Execution](#map--parallel-execution)
     - [Map with Dynamic Source (ActiveRecord)](#map-with-dynamic-source-activerecord)
   - [Input Validation](#input-validation)
@@ -92,20 +92,31 @@ Or install it yourself as:
 
 Configure RubyReactor with your Sidekiq and Redis settings:
 
+Every setting below is **optional** — RubyReactor ships with the defaults shown. Override only what you need.
+
 ```ruby
 RubyReactor.configure do |config|
-  # Redis configuration for state persistence
+  # Storage adapter. Default: :redis (the only adapter shipped today).
   config.storage.adapter = :redis
+  # Redis URL. Default: "redis://localhost:6379/0".
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
+  # Extra options passed to Redis.new. Default: {}.
   config.storage.redis_options = { timeout: 1 }
 
-  # Sidekiq configuration for async execution
+  # Sidekiq queue used by RubyReactor's async worker. Default: :default.
   config.sidekiq_queue = :default
+  # Sidekiq retry count for infrastructure failures only (deserialization,
+  # Redis, network). Step retries are managed separately. Default: 3.
   config.sidekiq_retry_count = 3
 
-  # Lock contention snooze behavior for async reactors. When a Sidekiq worker
-  # cannot acquire a lock or semaphore, it re-enqueues itself with this delay
-  # (plus jitter) up to `lock_snooze_max_attempts` times before giving up.
+  # Lock/semaphore/rate-limit/ordered-lock contention snooze behavior for
+  # async reactors. When a Sidekiq worker cannot acquire a primitive it
+  # re-enqueues itself with `lock_snooze_base_delay + rand(0..lock_snooze_jitter)`
+  # seconds (rate-limit uses a precise `retry_after_seconds` hint from the error;
+  # ordered-lock waits re-poll at the base delay so a successor catches its
+  # blocker finishing fast), up to `lock_snooze_max_attempts` times before
+  # marking the context :failed. Defaults: 5 / 5 / 20. Set max_attempts to
+  # :infinity to never give up.
   config.lock_snooze_base_delay = 5
   config.lock_snooze_jitter = 5
   config.lock_snooze_max_attempts = 20
@@ -114,10 +125,17 @@ RubyReactor.configure do |config|
   # `with_rate_limit(:stripe)`. See Locks, Semaphores, Rate Limits & Periods.
   config.rate_limits.register(:stripe, limits: { second: 3, minute: 100 })
 
-  # Logger configuration
+  # Logger. Default: Logger.new($stderr).
   config.logger = Logger.new($stdout)
+
+  # Async router. Default: RubyReactor::SidekiqAdapter. Swap for a custom
+  # adapter if you don't use Sidekiq — the adapter only needs to respond to
+  # `perform_async(serialized_context, reactor_class_name, **)`.
+  # config.async_router = MyCustomAdapter
 end
 ```
+
+You can also leave out the `configure` block entirely — defaults work for local development against a Redis on `localhost:6379`.
 
 
 ## Quick Start
@@ -359,7 +377,7 @@ ApprovalReactor.continue_by_correlation_id(
 )
 ```
 
-### Locks & Semaphores
+### Locks, Semaphores & Ordered Locks
 
 Coordinate across processes with Redis-backed primitives:
 
@@ -367,6 +385,7 @@ Coordinate across processes with Redis-backed primitives:
 - **`with_semaphore`** — cap total concurrent runners per key (capacity control).
 - **`with_rate_limit`** — fixed-window rate limit, single or multi-window ("3/sec AND 100/min"). Inline per-reactor, or reference a named limit registered once in `RubyReactor.configure` and shared across reactors.
 - **`with_period`** — run at most once per calendar bucket (dedup / once-per-day, once-per-month, etc).
+- **`with_ordered_lock`** — strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Workers can only proceed when their nonce equals `last_completed + 1`.
 
 ```ruby
 class RefundOrderReactor < RubyReactor::Reactor
@@ -423,6 +442,27 @@ class ChargeReactor < RubyReactor::Reactor
     run { |args| Stripe.charge(args[:account_id]) }
   end
 end
+
+class OrderedTransactionReactor < RubyReactor::Reactor
+  async
+  input :account_id
+  input :transaction
+
+  # Strict order: a monotonically increasing nonce is assigned at enqueue
+  # time (inside `Reactor.run`). Workers only execute when their nonce
+  # equals last_completed + 1; otherwise they snooze. After the sequence
+  # fully drains the counter resets to 0.
+  with_ordered_lock(poison_pill_timeout: 300) { |inputs| "txs:#{inputs[:account_id]}" }
+
+  step :apply do
+    argument :transaction, input(:transaction)
+    run { |args| Ledger.apply(args[:transaction]) }
+  end
+end
+
+# Caller-side order is preserved; the worker pool may pick jobs in any order
+# but the gate enforces sequential execution per key.
+[tx1, tx2, tx3].each { |tx| OrderedTransactionReactor.run(account_id: 42, transaction: tx) }
 ```
 
 **Named global limits.** When several reactors hit the same external service, register the limit once and reference it by name. The name is the shared key base, so every reactor throttles against one bucket:
@@ -449,8 +489,8 @@ Referencing an unregistered name raises `RubyReactor::RateLimitRegistry::Unknown
 
 On contention:
 
-- **Inline** (`Reactor.run`) raises `RubyReactor::Lock::AcquisitionError` / `RubyReactor::Semaphore::AcquisitionError` / `RubyReactor::RateLimit::ExceededError`.
-- **Async** (Sidekiq) snoozes the job via `perform_in(delay, ...)`. For rate limits the delay is the error's `retry_after_seconds` (precise wakeup); for locks/semaphores it's `lock_snooze_base_delay + jitter`. Snoozes do not count against the Sidekiq retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed.
+- **Inline** (`Reactor.run`) raises `RubyReactor::Lock::AcquisitionError` / `RubyReactor::Semaphore::AcquisitionError` / `RubyReactor::RateLimit::ExceededError` / `RubyReactor::OrderedLock::WaitError`.
+- **Async** (Sidekiq) snoozes the job via `perform_in(delay, ...)`. For rate limits the delay uses the error's `retry_after_seconds` hint (precise wakeup — the bucket roll time is known exactly); for locks, semaphores, and ordered-lock waits it's `lock_snooze_base_delay + jitter` (a short re-poll, since a held lock or a live blocker nonce typically clears in milliseconds). Snoozes do not count against the Sidekiq retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed (ordered-lock waits bypass the cap — see the ordered-lock docs).
 
 On dedup hits (period gate already marked), the reactor returns a `RubyReactor::Skipped` result instead — no steps run, no exception:
 
@@ -472,7 +512,7 @@ step :ensure_active do
 end
 ```
 
-See [Locks, Semaphores, Rate Limits & Periods](documentation/locks_and_semaphores.md) for re-entrancy, auto-extend, multi-window quotas, bucket semantics, owner identity, snooze tuning, and operational notes.
+See [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md) for re-entrancy, auto-extend, multi-window quotas, bucket semantics, owner identity, snooze tuning, ordered-lock assignment + poison-pill semantics, and operational notes.
 
 ### Map & Parallel Execution
 
@@ -986,9 +1026,9 @@ Learn how to pause and resume reactors to handle long-running processes, manual 
 ### [Testing with RSpec](documentation/testing.md)
 Comprehensive guide to testing reactors with RubyReactor's testing utilities. Learn about the `TestSubject` class for reactor execution and introspection, step mocking for isolating dependencies, testing nested and composed reactors, and custom RSpec matchers like `be_success`, `have_run_step`, and `have_retried_step`.
 
-### [Locks, Semaphores, Rate Limits & Periods](documentation/locks_and_semaphores.md)
+### [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md)
 
-Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), and calendar-bucketed dedup (`with_period`, returning `Skipped` results). Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, and once-per-day/month/year scheduling patterns.
+Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Skipped` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
 
 ### [Middlewares & OpenTelemetry](documentation/middlewares.md)
 

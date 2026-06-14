@@ -7,10 +7,13 @@ require_relative "executor/retry_manager"
 require_relative "executor/compensation_manager"
 require_relative "executor/result_handler"
 require_relative "executor/step_executor"
+require_relative "executor/ordered_lock_support"
 
 module RubyReactor
   # rubocop:disable Metrics/ClassLength
   class Executor
+    include OrderedLockSupport
+
     attr_reader :reactor_class, :context, :dependency_graph, :compensation_manager, :retry_manager, :result_handler,
                 :step_executor, :result, :middlewares
 
@@ -41,6 +44,8 @@ module RubyReactor
       @result = nil
       @acquired_lock = nil
       @acquired_semaphore = nil
+      @contention_snooze = false
+      @skip_context_persist = false
     end
 
     def self.resolve_middlewares(reactor_class)
@@ -71,9 +76,13 @@ module RubyReactor
       middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
       completed = false
 
-      if (skipped = check_period_gate)
+      enter_ordered_lock_scope
+      # short_circuit_result covers both the strict ordered-lock chain skip
+      # and the already-marked period bucket.
+      short = short_circuit_result
+      if short
         completed = true
-        return finalize_skipped(skipped)
+        return short_circuit!(short)
       end
 
       # Validate inputs BEFORE consuming a rate-limit slot or grabbing a
@@ -109,7 +118,9 @@ module RubyReactor
     rescue RubyReactor::Lock::AcquisitionError,
            RubyReactor::Semaphore::AcquisitionError,
            RubyReactor::RateLimit::ExceededError,
-           RubyReactor::RateLimitRegistry::UnknownLimitError => e
+           RubyReactor::RateLimitRegistry::UnknownLimitError,
+           RubyReactor::OrderedLock::WaitError => e
+      @contention_snooze = true
       raise e
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
@@ -118,77 +129,98 @@ module RubyReactor
       @result
     ensure
       release_locks
-      save_context if persist_context?
+      leave_ordered_lock_scope
+      save_context if persist_context? && !skip_context_persist?
 
+      emit_lifecycle_completion(completed)
+    end
+
+    # Contention errors (lock/semaphore/rate-limit/ordered-lock wait) are
+    # expected "try again later" signals, not failures — the worker snoozes
+    # and re-runs. Emitting `failed_reactor` for them floods dashboards with
+    # phantom failures (one per snooze round), so route them to a distinct
+    # `snooze_reactor` event instead.
+    def emit_lifecycle_completion(completed)
       if completed
         middlewares.on(:complete_reactor, reactor_class.name, @result, @context)
+      elsif @contention_snooze
+        middlewares.on(:snooze_reactor, reactor_class.name, $ERROR_INFO, @context)
       else
         middlewares.on(:failed_reactor, reactor_class.name, $ERROR_INFO, @context)
       end
     end
 
-    def resume_execution # rubocop:disable Metrics/MethodLength
+    def resume_execution # rubocop:disable Metrics/MethodLength,Metrics/PerceivedComplexity
       middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
       completed = false
+
       # A fresh async reactor run reaches the worker through resume_execution
       # (it never calls execute), so the period and rate-limit gates that live
       # in execute must be applied here too. Genuine resumes (a step already ran
       # or we paused mid-flight, so current_step is set) must NOT re-gate: a
       # paused reactor must not throttle or skip itself on the way back in.
       first_run = first_execution?
-      begin
-        @context.status = :running
 
-        if first_run && (skipped = check_period_gate)
-          completed = true
-          return finalize_skipped(skipped)
-        end
-        check_rate_limit if first_run
-
-        acquire_concurrency_primitives
-
-        # Post-lock re-check (see execute) — closes the period race for the
-        # first run of a locked async reactor.
-        if first_run && (skipped = check_period_gate)
-          completed = true
-          return finalize_skipped(skipped)
-        end
-
-        prepare_for_resume
-        save_context
-
-        @result = if @context.current_step
-                    execute_current_step_and_continue
-                  else
-                    execute_remaining_steps
-                  end
-
-        update_context_status(@result)
-        mark_period_on_success(@result)
-
-        handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
+      enter_ordered_lock_scope
+      # ordered-lock skip applies on any run; the period gate only on a fresh
+      # first run (a genuine resume must not skip itself when its own marker
+      # eventually lands).
+      short = ordered_lock_short_circuit
+      short ||= check_period_gate if first_run
+      if short
         completed = true
-        @result
-      rescue RubyReactor::Lock::AcquisitionError,
-             RubyReactor::Semaphore::AcquisitionError,
-             RubyReactor::RateLimit::ExceededError,
-             RubyReactor::RateLimitRegistry::UnknownLimitError
-        raise
-      rescue StandardError => e
-        handle_resume_error(e)
-        update_context_status(@result)
-        completed = true
-        @result
-      ensure
-        release_locks
-        save_context
-
-        if completed
-          middlewares.on(:complete_reactor, reactor_class.name, @result, @context)
-        else
-          middlewares.on(:failed_reactor, reactor_class.name, $ERROR_INFO, @context)
-        end
+        return short_circuit!(short)
       end
+
+      @context.status = :running
+      check_rate_limit if first_run
+
+      # Resumes intentionally skip check_rate_limit (a paused run must not
+      # block itself on resume), so acquire lock/semaphore directly rather
+      # than via acquire_locks.
+      acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
+      acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+
+      # Post-lock re-check (see execute) — closes the period race for the
+      # first run of a locked async reactor.
+      if first_run && (skipped = check_period_gate)
+        completed = true
+        return finalize_skipped(skipped)
+      end
+
+      prepare_for_resume
+      save_context
+
+      @result = if @context.current_step
+                  execute_current_step_and_continue
+                else
+                  execute_remaining_steps
+                end
+
+      update_context_status(@result)
+      mark_period_on_success(@result)
+
+      handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
+      completed = true
+      @result
+    rescue RubyReactor::Lock::AcquisitionError,
+           RubyReactor::Semaphore::AcquisitionError,
+           RubyReactor::RateLimit::ExceededError,
+           RubyReactor::RateLimitRegistry::UnknownLimitError,
+           RubyReactor::OrderedLock::WaitError => e
+      @contention_snooze = true
+      raise e
+    rescue StandardError => e
+      handle_resume_error(e)
+      update_context_status(@result)
+      completed = true
+      @result
+    ensure
+      release_locks
+      leave_ordered_lock_scope
+      save_context unless skip_context_persist?
+
+      emit_lifecycle_completion(completed)
     end
 
     def undo_all

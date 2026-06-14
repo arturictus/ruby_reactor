@@ -48,17 +48,24 @@ module RubyReactor
           # Resume execution from the failed step
           executor = Executor.new(context.reactor_class, {}, context)
           executor.resume_execution
-          executor.save_context
+          # Skip the post-run save when the executor deliberately suppressed
+          # persistence (stale-batch redelivery of an already-terminal context)
+          # — re-saving here would clobber the stored terminal record with this
+          # run's stale in-memory status.
+          executor.save_context unless executor.skip_context_persist?
 
           # Return the executor (which now has the result stored in it)
           executor
         rescue RubyReactor::Lock::AcquisitionError,
                RubyReactor::Semaphore::AcquisitionError,
-               RubyReactor::RateLimit::ExceededError => e
-          # Snooze on expected concurrency or rate contention. We avoid
-          # Sidekiq's native retry path so this doesn't burn the job's retry
-          # budget or appear as an error in dashboards. After the configured
-          # cap is reached we escalate by marking the reactor as failed.
+               RubyReactor::RateLimit::ExceededError,
+               RubyReactor::OrderedLock::WaitError => e
+          # Snooze on expected concurrency, rate, or ordering contention.
+          # OrderedLock::WaitError carries a poison-pill-derived retry hint,
+          # consumed by compute_snooze_delay below. We avoid Sidekiq's native
+          # retry path so this doesn't burn the job's retry budget or appear
+          # as an error in dashboards. After the configured cap is reached we
+          # escalate by marking the reactor as failed.
           handle_snooze(serialized_context, reactor_class_name, context, snooze_count, e)
         rescue RubyReactor::RateLimitRegistry::UnknownLimitError => e
           # Permanent configuration error — snoozing or retrying the same job
@@ -73,7 +80,15 @@ module RubyReactor
         config = RubyReactor.configuration
         max = config.lock_snooze_max_attempts
 
-        if max != :infinity && snooze_count >= max
+        # OrderedLock::WaitError bypasses the snooze cap. The gate's
+        # poison_pill_timeout is the only meaningful upper bound on how long a
+        # nonce can legitimately wait; capping snoozes would either fail jobs
+        # prematurely or strand the nonce in `assigned_at` until poison_pill
+        # eventually advances past it. Snooze until the gate passes (or poison
+        # auto-advance moves the cursor past us).
+        capped = !error.is_a?(RubyReactor::OrderedLock::WaitError)
+
+        if capped && max != :infinity && snooze_count >= max
           escalate_snooze(context, snooze_count, error)
           return
         end
@@ -86,15 +101,30 @@ module RubyReactor
       # (RateLimit::ExceededError carries the time until the bucket rolls);
       # otherwise fall back to the configured base + jitter for lock/semaphore
       # contention which has no precise hint.
+      #
+      # OrderedLock::WaitError is deliberately excluded from the hint path: its
+      # `retry_after_seconds` is the poison-pill window (the upper bound before
+      # a *dead* blocker is force-advanced), NOT how long the *live* blocker
+      # will take — which is usually milliseconds. Snoozing for the full window
+      # would make every out-of-order nonce sleep up to poison_pill_timeout even
+      # though its blocker finishes immediately, collapsing throughput. Re-poll
+      # at the base delay instead; poison auto-advance still clears a genuinely
+      # dead blocker on a later gate.
       def compute_snooze_delay(config, error)
         jitter = config.lock_snooze_jitter.to_f
         jitter_amount = jitter.positive? ? rand(0.0..jitter) : 0.0
 
-        if error.respond_to?(:retry_after_seconds) && error.retry_after_seconds
+        if hinted_retry?(error)
           [error.retry_after_seconds.to_f, 0.1].max + jitter_amount
         else
           config.lock_snooze_base_delay.to_f + jitter_amount
         end
+      end
+
+      def hinted_retry?(error)
+        return false if error.is_a?(RubyReactor::OrderedLock::WaitError)
+
+        error.respond_to?(:retry_after_seconds) && error.retry_after_seconds
       end
 
       def escalate_snooze(context, snooze_count, error)
@@ -117,6 +147,14 @@ module RubyReactor
           serialized,
           reactor_class_name
         )
+
+        # Escalation is a terminal Failure that never reaches the Executor's
+        # ensure path, so advance the ordered-lock cursor here. Without this
+        # the nonce stays stranded in assigned_at (successors stall for the
+        # full poison_pill_timeout) and, worse, the strict-mode chain marker
+        # is never recorded — successors would RUN instead of being skipped.
+        info = Executor::OrderedLockSupport.info_from(context)
+        Executor::OrderedLockSupport.advance_with_retry(info, failed: true) if info
       end
 
       def log_infrastructure_failure(msg, exception)

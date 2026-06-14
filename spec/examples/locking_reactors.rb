@@ -166,6 +166,128 @@ class StepSkipReactor < RubyReactor::Reactor
   end
 end
 
+module OrderedLockCounters
+  class << self
+    attr_accessor :runs
+
+    def reset
+      @runs = []
+    end
+  end
+  reset
+end
+
+class OrderedReactor < RubyReactor::Reactor
+  async
+  with_ordered_lock(poison_pill_timeout: 60) { |inputs| "orders:#{inputs[:account_id]}" }
+
+  input :account_id
+  input :thing
+
+  step :process do
+    argument :thing, input(:thing)
+    run do |args|
+      OrderedLockCounters.runs << args[:thing]
+      RubyReactor.Success(thing: args[:thing])
+    end
+  end
+end
+
+# Ordered-lock reactor with a step that runs longer than one heartbeat
+# interval (poison_pill_timeout 3 -> interval 1.0s). Used to prove the
+# background heartbeat restamps assigned_at while steps execute, so a slow
+# blocker is not poison-passed. Sync so the test drives it without a worker.
+class HeartbeatOrderedReactor < RubyReactor::Reactor
+  with_ordered_lock(poison_pill_timeout: 3) { |inputs| "hb_orders:#{inputs[:account_id]}" }
+
+  input :account_id
+
+  step :slow do
+    run do |_args|
+      sleep 1.3
+      RubyReactor.Success(done: true)
+    end
+  end
+end
+
+# Non-async ordered-lock reactor. Runs inline via `Reactor.run` -> sync
+# `Executor#execute`, exercising the path that must still advance the cursor
+# (and pop the thread-local active key) in its `ensure`.
+class SyncOrderedReactor < RubyReactor::Reactor
+  with_ordered_lock(poison_pill_timeout: 60) { |inputs| "sync_orders:#{inputs[:account_id]}" }
+
+  input :account_id
+  input :thing
+
+  step :process do
+    argument :thing, input(:thing)
+    run do |args|
+      OrderedLockCounters.runs << args[:thing]
+      RubyReactor.Success(thing: args[:thing])
+    end
+  end
+end
+
+class StrictOrderedReactor < RubyReactor::Reactor
+  async
+  with_ordered_lock(poison_pill_timeout: 60) { |inputs| "strict:#{inputs[:account_id]}" }
+
+  input :account_id
+  input :thing
+  input :fail, optional: true
+
+  step :process do
+    argument :thing, input(:thing)
+    argument :fail, input(:fail)
+    run do |args|
+      OrderedLockCounters.runs << args[:thing]
+      if args[:fail]
+        # Non-retryable so the Failure is terminal on the first attempt and the
+        # ordered-lock cursor advances (with `failed: true`) right away.
+        RubyReactor.Failure(StandardError.new("boom on #{args[:thing]}"), retryable: false)
+      else
+        RubyReactor.Success(thing: args[:thing])
+      end
+    end
+  end
+end
+
+class NonStrictOrderedReactor < RubyReactor::Reactor
+  async
+  with_ordered_lock(poison_pill_timeout: 60, strict: false) { |inputs| "lenient:#{inputs[:account_id]}" }
+
+  input :account_id
+  input :thing
+  input :fail, optional: true
+
+  step :process do
+    argument :thing, input(:thing)
+    argument :fail, input(:fail)
+    run do |args|
+      OrderedLockCounters.runs << args[:thing]
+      if args[:fail]
+        RubyReactor.Failure(StandardError.new("boom on #{args[:thing]}"), retryable: false)
+      else
+        RubyReactor.Success(thing: args[:thing])
+      end
+    end
+  end
+end
+
+class OrderedLockWithLockReactor < RubyReactor::Reactor
+  async
+  with_ordered_lock(poison_pill_timeout: 60) { |inputs| "combo:#{inputs[:account_id]}" }
+  with_lock(ttl: 10) { |inputs| "combo:#{inputs[:account_id]}" }
+
+  input :account_id
+  input :thing
+
+  step :process do
+    argument :thing, input(:thing)
+    run { |args| RubyReactor.Success(thing: args[:thing]) }
+  end
+end
+
 class MultiWindowRateLimitedReactor < RubyReactor::Reactor
   with_rate_limit(
     limits: { second: 2, minute: 5 }
