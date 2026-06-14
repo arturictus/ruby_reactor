@@ -1,13 +1,14 @@
-# Locks, Semaphores & Periods
+# Locks, Semaphores, Rate Limits, Periods & Ordered Locks
 
-RubyReactor ships with three Redis-backed coordination primitives — each tackling a different problem:
+RubyReactor ships with five Redis-backed coordination primitives — each tackling a different problem:
 
-| Primitive         | Question it answers                                                                                  |
-| ----------------- | ---------------------------------------------------------------------------------------------------- |
-| `with_lock`       | "Is anyone else **currently** running with this key?" — concurrency control.                         |
-| `with_semaphore`  | "Are too many runs **currently** in flight for this key?" — capacity control.                        |
-| `with_rate_limit` | "Have we already made N calls in this time window?" — fixed-window rate limiting (e.g. 3/sec).       |
-| `with_period`     | "Has a successful run **already happened in this calendar bucket**?" — dedup / once-per-period.      |
+| Primitive           | Question it answers                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| `with_lock`         | "Is anyone else **currently** running with this key?" — concurrency control.                         |
+| `with_semaphore`    | "Are too many runs **currently** in flight for this key?" — capacity control.                        |
+| `with_rate_limit`   | "Have we already made N calls in this time window?" — fixed-window rate limiting (e.g. 3/sec).       |
+| `with_period`       | "Has a successful run **already happened in this calendar bucket**?" — dedup / once-per-period.      |
+| `with_ordered_lock` | "Is my turn yet?" — strict sequential ordering via a monotonically increasing nonce.                 |
 
 They are orthogonal and composable: a reactor can declare any combination.
 
@@ -17,6 +18,7 @@ A typical use case:
 - Calls to an external service should never exceed 5 concurrent requests → semaphore with `limit: 5`.
 - Calls to a rate-limited API must respect "3 per second AND 100 per minute" → multi-window `with_rate_limit`.
 - A monthly billing reactor should run exactly once per org per month, even if a buggy scheduler enqueues it daily → period gate keyed by org id with `every: :month`.
+- Ledger transactions for an account must apply in submission order even under a parallel worker pool → ordered-lock keyed by account id.
 
 The lock/semaphore primitives:
 
@@ -25,6 +27,8 @@ The lock/semaphore primitives:
 - Carry a TTL so a crashed Ruby process cannot block the resource forever.
 
 The period primitive is different: it is **dedup**, not concurrency. It records a marker after a successful run and skips subsequent runs in the same calendar bucket.
+
+The ordered-lock primitive is different again: it assigns a nonce at **enqueue time** (inside `Reactor.run`) and uses a strict `last_completed + 1` gate to enforce sequential execution per key, even under a fan-out worker pool.
 
 ## Table of Contents
 
@@ -48,6 +52,16 @@ The period primitive is different: it is **dedup**, not concurrency. It records 
   - [Composing with `with_lock`](#composing-with-with_lock)
   - [The `Skipped` result](#the-skipped-result)
   - [Skipping mid-reactor from a step](#skipping-mid-reactor-from-a-step)
+- [Ordered Locks (strict sequencing)](#ordered-locks-strict-sequencing)
+  - [How it works](#how-it-works)
+  - [Drain and counter reset](#drain-and-counter-reset)
+  - [Poison-pill timeout](#poison-pill-timeout)
+  - [Composition with other primitives](#composition-with-other-primitives)
+  - [What does NOT advance the cursor](#what-does-not-advance-the-cursor)
+  - [Strict mode — stop the line on failure](#strict-mode--stop-the-line-on-failure)
+  - [Operations](#operations)
+  - [Caveats](#ordered-lock-caveats)
+  - [Composed children](#composed-children)
 - [Snooze configuration](#snooze-configuration)
 - [Inheritance](#inheritance)
 - [Observability](#observability)
@@ -456,6 +470,194 @@ What happens when a step returns `Skipped`:
 
 A common smell to avoid: returning `Skipped` from a step that has just done **partial** work that needs cleanup. If you'd want compensation to run, use `Failure` instead — `Skipped` explicitly says "the partial progress is correct, stop here."
 
+## Ordered Locks (strict sequencing)
+
+`with_ordered_lock` enforces strict per-key transaction ordering. When you fan a stream of work out across an async worker pool, normal queues give no order guarantee — two workers can pop neighbouring jobs and run them in whichever order the scheduler picks. The ordered-lock primitive fixes that with a monotonically increasing nonce that is **assigned at enqueue time** (synchronously inside `Reactor.run`, before `perform_async` is called) and a strict `last_completed + 1` gate at execute time.
+
+```ruby
+class ApplyTransactionReactor < RubyReactor::Reactor
+  async
+  input :account_id
+  input :transaction
+
+  with_ordered_lock(
+    poison_pill_timeout: 300   # secs before the gate auto-advances past a stuck blocker
+  ) { |inputs| "txs:#{inputs[:account_id]}" }
+
+  step :apply do
+    argument :transaction, input(:transaction)
+    run { |args| Ledger.apply(args[:transaction]) }
+  end
+end
+
+# Caller-side submission order is preserved per key.
+[tx1, tx2, tx3].each do |tx|
+  ApplyTransactionReactor.run(account_id: 42, transaction: tx)
+end
+# → nonces 1, 2, 3 assigned in `Reactor.run` (atomic INCR in Redis).
+# → workers may dequeue in any order, but only the one holding `last_completed + 1`
+#   executes; others raise `OrderedLock::WaitError` and snooze.
+```
+
+### How it works
+
+Three Redis keys per ordered-lock key (hash-tagged so they stay on one shard in a Redis cluster):
+
+| Key                                   | Purpose                                            |
+| ------------------------------------- | -------------------------------------------------- |
+| `ordered_lock:{<key>}:next`           | Last-assigned nonce (caller-side INCR target).     |
+| `ordered_lock:{<key>}:last_completed` | Last-advanced nonce (worker-side cursor).          |
+| `ordered_lock:{<key>}:assigned_at`    | Hash `{ nonce => unix_ts }` for poison-pill TTLs.  |
+
+Lifecycle per run:
+
+1. **Enqueue (caller process, inside `Reactor.run`)** — single Lua `INCR` on `next`, plus `HSET assigned_at`. The nonce is stamped onto `context.private_data[:ordered_lock]` and persisted in the serialized context that Sidekiq carries to the worker. Input-validation failures abort BEFORE assigning, so a bad payload never consumes a nonce.
+2. **Execute (worker)** — the executor's first gate (before rate-limit, lock, semaphore) is a Lua `can_proceed` script. It returns `go` if `my_nonce == last_completed + 1` (or if `my_nonce <= last_completed`, i.e. a Sidekiq retry of an already-advanced run — idempotent), or `wait` otherwise. On `wait`, the executor raises `RubyReactor::OrderedLock::WaitError`, no other primitive has been acquired, and the Sidekiq worker snoozes via `perform_in(retry_after_seconds + jitter, ...)`.
+3. **Terminal completion (`ensure` block in the executor)** — on `Success` / `Skipped` / `Failure` (with all retries exhausted), a Lua `advance` script moves `last_completed` forward to `my_nonce`. Idempotent: a duplicate / out-of-order advance is a no-op.
+
+### Drain and counter reset
+
+When `last_completed` catches up to `next`, the advance Lua deletes all three keys. The very next `Reactor.run` on that key starts again at nonce 1. This means you can re-use the same key across independent batches without worrying about an ever-growing counter:
+
+```ruby
+[a, b, c].each { |t| ApplyTransactionReactor.run(account_id: 42, transaction: t) }
+# … wait for the queue to drain (or use OrderedLock.peek to check) …
+# → nonces 1, 2, 3, drained, counter deleted.
+
+[d, e, f].each { |t| ApplyTransactionReactor.run(account_id: 42, transaction: t) }
+# → nonces 1, 2, 3 again. Same ordering enforcement.
+```
+
+If a new run arrives **before** the previous batch fully drains, it simply gets `next + 1` (e.g. 4, 5, 6) — the counter only resets after a clean drain.
+
+### Poison-pill timeout
+
+A naive ordered-lock has a fatal failure mode: if the caller crashes between `INCR` and `perform_async`, or if the worker dies after starting but before reaching the executor's `ensure` advance, the blocker nonce sits there forever and every subsequent nonce snoozes against it indefinitely.
+
+`poison_pill_timeout` (default `OrderedLock::DEFAULT_POISON_PILL_TIMEOUT`, currently 600s) protects against this. Inside the `can_proceed` Lua, if the blocker nonce was assigned more than `poison_pill_timeout` seconds ago, the script auto-advances `last_completed` past it. Tune this to roughly the maximum time you expect a single nonce to legitimately stay in-flight (including queue wait + retries).
+
+**Liveness heartbeat.** `assigned_at` is stamped at enqueue, but every time a nonce runs its own gate check (the initial attempt and each snooze round) it restamps its `assigned_at` to "now". This means the poison clock measures *time since the job last proved it was alive*, not time since enqueue — a job that merely sat in a deep queue, then started snoozing on a downstream lock, keeps a fresh timestamp and won't be poison-passed while it is actively retrying. (The restamp is guarded by `hexists`, so it never resurrects a timer that a terminal advance already deleted.)
+
+> ⚠️ **Backlog caveat.** The heartbeat only fires once a job is *picked up* and runs its gate. A job that is still sitting in the Sidekiq queue — never dispatched — keeps its enqueue-time `assigned_at`. If your queue backlog routinely exceeds `poison_pill_timeout`, a blocker can be poison-passed while it is merely waiting its turn to be dispatched, and ordering is silently ceded for that nonce. Set `poison_pill_timeout` comfortably above your worst-case *dispatch latency* (backlog drain time), not just your per-job runtime. Under sustained overload where backlog > timeout, ordered-lock ordering degrades by design — provision worker capacity or raise the timeout accordingly.
+
+A caller can also force-advance past a stuck nonce manually:
+
+```ruby
+RubyReactor::OrderedLock.skip!("txs:42", nonce: 7)
+```
+
+### Composition with other primitives
+
+The ordered-lock gate runs **before** any other primitive in the executor:
+
+```text
+execute:
+  check_ordered_lock_gate    # raise WaitError → snooze, no other primitive held
+  check_period_gate
+  check_rate_limit           # consumes a window slot
+  acquire_exclusive_lock
+  acquire_semaphore
+  …run steps…
+ensure:
+  release semaphore + lock
+  advance ordered_lock cursor (on terminal status only)
+```
+
+This ordering is deliberate and prevents a classic hold-and-wait deadlock that would otherwise occur if a reactor combined `with_lock` and `with_ordered_lock` on overlapping keys:
+
+> Without ordered-first: nonce 2 acquires `with_lock("X")`, then waits for nonce 1. Nonce 1 tries to acquire `with_lock("X")` and blocks behind nonce 2. With `auto_extend: true`, the lock TTL never expires. Both stuck forever.
+
+With ordered-first, a waiting nonce holds no other primitive. It snoozes and tries again later.
+
+A reactor can freely combine `with_ordered_lock` with any of `with_lock`, `with_semaphore`, `with_rate_limit`, and `with_period`. Composition with `with_lock` on the **same key** is a common pattern: ordering across the stream + at-most-one-runner per nonce.
+
+### What does NOT advance the cursor
+
+The cursor moves forward only on results the executor considers **terminal** for this run:
+
+- `RubyReactor::Success` (including `RubyReactor::Skipped`)
+- `RubyReactor::Failure` (when in-reactor step retries are exhausted)
+
+The cursor does **not** move on:
+
+- `RubyReactor::InterruptResult` — the reactor is paused waiting for `continue()`. The same nonce stays in-flight; the poison-pill timeout is the long-term safety net here, so tune it accordingly for human-action workflows.
+- `RubyReactor::AsyncResult` — the run handed off to a different Sidekiq job; that job still carries the same nonce.
+- `RetryQueuedResult` — a step explicitly re-queued itself.
+- `OrderedLock::WaitError` / `Lock::AcquisitionError` / other contention errors — they propagate before the executor sets `@result`, so the `ensure` block sees nothing terminal and does not advance.
+
+Sidekiq retries of a job whose nonce is already past `last_completed` are also safe: `can_proceed` returns `go` for any `my_nonce <= last_completed`, so a duplicate execution does no harm and the (idempotent) advance is a no-op.
+
+### Strict mode — stop the line on failure
+
+By default `with_ordered_lock(strict: true)` treats the sequence as a pipeline: **if any nonce terminates with a `Failure`, every subsequent nonce in the same batch is short-circuited with `Skipped(reason: :ordered_lock_chain_failed)` and never executes its steps.** This models "don't apply transaction N+1 if transaction N broke the ledger" — useful when later work depends on the success of earlier work and reordering is not safe.
+
+```ruby
+class ApplyTransactionReactor < RubyReactor::Reactor
+  async
+  with_ordered_lock(poison_pill_timeout: 300) { |i| "txs:#{i[:account_id]}" } # strict: true by default
+  step :apply do
+    argument :tx, input(:transaction)
+    run { |args| Ledger.apply(args[:tx]) } # raising/Failure poisons the chain
+  end
+end
+```
+
+If you want the *opposite* — preserve ordering but keep applying subsequent nonces even when an earlier one failed — pass `strict: false`:
+
+```ruby
+with_ordered_lock(strict: false) { |i| "emails:#{i[:user_id]}" }
+```
+
+Notes on strict mode:
+
+- The poison marker is per **key**, not per reactor class. Different reactors that share a key share the marker.
+- Only the **first** failure sticks. A second failure does not move the marker; cleanup is automatic on full drain.
+- Skipped runs from this mechanism are real `Skipped` results (`status: :skipped`, `result.success?` true, `result.skipped?` true, `result.reason == :ordered_lock_chain_failed`). They **do** advance the cursor — the chain keeps draining, it just produces Skipped for each subsequent member.
+- The chain-skip check applies only on the **initial** `execute`. A run that already started and then paused (InterruptResult / AsyncResult) **completes on resume** even if the chain failed while it was parked — once a nonce is past the gate it owns its slot until terminal.
+- The marker auto-clears on full drain (`last_completed == next`). The very next batch starts un-poisoned.
+- Operators can read the marker via `RubyReactor::OrderedLock.peek(key)[:first_failed]` (0 if no failure).
+
+### Operations
+
+```ruby
+RubyReactor::OrderedLock.peek("txs:42")
+# => { next: 7, last_completed: 4, in_flight: [5, 6, 7], first_failed: 0 }
+# `first_failed` is the lowest nonce that terminated with Failure (strict mode
+# poison marker), or 0 if none yet. Auto-clears on full drain.
+
+RubyReactor::OrderedLock.skip!("txs:42", nonce: 5)
+# Force-advance past a stuck nonce. Use when you're sure the blocker is dead
+# and you don't want to wait for poison_pill_timeout.
+
+RubyReactor::OrderedLock.reset!("txs:42")
+# Nuke all counters for a key. Ops escape hatch only — concurrent enqueues
+# during reset produce undefined ordering.
+```
+
+### Ordered-lock caveats
+
+- **No re-entrancy.** Unlike `with_lock` (which uses the root context id as owner to allow nested reactors to share the lock), a nested reactor with its own `with_ordered_lock` is an independent sequence. This is intentional — nested sequences with their own nonces compose by being independent. See [Composed children](#composed-children) below for the specific case of `compose :foo, ChildWithOrderedLock`.
+- **Synchronous nested `Reactor.run` on the same key is silently ignored.** Calling `InnerOrderedReactor.run(...)` from inside a step of `OuterOrderedReactor` when both target the same ordered-lock key would deadlock — the outer nonce holds the slot, the inner gets a fresh nonce that can never advance until the outer completes, but the outer is blocked waiting for the inner. The framework detects this at `Reactor#run` time, **skips** the inner's nonce assignment, and logs a warning. The inner reactor runs without gate/advance — i.e. as a normal Reactor call with no ordering enforcement on this nesting level — and the outer keeps its single slot. Different keys are unaffected; async/Sidekiq paths are unaffected (they execute on a different thread/process and so do not collide).
+- **Bypass via raw `perform_async` is unsafe.** Always go through `Reactor.run` on an ordered-lock reactor. Constructing a serialized context by hand and pushing it onto Sidekiq directly skips the enqueue-side INCR, so the worker either runs without a nonce (no gate enforcement) or fails the gate (no nonce in `private_data`).
+- **Validation failures don't consume a nonce.** Assignment happens after input validation succeeds.
+- **Pub/sub wake is intentionally not used.** The worker-snooze model uses Sidekiq's scheduled set as durable parking; pub/sub adds a fragile second path with no correctness benefit at our throughputs. See the design notes if you need sub-second wake latency at high parked-job counts.
+- **`WaitError` bypasses `lock_snooze_max_attempts`.** Unlike lock / semaphore / rate-limit contention, an ordered-lock wait does not count against the snooze cap. The cap would either fail a job prematurely (the legitimate wait window can be `poison_pill_timeout` long) or strand the nonce in `assigned_at` after escalation. Instead, a waiting nonce snoozes indefinitely until either the gate passes or `poison_pill_timeout` auto-advances the cursor past the blocker(s). Set `poison_pill_timeout` to your upper-bound wall-clock for legitimate single-nonce in-flight time.
+- **Clustered poison advances in one shot.** If multiple consecutive blockers are dead (e.g. a process crashed mid-batch), `can_proceed` drains all stale prefix blockers in a single Lua call rather than one per snooze round. Recovery time scales with `poison_pill_timeout`, not with the number of stale nonces.
+- **Synchronous (non-async) ordered-lock reactors raise `WaitError` to the caller.** The snooze-and-retry machinery lives in the Sidekiq worker. A *synchronous* `Reactor.run` on an ordered-lock reactor (a reactor without `async`) has no worker to park it: if its nonce isn't yet at the front of the line, `Reactor.run` raises `OrderedLock::WaitError` straight to the caller, and the nonce has **already been consumed** at enqueue. If the caller swallows the error and never retries, that nonce never advances and every successor stalls until `poison_pill_timeout` sweeps it. Synchronous ordered locks therefore only make sense when callers submit in already-correct order (so each gate passes first try) or when the caller explicitly retries on `WaitError`. For fan-out across concurrent producers, use an `async` reactor so contention is handled by the durable snooze path. (A single-producer synchronous sequence — one caller submitting strictly in order — drains cleanly; this is the case the `SyncOrderedReactor` integration tests cover.)
+- **Stale redeliveries never downgrade a terminal record.** A Sidekiq at-least-once redelivery of a job whose batch already drained is fenced two ways: the epoch check resolves it to `:stale_batch` (it runs no steps and mutates no counters), and if the original run had already reached a terminal status (`:completed` / `:failed`), the short-circuit deliberately skips persistence so the stored outcome is never overwritten with `:skipped`.
+
+### Composed children
+
+When you `compose :foo, ChildReactor` and `ChildReactor` declares `with_ordered_lock`, the child's declaration **is silently ignored** — the child is invoked through the compose machinery, which bypasses `Reactor#run` and never assigns a nonce. A warning is logged at class-load time so this isn't a silent surprise:
+
+```text
+RubyReactor: `with_ordered_lock` on ChildReactor is ignored when composed by
+ParentReactor#foo. Nested ordered-lock sequences are independent and must run
+via top-level `Reactor.run` to be enforced.
+```
+
+If you need ordering on the child's work, invoke it as a top-level `Reactor.run` (typically from a step body, with `async`), not via `compose`.
+
 ## Snooze configuration
 
 When a Sidekiq worker hits contention it re-enqueues itself after a small delay. Three knobs on `RubyReactor.configuration` control this:
@@ -479,7 +681,7 @@ The current snooze count is tracked as a positional arg on the Sidekiq job, so i
 
 ## Inheritance
 
-Lock, semaphore, rate-limit, and period config defined on a reactor are propagated to subclasses:
+Lock, semaphore, rate-limit, period, and ordered-lock config defined on a reactor are propagated to subclasses:
 
 ```ruby
 class BaseRefund < RubyReactor::Reactor
@@ -491,7 +693,7 @@ class FullRefund < BaseRefund   # also locks "order:<id>"
 end
 ```
 
-A subclass can call `with_lock` / `with_semaphore` / `with_rate_limit` / `with_period` again to override the inherited configuration.
+A subclass can call `with_lock` / `with_semaphore` / `with_rate_limit` / `with_period` / `with_ordered_lock` again to override the inherited configuration.
 
 ## Observability
 
@@ -501,6 +703,7 @@ A subclass can call `with_lock` / `with_semaphore` / `with_rate_limit` / `with_p
 - The period marker is the plain key `period:<base>:<bucket_id>`. `TTL` on that key tells you when the bucket frees up.
 - A `Skipped` result sets context status to `:skipped` (separate from `:completed`/`:failed`).
 - Rate-limit counters are at `rate:<base>:<period_name>:<bucket_id>`. `GET` gives the current count for the window; `TTL` gives time until the bucket rolls.
+- Ordered-lock state lives at `ordered_lock:{<key>}:next`, `:last_completed`, and `:assigned_at`. Use `RubyReactor::OrderedLock.peek(key)` to inspect all three in one call.
 
 ## Limitations
 
@@ -512,3 +715,4 @@ A subclass can call `with_lock` / `with_semaphore` / `with_rate_limit` / `with_p
 - **`with_rate_limit` is fixed-window.** Up to 2× the limit can run across a single window boundary. For strict pacing, use a token-bucket-style external rate limiter or stack a tighter `with_rate_limit(limit: 1, period: <interval>)` for serialized requests.
 - **Rate slots are consumed before lock/semaphore acquisition.** This ordering ensures a rate-limited job never grabs a mutex, but the inverse cost is that a run which passes the rate check and then hits lock/semaphore contention has already consumed a slot for an attempt that never ran. The same applies per snooze attempt when an async first run keeps colliding with a held lock. If your quota is tight relative to your contention, prefer keys that don't overlap a contended lock, or widen the window.
 - **Semaphores are not re-entrant.** Locks are owner-based and re-entrant across composed reactors; semaphores have no owner concept. A composed reactor acquiring the same semaphore key as its parent consumes a second token — with `limit: 1` and `wait: 0` it fails immediately, and with `wait > 0` it deadlocks until the wait expires. Don't share one semaphore key between a parent and its composed children.
+- **`with_ordered_lock` requires `Reactor.run` as the entry point.** Bypassing it (e.g. by hand-rolling a serialized context and pushing onto Sidekiq) skips the enqueue-side INCR and breaks the ordering guarantee. It is also not re-entrant — nested ordered-lock reactors are independent sequences. Both nesting paths (same-thread `Reactor.run` on the same key, and `compose` of a child that declares `with_ordered_lock`) silently skip the inner's ordering and log a warning rather than raise.

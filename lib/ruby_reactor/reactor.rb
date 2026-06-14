@@ -102,6 +102,11 @@ module RubyReactor
         return validation_result
       end
 
+      # Assign-at-enqueue: ordered_lock nonce is INCRed atomically here so
+      # the order matches the caller's order, not whichever worker happens to
+      # pick the job up first.
+      assign_ordered_lock_nonce!
+
       if self.class.async? && !@context.inline_async_execution
         # For async reactors, queue a job for the whole reactor
         @context.status = :running
@@ -422,6 +427,42 @@ module RubyReactor
       reactor_class_name = self.class.name || "AnonymousReactor-#{self.class.object_id}"
       serialized_context = ContextSerializer.serialize(@context)
       storage.store_context(@context.context_id, serialized_context, reactor_class_name)
+    end
+
+    def assign_ordered_lock_nonce!
+      return unless self.class.respond_to?(:ordered_lock_config) && self.class.ordered_lock_config
+      return if @context.private_data[:ordered_lock] || @context.private_data["ordered_lock"]
+
+      config = self.class.ordered_lock_config
+      key = config[:key_proc].call(@context.inputs)
+
+      # Synchronous nested `Reactor.run` of an ordered-lock reactor on the same
+      # key would deadlock: the outer nonce holds the slot, an inner nonce
+      # would never advance until the outer completes — but the outer is
+      # blocked waiting for the inner to return. Mirror the compose behavior:
+      # silently skip nonce assignment (the inner runs without gate/advance)
+      # and log a warning so this isn't invisible.
+      active = Executor::OrderedLockSupport.active_keys
+      if active.include?(key)
+        RubyReactor.configuration.logger.warn(
+          "RubyReactor: nested `Reactor.run` of #{self.class.name || "<anonymous>"} on " \
+          "ordered-lock key '#{key}' from inside another ordered-lock reactor on the same " \
+          "key — nonce assignment skipped, inner run executes without ordering enforcement. " \
+          "Use a different key or move the inner call to a top-level invocation if you need ordering."
+        )
+        return
+      end
+
+      nonce, epoch = RubyReactor::OrderedLock.assign(key, ttl: config[:ttl])
+
+      @context.private_data[:ordered_lock] = {
+        key: key,
+        nonce: nonce,
+        epoch: epoch,
+        poison_pill_timeout: config[:poison_pill_timeout],
+        ttl: config[:ttl],
+        strict: config.fetch(:strict, true)
+      }
     end
   end
   # rubocop:enable Metrics/ClassLength

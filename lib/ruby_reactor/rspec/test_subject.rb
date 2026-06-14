@@ -246,6 +246,8 @@ module RubyReactor
                   end
                 end
           RubyReactor::Success.new(val)
+        when "skipped"
+          skipped_result(ctx)
         when "running"
           # Try to determine if it is truly running or if we just missed the completion
           if @process_jobs && defined?(Sidekiq::Testing)
@@ -267,6 +269,17 @@ module RubyReactor
             # We assume no error if paused normally
           )
         end
+      end
+
+      # A clean halt: either a `with_period` gate or a step returning
+      # `RubyReactor.Skipped(...)`. The sync run already produced the exact
+      # Skipped (reason/step intact) — surface it. For async runs the worker
+      # swallows the return value, so rebuild from the trace.
+      def skipped_result(ctx)
+        return @run_result if @run_result.is_a?(RubyReactor::Skipped)
+
+        entry = ctx.execution_trace.reverse.find { |t| t[:type].to_s == "skipped" }
+        RubyReactor::Skipped.new(reason: entry&.dig(:reason), step_name: entry&.dig(:step))
       end
 
       def success?
@@ -419,34 +432,7 @@ module RubyReactor
       def process_pending_jobs
         return unless defined?(Sidekiq::Testing)
 
-        # Loop until no more jobs are being queued
-        # This handles batched map execution where jobs queue more jobs
-        max_iterations = 100
-        iterations = 0
-
-        while iterations < max_iterations
-          iterations += 1
-          jobs_processed = false
-
-          # Known worker classes to check
-          worker_classes = [
-            RubyReactor::SidekiqWorkers::Worker,
-            RubyReactor::SidekiqWorkers::MapElementWorker,
-            RubyReactor::SidekiqWorkers::MapCollectorWorker
-          ]
-
-          worker_classes.each do |worker_class|
-            while worker_class.jobs.any?
-              job = worker_class.jobs.shift
-              worker_class.new.perform(*job["args"])
-              jobs_processed = true
-            end
-          end
-
-          break unless jobs_processed
-        end
-
-        # Final reload
+        SidekiqHelpers.drain_async_jobs
         @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
       end
 

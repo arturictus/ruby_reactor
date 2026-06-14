@@ -104,7 +104,7 @@ RSpec.configure do |config|
     RubyReactor.configuration.instance_variable_set(:@rate_limits, RubyReactor::RateLimitRegistry.new)
 
     # Reset spec-fixture counters used by lock/period/rate-limit/skip specs.
-    %i[PeriodicCounters RateLimitCounters SkippedStepCounters].each do |const|
+    %i[PeriodicCounters RateLimitCounters SkippedStepCounters OrderedLockCounters].each do |const|
       Object.const_get(const).reset if Object.const_defined?(const)
     end
   end

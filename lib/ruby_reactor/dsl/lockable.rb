@@ -8,7 +8,7 @@ module RubyReactor
       end
 
       module ClassMethods
-        attr_reader :lock_config, :semaphore_config, :period_config, :rate_limit_config
+        attr_reader :lock_config, :semaphore_config, :period_config, :rate_limit_config, :ordered_lock_config
 
         # Propagate lock/semaphore/period/rate-limit config to subclasses;
         # without this a subclass of a configured reactor would silently lose
@@ -19,6 +19,7 @@ module RubyReactor
           subclass.instance_variable_set(:@semaphore_config, @semaphore_config) if @semaphore_config
           subclass.instance_variable_set(:@period_config, @period_config) if @period_config
           subclass.instance_variable_set(:@rate_limit_config, @rate_limit_config) if @rate_limit_config
+          subclass.instance_variable_set(:@ordered_lock_config, @ordered_lock_config) if @ordered_lock_config
         end
 
         # Configure locking for this reactor
@@ -70,6 +71,45 @@ module RubyReactor
 
           @period_config = {
             every: every,
+            key_proc: block
+          }
+        end
+
+        # Configure strict-ordering nonce gating for this reactor. A
+        # monotonically increasing nonce is assigned at enqueue time; the
+        # worker can only proceed when its nonce equals `last_completed + 1`.
+        # Otherwise the worker raises {OrderedLock::WaitError} and the Sidekiq
+        # worker snoozes via `perform_in`.
+        #
+        # Counters reset to 0 once the sequence fully drains (last_completed
+        # catches up to next). Re-entrancy is NOT supported — a nested reactor
+        # with its own `with_ordered_lock` is an independent sequence.
+        #
+        # @param poison_pill_timeout [Integer] seconds since the blocker nonce
+        #   was assigned before the gate auto-advances past it. Protects
+        #   against permanent head-of-line blocking from a caller that INCRed
+        #   the counter but crashed before enqueueing.
+        # @param ttl [Integer] TTL on the counter keys, refreshed on every
+        #   assign. Only fully-drained sequences GC themselves.
+        # @param strict [Boolean] When true (default), if any nonce in the
+        #   sequence terminates with a `Failure`, all subsequent nonces are
+        #   short-circuited with `Skipped(reason: :ordered_lock_chain_failed)`
+        #   instead of executing. This models "stop the line on the first
+        #   problem" pipelines (e.g. ledger transactions). When false, the
+        #   sequence keeps executing every nonce in order regardless of prior
+        #   failures. The poison state is per-key and clears on full drain. The
+        #   check only applies to a fresh `execute`; an already-started run
+        #   that paused (InterruptResult/AsyncResult) completes on resume even
+        #   if the chain failed in the meantime.
+        # @yield [inputs] Block that returns the ordered-lock key string.
+        def with_ordered_lock(poison_pill_timeout: OrderedLock::DEFAULT_POISON_PILL_TIMEOUT,
+                              ttl: OrderedLock::DEFAULT_TTL,
+                              strict: true,
+                              &block)
+          @ordered_lock_config = {
+            poison_pill_timeout: poison_pill_timeout,
+            ttl: ttl,
+            strict: strict,
             key_proc: block
           }
         end

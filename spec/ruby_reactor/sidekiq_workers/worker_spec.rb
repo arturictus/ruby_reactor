@@ -23,6 +23,7 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
     allow(RubyReactor::ContextSerializer).to receive(:deserialize).and_return(context)
     allow(RubyReactor::Executor).to receive(:new).and_return(executor)
     allow(executor).to receive(:save_context)
+    allow(executor).to receive(:skip_context_persist?).and_return(false)
     allow(context).to receive(:inline_async_execution=)
     # Deterministic delay for assertions
     RubyReactor.configuration.lock_snooze_base_delay = 5
@@ -114,6 +115,9 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
           .and_raise(RubyReactor::Lock::AcquisitionError, "lock busy")
         allow(context).to receive(:status=)
         allow(context).to receive(:failure_reason=)
+        # Escalation now advances the ordered-lock cursor; a non-ordered-lock
+        # reactor simply has no stash, so info_from returns nil and skips it.
+        allow(context).to receive(:private_data).and_return({})
         allow(RubyReactor::ContextSerializer).to receive(:serialize).and_return("{serialized}")
         allow(RubyReactor.configuration).to receive(:storage_adapter).and_return(adapter)
         allow(adapter).to receive(:store_context)
@@ -212,6 +216,42 @@ RSpec.describe RubyReactor::SidekiqWorkers::Worker do
     end
 
     # rubocop:enable RSpec/MultipleMemoizedHelpers
+
+    context "when OrderedLock::WaitError is raised" do
+      let(:error) do
+        RubyReactor::OrderedLock::WaitError.new(
+          key: "txs:42",
+          nonce: 7,
+          last_completed: 4,
+          retry_after_seconds: 3
+        )
+      end
+
+      before do
+        allow(executor).to receive(:resume_execution).and_raise(error)
+        allow(described_class).to receive(:perform_in)
+      end
+
+      it "snoozes using the error's retry_after_seconds" do
+        worker.perform(serialized_context)
+        expect(described_class).to have_received(:perform_in).with(3.0, serialized_context, nil, 1)
+      end
+
+      it "bypasses the snooze cap — keeps rescheduling past lock_snooze_max_attempts" do
+        RubyReactor.configuration.lock_snooze_max_attempts = 3
+        # Above the cap; for Lock/Semaphore this would escalate. WaitError must reschedule.
+        worker.perform(serialized_context, nil, 99)
+        expect(described_class).to have_received(:perform_in).with(3.0, serialized_context, nil, 100)
+      end
+
+      it "does NOT mark the context as failed even past the cap" do
+        RubyReactor.configuration.lock_snooze_max_attempts = 3
+        allow(context).to receive(:status=)
+        allow(context).to receive(:failure_reason=)
+        worker.perform(serialized_context, nil, 99)
+        expect(context).not_to have_received(:status=).with(:failed)
+      end
+    end
 
     context "with jitter configured" do
       before do

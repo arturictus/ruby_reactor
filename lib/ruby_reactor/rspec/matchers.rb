@@ -415,6 +415,72 @@ module RubyReactor
         end
       end
 
+      # Asserts the last-assigned ordered_lock nonce for a key. Subject is
+      # the user-provided ordered_lock key (without the `ordered_lock:` prefix).
+      #
+      #   expect("orders:42").to have_ordered_lock_next(3)
+      ::RSpec::Matchers.define :have_ordered_lock_next do |expected|
+        match { |key| Matchers.coordination_adapter.ordered_lock_peek(key)[:next] == expected }
+
+        failure_message do |key|
+          state = Matchers.coordination_adapter.ordered_lock_peek(key)
+          "expected ordered_lock '#{key}' next to be #{expected}, got #{state[:next]} " \
+            "(last_completed: #{state[:last_completed]}, in_flight: #{state[:in_flight].inspect})"
+        end
+      end
+
+      # Asserts the last-advanced cursor for an ordered_lock key.
+      #
+      #   expect("orders:42").to have_ordered_lock_last_completed(2)
+      ::RSpec::Matchers.define :have_ordered_lock_last_completed do |expected|
+        match do |key|
+          Matchers.coordination_adapter.ordered_lock_peek(key)[:last_completed] == expected
+        end
+
+        failure_message do |key|
+          state = Matchers.coordination_adapter.ordered_lock_peek(key)
+          "expected ordered_lock '#{key}' last_completed to be #{expected}, " \
+            "got #{state[:last_completed]} (next: #{state[:next]}, in_flight: #{state[:in_flight].inspect})"
+        end
+      end
+
+      # Asserts the exact set of in-flight nonces for an ordered_lock key.
+      # Order-insensitive — the matcher sorts both sides.
+      #
+      #   expect("orders:42").to have_ordered_lock_in_flight(2, 3)
+      ::RSpec::Matchers.define :have_ordered_lock_in_flight do |*expected|
+        match do |key|
+          actual = Matchers.coordination_adapter.ordered_lock_peek(key)[:in_flight].sort
+          actual == expected.flatten.map(&:to_i).sort
+        end
+
+        failure_message do |key|
+          state = Matchers.coordination_adapter.ordered_lock_peek(key)
+          "expected ordered_lock '#{key}' in_flight to be #{expected.flatten.sort.inspect}, " \
+            "got #{state[:in_flight].inspect} (next: #{state[:next]}, last_completed: #{state[:last_completed]})"
+        end
+      end
+
+      # Asserts an ordered_lock key has fully drained — counters GC'd, no
+      # in-flight nonces. After a clean drain `peek` returns all zeros.
+      #
+      #   expect("orders:42").to be_ordered_lock_drained
+      ::RSpec::Matchers.define :be_ordered_lock_drained do
+        match do |key|
+          state = Matchers.coordination_adapter.ordered_lock_peek(key)
+          state[:next].zero? && state[:last_completed].zero? && state[:in_flight].empty?
+        end
+
+        failure_message do |key|
+          state = Matchers.coordination_adapter.ordered_lock_peek(key)
+          "expected ordered_lock '#{key}' to be drained, but state is #{state.inspect}"
+        end
+
+        failure_message_when_negated do |key|
+          "expected ordered_lock '#{key}' not to be drained, but counters are all zero"
+        end
+      end
+
       # Add more matchers as per plan
       # rubocop:enable Metrics/BlockLength
     end

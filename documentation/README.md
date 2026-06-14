@@ -11,6 +11,7 @@ RubyReactor is a powerful Ruby framework for building reliable, sequential busin
 - [Composition](composition.md)
 - [Data Pipelines](data_pipelines.md)
 - [Retry Configuration](retry_configuration.md)
+- [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](locks_and_semaphores.md)
 - [Interrupts](interrupts.md)
 - [Middlewares & OpenTelemetry](middlewares.md)
 - [Testing with RSpec](testing.md)
