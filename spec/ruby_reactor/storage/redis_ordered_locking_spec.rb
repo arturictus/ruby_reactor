@@ -374,7 +374,10 @@ RSpec.describe RubyReactor::Storage::RedisOrderedLocking do
         key, nonce: 2, poison_pill_timeout: 60, epoch: 1, now: 1200
       )
 
-      expect(state).to eq("go") # poison semantics: skipped jobs may run late
+      # 'drained_go' (not plain 'go'): the executor uses this to distinguish a
+      # genuine late straggler (runs) from a redelivery of an already-terminal
+      # context (skips). Either way the counters must not be recreated.
+      expect(state).to eq("drained_go") # poison semantics: skipped jobs may run late
       expect(key).to be_ordered_lock_drained # no counters recreated
     end
 

@@ -92,6 +92,29 @@ RSpec.describe "OrderedLock Integration" do
 
       expect(OrderedLockCounters.runs).to eq([1, 2, 3])
     end
+
+    it "does not re-execute a drained-batch redelivery of an already-completed context" do
+      RubyReactor.configuration.lock_snooze_base_delay = 0.01
+      RubyReactor.configuration.lock_snooze_jitter = 0
+
+      OrderedReactor.run(account_id: 21, thing: :only) # nonce 1, lone batch
+      job = RubyReactor::SidekiqWorkers::Worker.jobs.last
+      RubyReactor::SidekiqWorkers::Worker.drain
+
+      expect(OrderedLockCounters.runs).to eq([:only])
+      expect(adapter.ordered_lock_peek("orders:21")).to be_ordered_lock_drained
+
+      # Re-deliver the SAME job (Sidekiq at-least-once). The gate sees a drained
+      # batch (counters GC'd) -> :drained_go, but the stored context already
+      # reached :completed, so this must be skipped — NOT re-run — and must not
+      # clobber the terminal record.
+      context_id = JSON.parse(job["args"].first)["context_id"]
+      RubyReactor::SidekiqWorkers::Worker.new.perform(*job["args"])
+
+      expect(OrderedLockCounters.runs).to eq([:only]) # step did not run again
+      expect(OrderedReactor.find(context_id).context.status.to_s).to eq("completed")
+      expect(adapter.ordered_lock_peek("orders:21")).to be_ordered_lock_drained
+    end
   end
 
   describe "running-blocker heartbeat" do

@@ -53,9 +53,13 @@ module RubyReactor
       adapter.ordered_lock_assign(key, ttl: ttl)
     end
 
-    # Gate check. Returns `:go`, `:skip_chain_failed`, `:stale_batch`, or raises
-    # {WaitError}.
+    # Gate check. Returns `:go`, `:drained_go`, `:skip_chain_failed`,
+    # `:stale_batch`, or raises {WaitError}.
     # - `:go` — proceed to run steps.
+    # - `:drained_go` — the batch fully drained and GC'd while this caller slept.
+    #   A genuine late straggler should run; a Sidekiq redelivery of an
+    #   already-terminal context should be skipped. The executor disambiguates
+    #   via the stored context status.
     # - `:skip_chain_failed` — only in strict mode: an earlier nonce in this
     #   sequence terminated with a Failure, so this run is short-circuited
     #   with `Skipped(reason: :ordered_lock_chain_failed)` without executing.
@@ -77,6 +81,12 @@ module RubyReactor
       case state
       when "go", "poison_advance"
         chain_failed?(first_failed) ? :skip_chain_failed : :go
+      when "drained_go"
+        # Batch fully drained and GC'd while this caller slept. A genuine late
+        # straggler may run (poison semantics); a redelivery of an
+        # already-terminal context must not. The executor disambiguates via the
+        # stored context status. (fail_key is GC'd here, so no chain check.)
+        :drained_go
       when "stale"
         :stale_batch
       when "wait"

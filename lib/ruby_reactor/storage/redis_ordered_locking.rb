@@ -98,8 +98,12 @@ module RubyReactor
         -- cursor with no TTL and let every nonce of the NEXT batch gate
         -- straight through. Only both-absent is conclusive — a mid-batch
         -- next_key TTL hiccup leaves last_key in place and proceeds normally.
+        -- Returns a DISTINCT 'drained_go' (not plain 'go') so the executor can
+        -- tell this apart: a genuine late straggler should run, but a Sidekiq
+        -- at-least-once redelivery of an already-terminal context must NOT
+        -- re-execute. The executor consults the stored context status to decide.
         if redis.call('exists', next_key) == 0 and redis.call('exists', last_key) == 0 then
-          return {'go', 0, last, first_failed}
+          return {'drained_go', 0, last, first_failed}
         end
 
         -- Liveness heartbeat: a gate check proves this caller is alive (about
