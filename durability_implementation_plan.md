@@ -106,6 +106,37 @@ snooze re-enqueue never loses inline progress, and re-enqueuing by id (rehydrate
 fresh) is safe. The per-context lock fits the same pattern: `wait: 0` →
 `AcquisitionError` → existing snooze path.
 
+### F8 — composed/nested sub-reactors build their own Executor + StepExecutor
+
+A composed sub-reactor runs through a **fresh** `Executor` (and therefore a fresh
+`StepExecutor`) created inside `ComposeStep.execute_child_reactor`
+(`lib/ruby_reactor/step/compose_step.rb`). The per-step checkpoint callback (F4)
+is injected when the Executor builds its `StepExecutor`, so it covers the
+**top-level** executor only. If it is not propagated into child executors, a
+crash mid-child re-runs the **whole child span**, not one step — the plan's
+"only the in-flight step re-runs" claim then fails for composed reactors.
+
+**Implication:** the `on_step_complete` callback must be wired into **every**
+executor, including the nested ones `ComposeStep` constructs. This is safe and
+correct because `checkpoint!` resolves `root = @context.root_context || @context`
+— a child's checkpoint serializes and stores the **root**, not the sub-context.
+The child execution path needs the callback; it does not need its own key.
+
+### F9 — the Collector resumes the parent in-process and stores the *sub* context
+
+`Collector.resume_parent_execution` (`lib/ruby_reactor/map/.../helpers.rb:55-116`)
+resumes the map's parent **synchronously inside the collector worker** and stores
+the updated **parent** context back to storage (~line 111-115). When the map is
+embedded in a composed sub-reactor, "parent" is the **sub** context, so the
+write lands under the sub's key — never the root. This is the F1 bug on the
+collector path, and the Phase-2 `checkpoint!` (which only the `Worker#perform`
+path calls) does **not** cover it.
+
+**Implication:** with storage load-bearing and rehydrate-by-root-id, a nested map
+completing leaves the **root blob stale** (it does not reflect the sub's
+post-map progress). The collector's parent-resume must checkpoint the **root**
+(via the same `checkpoint!` root resolution), not the sub context.
+
 ---
 
 ## Phase 0 — TTL config plumbing (prep, no behavior change)
@@ -224,6 +255,15 @@ already saves) to avoid a double write.
 Ordering inside a step is **side-effect → record result → checkpoint** so the
 checkpoint reflects committed state (investigation hole #2).
 
+**Propagate the callback into nested executors (F8).** `ComposeStep.execute_child_reactor`
+builds a fresh `Executor`/`StepExecutor` for each composed sub-reactor; the
+`on_step_complete` callback must be threaded into those too, or composed
+reactors lose the per-step guarantee (a mid-child crash re-runs the whole child
+span). Because `checkpoint!` resolves the **root**, a child's checkpoint stores
+the root with the child state embedded — exactly what resume-by-root-id needs.
+Regression test: checkpoint after a *sub-reactor's inner step* and assert the
+**root** key advanced (not the sub key).
+
 ### 2b. Rehydrate-by-id in the worker
 
 Change `Worker#perform` signature to
@@ -311,6 +351,9 @@ radius. `first_execution?` semantics are unchanged (current_step is still set by
   the sweeper.
 - Nested/composed: a checkpoint after a sub-reactor step stores the **root**
   with the child state embedded (regression guard for F1).
+- Composed per-step durability (F8/C1): kill mid-child after sub-step N → resume
+  rehydrates root, child resumes at sub-step N+1 (not the start of the child
+  span). Proves the `on_step_complete` callback is wired into nested executors.
 
 ---
 
@@ -413,6 +456,23 @@ same slot. So the durable truth of "what is done" is
 `present = HKEYS(map:ID:results)`, and `missing = (0...count) - present`. The
 `map:ID:counter` is merely a *trigger* and is the source of the M3 fragility.
 
+> **Strict-ordering storage is a precondition (M1).** The idempotent HSET path
+> only applies when `strict_ordering: true` (`redis_adapter.rb:37`). With
+> `strict_ordering: false` the adapter uses `rpush` (`redis_adapter.rb:40`):
+> there is **no index→slot mapping** (so `missing` is uncomputable) and `rpush`
+> is **not idempotent** (so a re-dispatch *duplicates* results). The entire
+> Phase-5 recovery model breaks for loose maps.
+>
+> **Decision: when durability is enabled, store map results index-keyed (HSET)
+> regardless of `strict_ordering`.** Loose ordering is purely a *read-order*
+> convenience for the collector; it does not require list storage. Change
+> `store_map_result` to always HSET-by-index under the durable path, and have the
+> loose-ordering collector read `HVALS`/sort-by-key as needed instead of relying
+> on insertion order. This makes `missing`-based recovery and idempotent
+> re-dispatch apply uniformly. (If a host ever needs true append semantics, the
+> map sweeper must skip those maps and they are documented non-durable — but the
+> default and recommended path is index-keyed.)
+
 **Decision: make completion authoritative on results-count, not the counter.**
 The Collector already gates on `results_count < total_count`
 (`collector.rb:37`). We make the *trigger* robust by recovering off `missing`,
@@ -429,6 +489,15 @@ that finds a map by scanning has everything to re-dispatch elements and
 re-trigger the collector without reconstructing the map_id. (`map_id` =
 `"#{parent_context_id}:#{step_name}"` is *derivable* but splitting on `:` is
 brittle if a step name ever contains one — store it explicitly.)
+
+Also record the **parent's lock kind** (N1): for a **nested** map — one whose
+parent context is itself a map *element* — store `parent_is_map_element: true`
+plus the parent element's `outer_map_id` and `outer_index`, so the sweeper can
+check the correct liveness lock (`map_element:…`) instead of assuming `async:`.
+A top-level or composed-reactor parent stores neither flag and the sweeper uses
+`async:#{parent_context_id}`. The element executor already carries
+`map_metadata` (`element_executor.rb`), so a map dispatched *from within* an
+element has these values in scope at `initialize_map_operation` time.
 
 ### 5b. Element-level lock (reuse Phase 1 primitive)
 
@@ -471,7 +540,7 @@ for each map {map_id, count, parent_context_id, step_name, class} in scan_maps:
   else:
     # all results in; did the parent resume?
     next if terminal?(parent_context_id)               # already collected
-    next if live_lock?("async:#{parent_context_id}")   # collector/parent running
+    next if parent_live_lock?(map_meta)                # collector/parent running
     re-trigger Collector(map_id, parent_context_id, ...)# M2 recovery
 ```
 
@@ -479,8 +548,36 @@ for each map {map_id, count, parent_context_id, step_name, class} in scan_maps:
 - Re-dispatch only indices with **no live element lock** → a slow-but-alive
   element is never double-run; the lock (5b) makes the sweeper safe, same as the
   reactor sweeper relies on the `async:` lock.
-- The collector re-trigger is gated on the parent **not** being terminal and
-  **not** holding its `async:` lock (no live resume in flight).
+
+#### Parent liveness key must match the parent's actual lock (N1 — nested maps)
+
+The collector re-trigger is gated on the parent **not** being terminal and
+**not** holding the lock under which the parent execution actually runs. For a
+**top-level or composed** parent that lock is `async:#{parent_context_id}`. But
+for a **nested** map (a map whose parent is itself a map *element*), the parent
+holds **no** `async:` lock — it runs under the element lock
+`map_element:#{outer_map_id}:#{index}` (5b). Checking `async:#{parent_context_id}`
+for a nested map therefore always reads "absent" → the sweeper would re-trigger
+the nested collector / re-dispatch **while the element parent is alive**.
+
+**Fix:** the sweeper derives the parent's lock key from map metadata, not by
+assuming `async:`:
+
+```text
+def parent_live_lock?(map_meta):
+  if map_meta.parent_is_map_element:                   # nested map
+    live_lock?("map_element:#{map_meta.outer_map_id}:#{map_meta.outer_index}")
+  else:                                                # top-level / composed parent
+    live_lock?("async:#{map_meta.parent_context_id}")
+```
+
+This requires 5a to record, for a nested map, that its parent is a map element
+plus the `outer_map_id` / `outer_index` that identify the element's lock. A
+top-level/composed map stores neither and falls to the `async:` branch.
+
+Symmetrically, 5e's parent-resume lock must be the **same** key — a nested map's
+collector resuming its element-parent must take that element's `map_element:`
+lock, not an `async:` lock the element never holds.
 
 ### 5e. Collector's parent-resume must take the parent lock
 
@@ -488,20 +585,55 @@ for each map {map_id, count, parent_context_id, step_name, class} in scan_maps:
 **synchronously inside the collector worker**, not via `Worker#perform`. Two
 collector deliveries (e.g. the eager queue at dispatch + the counter-zero
 trigger + a sweeper re-trigger) could resume the parent concurrently and both
-write its context. Wrap the parent resume in the **parent's `async:` lock**
-(Phase 1 primitive, `owner` per-execution) so only one resume runs; the loser
-no-ops. This closes the double-collector race that Phase 5d's re-trigger would
-otherwise introduce — the same "the recovery layer creates the race, the lock
-pays for it" pattern as the reactor sweeper.
+write its context. Wrap the parent resume in the **parent's lock** (Phase 1
+primitive, `owner` per-execution) so only one resume runs; the loser no-ops.
+This closes the double-collector race that Phase 5d's re-trigger would otherwise
+introduce — the same "the recovery layer creates the race, the lock pays for it"
+pattern as the reactor sweeper.
+
+**Use the parent's actual lock key (N1).** For a top-level/composed parent the
+key is `async:#{parent_context_id}`; for a **nested** map whose parent is a map
+element it is `map_element:#{outer_map_id}:#{outer_index}` — the same key 5d's
+`parent_live_lock?` checks. The two must agree or the sweeper's liveness gate and
+the resume guard protect different keys.
+
+**Checkpoint the root, not the sub (F9 / C2).** `resume_parent_execution`
+currently stores the resumed **parent** context under the parent's own key
+(`helpers.rb:111-115`). When the map is embedded in a composed sub-reactor the
+parent is the *sub* context, so the **root blob never advances** and a
+rehydrate-by-root-id resume loses the map's completion. The parent resume must
+persist via the same root-resolving `checkpoint!` (`root = parent.root_context ||
+parent`) used on the `Worker#perform` path — store the **root**, with the sub's
+post-map state embedded in `composed_contexts`. Regression test: map inside a
+composed reactor completes → assert the **root** key reflects the sub's
+post-collect progress.
 
 ### Residual after Phase 5
 
 - **One element may re-run** on crash (at-least-once), same irreducible residual
   as the main path — element steps with side effects must be idempotent.
+- **Element re-dispatch is from-scratch, not per-step (M2).** `ElementExecutor`
+  mints a fresh context unless a `serialized_context` is supplied
+  (`element_executor.rb` hydrate path), and 5c re-queues by *index* with inputs,
+  not a checkpoint. So an element's **internal** multi-step / async progress is
+  not individually durable across re-dispatch — the **whole element** re-runs.
+  This is acceptable (it is the same at-least-once residual, one element wide),
+  but it means the "only one in-flight *step*" guarantee is "only one in-flight
+  *element*" for map fan-out. Document it; if per-step durability inside elements
+  is ever needed, 5c must re-queue the element's stored checkpoint instead of
+  fresh inputs.
+- **Element-hosted sub-work stalls (N2).** A map element that itself runs a
+  composed reactor or a nested map is a `parent_context_id`-bearing context, so
+  `scan_reactors` skips it (`redis_adapter.rb:307`) — correctly, since the map
+  sweeper owns it. The map sweeper recovers the element's **nested map**
+  (via 5d) and re-dispatches the **whole element** if its result slot is missing
+  (M2), but it does not separately recover the element's *own* non-map async
+  steps mid-flight — those fold into the whole-element re-dispatch. Bounded and
+  acceptable; stated here so it is not mistaken for per-step element recovery.
 - **Nested maps** (a map element that itself contains an async map) inherit the
-  same recovery, since each level has its own map_id/metadata; verify the sweeper
-  enumerates nested map metadata too (the `scan_maps` pattern catches them as
-  long as their metadata key matches).
+  same recovery, since each level has its own map_id/metadata; the `scan_maps`
+  pattern catches them as long as their metadata key matches. Their parent
+  liveness/resume lock is the element lock, not `async:` — see N1 in 5d/5e.
 
 ### Tests
 
@@ -517,7 +649,16 @@ pays for it" pattern as the reactor sweeper.
   sweeper re-dispatches the missing tail.
 - Element lock: duplicate delivery of a live element is blocked; one result.
 - Collector concurrency: two collector deliveries → parent resumes exactly once
-  (parent `async:` lock).
+  (parent lock).
+- M1 (loose ordering durable): a `strict_ordering: false` map stores results
+  index-keyed under the durable path; re-dispatching index `i` overwrites slot
+  `i` (no duplicate), and `missing` is computable.
+- C2 (map in composed reactor): a map embedded in a composed sub-reactor
+  completes → the **root** key reflects the sub's post-collect progress (not just
+  the sub key); a rehydrate-by-root-id resume continues past the map.
+- N1 (nested map liveness): a nested map whose element-parent is alive
+  (`map_element:` lock held) is **not** re-triggered/re-dispatched by the
+  sweeper; once the element dies (lock expired) recovery proceeds.
 
 ---
 
@@ -537,6 +678,15 @@ constraints: **1 before 3** (the lock makes the reactor sweeper safe), **2's
 enqueue-before-persist** (F2) within phase 2, and **1 before 5** (the element
 lock and the collector's parent-resume lock both reuse the Phase-1 primitive).
 Phase 5 is independent of 3/4 and can land in parallel with them.
+
+Two cross-cutting constraints the phases above fold in:
+
+- **Composed reactors (F8/C1):** Phase 2's `on_step_complete` callback must reach
+  the nested executors `ComposeStep` builds, or composed reactors lose the
+  per-step guarantee. In-phase-2 work, not a separate phase.
+- **Maps in composed reactors (F9/C2):** Phase 5's collector parent-resume must
+  checkpoint the **root** (not the sub context). Depends on Phase 2's `checkpoint!`
+  root resolution existing.
 
 ---
 
