@@ -60,9 +60,14 @@ RSpec.describe RateLimitDemoReactor, type: :reactor do
 
       context = RubyReactor::Context.new(inputs, described_class)
       serialized_context = RubyReactor::ContextSerializer.serialize(context)
+      # The worker now takes an identity-only payload and rehydrates the live
+      # context from storage by id, so the context must be persisted first.
+      RubyReactor.configuration.storage_adapter.store_context(
+        context.context_id, serialized_context, described_class.name
+      )
 
       worker = RubyReactor::SidekiqWorkers::Worker.new
-      worker.perform(serialized_context, described_class.name)
+      worker.perform(context.context_id, described_class.name)
 
       # The step never ran (window full) and the job re-enqueued itself for
       # when the bucket rolls — it did not burn Sidekiq retry budget.
