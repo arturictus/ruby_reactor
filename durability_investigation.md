@@ -133,12 +133,30 @@ Much narrower, and defensible — subject to the remaining holes below.
    Order operations as `side-effect → record result → save context`, and that
    step must be idempotent.
 
-3. **Concurrent delivery race.** Storage becomes mutable shared state keyed by
-   id. Double-delivery (a retry firing while the original is still alive) means
-   two workers rehydrate the same id and both write → last-writer clobbers /
-   possible double execution. **Fix:** a **per-context lock** around
-   rehydrate → run → save. The existing nonce/ordered-lock primitives (PR #26)
-   may be reusable.
+3. **Concurrent delivery race — induced by the recovery layer, not standing
+   today.** This is *not* a risk plain OSS Sidekiq exhibits on its own. Two
+   workers running the **same** `context_id` in parallel requires a second
+   enqueue of the same args *while the first is still alive*, and none of the
+   normal paths do that: a Sidekiq **retry** only fires after the job raised
+   (original already dead), a **snooze** re-enqueue runs after `perform` returns
+   (sequential), and a hard kill on OSS Sidekiq **loses** the job rather than
+   redelivering it (see #1). The overlap appears only once we add a
+   **presumed-dead-but-alive** redelivery mechanism:
+   - the **sweeper** (#1) re-enqueuing a context whose worker is actually alive
+     (just slow / GC-paused / liveness-check raced) — the main source;
+   - `super_fetch` orphan recovery re-enqueuing a job from a worker that missed
+     its heartbeat;
+   - Redis failover / split-brain delivering a job twice.
+
+   When it does happen, two workers rehydrate the same id and both write →
+   last-writer clobbers / double execution. **Fix:** a **per-context lock**
+   around rehydrate → run → save. The lock is precisely **what makes the sweeper
+   safe** — the sweeper uses lock *presence* as the liveness signal, and the lock
+   protects against the sweeper mis-judging that liveness and double-firing. So
+   this hole is the *price of fixing #1*, and the lock pays it. The existing
+   `RubyReactor::Lock` primitive (PR #26) is reusable as-is (see "Per-context
+   lock" below). Without #1/super_fetch the lock is never even contended; with
+   them it must be correct from the start.
 
 4. **TTL management.** Redis storage currently has a 24h TTL
    (`lib/ruby_reactor/storage/redis_adapter.rb:20`). With storage load-bearing, a
@@ -177,11 +195,18 @@ as-is — no new primitive required**, but the owner model must be used carefull
 
 ### Critical caveat — owner must be per-execution, NOT the context_id
 
+This caveat only bites once a recovery mechanism exists (the sweeper of #1, or
+`super_fetch`). Today, with no such mechanism, the same `context_id` never runs
+in two workers at once (see hole #3), so the lock is never contended and the
+owner choice is untested. But the plan *adds* the sweeper, and the sweeper is the
+thing that creates presumed-dead-but-alive overlap — so the owner must be correct
+before that lands.
+
 `Lock` is **reentrant for the same owner** (a Redis hash `count` that the same
 owner increments). The obvious choice `owner: context_id` is therefore **wrong**
-for this guard: a duplicate delivery of the *same* context shares the same owner,
-so both workers would re-enter the lock and run concurrently — exactly the race
-we are trying to prevent.
+for this guard: when the sweeper double-fires a still-alive context, both
+deliveries share the same owner, so both workers would re-enter the lock and run
+concurrently — exactly the race the lock is meant to prevent.
 
 - **Key** = the resource → `"async:#{context_id}"` (so all deliveries of one
   reactor contend on the same lock).
@@ -206,24 +231,96 @@ for cross-nesting re-entrancy (`lib/ruby_reactor/executor.rb:348`). Our guard is
 separate lock (`async:` prefix vs. the user key) with different owner semantics —
 no conflict.
 
-### Smallest reuse path
+### Why `owner: context_id` is wrong — worked trace
 
-In `resume_execution` (`lib/ruby_reactor/executor.rb`), acquire after
-`enter_ordered_lock_scope` and before the user lock/semaphore (~line 164-181),
-release in the existing `ensure` block (~line 219) alongside `release_locks`:
+A tempting objection: "the same `context_id` is only queued once and never runs
+in parallel, so the owner can be the `context_id`." For **plain OSS Sidekiq with
+no sweeper that is true** — see hole #3: no normal path re-enqueues a context
+while its original is alive, and a hard kill loses the job rather than
+redelivering. The objection only fails once a **recovery layer** is present (the
+sweeper, `super_fetch`, or Redis failover), which can redeliver a
+presumed-dead-but-alive context and produce a genuine concurrent duplicate. Since
+the plan adds the sweeper, we must design for that case now.
 
-```ruby
-@context_lock = RubyReactor::Lock.new(
-  "async:#{@context.context_id}",
-  owner: @job_id || SecureRandom.uuid,  # per-execution, NOT context_id
-  ttl: <config>, auto_extend: true
-)
-@context_lock.acquire   # raises AcquisitionError if another delivery holds it
-# ... ensure: @context_lock&.release
+When that concurrent duplicate occurs, `owner: context_id` is provably broken.
+Trace `LOCK_ACQUIRE_SCRIPT` (`lib/ruby_reactor/storage/redis_locking.rb:11-28`):
+
+```text
+Worker A: lock_acquire(key, owner=ctx_id) → key absent → hset owner, count=1 → return 1  ✓ acquired
+Worker B: lock_acquire(key, owner=ctx_id) → key exists, hget owner == ctx_id → MATCH
+                                          → hincrby count=2 → return 1                    ✓ ALSO acquired
 ```
 
-On `AcquisitionError`, treat it like the existing lock-contention path → snooze
-and let the active holder finish (a concurrent duplicate, not a real failure).
+Both run. Guard defeated. The reentrancy is **intentional** — the *user* lock at
+`lib/ruby_reactor/executor.rb:348` deliberately uses
+`owner = root_context.context_id` so nested reactors re-enter instead of
+self-deadlocking. That same feature poisons `context_id` as a dedup owner. The
+`context_id` is the right **key** (the resource); the **owner** must be
+per-execution.
+
+### Smallest reuse path
+
+In `resume_execution` (`lib/ruby_reactor/executor.rb`), acquire **after**
+`enter_ordered_lock_scope` *and after the ordered-lock short-circuit return*
+(`~line 164-173`), before `acquire_exclusive_lock` (`~line 181`); release in the
+existing `ensure` block (`~line 219`) alongside `release_locks`.
+
+Acquiring after the short-circuit return matters: stale-batch / drained
+redeliveries return at ~line 172 doing no work — they must **not** grab the
+context lock.
+
+```ruby
+# after enter_ordered_lock_scope + short-circuit return, before @context.status = :running
+# ivar named @acquired_context_lock to match the existing @acquired_lock /
+# @acquired_semaphore convention; both names are collision-free in Executor.
+def acquire_context_lock
+  @acquired_context_lock = RubyReactor::Lock.new(
+    "async:#{@context.context_id}",
+    owner: @context_lock_owner ||= SecureRandom.uuid,   # per-execution, NOT context_id
+    ttl: RubyReactor.configuration.context_lock_ttl,    # new config, default ~60
+    wait: 0,                                            # fail fast → snooze
+    auto_extend: true
+  )
+  @acquired_context_lock.acquire   # raises AcquisitionError on a concurrent duplicate
+end
+# ... ensure (next to release_locks): @acquired_context_lock&.release
+```
+
+- **Owner = `SecureRandom.uuid` per Executor instance**, not the Sidekiq
+  `job_id`. Each delivery builds a fresh Executor → unique owner, with no
+  plumbing through `worker.perform`. The sweeper's liveness check cares only
+  about lock *presence*, not owner identity, so a nonce suffices. The same
+  in-memory nonce acquires and releases, so owner-proven release still holds.
+- **No self-contention.** Composed sub-reactors and map elements mint a fresh
+  `context_id` (`lib/ruby_reactor/step/compose_step.rb:77`,
+  `lib/ruby_reactor/map/element_executor.rb:76`) → distinct keys → a single
+  execution never contends with itself. We do not even rely on reentrancy here.
+- **Contention reuses the existing snooze path.** `wait: 0` →
+  `AcquisitionError` → caught at `lib/ruby_reactor/executor.rb:206` → sets
+  `@contention_snooze` → re-raises → `worker.handle_snooze` re-enqueues. Zero new
+  error handling.
+- **Crash semantics.** Holder dies → auto-extend thread stops → TTL expires →
+  a snooze-retry acquires and takes over. Lock absence *is* the takeover signal.
+
+### Decided — uncapped snooze for context-lock contention
+
+The existing snooze cap (`lock_snooze_max_attempts`,
+`lib/ruby_reactor/sidekiq_workers/worker.rb:91`) is tuned for contention against
+a *different* reactor. Here the holder is a *duplicate of the same execution*,
+legitimately alive and auto-extending. A long-running original could exhaust the
+loser's cap and falsely mark it `:failed`.
+
+**Decision: `async:` lock contention snoozes uncapped**, mirroring the
+`OrderedLock::WaitError` bypass at `lib/ruby_reactor/sidekiq_workers/worker.rb:89`.
+The loser waits until the winner finishes or dies — lock absence (holder died →
+auto-extend stopped) is the real takeover signal, so capping on attempt count
+would only add false failures. Implementation: in `worker.handle_snooze`, exclude
+`Lock::AcquisitionError` carrying the `async:` key from the cap, the same way
+`OrderedLock::WaitError` is excluded (`capped = !error.is_a?(...)`).
+
+Residual (accepted): a wedged-but-alive holder that keeps auto-extending blocks
+the duplicate indefinitely — but that is the holder's own bug, and the duplicate
+doing nothing is the correct behaviour regardless.
 
 ---
 
@@ -254,26 +351,40 @@ re-enqueue trivial.
 | Re-run blast radius on crash | whole inline span | save-per-step → resume at last persisted step | one in-flight step |
 | Stale retry payload | resumes from job-start | id-only payload + rehydrate from storage | none (always fresh) |
 | Lost job (hard kill) | stalls forever | sweeper re-enqueues by id, using lock as liveness | bounded by sweeper interval |
-| Concurrent double-delivery | double execution | per-context lock, per-execution owner | none (one runs, other snoozes) |
+| Concurrent double-delivery (only once sweeper/super_fetch exists) | sweeper re-fires a live context → double execution | per-context lock, per-execution owner | none (one runs, other snoozes) |
 | In-flight step idempotency | any re-run duplicates | narrowed to one step; order side-effect → record → save | irreducible; step must be idempotent |
 | Context TTL expiry | 24h fixed | refresh TTL on each save; align to max retry/snooze window | reactors idle > window (rare; documentable) |
-| Schema bump strands in-flight | permanent failure | version-tolerant deserialize / drain before bump | needs a deserialize-compat policy |
+| Schema bump strands in-flight | permanent failure | deferred — ship serializer/migration at first `SCHEMA_VERSION` bump | none today (single version) |
 
 ### The two residuals worth an explicit decision
 
 1. **In-flight step idempotency is irreducible.** At-least-once delivery means the
-   one step executing at crash time may re-run. We cannot remove this; we can only
-   (a) narrow it to a single step (done, via save-per-step) and (b) document that
-   side-effecting steps must be idempotent. Optionally add a per-step idempotency
-   key (record "step N committed" before the side effect's external call) for the
-   highest-risk steps — but that is opt-in, not a global requirement.
+   one step executing at crash time may re-run. We cannot remove this: the window
+   is between a step's side effect and its `save_context`, and only the *owner of
+   the side effect* can atomically tie "this happened" to "don't repeat it" — no
+   local bookkeeping closes it (a marker written before the call loses a crashed
+   call; a marker after the call is just `save_context`). What we can do:
+   - (a) **Narrow it to a single step** — done, via save-per-step.
+   - (b) **Document that side-effecting steps must be idempotent.** This is the
+     developer's responsibility; the framework cannot guarantee it.
+   - (c) **Offer a deterministic idempotency token** — `context.idempotency_key`,
+     a stable hash of `context_id + step_name`, that the step passes *into* an
+     external service that supports dedup (e.g. `Stripe::Charge.create(..,
+     idempotency_key: context.idempotency_key)`, or a unique constraint / upsert
+     key on a DB write). A redelivery regenerates the **same** key → the side
+     effect's owner dedupes. This does **not** remove the residual (at-least-once
+     still delivers twice); it lets an *idempotency-capable* side effect
+     neutralize the duplicate. Opt-in per step, because only some side effects can
+     accept a key; fire-and-forget / non-idempotent calls stay exposed and fall
+     back to (b).
 
-2. **Schema-version strictness.** Today a version mismatch is a permanent failure.
-   Once storage is load-bearing and contexts live longer, this becomes a real
-   operational hazard on deploy. Mitigation options: (a) make deserialize
-   version-tolerant (accept N and N-1, migrate forward), or (b) a deploy
-   discipline that drains in-flight reactors before bumping `SCHEMA_VERSION`.
-   Recommend (a) — back-compat deserialize — as it removes the hazard structurally.
+2. **Schema-version strictness (deferred — not a blocker).** Today a version
+   mismatch is a permanent failure, and that is **acceptable for now**. There is
+   only one schema version; the hazard is purely future. When a newer
+   `SCHEMA_VERSION` is introduced we will ship its serializer / migration
+   alongside it (accept N and N-1, migrate forward), which removes the hazard at
+   the point it would first arise. No action needed in this work; revisit when
+   the first schema bump lands.
 
 ### Sequencing that minimizes risk during rollout
 
@@ -287,23 +398,28 @@ the sweeper, then TTL refresh. Each step is independently shippable and reversib
 
 ## Plan of work (ordered)
 
-1. **Per-context lock** — prerequisite for safe shared mutable storage.
-   Reuse `RubyReactor::Lock` keyed by `context_id` with a **per-execution owner**
-   (job_id / random nonce, not the context_id — see verification above); wrap
-   rehydrate → run → save; snooze on `AcquisitionError`.
+1. **Per-context lock** — prerequisite for the sweeper (step 3) and for safe
+   shared mutable storage. Reuse `RubyReactor::Lock` keyed by `context_id` with a
+   **per-execution owner** (`SecureRandom.uuid` per Executor — not the
+   `context_id`, see verification above); wrap rehydrate → run → save; snooze
+   uncapped on `AcquisitionError`. Must land **before** step 3 — the sweeper is
+   what makes concurrent duplicates possible, and this lock is what makes the
+   sweeper safe.
 2. **Core change** — save-per-step + rehydrate-by-id + id-only job payload.
 3. **Sweeper** — `scan_reactors` for non-terminal contexts, skip any with a live
    `async:<context_id>` lock, re-enqueue the rest by id (lock = liveness signal).
+   Depends on step 1.
 4. **TTL management** — refresh storage TTL on each save, align with max
    retry/snooze window so load-bearing contexts never expire mid-flight.
-5. **Schema back-compat** — make `ContextSerializer` deserialize tolerate the
-   previous `SCHEMA_VERSION` so a deploy can't strand longer-lived stored
-   contexts (replaces today's permanent `SchemaVersionError`).
 
 ### Out of scope (for now)
 
 - Changing the async-boundary model (per-step requeue of inline async steps).
   The plan above achieves the durability win without it.
+- **Schema back-compat** — deferred. One schema version exists today; permanent
+  `SchemaVersionError` on mismatch is acceptable. When a newer `SCHEMA_VERSION`
+  is introduced, ship its serializer / migration (accept N and N-1) with it.
+  Revisit at the first schema bump, not now.
 
 ---
 
@@ -329,5 +445,7 @@ the sweeper, then TTL refresh. Each step is independently shippable and reversib
   load-bearing introduces **no new format**. The risk is the *strictness*:
   `SchemaVersionError` is a permanent, non-retried failure
   (`lib/ruby_reactor/sidekiq_workers/worker.rb:23`). With longer-lived stored
-  contexts, a deploy that bumps the schema can strand in-flight reactors. See
-  "Risk minimization".
+  contexts, a deploy that bumps the schema can strand in-flight reactors.
+  **Deferred** — only one schema version exists today, so this is acceptable; a
+  serializer/migration ships with the first `SCHEMA_VERSION` bump. See "Out of
+  scope".
