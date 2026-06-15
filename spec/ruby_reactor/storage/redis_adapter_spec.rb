@@ -64,17 +64,22 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       expect(stored_val).to eq(result.to_json)
     end
 
-    it "stores unordered result using RPUSH" do
+    it "stores unordered results index-keyed (HSET) too, for idempotent recovery" do
+      # Durable map storage is always index-keyed regardless of strict_ordering
+      # (Phase 5), so missing-index recovery and idempotent re-dispatch apply
+      # uniformly. Re-running an index overwrites its slot, never duplicates.
       map_id = "map-123"
-      index = 0
+      index = 2
       result = { value: 1 }
       reactor_class = "MyReactor"
       key = "reactor:MyReactor:map:map-123:results"
 
       adapter.store_map_result(map_id, index, result, reactor_class, strict_ordering: false)
+      adapter.store_map_result(map_id, index, result, reactor_class, strict_ordering: false) # idempotent
 
-      stored_vals = redis_client.lrange(key, 0, -1)
-      expect(stored_vals).to eq([result.to_json])
+      expect(redis_client.type(key)).to eq("hash")
+      expect(redis_client.hget(key, "2")).to eq(result.to_json)
+      expect(redis_client.hlen(key)).to eq(1)
     end
   end
 
@@ -91,13 +96,13 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       expect(result).to eq([{ "value" => 1 }, { "value" => 2 }])
     end
 
-    it "retrieves unordered results using LRANGE" do
+    it "retrieves unordered results from the index-keyed hash, sorted by index" do
       map_id = "map-123"
       reactor_class = "MyReactor"
       key = "reactor:MyReactor:map:map-123:results"
 
-      redis_client.rpush(key, { value: 1 }.to_json)
-      redis_client.rpush(key, { value: 2 }.to_json)
+      redis_client.hset(key, "1", { value: 2 }.to_json)
+      redis_client.hset(key, "0", { value: 1 }.to_json)
 
       result = adapter.retrieve_map_results(map_id, reactor_class, strict_ordering: false)
       expect(result).to eq([{ "value" => 1 }, { "value" => 2 }])

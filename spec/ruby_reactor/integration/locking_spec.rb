@@ -93,12 +93,14 @@ RSpec.describe "Locking Integration" do
       # Stub SidekiqWorker to capture rescheduling (snooze counter starts at 1)
       allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
 
-      # Call the worker's perform method with a serialized context
+      # Persist the context, then drive the worker by id (identity-only payload).
       context = RubyReactor::Context.new({ user_id: 1 }, SimpleLockReactor)
-      serialized_context = RubyReactor::ContextSerializer.serialize(context)
+      RubyReactor.configuration.storage_adapter.store_context(
+        context.context_id, RubyReactor::ContextSerializer.serialize(context), "SimpleLockReactor"
+      )
 
       worker = RubyReactor::SidekiqWorkers::Worker.new
-      worker.perform(serialized_context, "SimpleLockReactor")
+      worker.perform(context.context_id, "SimpleLockReactor")
 
       expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
         .with(5.0, instance_of(String), "SimpleLockReactor", 1)
@@ -533,9 +535,18 @@ RSpec.describe "Locking Integration" do
   describe "Async first-run gating (worker resume path)" do
     let(:worker) { RubyReactor::SidekiqWorkers::Worker.new }
 
-    def fresh_serialized_context(reactor_class, inputs)
+    # Identity-only payload: the worker rehydrates from storage by id, so a fresh
+    # async first-run must be persisted before the worker is driven.
+    def store_fresh_context(reactor_class, inputs)
       context = RubyReactor::Context.new(inputs, reactor_class)
-      RubyReactor::ContextSerializer.serialize(context)
+      persist(context, reactor_class)
+      context.context_id
+    end
+
+    def persist(context, reactor_class)
+      RubyReactor.configuration.storage_adapter.store_context(
+        context.context_id, RubyReactor::ContextSerializer.serialize(context), reactor_class.name
+      )
     end
 
     before do
@@ -546,7 +557,7 @@ RSpec.describe "Locking Integration" do
 
     describe "period gate" do
       it "runs the first worker pass and marks the bucket" do
-        worker.perform(fresh_serialized_context(PeriodicReactor, { org_id: 70 }), "PeriodicReactor")
+        worker.perform(store_fresh_context(PeriodicReactor, { org_id: 70 }), "PeriodicReactor")
 
         expect(PeriodicCounters.runs).to eq(1)
         expect(redis.exists?(RubyReactor::Period.key("daily_report:70", :day))).to be true
@@ -557,7 +568,7 @@ RSpec.describe "Locking Integration" do
         PeriodicReactor.run(org_id: 71)
         PeriodicCounters.reset
 
-        executor = worker.perform(fresh_serialized_context(PeriodicReactor, { org_id: 71 }), "PeriodicReactor")
+        executor = worker.perform(store_fresh_context(PeriodicReactor, { org_id: 71 }), "PeriodicReactor")
 
         expect(executor.result).to be_a(RubyReactor::Skipped)
         expect(PeriodicCounters.runs).to eq(0)
@@ -571,7 +582,8 @@ RSpec.describe "Locking Integration" do
         # Resume mid-flight: current_step set, as every pause/handoff path does.
         context = RubyReactor::Context.new({ org_id: 72 }, PeriodicReactor)
         context.current_step = :build_report
-        worker.perform(RubyReactor::ContextSerializer.serialize(context), "PeriodicReactor")
+        persist(context, PeriodicReactor)
+        worker.perform(context.context_id, "PeriodicReactor")
 
         expect(PeriodicCounters.runs).to eq(1)
       end
@@ -579,7 +591,7 @@ RSpec.describe "Locking Integration" do
 
     describe "rate limit" do
       it "consumes a slot on the first worker pass" do
-        worker.perform(fresh_serialized_context(RateLimitedReactor, { account_id: 80 }), "RateLimitedReactor")
+        worker.perform(store_fresh_context(RateLimitedReactor, { account_id: 80 }), "RateLimitedReactor")
 
         expect(RateLimitCounters.runs).to eq(1)
       end
@@ -589,7 +601,7 @@ RSpec.describe "Locking Integration" do
         3.times { RateLimitedReactor.run(account_id: 81) }
         RateLimitCounters.reset
 
-        worker.perform(fresh_serialized_context(RateLimitedReactor, { account_id: 81 }), "RateLimitedReactor")
+        worker.perform(store_fresh_context(RateLimitedReactor, { account_id: 81 }), "RateLimitedReactor")
 
         expect(RateLimitCounters.runs).to eq(0)
         expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
@@ -603,7 +615,8 @@ RSpec.describe "Locking Integration" do
 
         context = RubyReactor::Context.new({ account_id: 82 }, RateLimitedReactor)
         context.current_step = :call_api
-        worker.perform(RubyReactor::ContextSerializer.serialize(context), "RateLimitedReactor")
+        persist(context, RateLimitedReactor)
+        worker.perform(context.context_id, "RateLimitedReactor")
 
         expect(RateLimitCounters.runs).to eq(1)
         expect(RubyReactor::SidekiqWorkers::Worker).not_to have_received(:perform_in)
@@ -614,9 +627,9 @@ RSpec.describe "Locking Integration" do
         RubyReactor.configuration.instance_variable_set(:@rate_limits, RubyReactor::RateLimitRegistry.new)
 
         context = RubyReactor::Context.new({}, NamedRateLimitedReactor)
-        serialized = RubyReactor::ContextSerializer.serialize(context)
+        persist(context, NamedRateLimitedReactor)
 
-        expect { worker.perform(serialized, "NamedRateLimitedReactor") }.not_to raise_error
+        expect { worker.perform(context.context_id, "NamedRateLimitedReactor") }.not_to raise_error
 
         reloaded = NamedRateLimitedReactor.find(context.context_id)
         expect(reloaded.context.status.to_s).to eq("failed")

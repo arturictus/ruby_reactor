@@ -19,13 +19,18 @@ module RubyReactor
 
       def deserialize(serialized_data)
         decompressed = decompress_if_needed(serialized_data)
-        data = JSON.parse(decompressed, symbolize_names: false)
-
-        validate_schema_version(data)
-
-        Context.deserialize_from_retry(data)
+        deserialize_hash(JSON.parse(decompressed, symbolize_names: false))
       rescue JSON::ParserError => e
         raise RubyReactor::Error::DeserializationError, "Failed to parse serialized context: #{e.message}"
+      end
+
+      # Deserialize from an already-parsed Hash (e.g. what the storage adapter's
+      # `retrieve_context` returns). Lets the rehydrate-by-id worker path avoid a
+      # second JSON parse while still schema-validating. Schema validation lives
+      # here so both the string and Hash entry points enforce it.
+      def deserialize_hash(data)
+        validate_schema_version(data)
+        Context.deserialize_from_retry(data)
       end
 
       # rubocop:disable Metrics/CyclomaticComplexity, Metrics/MethodLength

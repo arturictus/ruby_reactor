@@ -48,7 +48,8 @@ module RubyReactor
                                  @context.root_context || @context
                                end
 
-        reactor_class_name = context_to_serialize.reactor_class.name
+        reactor_class_name = context_to_serialize.reactor_class&.name ||
+                             "AnonymousReactor-#{context_to_serialize.reactor_class.object_id}"
 
         @middlewares.on(:before_async_enqueue, context_to_serialize)
 
@@ -72,7 +73,12 @@ module RubyReactor
             fail_fast: map_args[:fail_fast]
           )
         else
-          configuration.async_router.perform_in(delay, serialized_context, reactor_class_name)
+          # Persist BEFORE enqueue — the job payload is identity-only (F2). The
+          # rescheduled job rehydrates the root by id from storage.
+          configuration.storage_adapter.store_context(
+            context_to_serialize.context_id, serialized_context, reactor_class_name
+          )
+          configuration.async_router.perform_in(delay, context_to_serialize.context_id, reactor_class_name)
         end
       end
 

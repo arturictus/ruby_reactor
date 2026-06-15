@@ -2,18 +2,19 @@
 
 module RubyReactor
   class SidekiqAdapter
-    def self.perform_async(serialized_context, reactor_class_name = nil, intermediate_results: {})
-      job_id = SidekiqWorkers::Worker.perform_async(serialized_context, reactor_class_name)
-      context = ContextSerializer.deserialize(serialized_context)
+    # Identity-only payload: the worker rehydrates the live context from storage
+    # by (context_id, reactor_class_name). The caller already holds context_id, so
+    # there is no blob to deserialize here.
+    def self.perform_async(context_id, reactor_class_name = nil, intermediate_results: {})
+      job_id = SidekiqWorkers::Worker.perform_async(context_id, reactor_class_name)
       RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: intermediate_results,
-                                   execution_id: context.context_id)
+                                   execution_id: context_id)
     end
 
-    def self.perform_in(delay, serialized_context, reactor_class_name = nil, intermediate_results: {})
-      job_id = SidekiqWorkers::Worker.perform_in(delay, serialized_context, reactor_class_name)
-      context = ContextSerializer.deserialize(serialized_context)
+    def self.perform_in(delay, context_id, reactor_class_name = nil, intermediate_results: {})
+      job_id = SidekiqWorkers::Worker.perform_in(delay, context_id, reactor_class_name)
       RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: intermediate_results,
-                                   execution_id: context.context_id)
+                                   execution_id: context_id)
     end
 
     # rubocop:disable Metrics/ParameterLists

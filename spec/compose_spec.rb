@@ -46,14 +46,20 @@ RSpec.describe "Compose" do
   it "retries the specific step inside composed reactor using inline syntax" do
     # We need to mock the async router to capture what gets enqueued
     queue = []
-    allow(RubyReactor.configuration.async_router).to receive(:perform_async) do |serialized_context, reactor_name|
-      queue << { context: serialized_context, reactor: reactor_name }
+    allow(RubyReactor.configuration.async_router).to receive(:perform_async) do |context_id, reactor_name|
+      queue << { context_id: context_id, reactor: reactor_name }
       RubyReactor::AsyncResult.new(job_id: "job_id")
     end
 
-    allow(RubyReactor.configuration.async_router).to receive(:perform_in) do |delay, serialized_context, reactor_name|
-      queue << { context: serialized_context, reactor: reactor_name, delay: delay }
+    allow(RubyReactor.configuration.async_router).to receive(:perform_in) do |delay, context_id, reactor_name|
+      queue << { context_id: context_id, reactor: reactor_name, delay: delay }
       "job_id"
+    end
+
+    # Identity-only payload: rehydrate the root from storage by the enqueued id.
+    storage = RubyReactor.configuration.storage_adapter
+    rehydrate = lambda do |job|
+      RubyReactor::ContextSerializer.deserialize_hash(storage.retrieve_context(job[:context_id], job[:reactor]))
     end
 
     class InlineComposeReactor < RubyReactor::Reactor
@@ -92,7 +98,7 @@ RSpec.describe "Compose" do
 
     # The enqueued job should be for InlineComposeReactor (the root)
     # NOT the inner reactor, because we want to preserve the full tree
-    context = RubyReactor::ContextSerializer.deserialize(job[:context])
+    context = rehydrate.call(job)
     expect(context.reactor_class).to eq(InlineComposeReactor)
     expect(context.inputs[:id]).to eq("fail")
 
@@ -120,7 +126,7 @@ RSpec.describe "Compose" do
     retry_job = queue.last
 
     # The retry job should ALSO be for InlineComposeReactor (the root)
-    retry_context = RubyReactor::ContextSerializer.deserialize(retry_job[:context])
+    retry_context = rehydrate.call(retry_job)
     expect(retry_context.reactor_class).to eq(InlineComposeReactor)
 
     # And it should have the retry state for the inner step

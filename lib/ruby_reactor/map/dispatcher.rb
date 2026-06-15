@@ -104,6 +104,48 @@ module RubyReactor
         end
       end
 
+      # Re-dispatch a SPECIFIC index whose result slot is missing (Phase 5c, used
+      # by the map sweeper). Index-driven rather than offset-driven: resolve the
+      # source from the stored parent context and pick source[index]. Idempotent
+      # because store_map_result HSETs by index — a re-run overwrites slot `index`,
+      # never duplicates.
+      def self.requeue_index(map_meta, index)
+        storage = RubyReactor.configuration.storage_adapter
+        parent_class_name = map_meta["parent_reactor_class_name"]
+        parent_context = load_parent_context_from_storage(map_meta["parent_context_id"], parent_class_name, storage)
+
+        arguments = {
+          map_id: map_meta["map_id"],
+          step_name: map_meta["step_name"],
+          strict_ordering: map_meta["strict_ordering"],
+          parent_context_id: map_meta["parent_context_id"],
+          parent_reactor_class_name: parent_class_name,
+          fail_fast: map_meta["fail_fast"],
+          batch_size: map_meta["batch_size"]
+        }
+
+        source = resolve_source(arguments, parent_context)
+        element = element_at(source, index)
+
+        queue_element_job(element, index, {
+                            map_id: map_meta["map_id"],
+                            arguments: arguments,
+                            context: parent_context,
+                            reactor_class_info: map_meta["reactor_class_info"],
+                            step_name: map_meta["step_name"]
+                          })
+      end
+
+      def self.element_at(source, index)
+        if source.is_a?(Array)
+          source[index]
+        elsif source.respond_to?(:offset) && source.respond_to?(:limit)
+          source.offset(index).limit(1).to_a.first
+        else
+          source.drop(index).first
+        end
+      end
+
       def self.queue_element_job(element, index, options)
         arguments = options[:arguments]
         context = options[:context]

@@ -108,10 +108,17 @@ module RubyReactor
           executor.resume_execution
         end
 
+        # Checkpoint the ROOT, not the sub (F9/C2). When the map is embedded in a
+        # composed sub-reactor, parent_context is the *sub*; storing only the sub
+        # would leave the root blob stale and a rehydrate-by-root-id resume would
+        # lose the map's completion. Resolve the root (which embeds the sub's
+        # post-map state via composed_contexts) and store that. For a top-level
+        # map parent_context IS the root, so this is unchanged.
+        root = parent_context.root_context || parent_context
         storage.store_context(
-          parent_context.context_id,
-          ContextSerializer.serialize(parent_context),
-          parent_context.reactor_class.name
+          root.context_id,
+          ContextSerializer.serialize(root),
+          root.reactor_class&.name || parent_context.reactor_class.name
         )
       end
     end

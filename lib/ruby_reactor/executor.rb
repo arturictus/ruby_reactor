@@ -38,12 +38,19 @@ module RubyReactor
           retry_manager: @retry_manager,
           result_handler: @result_handler,
           compensation_manager: @compensation_manager,
-          middlewares: @middlewares
+          middlewares: @middlewares,
+          # Save-per-step durable checkpoint. checkpoint! resolves the ROOT
+          # context, so this same callback — wired into every executor including
+          # the nested ones ComposeStep builds — always advances the root blob
+          # (F8): a mid-child crash re-runs one sub-step, not the whole child.
+          on_step_complete: -> { checkpoint! }
         }
       )
       @result = nil
       @acquired_lock = nil
       @acquired_semaphore = nil
+      @acquired_context_lock = nil
+      @context_lock_owner = nil
       @contention_snooze = false
       @skip_context_persist = false
     end
@@ -150,7 +157,7 @@ module RubyReactor
       end
     end
 
-    def resume_execution # rubocop:disable Metrics/MethodLength,Metrics/PerceivedComplexity
+    def resume_execution # rubocop:disable Metrics/MethodLength,Metrics/PerceivedComplexity,Metrics/CyclomaticComplexity
       middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
       completed = false
 
@@ -174,6 +181,13 @@ module RubyReactor
 
       @context.status = :running
       check_rate_limit if first_run
+
+      # Per-context liveness lock: serializes duplicate deliveries of the same
+      # root context (e.g. a sweeper re-enqueue racing a still-live worker) and
+      # doubles as the sweeper's "worker alive" signal. Only the ROOT executor
+      # holds it — composed/nested children resume inline under the root worker
+      # and must not contend on the root's own key.
+      acquire_context_lock
 
       # Resumes intentionally skip check_rate_limit (a paused run must not
       # block itself on resume), so acquire lock/semaphore directly rather
@@ -217,6 +231,8 @@ module RubyReactor
       @result
     ensure
       release_locks
+      @acquired_context_lock&.release
+      @acquired_context_lock = nil
       leave_ordered_lock_scope
       save_context unless skip_context_persist?
 
@@ -246,6 +262,19 @@ module RubyReactor
       # Serialize context
       serialized_context = ContextSerializer.serialize(@context)
       storage.store_context(@context.context_id, serialized_context, reactor_class_name)
+    end
+
+    # Durable per-step checkpoint. Unlike save_context (which serializes THIS
+    # executor's @context — the observability path, F1), checkpoint! always
+    # serializes and stores the ROOT context under the root's key — the unit the
+    # async worker rehydrates by id. For a top-level reactor root == @context; for
+    # a composed/nested child it stores the root with the child's live state
+    # embedded via composed_contexts. TTL is re-stamped on every write (Phase 4).
+    def checkpoint!
+      root = @context.root_context || @context
+      storage = RubyReactor::Configuration.instance.storage_adapter
+      reactor_class_name = root.reactor_class&.name || "AnonymousReactor-#{root.reactor_class.object_id}"
+      storage.store_context(root.context_id, ContextSerializer.serialize(root), reactor_class_name)
     end
 
     def persist_context?
@@ -338,6 +367,42 @@ module RubyReactor
     def period_key(config)
       base = config[:key_proc].call(@context.inputs)
       RubyReactor::Period.key(base, config[:every])
+    end
+
+    # Per-execution liveness lock on the root context id. Owner is a fresh UUID
+    # per execution (NOT the context_id): a duplicate delivery of the *same*
+    # context from a different worker must be blocked, so reentrancy by id would
+    # defeat the guard. Only the root executor acquires — a composed/nested child
+    # resumes inline under the root worker and shares the root's lock, so it must
+    # not try to re-acquire the same key with a different owner (self-deadlock).
+    def acquire_context_lock
+      root = @context.root_context || @context
+      return unless root.equal?(@context) # only the root executor holds it
+      # In Sidekiq::Testing.inline! the retry/snooze `perform_in` re-enters the
+      # worker synchronously, nested inside this still-running frame that holds
+      # the lock — it would self-contend forever. The lock guards concurrent
+      # cross-process delivery, which cannot happen under inline testing, so skip.
+      return if inline_testing_mode?
+
+      lock = RubyReactor::Lock.new(
+        "async:#{root.context_id}",
+        owner: @context_lock_owner ||= SecureRandom.uuid,
+        ttl: RubyReactor.configuration.context_lock_ttl,
+        wait: 0,            # fail fast -> snooze; never block the worker thread
+        auto_extend: true   # keep the liveness signal fresh while we run
+      )
+      lock.acquire
+      @acquired_context_lock = lock
+    rescue RubyReactor::Lock::AcquisitionError => e
+      # We lost the race to a live original holding this context's lock. We did
+      # no work, so we must NOT persist on the way out — saving our (older)
+      # rehydrated snapshot would clobber the original's newer checkpoint.
+      @skip_context_persist = true
+      raise RubyReactor::Lock::ContextLockContention.new(e.message, context_lock_key: "async:#{root.context_id}")
+    end
+
+    def inline_testing_mode?
+      defined?(Sidekiq::Testing) && Sidekiq::Testing.respond_to?(:inline?) && Sidekiq::Testing.inline?
     end
 
     def acquire_exclusive_lock

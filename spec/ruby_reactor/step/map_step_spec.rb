@@ -14,6 +14,7 @@ RSpec.describe RubyReactor::Step::MapStep do
     instance_double(RubyReactor::Context,
                     context_id: "test-context-id",
                     map_operations: {},
+                    map_metadata: nil,
                     current_step: :test_step,
                     inline_async_execution: false,
                     intermediate_results: {},

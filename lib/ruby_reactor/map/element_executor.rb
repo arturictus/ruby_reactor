@@ -8,6 +8,45 @@ module RubyReactor
       def self.perform(arguments)
         arguments = arguments.transform_keys(&:to_sym)
 
+        # Per-element liveness lock (Phase 5b): its presence is the map sweeper's
+        # "element alive" signal, and it serializes duplicate deliveries so a
+        # re-run can't double-decrement the counter (M3). A duplicate of a live
+        # element is dropped — the live original stores the result and finalizes.
+        lock = acquire_element_lock(arguments)
+        return if lock == :contended
+
+        begin
+          perform_element(arguments)
+        ensure
+          lock.release if lock.respond_to?(:release)
+        end
+      end
+
+      def self.acquire_element_lock(arguments)
+        # In Sidekiq::Testing.inline! an element's async-retry perform_map_element_in
+        # re-enters synchronously inside this frame; the lock would self-contend.
+        # It only guards concurrent cross-process delivery, impossible inline.
+        return :inline if inline_testing_mode?
+
+        lock = RubyReactor::Lock.new(
+          "map_element:#{arguments[:map_id]}:#{arguments[:index]}",
+          owner: SecureRandom.uuid, ttl: RubyReactor.configuration.context_lock_ttl,
+          wait: 0, auto_extend: true
+        )
+        lock.acquire
+        lock
+      rescue RubyReactor::Lock::AcquisitionError
+        RubyReactor.configuration.logger.info(
+          "RubyReactor map element #{arguments[:map_id]}:#{arguments[:index]} already in flight; dropping duplicate"
+        )
+        :contended
+      end
+
+      def self.inline_testing_mode?
+        defined?(Sidekiq::Testing) && Sidekiq::Testing.respond_to?(:inline?) && Sidekiq::Testing.inline?
+      end
+
+      def self.perform_element(arguments)
         context = hydrate_or_create_context(arguments)
         # The element already runs inside its own background worker, so any async
         # steps (and async retries) must execute inline here rather than handing

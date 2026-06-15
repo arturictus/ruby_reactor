@@ -111,10 +111,10 @@ module RubyReactor
         # For async reactors, queue a job for the whole reactor
         @context.status = :running
         Executor.middlewares_for(self.class).on(:before_async_enqueue, @context)
+        # Persist BEFORE enqueue — the job payload is identity-only (F2).
         save_context
 
-        serialized_context = ContextSerializer.serialize(@context)
-        @result = configuration.async_router.perform_async(serialized_context, self.class.name,
+        @result = configuration.async_router.perform_async(@context.context_id, self.class.name,
                                                            intermediate_results: @context.intermediate_results)
 
         # Even if it's an AsyncResult, it might have finished inline (e.g. Sidekiq::Testing.inline!)
@@ -312,10 +312,10 @@ module RubyReactor
 
     def perform_async_run
       @context.status = :running
+      # Persist BEFORE enqueue — the job payload is identity-only (F2).
       save_context
 
-      serialized_context = ContextSerializer.serialize(@context)
-      @result = configuration.async_router.perform_async(serialized_context, self.class.name,
+      @result = configuration.async_router.perform_async(@context.context_id, self.class.name,
                                                          intermediate_results: @context.intermediate_results)
 
       check_for_inline_completion

@@ -4,6 +4,19 @@ module RubyReactor
   class Lock
     class AcquisitionError < StandardError; end
 
+    # Raised specifically for the per-context liveness lock (`async:<id>`).
+    # Carries the bare key so the worker can exempt it from the snooze cap:
+    # a duplicate of the *same* execution may legitimately wait arbitrarily
+    # long for the live original to finish.
+    class ContextLockContention < AcquisitionError
+      attr_reader :context_lock_key
+
+      def initialize(message, context_lock_key:)
+        super(message)
+        @context_lock_key = context_lock_key
+      end
+    end
+
     # Minimum interval between auto-extend pings; protects very small TTLs.
     MIN_EXTEND_INTERVAL = 1.0
 

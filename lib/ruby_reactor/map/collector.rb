@@ -8,6 +8,42 @@ module RubyReactor
       def self.perform(arguments)
         arguments = arguments.transform_keys(&:to_sym)
         map_id = arguments[:map_id]
+
+        # Serialize concurrent collector deliveries for the SAME map (eager queue +
+        # counter-zero trigger + sweeper re-trigger could otherwise all resume the
+        # parent at once and both write its context). A dedicated map_collect lock
+        # is used rather than the parent's own lock so it never conflicts with the
+        # context lock the parent's resume_execution acquires for itself.
+        lock = acquire_collect_lock(map_id)
+        return if lock == :contended
+
+        begin
+          perform_collection(arguments)
+        ensure
+          lock.release if lock.respond_to?(:release)
+        end
+      end
+
+      def self.acquire_collect_lock(map_id)
+        return :inline if inline_testing_mode?
+
+        lock = RubyReactor::Lock.new(
+          "map_collect:#{map_id}",
+          owner: SecureRandom.uuid, ttl: RubyReactor.configuration.context_lock_ttl,
+          wait: 0, auto_extend: true
+        )
+        lock.acquire
+        lock
+      rescue RubyReactor::Lock::AcquisitionError
+        :contended
+      end
+
+      def self.inline_testing_mode?
+        defined?(Sidekiq::Testing) && Sidekiq::Testing.respond_to?(:inline?) && Sidekiq::Testing.inline?
+      end
+
+      def self.perform_collection(arguments)
+        map_id = arguments[:map_id]
         parent_context_id = arguments[:parent_context_id]
         parent_reactor_class_name = arguments[:parent_reactor_class_name]
         step_name = arguments[:step_name]
@@ -17,6 +53,11 @@ module RubyReactor
         storage = RubyReactor.configuration.storage_adapter
         parent_context_data = storage.retrieve_context(parent_context_id, parent_reactor_class_name)
         parent_context = RubyReactor::Context.deserialize_from_retry(parent_context_data)
+
+        # Idempotency: if the parent already recorded this map step's result, a
+        # prior collector already resumed it. Re-resuming would double-execute the
+        # steps after the map. Skip.
+        return if parent_context.intermediate_results.key?(step_name.to_sym)
 
         # Check if all tasks are completed
         metadata = storage.retrieve_map_metadata(map_id, parent_reactor_class_name)

@@ -9,10 +9,24 @@ module RubyReactor
 
     attr_writer :sidekiq_queue, :sidekiq_retry_count, :logger, :async_router,
                 :lock_snooze_base_delay, :lock_snooze_jitter, :lock_snooze_max_attempts,
-                :middlewares
+                :middlewares, :context_ttl, :context_lock_ttl
 
     def sidekiq_queue
       @sidekiq_queue ||= :default
+    end
+
+    # Retention TTL (seconds) for a stored reactor context. Storage is
+    # load-bearing for resume, so this must comfortably exceed the worst-case
+    # snooze/retry window. Refreshed on every checkpoint write.
+    def context_ttl
+      @context_ttl ||= 86_400
+    end
+
+    # TTL (seconds) for the per-context liveness lock (`async:<id>`). Short by
+    # design — it is a liveness signal, not retention. A live worker auto-extends
+    # it; its absence is the sweeper's "worker died" signal.
+    def context_lock_ttl
+      @context_lock_ttl ||= 60
     end
 
     def sidekiq_retry_count
