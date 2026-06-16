@@ -372,9 +372,20 @@ reactor only resumes when the recovery sweeper notices the lapsed liveness lock
 and re-enqueues it. The sweeper is a self-rescheduling chain — **kick it once per
 process boot:**
 
+The recommended spot is a Sidekiq server startup hook, so only the worker
+process runs recovery (not your web/console/client processes):
+
 ```ruby
-# config/initializers/ruby_reactor.rb (Rails) — or anywhere that runs at boot
-# in your Sidekiq server process.
+# config/initializers/sidekiq.rb
+Sidekiq.configure_server do |config|
+  config.on(:startup) { RubyReactor.start_sweeper! }
+end
+```
+
+Anywhere that runs once at boot works too — e.g. a Rails initializer:
+
+```ruby
+# config/initializers/ruby_reactor.rb
 RubyReactor.start_sweeper!
 ```
 
@@ -384,10 +395,15 @@ sweeper and the map sweeper every `config.sweeper_interval` seconds, and stops i
 you set `config.sweeper_enabled = false`. The interval is your recovery-latency
 bound.
 
-> **Sidekiq Enterprise `super_fetch`:** the chain is safe under reliable fetch.
-> Each next tick is claimed by a per-time-window lock, so a tick that
-> `super_fetch` recovers after a crash cannot fork the chain — duplicates
-> collapse back to a single successor.
+> **Sidekiq Enterprise `super_fetch` compatibility:** the chain is safe under
+> reliable fetch. `super_fetch` re-runs a job whose worker died mid-execution, so
+> a tick that crashes *after* enqueuing its successor but *before* acking would,
+> with naive single-flight, be recovered alongside that successor and fork the
+> chain (doubling every interval). RubyReactor avoids this: it never relies on
+> "one job in the chain" — each next tick is claimed by a per-time-window lock, so
+> a `super_fetch`-recovered tick computes the same window, loses the claim, and
+> collapses back to a single successor. The startup hook above is likewise
+> idempotent across multiple `super_fetch` server processes.
 
 **Prefer your own scheduler?** Set `config.sweeper_enabled = false` (which makes
 `start_sweeper!` a no-op) and drive recovery from cron, a Kubernetes `CronJob`,
