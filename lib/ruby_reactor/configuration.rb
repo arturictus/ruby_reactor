@@ -24,7 +24,18 @@ module RubyReactor
 
     # TTL (seconds) for the per-context liveness lock (`async:<id>`). Short by
     # design — it is a liveness signal, not retention. A live worker auto-extends
-    # it; its absence is the sweeper's "worker died" signal.
+    # it (every ttl/3 s, from a background thread); its absence is the sweeper's
+    # "worker died" signal.
+    #
+    # SAFETY CONSTRAINT: this MUST exceed the longest a single step can run
+    # WITHOUT letting the auto-extend thread make progress. Under MRI the
+    # extender shares the GIL, so a step that holds the GIL continuously for
+    # longer than this TTL (a long CPU-bound pure-Ruby loop, a C extension that
+    # never releases the GIL, or a stop-the-world GC pause) lets the lock lapse.
+    # A lapsed lock looks "dead" to the sweeper, which may re-enqueue a duplicate
+    # that runs CONCURRENTLY with the still-live original — a double-run. I/O-bound
+    # steps release the GIL and keep the lock fresh, so the default 60s suits
+    # typical workloads; raise it if you run long synchronous CPU-bound steps.
     def context_lock_ttl
       @context_lock_ttl ||= 60
     end

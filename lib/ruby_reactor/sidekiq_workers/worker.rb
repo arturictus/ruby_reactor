@@ -154,7 +154,7 @@ module RubyReactor
         }
 
         serialized = ContextSerializer.serialize(context)
-        reactor_class_name = context.reactor_class&.name || "AnonymousReactor"
+        reactor_class_name = RubyReactor.reactor_storage_name(context.reactor_class)
         RubyReactor.configuration.storage_adapter.store_context(
           context.context_id,
           serialized,

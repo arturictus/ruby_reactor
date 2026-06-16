@@ -114,7 +114,8 @@ module RubyReactor
         # Persist BEFORE enqueue — the job payload is identity-only (F2).
         save_context
 
-        @result = configuration.async_router.perform_async(@context.context_id, self.class.name,
+        @result = configuration.async_router.perform_async(@context.context_id,
+                                                           RubyReactor.reactor_storage_name(self.class),
                                                            intermediate_results: @context.intermediate_results)
 
         # Even if it's an AsyncResult, it might have finished inline (e.g. Sidekiq::Testing.inline!)
@@ -315,7 +316,8 @@ module RubyReactor
       # Persist BEFORE enqueue — the job payload is identity-only (F2).
       save_context
 
-      @result = configuration.async_router.perform_async(@context.context_id, self.class.name,
+      @result = configuration.async_router.perform_async(@context.context_id,
+                                                         RubyReactor.reactor_storage_name(self.class),
                                                          intermediate_results: @context.intermediate_results)
 
       check_for_inline_completion
@@ -424,7 +426,7 @@ module RubyReactor
 
     def save_context
       storage = configuration.storage_adapter
-      reactor_class_name = self.class.name || "AnonymousReactor-#{self.class.object_id}"
+      reactor_class_name = RubyReactor.reactor_storage_name(self.class)
       serialized_context = ContextSerializer.serialize(@context)
       storage.store_context(@context.context_id, serialized_context, reactor_class_name)
     end

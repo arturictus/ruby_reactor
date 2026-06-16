@@ -205,8 +205,7 @@ module RubyReactor
 
         # Use root context if available to ensure we serialize the full tree
         context_to_serialize = @context.root_context || @context
-        reactor_class_name = context_to_serialize.reactor_class&.name ||
-                             "AnonymousReactor-#{context_to_serialize.reactor_class.object_id}"
+        reactor_class_name = RubyReactor.reactor_storage_name(context_to_serialize.reactor_class)
 
         # Inject OTel context before serialization
         @middlewares.on(:before_async_enqueue, context_to_serialize)

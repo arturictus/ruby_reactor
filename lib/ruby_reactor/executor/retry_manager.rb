@@ -48,8 +48,7 @@ module RubyReactor
                                  @context.root_context || @context
                                end
 
-        reactor_class_name = context_to_serialize.reactor_class&.name ||
-                             "AnonymousReactor-#{context_to_serialize.reactor_class.object_id}"
+        reactor_class_name = RubyReactor.reactor_storage_name(context_to_serialize.reactor_class)
 
         @middlewares.on(:before_async_enqueue, context_to_serialize)
 

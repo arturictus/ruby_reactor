@@ -257,7 +257,7 @@ module RubyReactor
 
     def save_context
       storage = RubyReactor::Configuration.instance.storage_adapter
-      reactor_class_name = @reactor_class.name || "AnonymousReactor-#{@reactor_class.object_id}"
+      reactor_class_name = RubyReactor.reactor_storage_name(@reactor_class)
 
       # Serialize context
       serialized_context = ContextSerializer.serialize(@context)
@@ -273,7 +273,7 @@ module RubyReactor
     def checkpoint!
       root = @context.root_context || @context
       storage = RubyReactor::Configuration.instance.storage_adapter
-      reactor_class_name = root.reactor_class&.name || "AnonymousReactor-#{root.reactor_class.object_id}"
+      reactor_class_name = RubyReactor.reactor_storage_name(root.reactor_class)
       storage.store_context(root.context_id, ContextSerializer.serialize(root), reactor_class_name)
     end
 

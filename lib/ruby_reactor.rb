@@ -330,6 +330,22 @@ module RubyReactor
     Configuration.instance
   end
 
+  # The name under which a reactor class's durable state is keyed in storage
+  # (`reactor:<name>:context:<id>`, map metadata, etc.). MUST be stable across
+  # processes: the enqueuing process writes the blob under this name and a
+  # *different* worker process reads it back by the same name. So an anonymous
+  # class falls back to a fixed constant, NOT `object_id` — object_id is
+  # process-local and would make the worker's read key miss the writer's key.
+  # The context_id in the key still disambiguates distinct anonymous reactors.
+  # (A truly anonymous class can't be reconstituted by name in another process,
+  # so cross-process resume of one is inherently unsupported; this only keeps
+  # the keys self-consistent within a process — e.g. inline tests.)
+  def self.reactor_storage_name(reactor_class)
+    return "AnonymousReactor" if reactor_class.nil?
+
+    reactor_class.name || "AnonymousReactor"
+  end
+
   def self.root
     Pathname.new(File.expand_path("..", __dir__))
   end
