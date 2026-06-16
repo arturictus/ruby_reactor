@@ -36,6 +36,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 | Locks / sem / rate / per | Yes          | No              | No          | Manual              |
 | Built-in web dashboard   | Yes          | No              | No          | No                  |
 | Async with Sidekiq       | Yes          | No              | Limited     | Yes                 |
+| Durable crash recovery   | Yes          | No              | No          | Manual              |
 
 ## Real-World Use Cases
 
@@ -44,6 +45,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 - **Subscription Billing**: Coordinate Stripe charges, invoice email generation, and internal entitlement updates. Use interrupts to pause the workflow when 3rd-party APIs are required to continue the workflow or when specific customer approval is needed.
 
 ## Table of Contents
+
 - [Features](#features)
 - [Comparison](#comparison)
 - [Real-World Use Cases](#real-world-use-cases)
@@ -57,6 +59,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
   - [Async Execution](#async-execution)
     - [Full Reactor Async](#full-reactor-async)
     - [Step-Level Async](#step-level-async)
+  - [Durability & Recovery](#durability--recovery)
   - [Interrupts (Pause & Resume)](#interrupts-pause--resume)
   - [Locks, Semaphores & Ordered Locks](#locks-semaphores--ordered-locks)
   - [Map & Parallel Execution](#map--parallel-execution)
@@ -153,6 +156,11 @@ end
 ```
 
 You can also leave out the `configure` block entirely — defaults work for local development against a Redis on `localhost:6379`.
+
+> **Crash recovery needs a kick.** The `sweeper_*` settings above only configure
+> the recovery sweeper — they do not start it. Call `RubyReactor.start_sweeper!`
+> once at boot (ideally from a Sidekiq `on(:startup)` hook) or no crashed reactor
+> will ever resume. See [Durability & Recovery](#durability--recovery).
 
 
 ## Quick Start
