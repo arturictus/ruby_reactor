@@ -93,65 +93,86 @@ Or install it yourself as:
 
 ## Configuration
 
-Configure RubyReactor with your Sidekiq and Redis settings:
+Every setting is **optional** — RubyReactor ships with the defaults shown. Drop
+this into an initializer (e.g. `config/initializers/ruby_reactor.rb`); pasted as-is
+it changes nothing, so it doubles as a reference of every knob.
 
-Every setting below is **optional** — RubyReactor ships with the defaults shown. Override only what you need.
+> **Reading the block:** lines starting with `##` are documentation. Lines starting
+> with a single `#` (a `config.…` call) are real settings commented at their
+> default — uncomment one to enable it.
 
 ```ruby
 RubyReactor.configure do |config|
-  # Storage adapter. Default: :redis (the only adapter shipped today).
-  config.storage.adapter = :redis
-  # Redis URL. Default: "redis://localhost:6379/0".
+  ## === Storage (Redis) ===
+
+  ## Storage adapter. Default: :redis (the only adapter shipped today).
+  # config.storage.adapter = :redis
+
+  ## Redis URL. Default: "redis://localhost:6379/0".
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
-  # Extra options passed to Redis.new. Default: {}.
-  config.storage.redis_options = { timeout: 1 }
 
-  # Sidekiq queue used by RubyReactor's async worker. Default: :default.
-  config.sidekiq_queue = :default
-  # Sidekiq retry count for infrastructure failures only (deserialization,
-  # Redis, network). Step retries are managed separately. Default: 3.
-  config.sidekiq_retry_count = 3
+  ## Extra options passed to Redis.new. Default: {}.
+  # config.storage.redis_options = { timeout: 1 }
 
-  # Lock/semaphore/rate-limit/ordered-lock contention snooze behavior for
-  # async reactors. When a Sidekiq worker cannot acquire a primitive it
-  # re-enqueues itself with `lock_snooze_base_delay + rand(0..lock_snooze_jitter)`
-  # seconds (rate-limit uses a precise `retry_after_seconds` hint from the error;
-  # ordered-lock waits re-poll at the base delay so a successor catches its
-  # blocker finishing fast), up to `lock_snooze_max_attempts` times before
-  # marking the context :failed. Defaults: 5 / 5 / 20. Set max_attempts to
-  # :infinity to never give up.
-  config.lock_snooze_base_delay = 5
-  config.lock_snooze_jitter = 5
-  config.lock_snooze_max_attempts = 20
+  ## === Sidekiq ===
 
-  # Named rate limits shared across reactors. Reference them with
-  # `with_rate_limit(:stripe)`. See Locks, Semaphores, Rate Limits & Periods.
-  config.rate_limits.register(:stripe, limits: { second: 3, minute: 100 })
+  ## Sidekiq queue used by RubyReactor's async worker. Default: :default.
+  # config.sidekiq_queue = :default
 
-  # Durability & crash recovery. See "Durability & Recovery" below.
-  # Retention TTL (seconds) for stored reactor/map state. Must exceed your
-  # worst-case snooze/retry window; re-stamped on every write. Default: 86_400.
-  config.context_ttl = 86_400
-  # TTL (seconds) for the per-context liveness lock. A live worker auto-extends
-  # it; its absence is the sweeper's "worker died" signal. Must exceed the
-  # longest a single step can run without yielding the GIL. Default: 60.
-  config.context_lock_ttl = 60
-  # Minimum seconds between per-step checkpoints within one run. 0 = checkpoint
-  # after every step (strongest guarantee). Raise to coalesce mid-run writes for
-  # long reactors — only safe when steps are idempotent. Default: 0.
-  config.checkpoint_min_interval = 0
-  # Recovery sweeper. The chain is kicked once by `RubyReactor.start_sweeper!`.
-  config.sweeper_enabled = true   # run recovery by default
-  config.sweeper_interval = 30    # seconds between sweeps = recovery-latency bound
-  config.sweeper_limit = 1000     # max contexts/maps inspected per sweep
+  ## Sidekiq retry count for infrastructure failures only (deserialization,
+  ## Redis, network). Step retries are managed separately. Default: 3.
+  # config.sidekiq_retry_count = 3
 
-  # Logger. Default: Logger.new($stderr).
-  config.logger = Logger.new($stdout)
+  ## === Contention snooze (locks / semaphores / rate limits / ordered locks) ===
 
-  # Async router. Default: RubyReactor::SidekiqAdapter. Swap for a custom
-  # adapter if you don't use Sidekiq — the adapter only needs to respond to
-  # `perform_async(serialized_context, reactor_class_name, **)`.
+  ## When a Sidekiq worker cannot acquire a primitive it re-enqueues itself with
+  ## `lock_snooze_base_delay + rand(0..lock_snooze_jitter)` seconds (rate-limit
+  ## uses a precise `retry_after_seconds` hint from the error; ordered-lock waits
+  ## re-poll at the base delay so a successor catches its blocker finishing fast),
+  ## up to `lock_snooze_max_attempts` times before marking the context :failed.
+  ## Set max_attempts to :infinity to never give up.
+  # config.lock_snooze_base_delay = 5
+  # config.lock_snooze_jitter = 5
+  # config.lock_snooze_max_attempts = 20
+
+  ## === Durability & crash recovery (see "Durability & Recovery" below) ===
+
+  ## Retention TTL (seconds) for stored reactor/map state. Must exceed your
+  ## worst-case snooze/retry window; re-stamped on every write. Default: 86_400.
+  # config.context_ttl = 86_400
+
+  ## TTL (seconds) for the per-context liveness lock. A live worker auto-extends
+  ## it; its absence is the sweeper's "worker died" signal. Must exceed the
+  ## longest a single step can run without yielding the GIL. Default: 60.
+  # config.context_lock_ttl = 60
+
+  ## Minimum seconds between per-step checkpoints within one run. 0 = checkpoint
+  ## after every step (strongest guarantee). Raise to coalesce mid-run writes for
+  ## long reactors — only safe when steps are idempotent. Default: 0.
+  # config.checkpoint_min_interval = 0
+
+  ## Recovery sweeper (the chain is kicked once by `RubyReactor.start_sweeper!`).
+  # config.sweeper_enabled = true    # run recovery by default
+  # config.sweeper_interval = 30     # seconds between sweeps = recovery-latency bound
+  # config.sweeper_limit = 1000      # max contexts/maps inspected per sweep
+
+  ## === Misc ===
+
+  ## Logger. Default: Logger.new($stdout).
+  # config.logger = Logger.new($stdout)
+
+  ## Async router. Default: RubyReactor::SidekiqAdapter. Swap for a custom adapter
+  ## if you don't use Sidekiq — it only needs to respond to
+  ## `perform_async(context_id, reactor_class_name, **)`.
   # config.async_router = MyCustomAdapter
+
+  ## === Examples (no default — set these to use the feature) ===
+
+  ## Named rate limits shared across reactors. Reference with `with_rate_limit(:stripe)`.
+  # config.rate_limits.register(:stripe, limits: { second: 3, minute: 100 })
+
+  ## OpenTelemetry / custom middlewares. Default: [].
+  # config.middlewares = [RubyReactor::OpenTelemetry]
 end
 ```
 
