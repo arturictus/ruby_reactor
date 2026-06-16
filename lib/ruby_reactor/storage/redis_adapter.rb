@@ -19,7 +19,7 @@ module RubyReactor
         # Use standard SET for compatibility (ReJSON not strictly required for full docs).
         # TTL is re-stamped on every write so long-running / snoozed contexts
         # never expire mid-flight (Phase 4).
-        @redis.set(key, serialized_context, ex: RubyReactor.configuration.context_ttl)
+        @redis.set(key, serialized_context, ex: durability_ttl)
       end
 
       def retrieve_context(context_id, reactor_class_name)
@@ -39,7 +39,7 @@ module RubyReactor
       def store_map_result(map_id, index, serialized_result, reactor_class_name, strict_ordering: true)
         key = map_results_key(map_id, reactor_class_name)
         @redis.hset(key, index.to_s, serialized_result.to_json)
-        @redis.expire(key, 86_400)
+        @redis.expire(key, durability_ttl)
       end
 
       def retrieve_map_results(map_id, reactor_class_name, strict_ordering: true)
@@ -60,7 +60,7 @@ module RubyReactor
 
       def set_map_counter(map_id, count, reactor_class_name)
         key = map_counter_key(map_id, reactor_class_name)
-        @redis.set(key, count, ex: 86_400)
+        @redis.set(key, count, ex: durability_ttl)
       end
 
       # rubocop:disable Metrics/ParameterLists
@@ -90,7 +90,7 @@ module RubyReactor
           outer_index: outer_index,
           created_at: Time.now.to_i
         }
-        @redis.set(key, metadata.to_json, ex: 86_400)
+        @redis.set(key, metadata.to_json, ex: durability_ttl)
       end
       # rubocop:enable Metrics/ParameterLists
 
@@ -121,7 +121,7 @@ module RubyReactor
       def increment_map_counter(map_id, reactor_class_name)
         key = map_counter_key(map_id, reactor_class_name)
         @redis.incr(key)
-        @redis.expire(key, 86_400)
+        @redis.expire(key, durability_ttl)
       end
 
       def decrement_map_counter(map_id, reactor_class_name)
@@ -131,7 +131,7 @@ module RubyReactor
 
       def set_last_queued_index(map_id, index, reactor_class_name)
         key = map_last_queued_index_key(map_id, reactor_class_name)
-        @redis.set(key, index, ex: 86_400)
+        @redis.set(key, index, ex: durability_ttl)
       end
 
       def increment_last_queued_index(map_id, reactor_class_name)
@@ -143,7 +143,7 @@ module RubyReactor
         key = correlation_id_key(correlation_id, reactor_class_name)
         # Store mapping correlation_id -> context_id
         # Try to set if not exists
-        success = @redis.set(key, context_id, nx: true, ex: 86_400) # 24h TTL
+        success = @redis.set(key, context_id, nx: true, ex: durability_ttl)
 
         return if success
 
@@ -152,7 +152,7 @@ module RubyReactor
 
         if existing_context_id == context_id
           # Refresh TTL
-          @redis.expire(key, 86_400)
+          @redis.expire(key, durability_ttl)
           return
         end
 
@@ -250,7 +250,7 @@ module RubyReactor
       def store_map_element_context_id(map_id, context_id, reactor_class_name)
         key = map_element_contexts_key(map_id, reactor_class_name)
         @redis.rpush(key, context_id)
-        @redis.expire(key, 86_400)
+        @redis.expire(key, durability_ttl)
       end
 
       def retrieve_map_element_context_ids(map_id, reactor_class_name)
@@ -266,7 +266,7 @@ module RubyReactor
       def store_map_failed_context_id(map_id, context_id, reactor_class_name)
         key = map_failed_context_key(map_id, reactor_class_name)
         # Only store the first failure (nx: true)
-        @redis.set(key, context_id, nx: true, ex: 86_400)
+        @redis.set(key, context_id, nx: true, ex: durability_ttl)
       end
 
       def retrieve_map_failed_context_id(map_id, reactor_class_name)
@@ -276,12 +276,12 @@ module RubyReactor
 
       def set_map_offset(map_id, offset, reactor_class_name)
         key = map_offset_key(map_id, reactor_class_name)
-        @redis.set(key, offset, ex: 86_400)
+        @redis.set(key, offset, ex: durability_ttl)
       end
 
       def set_map_offset_if_not_exists(map_id, offset, reactor_class_name)
         key = map_offset_key(map_id, reactor_class_name)
-        @redis.set(key, offset, nx: true, ex: 86_400)
+        @redis.set(key, offset, nx: true, ex: durability_ttl)
       end
 
       def retrieve_map_offset(map_id, reactor_class_name)
@@ -310,6 +310,15 @@ module RubyReactor
       end
 
       private
+
+      # Single source of truth for the retention window of all durability-bearing
+      # state (context blob, map results/counters/metadata/offsets, correlation
+      # ids). Map state is load-bearing for resume exactly like the context, so it
+      # must share the context's configurable TTL — a shorter map TTL would expire
+      # map results mid-flight and break recovery. Re-stamped on every write.
+      def durability_ttl
+        RubyReactor.configuration.context_ttl
+      end
 
       def fetch_and_filter_reactors(keys)
         return [] if keys.empty?
