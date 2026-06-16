@@ -9,7 +9,7 @@ module RubyReactor
 
     attr_writer :sidekiq_queue, :sidekiq_retry_count, :logger, :async_router,
                 :lock_snooze_base_delay, :lock_snooze_jitter, :lock_snooze_max_attempts,
-                :middlewares, :context_ttl, :context_lock_ttl
+                :middlewares, :context_ttl, :context_lock_ttl, :checkpoint_min_interval
 
     def sidekiq_queue
       @sidekiq_queue ||= :default
@@ -36,6 +36,23 @@ module RubyReactor
     # that runs CONCURRENTLY with the still-live original — a double-run. I/O-bound
     # steps release the GIL and keep the lock fresh, so the default 60s suits
     # typical workloads; raise it if you run long synchronous CPU-bound steps.
+    # Minimum wall-clock seconds between two PER-STEP durable checkpoints within a
+    # single worker run. The save-per-step checkpoint (`on_step_complete`) bounds
+    # crash re-execution to one step, but re-serializes and re-writes the WHOLE
+    # root blob after every Success — O(steps × context_size) writes for a long,
+    # large reactor. This throttle coalesces the mid-run intermediate checkpoints:
+    # a checkpoint is written only if at least this many seconds have elapsed since
+    # the last one. The final terminal/handoff state is ALWAYS persisted (by the
+    # run's ensure-save and the pre-enqueue checkpoint), so throttling only affects
+    # mid-run granularity. Tradeoff: with interval > 0, a crash may re-run every
+    # step completed inside the last interval — safe only when those steps are
+    # idempotent or side-effect-free.
+    #
+    # Default 0 -> checkpoint after EVERY step (strongest guarantee, no coalescing).
+    def checkpoint_min_interval
+      @checkpoint_min_interval ||= 0
+    end
+
     def context_lock_ttl
       @context_lock_ttl ||= 60
     end

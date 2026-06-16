@@ -26,8 +26,61 @@ class CkParentReactor < RubyReactor::Reactor
   end
 end
 
+class CkThreeStepReactor < RubyReactor::Reactor
+  input :n
+  step :a do
+    argument :n, input(:n)
+    run { |args, _| RubyReactor.Success(args[:n] + 1) }
+  end
+  step :b do
+    argument :a, result(:a)
+    run { |args, _| RubyReactor.Success(args[:a] + 1) }
+  end
+  step :c do
+    argument :b, result(:b)
+    run { |args, _| RubyReactor.Success(args[:b] + 1) }
+  end
+end
+
 RSpec.describe "Per-step checkpoints" do
   let(:storage) { RubyReactor.configuration.storage_adapter }
+
+  def count_root_writes
+    writes = 0
+    allow(storage).to receive(:store_context).and_wrap_original do |orig, id, serialized, name|
+      writes += 1 unless JSON.parse(serialized)["parent_context_id"]
+      orig.call(id, serialized, name)
+    end
+    yield
+    writes
+  end
+
+  describe "checkpoint_min_interval throttling" do
+    around do |example|
+      original = RubyReactor.configuration.checkpoint_min_interval
+      example.run
+      RubyReactor.configuration.checkpoint_min_interval = original
+    end
+
+    it "writes a checkpoint after every step when the interval is 0 (default)" do
+      RubyReactor.configuration.checkpoint_min_interval = 0
+      writes = count_root_writes { expect(CkThreeStepReactor.run(n: 1)).to be_success }
+      # running save (1) + one checkpoint per completed step (3) + terminal save (1).
+      expect(writes).to be >= 4
+    end
+
+    it "coalesces mid-run checkpoints when the interval is large" do
+      RubyReactor.configuration.checkpoint_min_interval = 3600
+      throttled = count_root_writes { expect(CkThreeStepReactor.run(n: 1)).to be_success }
+
+      RubyReactor.configuration.checkpoint_min_interval = 0
+      unthrottled = count_root_writes { expect(CkThreeStepReactor.run(n: 1)).to be_success }
+
+      # A large interval suppresses the 2nd/3rd per-step checkpoints, so it must
+      # write strictly fewer times than the per-step default for the same reactor.
+      expect(throttled).to be < unthrottled
+    end
+  end
 
   it "checkpoints the ROOT repeatedly across steps (save-per-step, not one terminal save)" do
     root_id = nil

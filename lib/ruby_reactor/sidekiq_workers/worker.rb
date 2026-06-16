@@ -54,11 +54,12 @@ module RubyReactor
           # Resume execution from the failed step
           executor = Executor.new(context.reactor_class, {}, context)
           executor.resume_execution
-          # Final terminal save (root context). Skipped when the executor
-          # deliberately suppressed persistence (stale-batch redelivery of an
-          # already-terminal context) — re-saving would clobber the stored
-          # terminal record with this run's stale in-memory status.
-          executor.checkpoint! unless executor.skip_context_persist?
+          # No explicit save here: resume_execution's ensure block already persists
+          # the final root state (`save_context unless skip_context_persist?`), and
+          # in the worker the executor's context IS the root, so an extra checkpoint!
+          # would just re-write the identical blob to the identical key. The
+          # skip_context_persist? guard (stale-batch redelivery of an already-terminal
+          # context) is likewise honored there.
 
           # Return the executor (which now has the result stored in it)
           executor
