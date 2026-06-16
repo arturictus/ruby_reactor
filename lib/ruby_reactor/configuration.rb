@@ -9,7 +9,8 @@ module RubyReactor
 
     attr_writer :sidekiq_queue, :sidekiq_retry_count, :logger, :async_router,
                 :lock_snooze_base_delay, :lock_snooze_jitter, :lock_snooze_max_attempts,
-                :middlewares, :context_ttl, :context_lock_ttl, :checkpoint_min_interval
+                :middlewares, :context_ttl, :context_lock_ttl, :checkpoint_min_interval,
+                :sweeper_enabled, :sweeper_interval, :sweeper_limit
 
     def sidekiq_queue
       @sidekiq_queue ||= :default
@@ -51,6 +52,27 @@ module RubyReactor
     # Default 0 -> checkpoint after EVERY step (strongest guarantee, no coalescing).
     def checkpoint_min_interval
       @checkpoint_min_interval ||= 0
+    end
+
+    # Whether the recovery sweepers run. The host kicks the self-rescheduling
+    # chain once (`RubyReactor.start_sweeper!`, e.g. from an initializer); each
+    # tick re-checks this flag, so flipping it to false stops the chain at the
+    # next tick. Default on: durability is inert without a running sweeper, so
+    # recovery must work out of the box.
+    def sweeper_enabled
+      @sweeper_enabled = true if @sweeper_enabled.nil?
+      @sweeper_enabled
+    end
+
+    # Seconds between sweeps. This is the upper bound on recovery latency for a
+    # dead worker — lower it for faster recovery, raise it to cut scan load.
+    def sweeper_interval
+      @sweeper_interval ||= 30
+    end
+
+    # Max contexts/maps inspected per sweep (passed to each sweeper's run_once).
+    def sweeper_limit
+      @sweeper_limit ||= 1000
     end
 
     def context_lock_ttl

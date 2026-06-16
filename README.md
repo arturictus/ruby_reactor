@@ -125,6 +125,23 @@ RubyReactor.configure do |config|
   # `with_rate_limit(:stripe)`. See Locks, Semaphores, Rate Limits & Periods.
   config.rate_limits.register(:stripe, limits: { second: 3, minute: 100 })
 
+  # Durability & crash recovery. See "Durability & Recovery" below.
+  # Retention TTL (seconds) for stored reactor/map state. Must exceed your
+  # worst-case snooze/retry window; re-stamped on every write. Default: 86_400.
+  config.context_ttl = 86_400
+  # TTL (seconds) for the per-context liveness lock. A live worker auto-extends
+  # it; its absence is the sweeper's "worker died" signal. Must exceed the
+  # longest a single step can run without yielding the GIL. Default: 60.
+  config.context_lock_ttl = 60
+  # Minimum seconds between per-step checkpoints within one run. 0 = checkpoint
+  # after every step (strongest guarantee). Raise to coalesce mid-run writes for
+  # long reactors — only safe when steps are idempotent. Default: 0.
+  config.checkpoint_min_interval = 0
+  # Recovery sweeper. The chain is kicked once by `RubyReactor.start_sweeper!`.
+  config.sweeper_enabled = true   # run recovery by default
+  config.sweeper_interval = 30    # seconds between sweeps = recovery-latency bound
+  config.sweeper_limit = 1000     # max contexts/maps inspected per sweep
+
   # Logger. Default: Logger.new($stderr).
   config.logger = Logger.new($stdout)
 
@@ -338,6 +355,57 @@ def create(params)
    user = result.intermediate_results[:create_user]
    
    # do something with user
+end
+```
+
+### Durability & Recovery
+
+Async reactors are durable: state lives in Redis, not in the job payload. Before
+any background job is enqueued the root context is persisted, and after every
+completed step a checkpoint advances the stored blob — so a crash re-runs at most
+one step, never the whole reactor. Each running reactor also holds a short
+**liveness lock** that a live worker auto-extends; its absence is how a dead
+worker is detected.
+
+**Recovery is not automatic until you start the sweeper.** A crashed worker's
+reactor only resumes when the recovery sweeper notices the lapsed liveness lock
+and re-enqueues it. The sweeper is a self-rescheduling chain — **kick it once per
+process boot:**
+
+```ruby
+# config/initializers/ruby_reactor.rb (Rails) — or anywhere that runs at boot
+# in your Sidekiq server process.
+RubyReactor.start_sweeper!
+```
+
+That's all that's required: `start_sweeper!` is idempotent (safe to call on every
+boot — duplicate kicks collapse to one chain), runs both the top-level reactor
+sweeper and the map sweeper every `config.sweeper_interval` seconds, and stops if
+you set `config.sweeper_enabled = false`. The interval is your recovery-latency
+bound.
+
+> **Sidekiq Enterprise `super_fetch`:** the chain is safe under reliable fetch.
+> Each next tick is claimed by a per-time-window lock, so a tick that
+> `super_fetch` recovers after a crash cannot fork the chain — duplicates
+> collapse back to a single successor.
+
+**Prefer your own scheduler?** Set `config.sweeper_enabled = false` (which makes
+`start_sweeper!` a no-op) and drive recovery from cron, a Kubernetes `CronJob`,
+`sidekiq-cron`, `sidekiq-scheduler`, or Rails recurring tasks. Each tick is one
+call:
+
+```ruby
+RubyReactor.sweep_once # => { reactors: <n re-enqueued>, maps: <n recovered> }
+```
+
+For example, a rake task a system cron / CronJob can invoke:
+
+```ruby
+# lib/tasks/ruby_reactor.rake
+namespace :ruby_reactor do
+  task sweep: :environment do
+    RubyReactor.sweep_once
+  end
 end
 ```
 
