@@ -118,7 +118,7 @@ module RubyReactor
         storage.store_context(
           root.context_id,
           ContextSerializer.serialize(root),
-          root.reactor_class&.name || parent_context.reactor_class.name
+          RubyReactor.reactor_storage_name(root.reactor_class)
         )
       end
     end

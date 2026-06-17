@@ -2,6 +2,7 @@
 
 require "zeitwerk"
 require "pathname"
+require "securerandom"
 require_relative "ruby_reactor/registry"
 require_relative "ruby_reactor/utils/code_extractor"
 require_relative "ruby_reactor/dsl/lockable" # Add this

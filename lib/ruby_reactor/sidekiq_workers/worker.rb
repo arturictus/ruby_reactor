@@ -21,6 +21,11 @@ module RubyReactor
       # context from storage by id, then resume. A nil read means the context was
       # swept, expired, or already terminal-and-collected — nothing to resume.
       def perform(context_id, reactor_class_name = nil, snooze_count = 0)
+        # Normalize so a nil/omitted name resolves to the same storage key the
+        # enqueue path wrote (always via reactor_storage_name). Without this a
+        # nil here builds "reactor::context:<id>" and misses the stored
+        # "reactor:AnonymousReactor:context:<id>", silently no-op'ing.
+        reactor_class_name ||= RubyReactor.reactor_storage_name(nil)
         data = RubyReactor.configuration.storage_adapter.retrieve_context(context_id, reactor_class_name)
         return if data.nil?
 
