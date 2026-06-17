@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/arturictus/ruby_reactor/compare/v0.5.2...v0.5.3) (2026-06-17)
+
+
+### Features
+
+* Durability & Recovery ([#39](https://github.com/arturictus/ruby_reactor/issues/39)) ([103e583](https://github.com/arturictus/ruby_reactor/commit/103e5835b413eec2302fa63f3e998d487cfd9eaf))
+
 ## [0.5.2](https://github.com/arturictus/ruby_reactor/compare/v0.5.1...v0.5.2) (2026-06-14)
 
 
