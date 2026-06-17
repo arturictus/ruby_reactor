@@ -9,10 +9,74 @@ module RubyReactor
 
     attr_writer :sidekiq_queue, :sidekiq_retry_count, :logger, :async_router,
                 :lock_snooze_base_delay, :lock_snooze_jitter, :lock_snooze_max_attempts,
-                :middlewares
+                :middlewares, :context_ttl, :context_lock_ttl, :checkpoint_min_interval,
+                :sweeper_enabled, :sweeper_interval, :sweeper_limit
 
     def sidekiq_queue
       @sidekiq_queue ||= :default
+    end
+
+    # Retention TTL (seconds) for a stored reactor context. Storage is
+    # load-bearing for resume, so this must comfortably exceed the worst-case
+    # snooze/retry window. Refreshed on every checkpoint write.
+    def context_ttl
+      @context_ttl ||= 86_400
+    end
+
+    # Minimum wall-clock seconds between two PER-STEP durable checkpoints within a
+    # single worker run. The save-per-step checkpoint (`on_step_complete`) bounds
+    # crash re-execution to one step, but re-serializes and re-writes the WHOLE
+    # root blob after every Success — O(steps × context_size) writes for a long,
+    # large reactor. This throttle coalesces the mid-run intermediate checkpoints:
+    # a checkpoint is written only if at least this many seconds have elapsed since
+    # the last one. The final terminal/handoff state is ALWAYS persisted (by the
+    # run's ensure-save and the pre-enqueue checkpoint), so throttling only affects
+    # mid-run granularity. Tradeoff: with interval > 0, a crash may re-run every
+    # step completed inside the last interval — safe only when those steps are
+    # idempotent or side-effect-free.
+    #
+    # Default 0 -> checkpoint after EVERY step (strongest guarantee, no coalescing).
+    def checkpoint_min_interval
+      @checkpoint_min_interval ||= 0
+    end
+
+    # Whether the recovery sweepers run. The host kicks the self-rescheduling
+    # chain once (`RubyReactor.start_sweeper!`, e.g. from an initializer); each
+    # tick re-checks this flag, so flipping it to false stops the chain at the
+    # next tick. Default on: durability is inert without a running sweeper, so
+    # recovery must work out of the box.
+    def sweeper_enabled
+      @sweeper_enabled = true if @sweeper_enabled.nil?
+      @sweeper_enabled
+    end
+
+    # Seconds between sweeps. This is the upper bound on recovery latency for a
+    # dead worker — lower it for faster recovery, raise it to cut scan load.
+    def sweeper_interval
+      @sweeper_interval ||= 30
+    end
+
+    # Max contexts/maps inspected per sweep (passed to each sweeper's run_once).
+    def sweeper_limit
+      @sweeper_limit ||= 1000
+    end
+
+    # TTL (seconds) for the per-context liveness lock (`async:<id>`). Short by
+    # design — it is a liveness signal, not retention. A live worker auto-extends
+    # it (every ttl/3 s, from a background thread); its absence is the sweeper's
+    # "worker died" signal.
+    #
+    # SAFETY CONSTRAINT: this MUST exceed the longest a single step can run
+    # WITHOUT letting the auto-extend thread make progress. Under MRI the
+    # extender shares the GIL, so a step that holds the GIL continuously for
+    # longer than this TTL (a long CPU-bound pure-Ruby loop, a C extension that
+    # never releases the GIL, or a stop-the-world GC pause) lets the lock lapse.
+    # A lapsed lock looks "dead" to the sweeper, which may re-enqueue a duplicate
+    # that runs CONCURRENTLY with the still-live original — a double-run. I/O-bound
+    # steps release the GIL and keep the lock fresh, so the default 60s suits
+    # typical workloads; raise it if you run long synchronous CPU-bound steps.
+    def context_lock_ttl
+      @context_lock_ttl ||= 60
     end
 
     def sidekiq_retry_count
@@ -36,7 +100,7 @@ module RubyReactor
     end
 
     def logger
-      @logger ||= Logger.new($stderr)
+      @logger ||= Logger.new($stdout)
     end
 
     def async_router

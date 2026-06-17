@@ -11,6 +11,7 @@ module RubyReactor
         @result_handler = managers[:result_handler]
         @compensation_manager = managers[:compensation_manager]
         @middlewares = managers[:middlewares] || context.middlewares || Executor.middlewares_for(reactor_class)
+        @on_step_complete = managers[:on_step_complete]
       end
 
       def execute_all_steps
@@ -45,8 +46,14 @@ module RubyReactor
             # If a step returns InterruptResult, we need to stop execution and return it
             return result if result.is_a?(RubyReactor::InterruptResult)
 
-            # If result is nil, it means async was executed inline (test mode), continue
-            next if result.nil?
+            # Only a continue-Success reaches here (Async/Retry/Skipped/Failure/
+            # Interrupt all returned above; nil is inline-async test mode). It is
+            # the one outcome where the loop proceeds to more steps with no other
+            # save in between — every terminal/handoff result persists via its own
+            # path. Write a durable checkpoint so a crash re-runs at most this one
+            # step. Ordering: side-effect -> record result (inside execute_step) ->
+            # checkpoint here.
+            @on_step_complete&.call if result.is_a?(RubyReactor::Success)
           end
         end
 
@@ -198,18 +205,31 @@ module RubyReactor
 
         # Use root context if available to ensure we serialize the full tree
         context_to_serialize = @context.root_context || @context
-        reactor_class_name = context_to_serialize.reactor_class.name
+        reactor_class_name = RubyReactor.reactor_storage_name(context_to_serialize.reactor_class)
 
         # Inject OTel context before serialization
         @middlewares.on(:before_async_enqueue, context_to_serialize)
 
-        serialized_context = ContextSerializer.serialize(context_to_serialize)
+        # Storage is load-bearing: the job payload is identity-only, so the root
+        # context MUST be persisted BEFORE the job is enqueued (F2). The reactor
+        # class name used for the storage key must match the one handed to the
+        # worker, so compute it once and reuse it for both.
+        checkpoint_root!(context_to_serialize, reactor_class_name)
 
         configuration.async_router.perform_async(
-          serialized_context,
+          context_to_serialize.context_id,
           reactor_class_name,
           intermediate_results: @context.intermediate_results
         )
+      end
+
+      # Persist the root context under its storage key. Mirrors Executor#checkpoint!
+      # but lives here because handle_async_step runs inside the StepExecutor and
+      # must serialize AFTER the before_async_enqueue middleware has injected its
+      # OTel context.
+      def checkpoint_root!(root, reactor_class_name)
+        storage = RubyReactor::Configuration.instance.storage_adapter
+        storage.store_context(root.context_id, ContextSerializer.serialize(root), reactor_class_name)
       end
 
       def handle_interrupt_step(step_config)

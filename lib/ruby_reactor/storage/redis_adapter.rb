@@ -16,8 +16,10 @@ module RubyReactor
 
       def store_context(context_id, serialized_context, reactor_class_name)
         key = context_key(context_id, reactor_class_name)
-        # Use standard SET for compatibility (ReJSON not strictly required for full docs)
-        @redis.set(key, serialized_context, ex: 86_400) # 24h TTL
+        # Use standard SET for compatibility (ReJSON not strictly required for full docs).
+        # TTL is re-stamped on every write so long-running / snoozed contexts
+        # never expire mid-flight (Phase 4).
+        @redis.set(key, serialized_context, ex: durability_ttl)
       end
 
       def retrieve_context(context_id, reactor_class_name)
@@ -28,52 +30,84 @@ module RubyReactor
         JSON.parse(json)
       end
 
+      # Durable map storage is ALWAYS index-keyed (HSET), regardless of
+      # strict_ordering. The index->slot mapping makes completion recoverable
+      # (missing = (0...count) - HKEYS) and re-dispatch idempotent (re-running
+      # index i overwrites slot i, never duplicates). strict_ordering is now only
+      # a read-order convenience, not a storage-layout switch (Phase 5).
+      # rubocop:disable Lint/UnusedMethodArgument
       def store_map_result(map_id, index, serialized_result, reactor_class_name, strict_ordering: true)
         key = map_results_key(map_id, reactor_class_name)
-
-        if strict_ordering
-          # Use Hash for strict ordering by index
-          # HSET key index serialized_result
-          @redis.hset(key, index.to_s, serialized_result.to_json)
-        else
-          # Loose ordering: just push to list
-          @redis.rpush(key, serialized_result.to_json)
-        end
-
-        @redis.expire(key, 86_400)
+        @redis.hset(key, index.to_s, serialized_result.to_json)
+        @redis.expire(key, durability_ttl)
       end
 
       def retrieve_map_results(map_id, reactor_class_name, strict_ordering: true)
+        # rubocop:enable Lint/UnusedMethodArgument
         key = map_results_key(map_id, reactor_class_name)
+        results = @redis.hgetall(key)
+        # Index-keyed for both modes; sort by index so reads are deterministic.
+        results.keys.sort_by(&:to_i).map { |k| JSON.parse(results[k]) }
+      end
 
-        if strict_ordering
-          results = @redis.hgetall(key)
-          # Sort by index (key)
-          results.keys.sort_by(&:to_i).map { |k| JSON.parse(results[k]) }
-        else
-          results = @redis.lrange(key, 0, -1)
-          results.map { |r| JSON.parse(r) }
-        end
+      # Indices that have NO stored result yet: the authoritative, idempotent
+      # signal for what the map sweeper must (re)dispatch.
+      def missing_map_indices(map_id, count, reactor_class_name)
+        key = map_results_key(map_id, reactor_class_name)
+        present = @redis.hkeys(key).map(&:to_i)
+        (0...count).to_a - present
       end
 
       def set_map_counter(map_id, count, reactor_class_name)
         key = map_counter_key(map_id, reactor_class_name)
-        @redis.set(key, count, ex: 86_400)
+        @redis.set(key, count, ex: durability_ttl)
       end
 
-      def initialize_map_operation(map_id, count, parent_reactor_class_name, reactor_class_info:, strict_ordering: true)
+      # rubocop:disable Metrics/ParameterLists
+      def initialize_map_operation(map_id, count, parent_reactor_class_name, reactor_class_info:, strict_ordering: true,
+                                   parent_context_id: nil, step_name: nil, parent_is_map_element: false,
+                                   outer_map_id: nil, outer_index: nil)
         # Ensure counter is set
         set_map_counter(map_id, count, parent_reactor_class_name)
 
-        # Store metadata
+        # Store metadata. parent_context_id/step_name let the map sweeper recover
+        # without re-deriving the map_id (which is brittle to split on ':'). The
+        # nested-map fields (parent_is_map_element + outer_map_id/outer_index)
+        # record which liveness lock the parent actually holds (N1): a nested
+        # map's parent is itself a map element running under a `map_element:` lock,
+        # not an `async:` lock.
         key = "reactor:#{parent_reactor_class_name}:map:#{map_id}:metadata"
         metadata = {
+          map_id: map_id,
           count: count,
           strict_ordering: strict_ordering,
           reactor_class_info: reactor_class_info,
+          parent_context_id: parent_context_id,
+          parent_reactor_class_name: parent_reactor_class_name,
+          step_name: step_name,
+          parent_is_map_element: parent_is_map_element,
+          outer_map_id: outer_map_id,
+          outer_index: outer_index,
           created_at: Time.now.to_i
         }
-        @redis.set(key, metadata.to_json, ex: 86_400)
+        @redis.set(key, metadata.to_json, ex: durability_ttl)
+      end
+      # rubocop:enable Metrics/ParameterLists
+
+      # Enumerate active map operations for the map sweeper (Phase 5d). Returns
+      # the parsed metadata hash for each (includes map_id, count,
+      # parent_context_id, step_name, parent_reactor_class_name, and the nested-map
+      # lock fields). Bounded by `count` to keep a sweep cheap.
+      def scan_maps(count: 1000)
+        results = []
+        @redis.scan_each(match: "reactor:*:map:*:metadata", count: 100) do |key|
+          json = @redis.get(key)
+          next unless json
+
+          results << JSON.parse(json)
+          return results if results.size >= count
+        end
+        results
       end
 
       def retrieve_map_metadata(map_id, reactor_class_name)
@@ -87,7 +121,7 @@ module RubyReactor
       def increment_map_counter(map_id, reactor_class_name)
         key = map_counter_key(map_id, reactor_class_name)
         @redis.incr(key)
-        @redis.expire(key, 86_400)
+        @redis.expire(key, durability_ttl)
       end
 
       def decrement_map_counter(map_id, reactor_class_name)
@@ -97,7 +131,7 @@ module RubyReactor
 
       def set_last_queued_index(map_id, index, reactor_class_name)
         key = map_last_queued_index_key(map_id, reactor_class_name)
-        @redis.set(key, index, ex: 86_400)
+        @redis.set(key, index, ex: durability_ttl)
       end
 
       def increment_last_queued_index(map_id, reactor_class_name)
@@ -109,7 +143,7 @@ module RubyReactor
         key = correlation_id_key(correlation_id, reactor_class_name)
         # Store mapping correlation_id -> context_id
         # Try to set if not exists
-        success = @redis.set(key, context_id, nx: true, ex: 86_400) # 24h TTL
+        success = @redis.set(key, context_id, nx: true, ex: durability_ttl)
 
         return if success
 
@@ -118,7 +152,7 @@ module RubyReactor
 
         if existing_context_id == context_id
           # Refresh TTL
-          @redis.expire(key, 86_400)
+          @redis.expire(key, durability_ttl)
           return
         end
 
@@ -216,7 +250,7 @@ module RubyReactor
       def store_map_element_context_id(map_id, context_id, reactor_class_name)
         key = map_element_contexts_key(map_id, reactor_class_name)
         @redis.rpush(key, context_id)
-        @redis.expire(key, 86_400)
+        @redis.expire(key, durability_ttl)
       end
 
       def retrieve_map_element_context_ids(map_id, reactor_class_name)
@@ -232,7 +266,7 @@ module RubyReactor
       def store_map_failed_context_id(map_id, context_id, reactor_class_name)
         key = map_failed_context_key(map_id, reactor_class_name)
         # Only store the first failure (nx: true)
-        @redis.set(key, context_id, nx: true, ex: 86_400)
+        @redis.set(key, context_id, nx: true, ex: durability_ttl)
       end
 
       def retrieve_map_failed_context_id(map_id, reactor_class_name)
@@ -242,12 +276,12 @@ module RubyReactor
 
       def set_map_offset(map_id, offset, reactor_class_name)
         key = map_offset_key(map_id, reactor_class_name)
-        @redis.set(key, offset, ex: 86_400)
+        @redis.set(key, offset, ex: durability_ttl)
       end
 
       def set_map_offset_if_not_exists(map_id, offset, reactor_class_name)
         key = map_offset_key(map_id, reactor_class_name)
-        @redis.set(key, offset, nx: true, ex: 86_400)
+        @redis.set(key, offset, nx: true, ex: durability_ttl)
       end
 
       def retrieve_map_offset(map_id, reactor_class_name)
@@ -260,42 +294,31 @@ module RubyReactor
         @redis.incrby(key, increment)
       end
 
+      # rubocop:disable Lint/UnusedMethodArgument
       def retrieve_map_results_batch(map_id, reactor_class_name, offset:, limit:, strict_ordering: true)
+        # Always index-keyed now (Phase 5): HMGET the contiguous index window.
         key = map_results_key(map_id, reactor_class_name)
-
-        if strict_ordering
-          # For Hash based results (indexed), we can use HMGET if we know the keys.
-          # Since we use 0-based index keys, we can generate the keys for the batch.
-          fields = (offset...(offset + limit)).map(&:to_s)
-          results = @redis.hmget(key, *fields)
-
-          # HMGET returns nil for missing fields, compact them?
-          # Or should we respect the holes?
-          # Map results are usually dense.
-          results.compact.map { |r| JSON.parse(r) }
-        else
-          # For List based results
-          # LRANGE uses inclusive ending index
-          end_index = offset + limit - 1
-          results = @redis.lrange(key, offset, end_index)
-          results.map { |r| JSON.parse(r) }
-        end
+        fields = (offset...(offset + limit)).map(&:to_s)
+        results = @redis.hmget(key, *fields)
+        results.compact.map { |r| JSON.parse(r) }
       end
+      # rubocop:enable Lint/UnusedMethodArgument
 
       def count_map_results(map_id, reactor_class_name)
         key = map_results_key(map_id, reactor_class_name)
-        type = @redis.type(key)
-
-        if type == "hash"
-          @redis.hlen(key)
-        elsif type == "list"
-          @redis.llen(key)
-        else
-          0
-        end
+        @redis.hlen(key)
       end
 
       private
+
+      # Single source of truth for the retention window of all durability-bearing
+      # state (context blob, map results/counters/metadata/offsets, correlation
+      # ids). Map state is load-bearing for resume exactly like the context, so it
+      # must share the context's configurable TTL — a shorter map TTL would expire
+      # map results mid-flight and break recovery. Re-stamped on every write.
+      def durability_ttl
+        RubyReactor.configuration.context_ttl
+      end
 
       def fetch_and_filter_reactors(keys)
         return [] if keys.empty?

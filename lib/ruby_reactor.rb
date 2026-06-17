@@ -2,6 +2,7 @@
 
 require "zeitwerk"
 require "pathname"
+require "securerandom"
 require_relative "ruby_reactor/registry"
 require_relative "ruby_reactor/utils/code_extractor"
 require_relative "ruby_reactor/dsl/lockable" # Add this
@@ -328,6 +329,47 @@ module RubyReactor
 
   def self.configuration
     Configuration.instance
+  end
+
+  # The name under which a reactor class's durable state is keyed in storage
+  # (`reactor:<name>:context:<id>`, map metadata, etc.). MUST be stable across
+  # processes: the enqueuing process writes the blob under this name and a
+  # *different* worker process reads it back by the same name. So an anonymous
+  # class falls back to a fixed constant, NOT `object_id` — object_id is
+  # process-local and would make the worker's read key miss the writer's key.
+  # The context_id in the key still disambiguates distinct anonymous reactors.
+  # (A truly anonymous class can't be reconstituted by name in another process,
+  # so cross-process resume of one is inherently unsupported; this only keeps
+  # the keys self-consistent within a process — e.g. inline tests.)
+  def self.reactor_storage_name(reactor_class)
+    return "AnonymousReactor" if reactor_class.nil?
+
+    reactor_class.name || "AnonymousReactor"
+  end
+
+  # Kick the self-rescheduling recovery sweeper chain. Call once per cluster —
+  # typically from an initializer (`RubyReactor.start_sweeper!`). Idempotent:
+  # calling it on every process boot is safe because the worker claims each tick
+  # by time-window, so duplicate kicks collapse to a single chain. No-op when
+  # `config.sweeper_enabled` is false. Returns the scheduled job id, or nil when
+  # disabled or when this window's tick was already claimed by another caller.
+  def self.start_sweeper!
+    return unless configuration.sweeper_enabled
+
+    SidekiqWorkers::SweeperWorker.schedule_next
+  end
+
+  # Run both recovery sweepers exactly once and return their counts. The
+  # synchronous escape hatch for hosts that schedule recovery with their own
+  # cron / k8s CronJob instead of the in-cluster chain (set
+  # `config.sweeper_enabled = false` and call this from `rake ruby_reactor:sweep`
+  # or a binstub).
+  def self.sweep_once(limit: nil)
+    limit ||= configuration.sweeper_limit
+    {
+      reactors: Sweeper.run_once(limit: limit),
+      maps: Map::Sweeper.run_once(limit: limit)
+    }
   end
 
   def self.root

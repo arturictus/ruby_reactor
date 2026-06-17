@@ -25,8 +25,10 @@ RSpec.describe "OrderedLock Integration" do
     it "persists the nonce on the context" do
       OrderedReactor.run(account_id: 1, thing: 42)
       jobs = Sidekiq::Queues[RubyReactor.configuration.sidekiq_queue.to_s]
-      payload = jobs.first["args"].first
-      data = JSON.parse(payload)
+      # Identity-only payload: args are [context_id, reactor_class_name]; the
+      # persisted context lives in storage.
+      context_id, reactor_name = jobs.first["args"]
+      data = adapter.retrieve_context(context_id, reactor_name)
       ol = data["private_data"]["ordered_lock"]
       expect(ol["key"]).to eq("orders:1")
       expect(ol["nonce"]).to eq(1)
@@ -108,7 +110,7 @@ RSpec.describe "OrderedLock Integration" do
       # batch (counters GC'd) -> :drained_go, but the stored context already
       # reached :completed, so this must be skipped — NOT re-run — and must not
       # clobber the terminal record.
-      context_id = JSON.parse(job["args"].first)["context_id"]
+      context_id = job["args"].first # identity-only payload: args.first IS the id
       RubyReactor::SidekiqWorkers::Worker.new.perform(*job["args"])
 
       expect(OrderedLockCounters.runs).to eq([:only]) # step did not run again
@@ -305,7 +307,7 @@ RSpec.describe "OrderedLock Integration" do
 
       OrderedReactor.run(account_id: 88, thing: :a)
       duplicate = RubyReactor::SidekiqWorkers::Worker.jobs.last
-      ctx_id = JSON.parse(duplicate["args"].first)["context_id"]
+      ctx_id = duplicate["args"].first # identity-only payload: args.first IS the id
       RubyReactor::SidekiqWorkers::Worker.drain
       expect(adapter.retrieve_context(ctx_id, "OrderedReactor")["status"]).to eq("completed")
 

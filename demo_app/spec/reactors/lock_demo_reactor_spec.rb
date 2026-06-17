@@ -83,9 +83,14 @@ RSpec.describe LockDemoReactor, type: :reactor do
       context.intermediate_results[:verify_ledger] = { verified: true, order_id: "order_42" }
       context.current_step = :process_refund
       serialized_context = RubyReactor::ContextSerializer.serialize(context)
+      # The worker now takes an identity-only payload and rehydrates the live
+      # context from storage by id, so the context must be persisted first.
+      RubyReactor.configuration.storage_adapter.store_context(
+        context.context_id, serialized_context, described_class.name
+      )
 
       worker = RubyReactor::SidekiqWorkers::Worker.new
-      worker.perform(serialized_context, described_class.name)
+      worker.perform(context.context_id, described_class.name)
 
       expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
         .with(5.0, instance_of(String), described_class.name, 1)

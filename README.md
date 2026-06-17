@@ -36,6 +36,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 | Locks / sem / rate / per | Yes          | No              | No          | Manual              |
 | Built-in web dashboard   | Yes          | No              | No          | No                  |
 | Async with Sidekiq       | Yes          | No              | Limited     | Yes                 |
+| Durable crash recovery   | Yes          | No              | No          | Manual              |
 
 ## Real-World Use Cases
 
@@ -44,6 +45,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 - **Subscription Billing**: Coordinate Stripe charges, invoice email generation, and internal entitlement updates. Use interrupts to pause the workflow when 3rd-party APIs are required to continue the workflow or when specific customer approval is needed.
 
 ## Table of Contents
+
 - [Features](#features)
 - [Comparison](#comparison)
 - [Real-World Use Cases](#real-world-use-cases)
@@ -57,6 +59,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
   - [Async Execution](#async-execution)
     - [Full Reactor Async](#full-reactor-async)
     - [Step-Level Async](#step-level-async)
+  - [Durability & Recovery](#durability--recovery)
   - [Interrupts (Pause & Resume)](#interrupts-pause--resume)
   - [Locks, Semaphores & Ordered Locks](#locks-semaphores--ordered-locks)
   - [Map & Parallel Execution](#map--parallel-execution)
@@ -90,52 +93,95 @@ Or install it yourself as:
 
 ## Configuration
 
-Configure RubyReactor with your Sidekiq and Redis settings:
+Every setting is **optional** — RubyReactor ships with the defaults shown. Drop
+this into an initializer (e.g. `config/initializers/ruby_reactor.rb`); pasted as-is
+it changes nothing, so it doubles as a reference of every knob.
 
-Every setting below is **optional** — RubyReactor ships with the defaults shown. Override only what you need.
+> **Reading the block:** lines starting with `##` are documentation. Lines starting
+> with a single `#` (a `config.…` call) are real settings commented at their
+> default — uncomment one to enable it.
 
 ```ruby
 RubyReactor.configure do |config|
-  # Storage adapter. Default: :redis (the only adapter shipped today).
-  config.storage.adapter = :redis
-  # Redis URL. Default: "redis://localhost:6379/0".
+  ## === Storage (Redis) ===
+
+  ## Storage adapter. Default: :redis (the only adapter shipped today).
+  # config.storage.adapter = :redis
+
+  ## Redis URL. Default: "redis://localhost:6379/0".
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
-  # Extra options passed to Redis.new. Default: {}.
-  config.storage.redis_options = { timeout: 1 }
 
-  # Sidekiq queue used by RubyReactor's async worker. Default: :default.
-  config.sidekiq_queue = :default
-  # Sidekiq retry count for infrastructure failures only (deserialization,
-  # Redis, network). Step retries are managed separately. Default: 3.
-  config.sidekiq_retry_count = 3
+  ## Extra options passed to Redis.new. Default: {}.
+  # config.storage.redis_options = { timeout: 1 }
 
-  # Lock/semaphore/rate-limit/ordered-lock contention snooze behavior for
-  # async reactors. When a Sidekiq worker cannot acquire a primitive it
-  # re-enqueues itself with `lock_snooze_base_delay + rand(0..lock_snooze_jitter)`
-  # seconds (rate-limit uses a precise `retry_after_seconds` hint from the error;
-  # ordered-lock waits re-poll at the base delay so a successor catches its
-  # blocker finishing fast), up to `lock_snooze_max_attempts` times before
-  # marking the context :failed. Defaults: 5 / 5 / 20. Set max_attempts to
-  # :infinity to never give up.
-  config.lock_snooze_base_delay = 5
-  config.lock_snooze_jitter = 5
-  config.lock_snooze_max_attempts = 20
+  ## === Sidekiq ===
 
-  # Named rate limits shared across reactors. Reference them with
-  # `with_rate_limit(:stripe)`. See Locks, Semaphores, Rate Limits & Periods.
-  config.rate_limits.register(:stripe, limits: { second: 3, minute: 100 })
+  ## Sidekiq queue used by RubyReactor's async worker. Default: :default.
+  # config.sidekiq_queue = :default
 
-  # Logger. Default: Logger.new($stderr).
-  config.logger = Logger.new($stdout)
+  ## Sidekiq retry count for infrastructure failures only (deserialization,
+  ## Redis, network). Step retries are managed separately. Default: 3.
+  # config.sidekiq_retry_count = 3
 
-  # Async router. Default: RubyReactor::SidekiqAdapter. Swap for a custom
-  # adapter if you don't use Sidekiq — the adapter only needs to respond to
-  # `perform_async(serialized_context, reactor_class_name, **)`.
+  ## === Contention snooze (locks / semaphores / rate limits / ordered locks) ===
+
+  ## When a Sidekiq worker cannot acquire a primitive it re-enqueues itself with
+  ## `lock_snooze_base_delay + rand(0..lock_snooze_jitter)` seconds (rate-limit
+  ## uses a precise `retry_after_seconds` hint from the error; ordered-lock waits
+  ## re-poll at the base delay so a successor catches its blocker finishing fast),
+  ## up to `lock_snooze_max_attempts` times before marking the context :failed.
+  ## Set max_attempts to :infinity to never give up.
+  # config.lock_snooze_base_delay = 5
+  # config.lock_snooze_jitter = 5
+  # config.lock_snooze_max_attempts = 20
+
+  ## === Durability & crash recovery (see "Durability & Recovery" below) ===
+
+  ## Retention TTL (seconds) for stored reactor/map state. Must exceed your
+  ## worst-case snooze/retry window; re-stamped on every write. Default: 86_400.
+  # config.context_ttl = 86_400
+
+  ## TTL (seconds) for the per-context liveness lock. A live worker auto-extends
+  ## it; its absence is the sweeper's "worker died" signal. Must exceed the
+  ## longest a single step can run without yielding the GIL. Default: 60.
+  # config.context_lock_ttl = 60
+
+  ## Minimum seconds between per-step checkpoints within one run. 0 = checkpoint
+  ## after every step (strongest guarantee). Raise to coalesce mid-run writes for
+  ## long reactors — only safe when steps are idempotent. Default: 0.
+  # config.checkpoint_min_interval = 0
+
+  ## Recovery sweeper (the chain is kicked once by `RubyReactor.start_sweeper!`).
+  # config.sweeper_enabled = true    # run recovery by default
+  # config.sweeper_interval = 30     # seconds between sweeps = recovery-latency bound
+  # config.sweeper_limit = 1000      # max contexts/maps inspected per sweep
+
+  ## === Misc ===
+
+  ## Logger. Default: Logger.new($stdout).
+  # config.logger = Logger.new($stdout)
+
+  ## Async router. Default: RubyReactor::SidekiqAdapter. Swap for a custom adapter
+  ## if you don't use Sidekiq — it only needs to respond to
+  ## `perform_async(context_id, reactor_class_name, **)`.
   # config.async_router = MyCustomAdapter
+
+  ## === Examples (no default — set these to use the feature) ===
+
+  ## Named rate limits shared across reactors. Reference with `with_rate_limit(:stripe)`.
+  # config.rate_limits.register(:stripe, limits: { second: 3, minute: 100 })
+
+  ## OpenTelemetry / custom middlewares. Default: [].
+  # config.middlewares = [RubyReactor::OpenTelemetry]
 end
 ```
 
 You can also leave out the `configure` block entirely — defaults work for local development against a Redis on `localhost:6379`.
+
+> **Crash recovery needs a kick.** The `sweeper_*` settings above only configure
+> the recovery sweeper — they do not start it. Call `RubyReactor.start_sweeper!`
+> once at boot (ideally from a Sidekiq `on(:startup)` hook) or no crashed reactor
+> will ever resume. See [Durability & Recovery](#durability--recovery).
 
 
 ## Quick Start
@@ -338,6 +384,73 @@ def create(params)
    user = result.intermediate_results[:create_user]
    
    # do something with user
+end
+```
+
+### Durability & Recovery
+
+Async reactors are durable: state lives in Redis, not in the job payload. Before
+any background job is enqueued the root context is persisted, and after every
+completed step a checkpoint advances the stored blob — so a crash re-runs at most
+one step, never the whole reactor. Each running reactor also holds a short
+**liveness lock** that a live worker auto-extends; its absence is how a dead
+worker is detected.
+
+**Recovery is not automatic until you start the sweeper.** A crashed worker's
+reactor only resumes when the recovery sweeper notices the lapsed liveness lock
+and re-enqueues it. The sweeper is a self-rescheduling chain — **kick it once per
+process boot:**
+
+The recommended spot is a Sidekiq server startup hook, so only the worker
+process runs recovery (not your web/console/client processes):
+
+```ruby
+# config/initializers/sidekiq.rb
+Sidekiq.configure_server do |config|
+  config.on(:startup) { RubyReactor.start_sweeper! }
+end
+```
+
+Anywhere that runs once at boot works too — e.g. a Rails initializer:
+
+```ruby
+# config/initializers/ruby_reactor.rb
+RubyReactor.start_sweeper!
+```
+
+That's all that's required: `start_sweeper!` is idempotent (safe to call on every
+boot — duplicate kicks collapse to one chain), runs both the top-level reactor
+sweeper and the map sweeper every `config.sweeper_interval` seconds, and stops if
+you set `config.sweeper_enabled = false`. The interval is your recovery-latency
+bound.
+
+> **Sidekiq Enterprise `super_fetch` compatibility:** the chain is safe under
+> reliable fetch. `super_fetch` re-runs a job whose worker died mid-execution, so
+> a tick that crashes *after* enqueuing its successor but *before* acking would,
+> with naive single-flight, be recovered alongside that successor and fork the
+> chain (doubling every interval). RubyReactor avoids this: it never relies on
+> "one job in the chain" — each next tick is claimed by a per-time-window lock, so
+> a `super_fetch`-recovered tick computes the same window, loses the claim, and
+> collapses back to a single successor. The startup hook above is likewise
+> idempotent across multiple `super_fetch` server processes.
+
+**Prefer your own scheduler?** Set `config.sweeper_enabled = false` (which makes
+`start_sweeper!` a no-op) and drive recovery from cron, a Kubernetes `CronJob`,
+`sidekiq-cron`, `sidekiq-scheduler`, or Rails recurring tasks. Each tick is one
+call:
+
+```ruby
+RubyReactor.sweep_once # => { reactors: <n re-enqueued>, maps: <n recovered> }
+```
+
+For example, a rake task a system cron / CronJob can invoke:
+
+```ruby
+# lib/tasks/ruby_reactor.rake
+namespace :ruby_reactor do
+  task sweep: :environment do
+    RubyReactor.sweep_once
+  end
 end
 ```
 

@@ -180,7 +180,7 @@ module RubyReactor
       end
 
       def stored_context_status
-        reactor_class_name = @reactor_class.name || "AnonymousReactor-#{@reactor_class.object_id}"
+        reactor_class_name = RubyReactor.reactor_storage_name(@reactor_class)
         data = RubyReactor.configuration.storage_adapter.retrieve_context(@context.context_id, reactor_class_name)
         return nil unless data
 

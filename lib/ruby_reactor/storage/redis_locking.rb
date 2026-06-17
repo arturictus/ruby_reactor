@@ -210,6 +210,14 @@ module RubyReactor
       # rate-limit/period state without leaking Redis-specific calls into
       # test code.
 
+      # Liveness check for a logical lock by its BARE key (e.g. "async:<id>").
+      # Prepends the "lock:" prefix that Lock applies. True while a worker holds
+      # (and auto-extends) the lock; false once it expires — the sweeper's
+      # "worker died" signal.
+      def lock_held?(key)
+        @redis.exists?("lock:#{key}")
+      end
+
       # Returns { owner:, count: } for a held lock, or nil if free.
       # `prefixed_key` is the full key (e.g. "lock:order:42").
       def lock_info(prefixed_key)

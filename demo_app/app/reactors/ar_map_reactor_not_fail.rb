@@ -64,4 +64,6 @@ class ArMapReactorNotFail < RubyReactor::Reactor
       Success()
     end
   end
+
+  returns :prepare_products
 end

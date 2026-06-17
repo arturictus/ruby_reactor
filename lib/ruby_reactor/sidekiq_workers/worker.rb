@@ -17,15 +17,26 @@ module RubyReactor
         # Handle infrastructure failures (network, Redis, etc.)
       end
 
-      def perform(serialized_context, reactor_class_name = nil, snooze_count = 0)
+      # Identity-only payload: storage is the source of truth. Rehydrate the live
+      # context from storage by id, then resume. A nil read means the context was
+      # swept, expired, or already terminal-and-collected — nothing to resume.
+      def perform(context_id, reactor_class_name = nil, snooze_count = 0)
+        # Normalize so a nil/omitted name resolves to the same storage key the
+        # enqueue path wrote (always via reactor_storage_name). Without this a
+        # nil here builds "reactor::context:<id>" and misses the stored
+        # "reactor:AnonymousReactor:context:<id>", silently no-op'ing.
+        reactor_class_name ||= RubyReactor.reactor_storage_name(nil)
+        data = RubyReactor.configuration.storage_adapter.retrieve_context(context_id, reactor_class_name)
+        return if data.nil?
+
         begin
-          context = ContextSerializer.deserialize(serialized_context)
+          context = ContextSerializer.deserialize_hash(data)
         rescue RubyReactor::Error::DeserializationError,
                RubyReactor::Error::SchemaVersionError => e
-          # Permanent failures — retrying the same blob will keep failing.
-          # Mark the context as failed (best-effort) and return so Sidekiq
-          # does not burn its retry budget.
-          handle_deserialization_failure(serialized_context, reactor_class_name, e)
+          # Permanent failures — re-reading the same stored blob will keep
+          # failing. Mark the context as failed (best-effort) and return so
+          # Sidekiq does not burn its retry budget.
+          handle_deserialization_failure(context_id, reactor_class_name, e)
           return
         end
 
@@ -48,11 +59,12 @@ module RubyReactor
           # Resume execution from the failed step
           executor = Executor.new(context.reactor_class, {}, context)
           executor.resume_execution
-          # Skip the post-run save when the executor deliberately suppressed
-          # persistence (stale-batch redelivery of an already-terminal context)
-          # — re-saving here would clobber the stored terminal record with this
-          # run's stale in-memory status.
-          executor.save_context unless executor.skip_context_persist?
+          # No explicit save here: resume_execution's ensure block already persists
+          # the final root state (`save_context unless skip_context_persist?`), and
+          # in the worker the executor's context IS the root, so an extra checkpoint!
+          # would just re-write the identical blob to the identical key. The
+          # skip_context_persist? guard (stale-batch redelivery of an already-terminal
+          # context) is likewise honored there.
 
           # Return the executor (which now has the result stored in it)
           executor
@@ -66,7 +78,7 @@ module RubyReactor
           # retry path so this doesn't burn the job's retry budget or appear
           # as an error in dashboards. After the configured cap is reached we
           # escalate by marking the reactor as failed.
-          handle_snooze(serialized_context, reactor_class_name, context, snooze_count, e)
+          handle_snooze(context_id, reactor_class_name, context, snooze_count, e)
         rescue RubyReactor::RateLimitRegistry::UnknownLimitError => e
           # Permanent configuration error — snoozing or retrying the same job
           # will keep failing. Mark the context failed immediately.
@@ -76,7 +88,7 @@ module RubyReactor
 
       private
 
-      def handle_snooze(serialized_context, reactor_class_name, context, snooze_count, error)
+      def handle_snooze(context_id, reactor_class_name, context, snooze_count, error)
         config = RubyReactor.configuration
         max = config.lock_snooze_max_attempts
 
@@ -86,7 +98,12 @@ module RubyReactor
         # prematurely or strand the nonce in `assigned_at` until poison_pill
         # eventually advances past it. Snooze until the gate passes (or poison
         # auto-advance moves the cursor past us).
-        capped = !error.is_a?(RubyReactor::OrderedLock::WaitError)
+        # The per-context liveness lock (`async:<id>`) is also uncapped: a
+        # duplicate of the *same* execution may wait arbitrarily long for the
+        # live original to finish (e.g. a sweeper re-enqueue racing a slow but
+        # alive worker). Capping it would fail a legitimately-waiting duplicate.
+        capped = !(error.is_a?(RubyReactor::OrderedLock::WaitError) ||
+                   error.is_a?(RubyReactor::Lock::ContextLockContention))
 
         if capped && max != :infinity && snooze_count >= max
           escalate_snooze(context, snooze_count, error)
@@ -94,7 +111,9 @@ module RubyReactor
         end
 
         delay = compute_snooze_delay(config, error)
-        self.class.perform_in(delay, serialized_context, reactor_class_name, snooze_count + 1)
+        # Re-enqueue by id: the context is already persisted in storage, so the
+        # rescheduled job rehydrates fresh state (no stale blob).
+        self.class.perform_in(delay, context_id, reactor_class_name, snooze_count + 1)
       end
 
       # Use the error's `retry_after_seconds` hint when available
@@ -141,7 +160,7 @@ module RubyReactor
         }
 
         serialized = ContextSerializer.serialize(context)
-        reactor_class_name = context.reactor_class&.name || "AnonymousReactor"
+        reactor_class_name = RubyReactor.reactor_storage_name(context.reactor_class)
         RubyReactor.configuration.storage_adapter.store_context(
           context.context_id,
           serialized,
@@ -162,39 +181,28 @@ module RubyReactor
         RubyReactor.configuration.logger.error("Job details: #{msg.inspect}")
       end
 
-      def handle_deserialization_failure(serialized_context, reactor_class_name, error)
-        metadata = extract_failure_metadata(serialized_context)
-        context_id = metadata[:context_id]
-        resolved_reactor_class_name = reactor_class_name || metadata[:reactor_class_name]
-
+      # The id-only payload already carries context_id and reactor_class_name, so
+      # there is no blob to parse for metadata — just mark the stored context
+      # failed (best-effort) so the job stops retrying a permanently-broken blob.
+      def handle_deserialization_failure(context_id, reactor_class_name, error)
         RubyReactor.configuration.logger.error(
           "RubyReactor deserialization failure for context " \
           "#{context_id || "unknown"}: #{error.class.name}: #{error.message}"
         )
 
-        return unless context_id && resolved_reactor_class_name
+        return unless context_id && reactor_class_name
 
-        payload = build_failed_context_payload(context_id, resolved_reactor_class_name, error)
+        payload = build_failed_context_payload(context_id, reactor_class_name, error)
         RubyReactor.configuration.storage_adapter.store_context(
           context_id,
           payload,
-          resolved_reactor_class_name
+          reactor_class_name
         )
       rescue StandardError => e
         # Don't let a persistence failure mask the original deserialization error.
         RubyReactor.configuration.logger.error(
           "RubyReactor failed to persist deserialization failure: #{e.class.name}: #{e.message}"
         )
-      end
-
-      def extract_failure_metadata(serialized_context)
-        data = JSON.parse(serialized_context)
-        {
-          context_id: data["context_id"],
-          reactor_class_name: data["reactor_class"]
-        }
-      rescue StandardError
-        {}
       end
 
       def build_failed_context_payload(context_id, reactor_class_name, error)

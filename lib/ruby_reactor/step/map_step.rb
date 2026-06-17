@@ -179,8 +179,23 @@ module RubyReactor
           storage = RubyReactor.configuration.storage_adapter
           storage.initialize_map_operation(
             map_id, arguments[:source].size, context.reactor_class.name,
-            strict_ordering: arguments[:strict_ordering], reactor_class_info: reactor_class_info
+            strict_ordering: arguments[:strict_ordering], reactor_class_info: reactor_class_info,
+            **map_recovery_metadata(context, arguments[:step_name] || context.current_step)
           )
+        end
+
+        # Recovery metadata for the map sweeper. When this map runs inside a map
+        # element (context.map_metadata present), it is a NESTED map: its parent
+        # holds the element's `map_element:` lock, not an `async:` lock (N1).
+        def map_recovery_metadata(context, step_name)
+          outer = context.map_metadata
+          {
+            parent_context_id: context.context_id,
+            step_name: step_name.to_s,
+            parent_is_map_element: !outer.nil?,
+            outer_map_id: outer && (outer[:map_id] || outer["map_id"]),
+            outer_index: outer && (outer[:index] || outer["index"])
+          }
         end
 
         def dispatch_async_map(map_id, arguments, context, _reactor_class_info, step_name)
@@ -231,7 +246,8 @@ module RubyReactor
           storage = RubyReactor.configuration.storage_adapter
           storage.initialize_map_operation(
             map_id, arguments[:source].size, context.reactor_class.name,
-            strict_ordering: arguments[:strict_ordering], reactor_class_info: reactor_class_info
+            strict_ordering: arguments[:strict_ordering], reactor_class_info: reactor_class_info,
+            **map_recovery_metadata(context, step_name)
           )
 
           limit ||= arguments[:source].size

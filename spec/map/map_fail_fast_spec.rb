@@ -364,7 +364,7 @@ RSpec.describe "Map fail_fast Option" do
       # Trigger execution via async router
       # This mimics Reactor#run for async reactors (but we do it manually to ensure context persistence
       # and ID availability)
-      RubyReactor.configuration.async_router.perform_async(serialized_ctx)
+      RubyReactor.configuration.async_router.perform_async(context.context_id, AsyncFailFastReactor.name)
 
       # Drain Sidekiq jobs
       # We need to drain multiple times/types because:
