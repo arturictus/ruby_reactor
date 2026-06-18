@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.4](https://github.com/arturictus/ruby_reactor/compare/v0.5.3...v0.5.4) (2026-06-18)
+
+
+### documentation
+
+* emphasize class-based steps as preferred way  ([#38](https://github.com/arturictus/ruby_reactor/issues/38)) ([0ee6234](https://github.com/arturictus/ruby_reactor/commit/0ee62346fd0c49d97c57cef780a6a7135d4253cd))
+
 ## [0.5.3](https://github.com/arturictus/ruby_reactor/compare/v0.5.2...v0.5.3) (2026-06-17)
 
 
