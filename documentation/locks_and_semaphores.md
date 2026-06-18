@@ -395,7 +395,7 @@ With the under-lock re-check, `with_lock` + `with_period` gives **strict at-most
 `RubyReactor::Skipped` is a Success-subclass result returned in two situations:
 
 1. **Implicit period gate**, as shown above — a `with_period` reactor reruns in an already-claimed bucket.
-2. **Explicit step return** — a step's `run` block returns `RubyReactor.Skipped(...)` to halt the reactor cleanly without compensation. See [Skipping mid-reactor from a step](#skipping-mid-reactor-from-a-step) below.
+2. **Explicit step return** — a step's `run` block returns `Skipped(...)` to halt the reactor cleanly without compensation. `Skipped` is a bare helper available in both class steps and inline blocks, exactly like `Success`/`Failure` (the fully-qualified `RubyReactor.Skipped(...)` works too). See [Skipping mid-reactor from a step](#skipping-mid-reactor-from-a-step) below.
 
 Both shapes share the same API:
 
@@ -428,11 +428,11 @@ class SyncSubscriberReactor < RubyReactor::Reactor
 
   step :ensure_active do
     argument :user, result(:fetch_user)
-    run do |args|
+    run do |args, _ctx|
       # Nothing to do — bail out, but keep the user-fetch we already did.
-      next RubyReactor.Skipped(reason: "user_opted_out") if args[:user].opted_out?
+      next Skipped(reason: "user_opted_out") if args[:user].opted_out?
 
-      RubyReactor.Success(args[:user])
+      Success(args[:user])
     end
   end
 

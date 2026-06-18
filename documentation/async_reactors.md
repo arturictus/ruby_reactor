@@ -18,12 +18,18 @@ When a reactor is marked as `async true`, the entire execution happens in a Side
 ### Configuration
 
 ```ruby
+class ValidateOrderStep
+  include RubyReactor::Step
+
+  def self.run(_arguments, _context)
+    validate_order_logic
+  end
+end
+
 class OrderProcessingReactor < RubyReactor::Reactor
   async true  # Enable full reactor async
 
-  step :validate_order do
-    run { validate_order_logic }
-  end
+  step :validate_order, ValidateOrderStep
 
   step :process_payment do
     run { process_payment_logic }
@@ -83,10 +89,17 @@ Individual steps can be marked as `async: true`. Execution runs synchronously un
 ### Configuration
 
 ```ruby
+class ValidateOrderStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    validate_order_logic(arguments)
+  end
+end
+
 class OrderProcessingReactor < RubyReactor::Reactor
-  step :validate_order do
-    # Runs synchronously
-    run { |args, _ctx| validate_order_logic(args) }
+  step :validate_order, ValidateOrderStep do
+    argument :order_id, input(:order_id)
   end
 
   step :process_payment do

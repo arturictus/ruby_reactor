@@ -22,25 +22,18 @@ end
 
 Steps are the individual units of work within a reactor. Each step has a name and implementation.
 
-### Inline Step Definition
+RubyReactor supports two definition styles:
 
-`run` blocks always receive two positional arguments: the resolved arguments hash and the execution context. Declare inputs with `argument :name, source`:
+| Style | When to use |
+|-------|-------------|
+| **Class steps** (preferred) | Production logic, compensation/undo, shared steps, anything you will test |
+| **Inline blocks** | Prototypes, trivial steps, concise documentation examples |
 
-```ruby
-step :validate_order do
-  argument :order_id, input(:order_id)
+> Documentation examples mix class steps with inline blocks — class steps where the logic matters, inline blocks where a step is trivial. Prefer class steps in your application code, especially as reactors grow.
 
-  run do |args, _context|
-    order = Order.find(args[:order_id])
-    return Failure("Order not found") unless order
-    Success({ order: order })
-  end
-end
-```
+### Step Classes (preferred)
 
-### Step Classes
-
-For complex steps with compensation and undo logic, or for better testability and reusability, you can define steps as separate classes that include the `RubyReactor::Step` module. This is the preferred approach for steps that require sophisticated error handling or have significant business logic.
+Define steps as separate classes that include `RubyReactor::Step`. This is the recommended approach for real business logic: it keeps reactors readable, makes steps easy to unit test, and lets you reuse the same step across multiple reactors.
 
 ```ruby
 class ReserveInventoryStep
@@ -82,23 +75,42 @@ class OrderProcessingReactor < RubyReactor::Reactor
 end
 ```
 
-**Benefits of Step Classes:**
-- **Reusability**: Step classes can be shared across multiple reactors
-- **Testability**: Easier to unit test individual step logic in isolation
-- **Organization**: Complex business logic is better organized in dedicated classes
-- **Maintainability**: Compensation and undo logic is clearly separated
-- **Readability**: Reactor definitions remain focused on orchestration
+**Benefits of class steps:**
 
-**Step Class Methods:**
-- **`run(arguments, context)`**: The main business logic. Returns `Success(result)` or `Failure(error)`
+- **Testability** — call `MyStep.run(args, context)` (and `compensate`/`undo`) directly in unit specs without running the whole reactor
+- **Composability** — share a step class across reactors and build larger workflows from small, focused units
+- **Readability** — reactor definitions stay orchestration-only; business logic lives in named classes instead of growing inline blocks
+- **Maintainability** — compensation and undo logic sit beside `run` in one place
+
+**Step class methods:**
+- **`run(arguments, context)`**: The main business logic. Returns `Success(result)`, `Failure(error)`, or `Skipped(reason:)` (see [Skipping a reactor cleanly](#skipping-a-reactor-cleanly))
 - **`compensate(error, arguments, context)`**: Cleanup for the current failing step. Called when the step fails
 - **`undo(result, arguments, context)`**: Rollback for previously successful steps. Called during reactor failure rollback
 
-**Step Components:**
+### Inline step definition
+
+For quick prototypes or trivial steps, define logic inline inside the reactor. `run` blocks always receive two positional arguments: the resolved arguments hash and the execution context. Declare inputs with `argument :name, source`:
+
+```ruby
+step :validate_order do
+  argument :order_id, input(:order_id)
+
+  run do |args, _context|
+    order = Order.find(args[:order_id])
+    return Failure("Order not found") unless order
+    Success({ order: order })
+  end
+end
+```
+
+Inline blocks support `compensate` and `undo` the same way class steps do — useful for small examples, but harder to test and reuse as logic grows.
+
+**Step components (both styles):**
+
 - **Name**: Unique identifier (symbol)
-- **Implementation**: The `run` block containing business logic
-- **Dependencies**: Other steps that must complete first
-- **Compensation**: Undo logic for rollback scenarios
+- **Implementation**: `run` block or `self.run` class method
+- **Dependencies**: Other steps that must complete first (`argument`, `wait_for`)
+- **Compensation / undo**: Rollback logic for failures
 
 ## Context
 
@@ -120,22 +132,40 @@ context = RubyReactor::Context.new(order_id: 123, customer_id: 456)
 Steps can depend on other steps, creating a directed acyclic graph (DAG) of execution.
 
 ```ruby
-step :validate_order do
-  run { validate_order_logic }
-end
+class ValidateOrderStep
+  include RubyReactor::Step
 
-step :process_payment do
-  argument :order, result(:validate_order)
-  run do |args, _context|
-    process_payment_for_order(args[:order])
+  def self.run(_arguments, _context)
+    validate_order_logic
   end
 end
 
-step :send_confirmation do
-  argument :payment_result, result(:process_payment)
-  run do |args, _context|
-    payment_result = args[:payment_result]
+class ProcessPaymentStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    process_payment_for_order(arguments[:order])
+  end
+end
+
+class SendConfirmationStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    payment_result = arguments[:payment_result]
     send_confirmation_email(payment_result[:order], payment_result[:payment_id])
+  end
+end
+
+class OrderProcessingReactor < RubyReactor::Reactor
+  step :validate_order, ValidateOrderStep
+
+  step :process_payment, ProcessPaymentStep do
+    argument :order, result(:validate_order)
+  end
+
+  step :send_confirmation, SendConfirmationStep do
+    argument :payment_result, result(:process_payment)
   end
 end
 ```
@@ -147,10 +177,11 @@ end
 
 ## Results
 
-`Reactor.run` returns one of four result types:
+`Reactor.run` returns one of five result types:
 
 - **`RubyReactor::Success`** — `success?` is `true`. `value` holds the output of the step named in `returns`, or the full `intermediate_results` hash if no `returns` is declared.
 - **`RubyReactor::Failure`** — `failure?` is `true`. Readers include `error`, `step_name`, `reactor_name`, `step_arguments`, `inputs`, `exception_class`, `file_path`, `line_number`, `backtrace`, `validation_errors`, and `retryable?`.
+- **`RubyReactor::Skipped`** — a "clean halt". A `Success` subclass, so `success?` is `true` **and** `skipped?` is `true`; `reason` and `step_name` say where/why. Returned when a step returns `Skipped(reason: "...")` or a `with_period` bucket is already claimed. Remaining steps don't run and completed steps are **not** compensated. See [Skipping a reactor cleanly](#skipping-a-reactor-cleanly).
 - **`RubyReactor::AsyncResult`** — returned by an async reactor or when a step hands off to a worker. Readers: `job_id`, `execution_id`, `intermediate_results`.
 - **`RubyReactor::InterruptResult`** — returned when an `interrupt` step pauses execution. Readers: `execution_id`, `correlation_id`, `status` (`:paused`), `timeout_at`, `intermediate_results`.
 
@@ -173,19 +204,23 @@ RubyReactor provides sophisticated error handling with automatic compensation.
 When a step fails, execution stops and compensation begins:
 
 ```ruby
-step :process_payment do
-  argument :amount, input(:amount)
-  argument :token, input(:card_token)
+class ProcessPaymentStep
+  include RubyReactor::Step
 
-  run do |args, _ctx|
-    # This might fail
-    PaymentService.charge(args[:amount], args[:token])
+  def self.run(arguments, _context)
+    PaymentService.charge(arguments[:amount], arguments[:token])
   end
 
-  compensate do |error, args, _ctx|
-    # Compensation receives (error, arguments, context)
+  def self.compensate(error, arguments, _context)
     # Best-effort cleanup specific to this step's failure
-    AuditService.log_payment_failure(args[:token], error.message)
+    AuditService.log_payment_failure(arguments[:token], error.message)
+  end
+end
+
+class PaymentReactor < RubyReactor::Reactor
+  step :process_payment, ProcessPaymentStep do
+    argument :amount, input(:amount)
+    argument :token, input(:card_token)
   end
 end
 ```
@@ -420,18 +455,23 @@ Unlike compensation which only runs for the failing step, undo is triggered duri
 ### Basic Undo
 
 ```ruby
-step :reserve_inventory do
-  argument :items, input(:items)
+class ReserveInventoryStep
+  include RubyReactor::Step
 
-  run do |args, _ctx|
-    reservation_id = InventoryService.reserve(args[:items])
-    Success({ reservation_id: reservation_id })
+  def self.run(arguments, _context)
+    reservation_id = InventoryService.reserve(arguments[:items])
+    Success(reservation_id: reservation_id)
   end
 
-  undo do |result, arguments, context|
-    # Undo receives the step's result, arguments, and full context
+  def self.undo(result, _arguments, _context)
     InventoryService.release(result[:reservation_id])
     Success("Inventory reservation released")
+  end
+end
+
+class OrderReactor < RubyReactor::Reactor
+  step :reserve_inventory, ReserveInventoryStep do
+    argument :items, input(:items)
   end
 end
 ```
@@ -485,20 +525,23 @@ Compensation runs immediately when a step fails, before the broader rollback pro
 ### Basic Compensation
 
 ```ruby
-step :reserve_inventory do
-  argument :items, input(:items)
+class ReserveInventoryStep
+  include RubyReactor::Step
 
-  run do |args, _ctx|
-    reservation_id = InventoryService.reserve(args[:items])
-    Success({ reservation_id: reservation_id })
+  def self.run(arguments, _context)
+    reservation_id = InventoryService.reserve(arguments[:items])
+    Success(reservation_id: reservation_id)
   end
 
-  compensate do |error, arguments, context|
-    # Clean up partial reservations if the step failed
-    # Note: This step didn't succeed, so we don't have a result to undo
-    # Instead, we work with the error and arguments
+  def self.compensate(error, _arguments, _context)
     puts "Cleaning up after reservation failure: #{error.message}"
-    # Any cleanup logic specific to this step's failure
+    Success()
+  end
+end
+
+class OrderReactor < RubyReactor::Reactor
+  step :reserve_inventory, ReserveInventoryStep do
+    argument :items, input(:items)
   end
 end
 ```
@@ -534,7 +577,48 @@ step :process_payment do
 end
 ```
 
+## Skipping a reactor cleanly
 
+Alongside `Success` and `Failure`, a step can return **`Skipped`** — a "clean halt". The reactor stops immediately: remaining steps don't run, and **already-completed steps are NOT compensated or undone**. Use it when a step discovers the rest of the workflow is unnecessary and the partial progress so far is correct to keep (e.g. "user already opted out", "nothing to do this round").
+
+`Skipped` is exposed exactly like `Success` and `Failure` — as a bare helper inside both class steps and inline `run` blocks:
+
+```ruby
+# Class step
+class SyncProfileStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    return Skipped(reason: "user_opted_out") if arguments[:user].opted_out?
+
+    Success(synced: ProfileService.sync(arguments[:user]))
+  end
+end
+
+# Inline block — identical helper
+step :sync_profile do
+  argument :user, input(:user)
+  run do |args, _ctx|
+    next Skipped(reason: "user_opted_out") if args[:user].opted_out?
+
+    Success(synced: ProfileService.sync(args[:user]))
+  end
+end
+```
+
+`Skipped` is a `Success` subclass, so existing `if result.success?` branches still take the right path; check `result.skipped?` to distinguish it:
+
+```ruby
+result = SyncReactor.run(user: user)
+result.success?   # => true
+result.skipped?   # => true on a clean halt, false otherwise
+result.reason     # => "user_opted_out"
+result.step_name  # => :sync_profile (the halting step)
+```
+
+The reactor's context status becomes `:skipped` (distinct from `:completed`/`:failed`), and a `{ type: :skipped, step:, reason: }` entry is appended to the execution trace.
+
+**`Skipped` vs `Failure`:** use `Skipped` when the partial progress is correct and should be kept; use `Failure` when prior steps need to be rolled back. A `with_period` dedup gate also produces a `Skipped` result before any step runs. See [Locks & Semaphores — The `Skipped` result](locks_and_semaphores.md#the-skipped-result) for the full reference and the decision matrix.
 
 ## Validation
 

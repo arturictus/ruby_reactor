@@ -19,7 +19,7 @@ module RubyReactor
         RubyReactor::Template::Element.new(map_name, path)
       end
 
-      # Make Success and Failure available in DSL contexts
+      # Make Success, Failure, and Skipped available in DSL contexts
       # rubocop:disable Naming/MethodName
       def Success(value = nil)
         # rubocop:enable Naming/MethodName
@@ -30,6 +30,12 @@ module RubyReactor
       def Failure(error)
         # rubocop:enable Naming/MethodName
         RubyReactor.Failure(error)
+      end
+
+      # rubocop:disable Naming/MethodName
+      def Skipped(reason: nil, **kwargs)
+        # rubocop:enable Naming/MethodName
+        RubyReactor.Skipped(reason: reason, **kwargs)
       end
     end
   end
