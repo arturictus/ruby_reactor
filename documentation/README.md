@@ -2,6 +2,17 @@
 
 RubyReactor is a powerful Ruby framework for building reliable, sequential business processes with built-in error handling, compensation, and rollback capabilities.
 
+## Defining Steps
+
+RubyReactor supports two step styles:
+
+- **Class steps** (preferred) — a class that `include RubyReactor::Step` with `self.run`, and optionally `self.compensate` and `self.undo`. Reference it in the reactor with `step :name, MyStepClass do ... end`.
+- **Inline blocks** — `step :name do ... run { ... } end` inside the reactor class.
+
+Use class steps for anything beyond a trivial one-liner. They improve **testability** (unit-test step logic in isolation), **composability** (reuse the same step across reactors), and **readability** (reactor files stay focused on orchestration as workflows grow).
+
+Most examples in this documentation mix class steps with inline blocks — class steps where the logic matters, inline blocks where a step is trivial. See [Core Concepts — Step Classes](core_concepts.md#step-classes) for the full guide.
+
 ## Table of Contents
 
 - [Getting Started](getting_started.md)
@@ -25,17 +36,31 @@ RubyReactor is a powerful Ruby framework for building reliable, sequential busin
 ```ruby
 require 'ruby_reactor'
 
+class ValidateOrderStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    Success(Order.find(arguments[:order_id]))
+  end
+end
+
+class ProcessPaymentStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    Success(PaymentService.charge(arguments[:order]))
+  end
+end
+
 class OrderProcessingReactor < RubyReactor::Reactor
   input :order_id
 
-  step :validate_order do
+  step :validate_order, ValidateOrderStep do
     argument :order_id, input(:order_id)
-    run { |args, _ctx| Success(Order.find(args[:order_id])) }
   end
 
-  step :process_payment do
+  step :process_payment, ProcessPaymentStep do
     argument :order, result(:validate_order)
-    run { |args, _ctx| Success(PaymentService.charge(args[:order])) }
   end
 
   step :send_confirmation do

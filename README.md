@@ -52,6 +52,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Quick Start](#quick-start)
+- [Defining Steps](#defining-steps)
 - [Web Dashboard](#web-dashboard)
   - [Rails Installation](#rails-installation)
 - [Usage](#usage)
@@ -198,6 +199,54 @@ result = HelloReactor.run
 puts result.value  # => "Hello from Ruby Reactor!"
 ```
 
+> **Note:** Examples in this README use inline `step` blocks where a step is trivial. For production workflows, prefer [class-based steps](#defining-steps).
+
+## Defining Steps
+
+RubyReactor supports two ways to define step logic:
+
+| Style | Best for |
+|-------|----------|
+| **Class steps** (preferred) | Real business logic, compensation/undo, shared steps, testability |
+| **Inline blocks** | Quick prototypes, trivial one-liners, documentation examples |
+
+**Class steps** are plain Ruby classes that include `RubyReactor::Step` and implement `run`, and optionally `compensate` and `undo`:
+
+```ruby
+class ReserveInventoryStep
+  include RubyReactor::Step
+
+  def self.run(arguments, context)
+    reservation_id = InventoryService.reserve(arguments[:order][:items])
+    Success(reservation_id: reservation_id)
+  end
+
+  def self.compensate(error, arguments, context)
+    InventoryService.release_partial(arguments[:order][:items])
+    Success()
+  end
+
+  def self.undo(result, arguments, context)
+    InventoryService.release(result[:reservation_id])
+    Success()
+  end
+end
+
+class OrderProcessingReactor < RubyReactor::Reactor
+  step :reserve_inventory, ReserveInventoryStep do
+    argument :order, result(:validate_order)
+  end
+end
+```
+
+**Why prefer class steps?**
+
+- **Testability** — unit-test `run`, `compensate`, and `undo` in isolation without booting the whole reactor
+- **Composability** — share the same step class across multiple reactors and compose larger workflows from small, focused units
+- **Readability** — reactor files stay orchestration-only; business logic lives in named classes instead of growing inline blocks
+
+See [Core Concepts — Step Classes](documentation/core_concepts.md#step-classes) for the full reference. Usage examples below mix class and inline steps — inline where the logic is trivial.
+
 ## Web Dashboard
 
 RubyReactor ships with a built-in web dashboard to inspect reactor executions, view logs, and retry failed steps. The dashboard is a Rack app (a [Roda](https://roda.jeremyevans.net/) application) bundled inside the gem with its pre-compiled JS/CSS assets — no extra install or asset build step is required.
@@ -237,60 +286,59 @@ You can secure the dashboard using standard Rails authentication methods (e.g., 
 
 ## Usage
 
-RubyReactor allows you to define complex workflows as "reactors" with steps that can depend on each other, handle failures with compensations, and validate inputs.
+RubyReactor allows you to define complex workflows as "reactors" with steps that can depend on each other, handle failures with compensations, and validate inputs. Examples in this section mix class steps with inline blocks; see [Defining Steps](#defining-steps) for guidance.
 
 ### Basic Example: User Registration
 
 ```ruby
 require 'ruby_reactor'
 
+class ValidateEmailStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    email = arguments[:email]
+    email&.include?('@') ? Success(email.strip) : Failure("Email must contain @")
+  end
+end
+
+class CreateUserStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    Success(
+      id: rand(10000),
+      email: arguments[:email],
+      password_hash: arguments[:password_hash],
+      created_at: Time.now
+    )
+  end
+
+  def self.compensate(_error, arguments, _context)
+    Notify.to(arguments[:email])
+    Success()
+  end
+end
+
 class UserRegistrationReactor < RubyReactor::Reactor
-  # Define inputs with optional validation
   input :email
   input :password
 
-  # Define steps with their dependencies
-  step :validate_email do
+  step :validate_email, ValidateEmailStep do
     argument :email, input(:email)
-
-    run do |args, context|
-      if args[:email] && args[:email].include?('@')
-        Success(args[:email].strip)
-      else
-        Failure("Email must contain @")
-      end
-    end
   end
 
   step :hash_password do
     argument :password, input(:password)
-
-    run do |args, context|
+    run do |args, _context|
       require 'digest'
-      hashed = Digest::SHA256.hexdigest(args[:password])
-      Success(hashed)
+      Success(Digest::SHA256.hexdigest(args[:password]))
     end
   end
 
-  step :create_user do
-    # Arguments can reference results from other steps
+  step :create_user, CreateUserStep do
     argument :email, result(:validate_email)
     argument :password_hash, result(:hash_password)
-
-    run do |args, context|
-      user = {
-        id: rand(10000),
-        email: args[:email],
-        password_hash: args[:password_hash],
-        created_at: Time.now
-      }
-      Success(user)
-    end
-
-    compensate do |error, args, context|
-      Notify.to(args[:email])
-      Success()
-    end
   end
 
   step :notify_user do
@@ -302,12 +350,12 @@ class UserRegistrationReactor < RubyReactor::Reactor
       Success()
     end
 
-    compensate do |error, args, context|
+    compensate do |_error, args, _context|
       Email.send("support@acme.com", "Email verification for #{args[:email]} couldn't be sent")
       Success()
     end
   end
-  # Specify which step's result to return
+
   returns :create_user
 end
 
@@ -1089,7 +1137,7 @@ end
 
 ### Testing
 
-RubyReactor provides testing utilities for RSpec. See the [Testing with RSpec](documentation/testing.md) guide for comprehensive documentation.
+RubyReactor provides testing utilities for RSpec. See the [Testing with RSpec](documentation/testing.md) guide for comprehensive documentation — including [unit-testing class-based steps](documentation/testing.md#testing-step-classes) directly.
 
 ```ruby
 RSpec.describe PaymentReactor do
@@ -1116,7 +1164,7 @@ end
 For detailed documentation, see the following guides:
 
 ### [Core Concepts](documentation/core_concepts.md)
-Learn about the fundamental building blocks of RubyReactor: Reactors, Steps, Context, and Results. Understand how steps are defined, how data flows between them, and how the context maintains state throughout execution.
+Learn about the fundamental building blocks of RubyReactor: Reactors, Steps, Context, and Results. Covers class-based steps (the preferred approach) and inline blocks, how data flows between steps, and how the context maintains state throughout execution.
 
 ### [DAG (Directed Acyclic Graph)](documentation/DAG.md)
 Deep dive into how RubyReactor manages dependencies. This guide explains how the Directed Acyclic Graph is constructed to ensure steps execute in the correct topological order, enabling automatic parallelization of independent steps.

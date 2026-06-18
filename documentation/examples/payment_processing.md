@@ -1,5 +1,7 @@
 # Payment Processing Reactor Example
 
+> This example mixes class steps with inline blocks — class steps for core business logic, inline blocks for simpler steps.
+
 This example shows a payment processing workflow with fraud detection, multiple payment attempts, and comprehensive error handling.
 
 ## Overview
@@ -40,6 +42,38 @@ graph TD
 ## Implementation
 
 ```ruby
+class ValidatePaymentStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    Success(
+      validated_amount: arguments[:amount],
+      validated_currency: arguments[:currency]
+    )
+  end
+end
+
+class PreAuthorizeStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    auth_result = PaymentGateway.pre_authorize(
+      amount: arguments[:amount],
+      currency: arguments[:currency],
+      card_token: arguments[:card_token]
+    )
+
+    raise "Pre-authorization failed: #{auth_result.error}" unless auth_result.success?
+
+    Success(auth_id: auth_result.id, auth_amount: arguments[:amount])
+  end
+
+  def self.undo(result, _arguments, _context)
+    PaymentGateway.void_authorization(result[:auth_id]) if result[:auth_id]
+    Success()
+  end
+end
+
 class PaymentProcessingReactor < RubyReactor::Reactor
   async true
 
@@ -58,18 +92,10 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     required(:card_token).filled(:string, format?: /^tok_/)
   end
 
-  step :validate_payment do
+  step :validate_payment, ValidatePaymentStep do
     argument :amount, input(:amount)
     argument :currency, input(:currency)
     argument :card_token, input(:card_token)
-
-    run do |args, _context|
-      amount = args[:amount]
-      currency = args[:currency]
-      card_token = args[:card_token]
-
-      Success({ validated_amount: amount, validated_currency: currency })
-    end
   end
 
   step :fraud_detection do
@@ -95,35 +121,13 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     end
   end
 
-  step :pre_authorize do
+  step :pre_authorize, PreAuthorizeStep do
     argument :fraud_data, result(:fraud_detection)
     argument :amount, input(:amount)
     argument :currency, input(:currency)
     argument :card_token, input(:card_token)
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
-
-    run do |args, _context|
-      amount = args[:amount]
-      currency = args[:currency]
-      card_token = args[:card_token]
-
-      auth_result = PaymentGateway.pre_authorize(
-        amount: amount,
-        currency: currency,
-        card_token: card_token
-      )
-
-      raise "Pre-authorization failed: #{auth_result.error}" unless auth_result.success?
-
-      Success({ auth_id: auth_result.id, auth_amount: amount })
-    end
-
-    undo do |result, _args, _ctx|
-      # Void the pre-authorization if a later step fails
-      PaymentGateway.void_authorization(result[:auth_id]) if result[:auth_id]
-      Success()
-    end
   end
 
   step :charge_payment do

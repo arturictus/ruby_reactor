@@ -1,5 +1,7 @@
 # Order Processing Reactor Example
 
+> This example mixes class steps with inline blocks — class steps for core business logic, inline blocks for simpler steps.
+
 This example demonstrates a complete order processing workflow with validation, payment processing, inventory management, and notifications.
 
 ## Overview
@@ -40,6 +42,58 @@ graph TD
 ## Implementation
 
 ```ruby
+class ValidateOrderStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    order = Order.find_by(id: arguments[:order_id])
+    return Failure("Order not found") unless order
+    return Failure("Order already processed") if order.processed?
+    return Failure("Order cancelled") if order.cancelled?
+
+    Success(order: order)
+  end
+end
+
+class ReserveInventoryStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    reservation_id = InventoryService.reserve_items(arguments[:order].items)
+    return Failure("Inventory reservation failed") unless reservation_id
+
+    Success(reservation_id: reservation_id)
+  end
+
+  def self.undo(result, _arguments, _context)
+    InventoryService.release_reservation(result[:reservation_id]) if result[:reservation_id]
+    Success()
+  end
+end
+
+class ProcessPaymentStep
+  include RubyReactor::Step
+
+  def self.run(arguments, _context)
+    order = arguments[:order]
+    payment_result = PaymentService.charge(
+      amount: order.total,
+      currency: order.currency,
+      card_token: order.customer.card_token,
+      description: "Order ##{order.id}"
+    )
+
+    return Failure("Payment failed: #{payment_result.error}") unless payment_result.success?
+
+    Success(payment_id: payment_result.id, payment_amount: order.total)
+  end
+
+  def self.undo(result, _arguments, _context)
+    PaymentService.refund(result[:payment_id]) if result[:payment_id]
+    Success()
+  end
+end
+
 class OrderProcessingReactor < RubyReactor::Reactor
   async true  # Enable asynchronous execution
 
@@ -50,17 +104,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
     required(:order_id).filled(:string)
   end
 
-  step :validate_order do
+  step :validate_order, ValidateOrderStep do
     argument :order_id, input(:order_id)
-
-    run do |args, _ctx|
-      order = Order.find_by(id: args[:order_id])
-      return Failure("Order not found") unless order
-      return Failure("Order already processed") if order.processed?
-      return Failure("Order cancelled") if order.cancelled?
-
-      Success({ order: order })
-    end
   end
 
   step :check_inventory do
@@ -82,51 +127,19 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
       return Failure("Insufficient inventory: #{unavailable_items}") unless unavailable_items.empty?
 
-      Success({ inventory_checked: true })
+      Success(inventory_checked: true)
     end
   end
 
-  step :reserve_inventory do
+  step :reserve_inventory, ReserveInventoryStep do
     argument :order, result(:validate_order, :order)
-
-    run do |args, _ctx|
-      reservation_id = InventoryService.reserve_items(args[:order].items)
-      return Failure("Inventory reservation failed") unless reservation_id
-
-      Success({ reservation_id: reservation_id })
-    end
-
-    undo do |result, _args, _ctx|
-      # Release reservation when a later step fails
-      InventoryService.release_reservation(result[:reservation_id]) if result[:reservation_id]
-      Success()
-    end
   end
 
-  step :process_payment do
+  step :process_payment, ProcessPaymentStep do
     argument :order, result(:validate_order, :order)
 
     # Payment processing needs careful retry handling
     retries max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
-
-    run do |args, _ctx|
-      order = args[:order]
-      payment_result = PaymentService.charge(
-        amount: order.total,
-        currency: order.currency,
-        card_token: order.customer.card_token,
-        description: "Order ##{order.id}"
-      )
-
-      return Failure("Payment failed: #{payment_result.error}") unless payment_result.success?
-
-      Success({ payment_id: payment_result.id, payment_amount: order.total })
-    end
-
-    undo do |result, _args, _ctx|
-      PaymentService.refund(result[:payment_id]) if result[:payment_id]
-      Success()
-    end
   end
 
   step :update_inventory do

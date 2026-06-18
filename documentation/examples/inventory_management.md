@@ -1,5 +1,7 @@
 # Inventory Management Reactor Example
 
+> This example mixes class steps with inline blocks — class steps for core business logic, inline blocks for simpler steps.
+
 This example demonstrates inventory management with reservations, stock updates, and supplier integration.
 
 ## Overview
