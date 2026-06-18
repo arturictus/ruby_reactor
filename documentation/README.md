@@ -11,7 +11,7 @@ RubyReactor supports two step styles:
 
 Use class steps for anything beyond a trivial one-liner. They improve **testability** (unit-test step logic in isolation), **composability** (reuse the same step across reactors), and **readability** (reactor files stay focused on orchestration as workflows grow).
 
-Most examples in this documentation mix class steps with inline blocks — class steps where the logic matters, inline blocks where a step is trivial. See [Core Concepts — Step Classes](core_concepts.md#step-classes) for the full guide.
+Most examples in this documentation mix class steps with inline blocks — class steps where the logic matters, inline blocks where a step is trivial. See [Core Concepts — Step Classes](core_concepts.md#step-classes-preferred) for the full guide.
 
 ## Table of Contents
 

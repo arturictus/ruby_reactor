@@ -18,7 +18,7 @@ This will give you access to the `test_reactor` helper method and all custom mat
 
 > For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, or `with_ordered_lock`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, `be_period_marked`, `have_ordered_lock_next`, `have_ordered_lock_last_completed`, `have_ordered_lock_in_flight`, and `be_ordered_lock_drained` matchers, plus patterns for testing async snooze and escalation.
 
-> Examples elsewhere in the documentation mix class steps with inline blocks — class steps where the logic matters, inline blocks where a step is trivial. For production code, prefer [class-based steps](core_concepts.md#step-classes) and unit-test them directly — see [Testing Step Classes](#testing-step-classes) below.
+> Examples elsewhere in the documentation mix class steps with inline blocks — class steps where the logic matters, inline blocks where a step is trivial. For production code, prefer [class-based steps](core_concepts.md#step-classes-preferred) and unit-test them directly — see [Testing Step Classes](#testing-step-classes) below.
 
 ## Testing Step Classes
 

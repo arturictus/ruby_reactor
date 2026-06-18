@@ -15,6 +15,10 @@ module RubyReactor
       def Failure(error = nil)
         RubyReactor::Failure(error)
       end
+
+      def Skipped(reason: nil, **kwargs)
+        RubyReactor.Skipped(reason: reason, **kwargs)
+      end
       # rubocop:enable Naming/MethodName
 
       def run(arguments, context)

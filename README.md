@@ -210,6 +210,12 @@ RubyReactor supports two ways to define step logic:
 | **Class steps** (preferred) | Real business logic, compensation/undo, shared steps, testability |
 | **Inline blocks** | Quick prototypes, trivial one-liners, documentation examples |
 
+Whichever style you use, a step's `run` returns one of three signals — all exposed as bare helpers in both class steps and inline blocks:
+
+- **`Success(value)`** — step succeeded; `value` flows to dependent steps.
+- **`Failure(error)`** — step failed; the reactor rolls back completed steps (compensate/undo).
+- **`Skipped(reason:)`** — clean halt: stop the reactor, keep partial progress, **no rollback**. See [Skipping a reactor cleanly](documentation/core_concepts.md#skipping-a-reactor-cleanly).
+
 **Class steps** are plain Ruby classes that include `RubyReactor::Step` and implement `run`, and optionally `compensate` and `undo`:
 
 ```ruby
@@ -245,7 +251,7 @@ end
 - **Composability** — share the same step class across multiple reactors and compose larger workflows from small, focused units
 - **Readability** — reactor files stay orchestration-only; business logic lives in named classes instead of growing inline blocks
 
-See [Core Concepts — Step Classes](documentation/core_concepts.md#step-classes) for the full reference. Usage examples below mix class and inline steps — inline where the logic is trivial.
+See [Core Concepts — Step Classes](documentation/core_concepts.md#step-classes-preferred) for the full reference. Usage examples below mix class and inline steps — inline where the logic is trivial.
 
 ## Web Dashboard
 
@@ -661,14 +667,14 @@ result.success?  # true (Skipped is a Success subclass)
 result.skipped?  # true on dedup hit, false otherwise
 ```
 
-A step's `run` block can also return `RubyReactor.Skipped(reason: "...")` to halt the reactor cleanly — remaining steps don't execute, **and already-completed steps are NOT compensated**. Use it when the rest of the workflow is unnecessary and partial progress should be kept (`Failure` is for "stop and roll back").
+A step's `run` block can also return `Skipped(reason: "...")` to halt the reactor cleanly — remaining steps don't execute, **and already-completed steps are NOT compensated**. Use it when the rest of the workflow is unnecessary and partial progress should be kept (`Failure` is for "stop and roll back"). `Skipped` is a bare helper just like `Success`/`Failure` (or use the fully-qualified `RubyReactor.Skipped(...)`).
 
 ```ruby
 step :ensure_active do
   argument :user, result(:fetch_user)
-  run do |args|
-    next RubyReactor.Skipped(reason: "user_opted_out") if args[:user].opted_out?
-    RubyReactor.Success(args[:user])
+  run do |args, _ctx|
+    next Skipped(reason: "user_opted_out") if args[:user].opted_out?
+    Success(args[:user])
   end
 end
 ```

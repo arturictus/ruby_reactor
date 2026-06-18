@@ -108,7 +108,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
 end
 ```
 
-Class steps are the recommended default because they improve **testability** (test `run`/`compensate`/`undo` without the full reactor), **composability** (reuse steps across reactors), and **readability** (reactor files stay orchestration-only as workflows grow). See [Core Concepts — Step Classes](core_concepts.md#step-classes) for compensation, undo, and the full API.
+Class steps are the recommended default because they improve **testability** (test `run`/`compensate`/`undo` without the full reactor), **composability** (reuse steps across reactors), and **readability** (reactor files stay orchestration-only as workflows grow). See [Core Concepts — Step Classes](core_concepts.md#step-classes-preferred) for compensation, undo, and the full API.
 
 ### Run blocks always receive `(arguments, context)`
 
