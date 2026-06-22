@@ -269,7 +269,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
     end
 
     before do
-      allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
+      allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::Adapters::Sidekiq::Router)
       Sidekiq::Testing.fake!
     end
 
@@ -284,7 +284,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
       expect(result).to be_a(RubyReactor::AsyncResult)
 
       # With batch_size: 2, should queue 2 jobs initially
-      expect(RubyReactor::SidekiqWorkers::MapElementWorker.jobs.size).to eq(2)
+      expect(RubyReactor::Adapters::Sidekiq::MapElementWorker.jobs.size).to eq(2)
     end
   end
 

@@ -1,14 +1,20 @@
 # frozen_string_literal: true
 
 require "spec_helper"
-require "sidekiq/testing"
-require "ruby_reactor/sidekiq_workers/sweeper_worker"
+require "active_job"
+require "ruby_reactor/adapters/active_job/sweeper_worker"
 
-RSpec.describe RubyReactor::SidekiqWorkers::SweeperWorker do
+RSpec.describe RubyReactor::Adapters::ActiveJob::SweeperWorker do
+  around do |example|
+    original = ActiveJob::Base.queue_adapter
+    ActiveJob::Base.queue_adapter = :test
+    example.run
+  ensure
+    ActiveJob::Base.queue_adapter = original
+  end
+
   before do
-    described_class.clear
-    # The sweep itself is exercised by the Sweeper specs; here we only care about
-    # the scheduling/chaining behavior, so stub the actual recovery work out.
+    described_class.queue_adapter.enqueued_jobs.clear
     allow(RubyReactor::Sweeper).to receive(:run_once).and_return(0)
     allow(RubyReactor::Map::Sweeper).to receive(:run_once).and_return(0)
   end
@@ -16,16 +22,14 @@ RSpec.describe RubyReactor::SidekiqWorkers::SweeperWorker do
   describe ".schedule_next" do
     it "enqueues exactly one tick for the upcoming window" do
       described_class.schedule_next
-      expect(described_class.jobs.size).to eq(1)
+      expect(described_class.queue_adapter.enqueued_jobs.size).to eq(1)
     end
 
     it "is single-flight: a duplicate call for the same window enqueues nothing more" do
       described_class.schedule_next
-      described_class.schedule_next # same time window -> claim already held
+      described_class.schedule_next
 
-      # The window lock collapses the duplicate, so no fork — exactly the property
-      # that keeps a super_fetch-recovered tick from doubling the chain.
-      expect(described_class.jobs.size).to eq(1)
+      expect(described_class.queue_adapter.enqueued_jobs.size).to eq(1)
     end
   end
 
@@ -35,14 +39,14 @@ RSpec.describe RubyReactor::SidekiqWorkers::SweeperWorker do
 
       expect(RubyReactor::Sweeper).to have_received(:run_once)
       expect(RubyReactor::Map::Sweeper).to have_received(:run_once)
-      expect(described_class.jobs.size).to eq(1) # chained forward
+      expect(described_class.queue_adapter.enqueued_jobs.size).to eq(1)
     end
 
     it "still chains forward when a sweep raises (recovery must not die on one bad sweep)" do
       allow(RubyReactor::Sweeper).to receive(:run_once).and_raise(StandardError, "boom")
 
       expect { described_class.new.perform }.not_to raise_error
-      expect(described_class.jobs.size).to eq(1)
+      expect(described_class.queue_adapter.enqueued_jobs.size).to eq(1)
     end
 
     context "when the sweeper is disabled" do
@@ -57,7 +61,7 @@ RSpec.describe RubyReactor::SidekiqWorkers::SweeperWorker do
         described_class.new.perform
 
         expect(RubyReactor::Sweeper).not_to have_received(:run_once)
-        expect(described_class.jobs).to be_empty
+        expect(described_class.queue_adapter.enqueued_jobs).to be_empty
       end
     end
   end

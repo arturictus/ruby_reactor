@@ -2,13 +2,13 @@
 
 require "spec_helper"
 require "sidekiq/testing"
-require "ruby_reactor/sidekiq_workers/worker"
+require "ruby_reactor/adapters/sidekiq/worker"
 
 # The worker fans many collaborators (storage, serializer, executor, context,
 # router) into one unit, so the suite needs more memoized helpers than the cop's
 # default; the alternative (re-stubbing in every example) is worse.
 # rubocop:disable RSpec/MultipleMemoizedHelpers
-RSpec.describe RubyReactor::SidekiqWorkers::Worker do
+RSpec.describe RubyReactor::Adapters::Sidekiq::Worker do
   subject(:worker) { described_class.new }
 
   let(:reactor_class) { Class.new { def self.name = "TestReactor" } }

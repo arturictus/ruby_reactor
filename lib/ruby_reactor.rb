@@ -26,6 +26,13 @@ rescue LoadError
   # sidekiq is optional, async features won't be available
 end
 
+# Load active_job if available (for the ActiveJob async adapter)
+begin
+  require "active_job"
+rescue LoadError
+  # active_job is optional, only needed when using the ActiveJob adapter
+end
+
 loader = Zeitwerk::Loader.for_gem
 loader.inflector.inflect("api" => "API", "rspec" => "RSpec")
 loader.setup
@@ -356,7 +363,17 @@ module RubyReactor
   def self.start_sweeper!
     return unless configuration.sweeper_enabled
 
-    SidekiqWorkers::SweeperWorker.schedule_next
+    sweeper_job_class.schedule_next
+  end
+
+  # The sweeper job class living alongside the configured `async_router`
+  # (e.g. `Adapters::Sidekiq::Router` -> `Adapters::Sidekiq::SweeperWorker`),
+  # so the chain is kicked through whichever backend is configured instead of
+  # a hardcoded Sidekiq class.
+  def self.sweeper_job_class
+    router = configuration.async_router
+    namespace = Object.const_get(router.name.rpartition("::").first)
+    namespace.const_get(:SweeperWorker)
   end
 
   # Run both recovery sweepers exactly once and return their counts. The

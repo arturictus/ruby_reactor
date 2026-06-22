@@ -26,7 +26,7 @@ RSpec.describe RubyReactor::Step::MapStep do
   let(:storage_adapter) { RubyReactor.configuration.storage_adapter }
 
   # Async router is fine to be mocked as we don't want to actually enqueue sidekiq jobs here unless necessary
-  let(:async_router) { class_double(RubyReactor::SidekiqAdapter) }
+  let(:async_router) { class_double(RubyReactor::Adapters::Sidekiq::Router) }
 
   before do
     allow(RubyReactor.configuration).to receive(:async_router).and_return(async_router)

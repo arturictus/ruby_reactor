@@ -405,8 +405,8 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
 
       TelemetryAsyncRetryReactor.new.run
       5.times do
-        RubyReactor::SidekiqWorkers::Worker.drain
-        break if RubyReactor::SidekiqWorkers::Worker.jobs.empty?
+        RubyReactor::Adapters::Sidekiq::Worker.drain
+        break if RubyReactor::Adapters::Sidekiq::Worker.jobs.empty?
       end
 
       spans = exporter.finished_spans
@@ -428,10 +428,10 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
     it "traces a requeued async map element attempt as ERROR and the successful attempt as OK" do
       TelemetryAsyncMapRetryReactor.new.run(items: [3], fail_until_attempt: 2)
       8.times do
-        RubyReactor::SidekiqWorkers::MapElementWorker.drain
-        RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
-        break if RubyReactor::SidekiqWorkers::MapElementWorker.jobs.empty? &&
-                 RubyReactor::SidekiqWorkers::MapCollectorWorker.jobs.empty?
+        RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
+        RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+        break if RubyReactor::Adapters::Sidekiq::MapElementWorker.jobs.empty? &&
+                 RubyReactor::Adapters::Sidekiq::MapCollectorWorker.jobs.empty?
       end
 
       spans = exporter.finished_spans

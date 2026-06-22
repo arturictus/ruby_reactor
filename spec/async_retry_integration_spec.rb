@@ -6,7 +6,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
   before do
     Sidekiq::Testing.fake!
     Sidekiq::Worker.clear_all
-    allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
+    allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::Adapters::Sidekiq::Router)
   end
 
   after do
@@ -24,7 +24,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       expect(result.failure?).to be false
 
       # Verify job was queued
-      expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(1)
+      expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(1)
     end
 
     it "executes full reactor asynchronously" do
@@ -32,10 +32,10 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       reactor.run(user_id: 123, email: "test@example.com")
 
       # Process the queued job
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       # Verify the job was processed (in real Sidekiq this would happen asynchronously)
-      expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(0)
+      expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(0)
     end
   end
 
@@ -47,7 +47,7 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       expect(result).to be_a(RubyReactor::AsyncResult)
 
       # Verify job was queued for async step
-      expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(1)
+      expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(1)
     end
 
     it "resumes execution from async step in worker" do
@@ -55,10 +55,10 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       reactor.run(user_id: 123, email: "test@example.com")
 
       # Process the queued job
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       # Verify the job was processed
-      expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(0)
+      expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(0)
     end
   end
 
@@ -98,17 +98,17 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       expect(result).to be_a(RubyReactor::AsyncResult)
 
       # Should have 1 job queued
-      expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(1)
+      expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(1)
 
       # Process the job - this should execute the step, fail, and requeue for retry
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       # In fake mode, drain processes all jobs, including scheduled ones
       # Since the step fails and retries, it should process multiple jobs
       # But ultimately, when max_attempts is reached, no more jobs should be queued
 
       # After all processing, there should be no jobs left
-      expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(0)
+      expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(0)
     end
   end
 
@@ -118,10 +118,10 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       reactor.run(attempt_count: 1)
 
       # Should have 1 job initially
-      expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(1)
+      expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(1)
 
       # Process jobs - should retry a few times
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       # Verify retries happened (in fake mode, jobs are processed immediately)
       # In real Sidekiq, this would be scheduled with delays
@@ -132,8 +132,8 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
         reactor = RetryLinearReactor.new
         reactor.run
 
-        expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(1)
-        RubyReactor::SidekiqWorkers::Worker.drain
+        expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(1)
+        RubyReactor::Adapters::Sidekiq::Worker.drain
       end
     end
 
@@ -142,8 +142,8 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
         reactor = RetryFixedReactor.new
         reactor.run
 
-        expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(1)
-        RubyReactor::SidekiqWorkers::Worker.drain
+        expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(1)
+        RubyReactor::Adapters::Sidekiq::Worker.drain
       end
     end
   end

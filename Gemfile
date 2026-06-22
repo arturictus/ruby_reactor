@@ -21,6 +21,7 @@ gem "dry-validation", "~> 1.10"
 gem "globalid", "~> 1.0"
 
 group :development, :test do
+  gem "activejob", "~> 7.0"
   gem "opentelemetry-api"
   gem "opentelemetry-sdk"
 end

@@ -191,9 +191,9 @@ module RubyReactor
         end
 
         @run_result = nil
-        if @process_jobs && defined?(Sidekiq::Testing)
-          # Ensure SidekiqAdapter is used to capture jobs in fake mode
-          allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
+        if @process_jobs && AsyncTestHelpers.sidekiq_testing?
+          # Ensure the Sidekiq router is used to capture jobs in fake mode
+          allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::Adapters::Sidekiq::Router)
 
           # Avoid nesting error which happens in Sidekiq 7+ if a mode is already set
           begin
@@ -203,6 +203,10 @@ module RubyReactor
           rescue Sidekiq::Testing::TestModeAlreadySetError
             @run_result = execution_class.run(@inputs)
           end
+        elsif @process_jobs && AsyncTestHelpers.active_job_testing?
+          # Ensure the ActiveJob router is used to capture jobs in the :test adapter
+          allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::Adapters::ActiveJob::Router)
+          @run_result = execution_class.run(@inputs)
         else
           @run_result = execution_class.run(@inputs)
         end
@@ -250,7 +254,7 @@ module RubyReactor
           skipped_result(ctx)
         when "running"
           # Try to determine if it is truly running or if we just missed the completion
-          if @process_jobs && defined?(Sidekiq::Testing)
+          if @process_jobs && AsyncTestHelpers.active?
             # Force one more check
             process_pending_jobs
             # Reload status
@@ -357,7 +361,7 @@ module RubyReactor
         @reactor_instance.continue(payload: payload, step_name: step_name)
 
         # Process any pending async jobs
-        process_pending_jobs if @process_jobs && defined?(Sidekiq::Testing)
+        process_pending_jobs if @process_jobs && AsyncTestHelpers.active?
 
         # Reload the reactor instance to get updated state
         @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
@@ -430,9 +434,9 @@ module RubyReactor
       private
 
       def process_pending_jobs
-        return unless defined?(Sidekiq::Testing)
+        return unless AsyncTestHelpers.active?
 
-        SidekiqHelpers.drain_async_jobs
+        AsyncTestHelpers.drain_async_jobs
         @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
       end
 

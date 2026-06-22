@@ -812,7 +812,7 @@ RSpec.describe RubyReactor do
     end
 
     before do
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
+      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::Adapters::Sidekiq::Router)
     end
 
     it "returns job_id and intermediate_results correctly" do
