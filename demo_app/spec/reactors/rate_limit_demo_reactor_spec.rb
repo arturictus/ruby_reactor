@@ -56,7 +56,7 @@ RSpec.describe RateLimitDemoReactor, type: :reactor do
       3.times { run_sync }
 
       RubyReactor.configuration.lock_snooze_jitter = 0
-      allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+      allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in)
 
       context = RubyReactor::Context.new(inputs, described_class)
       serialized_context = RubyReactor::ContextSerializer.serialize(context)
@@ -66,13 +66,13 @@ RSpec.describe RateLimitDemoReactor, type: :reactor do
         context.context_id, serialized_context, described_class.name
       )
 
-      worker = RubyReactor::SidekiqWorkers::Worker.new
+      worker = RubyReactor::Adapters::Sidekiq::Worker.new
       worker.perform(context.context_id, described_class.name)
 
       # The step never ran (window full) and the job re-enqueued itself for
       # when the bucket rolls — it did not burn Sidekiq retry budget.
       expect("api:acct_1").to have_rate_limit_count(3).for(:second)
-      expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
+      expect(RubyReactor::Adapters::Sidekiq::Worker).to have_received(:perform_in)
         .with(a_value >= 0.1, instance_of(String), described_class.name, 1)
     end
   end

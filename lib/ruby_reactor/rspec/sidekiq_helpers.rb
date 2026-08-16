@@ -36,9 +36,9 @@ module RubyReactor
 
       def self.worker_classes
         @worker_classes ||= [
-          RubyReactor::SidekiqWorkers::Worker,
-          RubyReactor::SidekiqWorkers::MapElementWorker,
-          RubyReactor::SidekiqWorkers::MapCollectorWorker
+          RubyReactor::Adapters::Sidekiq::Worker,
+          RubyReactor::Adapters::Sidekiq::MapElementWorker,
+          RubyReactor::Adapters::Sidekiq::MapCollectorWorker
         ]
       end
 

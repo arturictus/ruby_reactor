@@ -3,6 +3,8 @@
 require_relative "rspec/helpers"
 require_relative "rspec/matchers"
 require_relative "rspec/sidekiq_helpers"
+require_relative "rspec/active_job_helpers"
+require_relative "rspec/async_test_helpers"
 require_relative "rspec/storage_reset"
 require_relative "rspec/test_subject"
 
@@ -43,6 +45,8 @@ module RubyReactor
         end
         ::Sidekiq::Worker.clear_all
       end
+
+      ::ActiveJob::Base.queue_adapter.enqueued_jobs.clear if AsyncTestHelpers.active_job_testing?
 
       adapter = ::RubyReactor.configuration.storage_adapter
       adapter.reset! if adapter.respond_to?(:reset!)

@@ -54,8 +54,8 @@ RSpec.describe "Map Async Retry Behavior" do
       # No batch_size now runs through the same per-element path as batch_size
       # maps (batch_size defaults to the full source size), so drain the element
       # and collector workers; retries requeue MapElementWorker jobs.
-      RubyReactor::SidekiqWorkers::MapElementWorker.drain
-      RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
 
       # Retrieve final result
       context_id = reactor.context.context_id
@@ -75,8 +75,8 @@ RSpec.describe "Map Async Retry Behavior" do
 
       expect(result).to be_a(RubyReactor::AsyncResult)
 
-      RubyReactor::SidekiqWorkers::MapElementWorker.drain
-      RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
 
       context_id = reactor.context.context_id
       storage = RubyReactor.configuration.storage_adapter
@@ -146,8 +146,8 @@ RSpec.describe "Map Async Retry Behavior" do
       expect(result).to be_a(RubyReactor::AsyncResult)
 
       # Drain workers (multiple times might be needed for batches/retries)
-      RubyReactor::SidekiqWorkers::MapElementWorker.drain
-      RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
 
       # Retrieve final result
       context_id = reactor.context.context_id
@@ -173,8 +173,8 @@ RSpec.describe "Map Async Retry Behavior" do
       expect(result).to be_a(RubyReactor::AsyncResult)
 
       # Drain workers
-      RubyReactor::SidekiqWorkers::MapElementWorker.drain
-      RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
 
       # Retrieve final result
       context_id = reactor.context.context_id
@@ -257,8 +257,8 @@ RSpec.describe "Map Async Retry Behavior" do
       expect(result).to be_a(RubyReactor::AsyncResult)
 
       # Drain workers
-      RubyReactor::SidekiqWorkers::MapElementWorker.drain
-      RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
 
       # Retrieve final result
       context_id = reactor.context.context_id
@@ -282,8 +282,8 @@ RSpec.describe "Map Async Retry Behavior" do
       expect(result).to be_a(RubyReactor::AsyncResult)
 
       # Drain workers
-      RubyReactor::SidekiqWorkers::MapElementWorker.drain
-      RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
 
       # Retrieve final result
       context_id = reactor.context.context_id

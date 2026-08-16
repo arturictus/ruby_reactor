@@ -7,15 +7,15 @@ require "spec_helper"
 # completes off the index-keyed results hash.
 RSpec.describe "Map recovery (M1)" do
   before do
-    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
+    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::Adapters::Sidekiq::Router)
     Sidekiq::Testing.fake!
   end
 
   after { Sidekiq::Testing.inline! }
 
   let(:storage) { RubyReactor.configuration.storage_adapter }
-  let(:element_worker) { RubyReactor::SidekiqWorkers::MapElementWorker }
-  let(:collector_worker) { RubyReactor::SidekiqWorkers::MapCollectorWorker }
+  let(:element_worker) { RubyReactor::Adapters::Sidekiq::MapElementWorker }
+  let(:collector_worker) { RubyReactor::Adapters::Sidekiq::MapCollectorWorker }
 
   it "re-dispatches every missing index when element jobs are lost, then completes" do
     reactor = MapTestReactors::AsyncMapReactor.new

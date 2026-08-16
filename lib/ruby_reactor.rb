@@ -26,6 +26,13 @@ rescue LoadError
   # sidekiq is optional, async features won't be available
 end
 
+# Load active_job if available (for the ActiveJob async adapter)
+begin
+  require "active_job"
+rescue LoadError
+  # active_job is optional, only needed when using the ActiveJob adapter
+end
+
 loader = Zeitwerk::Loader.for_gem
 loader.inflector.inflect("api" => "API", "rspec" => "RSpec")
 loader.setup
@@ -356,7 +363,39 @@ module RubyReactor
   def self.start_sweeper!
     return unless configuration.sweeper_enabled
 
-    SidekiqWorkers::SweeperWorker.schedule_next
+    sweeper_job_class.schedule_next
+  end
+
+  # The sweeper job class living alongside the configured `async_router`
+  # (e.g. `Adapters::Sidekiq::Router` -> `Adapters::Sidekiq::SweeperWorker`),
+  # so the chain is kicked through whichever backend is configured instead of
+  # a hardcoded Sidekiq class. Known built-in routers are mapped explicitly;
+  # a custom `configuration.async_router` falls back to a sibling-namespace
+  # lookup, with a clear error (instead of a bare NameError) when that
+  # convention doesn't hold.
+  def self.sweeper_job_class
+    router = configuration.async_router
+    case router.name
+    when "RubyReactor::Adapters::Sidekiq::Router" then Adapters::Sidekiq::SweeperWorker
+    when "RubyReactor::Adapters::ActiveJob::Router" then Adapters::ActiveJob::SweeperWorker
+    else
+      inferred_sweeper_job_class(router)
+    end
+  end
+
+  def self.inferred_sweeper_job_class(router)
+    namespace_name = router.name.to_s.rpartition("::").first
+    raise sweeper_job_class_error(router) if namespace_name.empty?
+
+    Object.const_get(namespace_name).const_get(:SweeperWorker)
+  rescue NameError
+    raise sweeper_job_class_error(router)
+  end
+
+  def self.sweeper_job_class_error(router)
+    "RubyReactor: cannot infer a sweeper job class for custom async_router " \
+      "#{router.inspect}. Define a `SweeperWorker` class alongside it " \
+      "(same namespace), or override `RubyReactor.sweeper_job_class`."
   end
 
   # Run both recovery sweepers exactly once and return their counts. The

@@ -28,7 +28,7 @@ RSpec.describe "Async Notification Interrupt Reactor" do
 
     execution = reactor_class.run
 
-    # SidekiqAdapter now returns InterruptResult when inline! is active
+    # Adapters::Sidekiq::Router now returns InterruptResult when inline! is active
     expect(execution).to be_a(RubyReactor::InterruptResult)
     execution_id = execution.execution_id
 
@@ -50,7 +50,7 @@ RSpec.describe "Async Notification Interrupt Reactor" do
       payload: { status: "approved" }
     )
 
-    # SidekiqAdapter now returns Success when inline! is active
+    # Adapters::Sidekiq::Router now returns Success when inline! is active
     expect(result).to be_a(RubyReactor::Success)
 
     # Inline execution should have completed 'process_approval'
@@ -71,8 +71,8 @@ RSpec.describe "Async Notification Interrupt Reactor" do
 
   context "with manual async execution" do
     before do
-      # Use real SidekiqAdapter to test actual Sidekiq queuing
-      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
+      # Use real Adapters::Sidekiq::Router to test actual Sidekiq queuing
+      allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::Adapters::Sidekiq::Router)
     end
 
     it "returns AsyncResult initially, then pauses at interrupt after worker runs" do
@@ -89,7 +89,7 @@ RSpec.describe "Async Notification Interrupt Reactor" do
 
         # 2. Drain Sidekiq jobs to run send_notifications
         # This runs send_notifications and pauses at manager_approval
-        RubyReactor::SidekiqWorkers::Worker.drain
+        RubyReactor::Adapters::Sidekiq::Worker.drain
 
         expect(reactor_class.trace).to eq(%i[retrieve_context send_notifications])
 
@@ -107,7 +107,7 @@ RSpec.describe "Async Notification Interrupt Reactor" do
         expect(reactor_class.trace).to eq(%i[retrieve_context send_notifications])
 
         # 4. Drain again to run process_approval
-        RubyReactor::SidekiqWorkers::Worker.drain
+        RubyReactor::Adapters::Sidekiq::Worker.drain
 
         expect(reactor_class.trace).to eq(%i[retrieve_context send_notifications process_approval])
 

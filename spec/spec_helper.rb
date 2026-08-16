@@ -67,7 +67,7 @@ end
 RubyReactor.configure do |config|
   config.storage.adapter = :redis
   config.storage.redis_url = REDIS_TEST_URL
-  config.async_router = RubyReactor::SidekiqAdapter
+  config.async_router = RubyReactor::Adapters::Sidekiq::Router
 end
 
 RSpec.configure do |config|

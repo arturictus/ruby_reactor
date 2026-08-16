@@ -5,8 +5,8 @@ require "spec_helper"
 RSpec.describe "Async Map Execution" do
   before do
     # Use real Redis from spec_helper configuration
-    # But we need to ensure SidekiqAdapter is used instead of WorkerMock for this test
-    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::SidekiqAdapter)
+    # But we need to ensure Adapters::Sidekiq::Router is used instead of WorkerMock for this test
+    allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::Adapters::Sidekiq::Router)
 
     Sidekiq::Testing.fake!
   end
@@ -23,7 +23,7 @@ RSpec.describe "Async Map Execution" do
 
     # Check Sidekiq jobs
     # With batch_size: 1, only 1 job should be queued initially
-    expect(RubyReactor::SidekiqWorkers::MapElementWorker.jobs.size).to eq(1)
+    expect(RubyReactor::Adapters::Sidekiq::MapElementWorker.jobs.size).to eq(1)
   end
 
   it "processes map elements and triggers collector" do
@@ -35,13 +35,13 @@ RSpec.describe "Async Map Execution" do
     context_id = reactor.context.context_id
 
     # Process jobs
-    RubyReactor::SidekiqWorkers::MapElementWorker.drain
+    RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
 
     # Check if Collector was queued
-    expect(RubyReactor::SidekiqWorkers::MapCollectorWorker.jobs.size).to eq(2)
+    expect(RubyReactor::Adapters::Sidekiq::MapCollectorWorker.jobs.size).to eq(2)
 
     # Process Collector
-    RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+    RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
 
     # Verify result in Redis
     storage = RubyReactor.configuration.storage_adapter

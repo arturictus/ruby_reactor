@@ -2,12 +2,12 @@
 
 require "spec_helper"
 require "sidekiq/testing"
-require "ruby_reactor/sidekiq_workers/sweeper_worker"
+require "ruby_reactor/adapters/sidekiq/sweeper_worker"
 
 # Module-level sweeper entrypoints: the host kick (start_sweeper!) and the
 # synchronous escape hatch (sweep_once).
 RSpec.describe "RubyReactor sweeper entrypoints" do
-  let(:worker) { RubyReactor::SidekiqWorkers::SweeperWorker }
+  let(:worker) { RubyReactor::Adapters::Sidekiq::SweeperWorker }
 
   before do
     worker.clear

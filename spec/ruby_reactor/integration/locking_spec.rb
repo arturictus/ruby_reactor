@@ -91,7 +91,7 @@ RSpec.describe "Locking Integration" do
       RubyReactor.configuration.lock_snooze_jitter = 0
 
       # Stub SidekiqWorker to capture rescheduling (snooze counter starts at 1)
-      allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+      allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in)
 
       # Persist the context, then drive the worker by id (identity-only payload).
       context = RubyReactor::Context.new({ user_id: 1 }, SimpleLockReactor)
@@ -99,10 +99,10 @@ RSpec.describe "Locking Integration" do
         context.context_id, RubyReactor::ContextSerializer.serialize(context), "SimpleLockReactor"
       )
 
-      worker = RubyReactor::SidekiqWorkers::Worker.new
+      worker = RubyReactor::Adapters::Sidekiq::Worker.new
       worker.perform(context.context_id, "SimpleLockReactor")
 
-      expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
+      expect(RubyReactor::Adapters::Sidekiq::Worker).to have_received(:perform_in)
         .with(5.0, instance_of(String), "SimpleLockReactor", 1)
     end
   end
@@ -533,7 +533,7 @@ RSpec.describe "Locking Integration" do
   # (it never calls Executor#execute), so the period and rate-limit gates must
   # be enforced there too — but only on first runs, never on genuine resumes.
   describe "Async first-run gating (worker resume path)" do
-    let(:worker) { RubyReactor::SidekiqWorkers::Worker.new }
+    let(:worker) { RubyReactor::Adapters::Sidekiq::Worker.new }
 
     # Identity-only payload: the worker rehydrates from storage by id, so a fresh
     # async first-run must be persisted before the worker is driven.
@@ -564,7 +564,7 @@ RSpec.describe "Locking Integration" do
       end
 
       it "skips a fresh worker pass when the bucket is already marked" do
-        allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+        allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in)
         PeriodicReactor.run(org_id: 71)
         PeriodicCounters.reset
 
@@ -572,7 +572,7 @@ RSpec.describe "Locking Integration" do
 
         expect(executor.result).to be_a(RubyReactor::Skipped)
         expect(PeriodicCounters.runs).to eq(0)
-        expect(RubyReactor::SidekiqWorkers::Worker).not_to have_received(:perform_in)
+        expect(RubyReactor::Adapters::Sidekiq::Worker).not_to have_received(:perform_in)
       end
 
       it "does not re-check the gate on a genuine resume (a paused run must not skip itself)" do
@@ -597,19 +597,19 @@ RSpec.describe "Locking Integration" do
       end
 
       it "snoozes a fresh worker pass when the window is full, using the retry_after hint" do
-        allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+        allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in)
         3.times { RateLimitedReactor.run(account_id: 81) }
         RateLimitCounters.reset
 
         worker.perform(store_fresh_context(RateLimitedReactor, { account_id: 81 }), "RateLimitedReactor")
 
         expect(RateLimitCounters.runs).to eq(0)
-        expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
+        expect(RubyReactor::Adapters::Sidekiq::Worker).to have_received(:perform_in)
           .with(a_value >= 0.1, instance_of(String), "RateLimitedReactor", 1)
       end
 
       it "does not re-check the limit on a genuine resume (a paused run must not throttle itself)" do
-        allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+        allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in)
         3.times { RateLimitedReactor.run(account_id: 82) } # window now full
         RateLimitCounters.reset
 
@@ -619,11 +619,11 @@ RSpec.describe "Locking Integration" do
         worker.perform(context.context_id, "RateLimitedReactor")
 
         expect(RateLimitCounters.runs).to eq(1)
-        expect(RubyReactor::SidekiqWorkers::Worker).not_to have_received(:perform_in)
+        expect(RubyReactor::Adapters::Sidekiq::Worker).not_to have_received(:perform_in)
       end
 
       it "marks the context failed immediately on an unknown named limit (no snooze, no Sidekiq retry)" do
-        allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+        allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in)
         RubyReactor.configuration.instance_variable_set(:@rate_limits, RubyReactor::RateLimitRegistry.new)
 
         context = RubyReactor::Context.new({}, NamedRateLimitedReactor)
@@ -633,7 +633,7 @@ RSpec.describe "Locking Integration" do
 
         reloaded = NamedRateLimitedReactor.find(context.context_id)
         expect(reloaded.context.status.to_s).to eq("failed")
-        expect(RubyReactor::SidekiqWorkers::Worker).not_to have_received(:perform_in)
+        expect(RubyReactor::Adapters::Sidekiq::Worker).not_to have_received(:perform_in)
       end
     end
   end

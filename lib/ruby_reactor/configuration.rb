@@ -7,13 +7,23 @@ module RubyReactor
   class Configuration
     include Singleton
 
-    attr_writer :sidekiq_queue, :sidekiq_retry_count, :logger, :async_router,
+    attr_writer :queue_name, :job_retry_count, :logger, :async_router,
                 :lock_snooze_base_delay, :lock_snooze_jitter, :lock_snooze_max_attempts,
                 :middlewares, :context_ttl, :context_lock_ttl, :checkpoint_min_interval,
                 :sweeper_enabled, :sweeper_interval, :sweeper_limit
 
+    def queue_name
+      @queue_name ||= :default
+    end
+
+    # Deprecated alias for `queue_name` — kept so existing Sidekiq-only configs
+    # don't break.
     def sidekiq_queue
-      @sidekiq_queue ||= :default
+      queue_name
+    end
+
+    def sidekiq_queue=(value)
+      self.queue_name = value
     end
 
     # Retention TTL (seconds) for a stored reactor context. Storage is
@@ -79,8 +89,18 @@ module RubyReactor
       @context_lock_ttl ||= 60
     end
 
+    def job_retry_count
+      @job_retry_count ||= 3
+    end
+
+    # Deprecated alias for `job_retry_count` — kept so existing Sidekiq-only
+    # configs don't break.
     def sidekiq_retry_count
-      @sidekiq_retry_count ||= 3
+      job_retry_count
+    end
+
+    def sidekiq_retry_count=(value)
+      self.job_retry_count = value
     end
 
     # Base seconds the Sidekiq worker waits before re-checking a contended lock.
@@ -104,7 +124,7 @@ module RubyReactor
     end
 
     def async_router
-      @async_router ||= RubyReactor::SidekiqAdapter
+      @async_router ||= RubyReactor::Adapters::Sidekiq::Router
     end
 
     def storage

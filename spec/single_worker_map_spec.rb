@@ -17,11 +17,11 @@ RSpec.describe "Async Map Execution without batch_size" do
     # An async map without batch_size now fans out per-element workers
     # (batch_size defaults to the full source size) instead of a single
     # MapExecutionWorker. One worker per element.
-    expect(RubyReactor::SidekiqWorkers::MapElementWorker.jobs.size).to eq(3)
+    expect(RubyReactor::Adapters::Sidekiq::MapElementWorker.jobs.size).to eq(3)
 
     # Process the elements and the collector that aggregates them.
-    RubyReactor::SidekiqWorkers::MapElementWorker.drain
-    RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+    RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
+    RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
 
     # Verify result in Redis
     storage = RubyReactor.configuration.storage_adapter

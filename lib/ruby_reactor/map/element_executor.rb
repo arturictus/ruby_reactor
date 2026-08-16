@@ -51,7 +51,7 @@ module RubyReactor
         # The element already runs inside its own background worker, so any async
         # steps (and async retries) must execute inline here rather than handing
         # off to a detached Worker that would escape map result/counter tracking.
-        # This mirrors SidekiqWorkers::Worker, which sets the same flag.
+        # This mirrors RubyReactor::Worker, which sets the same flag.
         context.inline_async_execution = true
 
         storage = RubyReactor.configuration.storage_adapter

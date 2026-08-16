@@ -325,7 +325,7 @@ email_delivery_failure_rate
 
 ## Scaling Considerations
 
-- **High Volume**: Use async execution with multiple Sidekiq workers
+- **High Volume**: Use async execution with multiple Sidekiq or ActiveJob workers
 - **Payment Processing**: Implement idempotency keys for payment providers
 - **Inventory**: Use optimistic locking or database transactions
 - **Email**: Queue emails separately to avoid blocking order completion

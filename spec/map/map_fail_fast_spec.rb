@@ -372,13 +372,13 @@ RSpec.describe "Map fail_fast Option" do
       # 2. MapCollectorWorker waits for results
 
       # Main Worker
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       # Process elements (Batches)
-      RubyReactor::SidekiqWorkers::MapElementWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
 
       # Collector
-      RubyReactor::SidekiqWorkers::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
 
       # Reload reactor from storage to check status
       stored_reactor = AsyncFailFastReactor.find(context.context_id)

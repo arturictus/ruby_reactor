@@ -402,7 +402,7 @@ end
 **Characteristics:**
 
 - Non-blocking execution
-- Background processing with Sidekiq
+- Background processing with Sidekiq or ActiveJob
 - Retry capabilities
 - Better scalability
 
@@ -725,7 +725,7 @@ graph TD
 - Simple debugging and monitoring
 
 ### Asynchronous
-- Multi-threaded execution via Sidekiq
+- Multi-threaded execution via Sidekiq or ActiveJob workers
 - Non-blocking retry mechanisms
 - Complex monitoring and debugging
 

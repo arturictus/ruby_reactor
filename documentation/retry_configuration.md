@@ -259,13 +259,15 @@ retry_timeout_count(step_name)
 ```
 
 
-### Sidekiq Web UI
+### Job Backend Visibility
 
-Retry jobs are visible in Sidekiq web interface with:
+On the Sidekiq adapter (the default), retry jobs are visible in the Sidekiq web interface with:
 - Step name and attempt number
 - Failure reason and stack trace
 - Scheduled retry time
 - Job arguments and context
+
+On the ActiveJob adapter, visibility depends on your underlying queue adapter's own tooling (e.g. Solid Queue's dashboard).
 
 ## Performance Considerations
 
@@ -349,10 +351,10 @@ describe "Retry integration" do
       result = FailingReactor.run(input: "test")
 
       # Verify job was queued for retry
-      expect(RubyReactor::SidekiqWorkers::Worker.jobs.size).to eq(1)
+      expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(1)
 
       # Process the retry
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       # Verify final success
       expect(result).to be_success
@@ -360,3 +362,5 @@ describe "Retry integration" do
   end
 end
 ```
+
+On the ActiveJob adapter, prefer the framework-agnostic `test_reactor` helper (see [Testing with RSpec](testing.md)) over reaching into `RubyReactor::Adapters::ActiveJob::Worker` directly — it detects and drains ActiveJob's `:test` queue adapter the same way it drains Sidekiq fake mode above.

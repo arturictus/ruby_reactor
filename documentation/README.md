@@ -83,7 +83,7 @@ result.value    # => payment result
 - **Error Handling**: Automatic compensation and rollback on failures
 - **Async Support**: Full reactor async or step-level async execution
 - **Non-Blocking Retries**: Job requeuing instead of blocking workers
-- **Sidekiq Integration**: Seamless background processing
+- **Pluggable Backend**: Sidekiq or ActiveJob (any ActiveJob-compatible queue) for background processing
 - **Retry Configuration**: Flexible retry policies per step
 
 ## Architecture
@@ -91,7 +91,7 @@ result.value    # => payment result
 RubyReactor provides two execution models:
 
 1. **Synchronous**: All steps execute in the current thread
-2. **Asynchronous**: Steps execute in Sidekiq workers with non-blocking retries
+2. **Asynchronous**: Steps execute in background jobs (Sidekiq or ActiveJob) with non-blocking retries
 
 ### Execution Flow
 
@@ -112,11 +112,11 @@ graph TD
 ```mermaid
 graph TD
     A[Client Request] --> B{Async<br/>Model?}
-    B -->|Full Reactor| C[Queue All Steps<br/>to Sidekiq]
+    B -->|Full Reactor| C[Queue All Steps<br/>to Background Job]
     B -->|Step-Level| D[Execute Sync Steps<br/>Until First Async]
-    C --> E[Sidekiq Worker<br/>Executes All Steps]
-    D --> F[Queue Remaining Steps<br/>to Sidekiq]
-    F --> G[Sidekiq Worker<br/>Executes Remaining Steps]
+    C --> E[Background Worker<br/>Executes All Steps]
+    D --> F[Queue Remaining Steps<br/>to Background Job]
+    F --> G[Background Worker<br/>Executes Remaining Steps]
     E --> H{Result?}
     G --> H
     H -->|Success| I[Return Success]
@@ -146,7 +146,7 @@ RubyReactor provides comprehensive error handling:
 
 - Ruby 3.0+
 - Redis (for async execution and state persistence)
-- Sidekiq (for background processing)
+- Sidekiq or ActiveJob (for background processing)
 - dry-validation (optional, for input/payload validation)
 
 ## Installation

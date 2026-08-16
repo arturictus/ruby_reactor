@@ -49,15 +49,15 @@ RSpec.describe "OrderedLock Integration" do
       # snooze must be queued. Note: WaitError bypasses lock_snooze_max_attempts,
       # so we drive perform manually rather than using `drain` (which would
       # loop until poison_pill_timeout elapses).
-      third = RubyReactor::SidekiqWorkers::Worker.jobs.last
-      RubyReactor::SidekiqWorkers::Worker.jobs.clear
+      third = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
 
-      allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in).and_call_original
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*third["args"])
+      allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in).and_call_original
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*third["args"])
 
       expect(OrderedLockCounters.runs).to be_empty
       expect(adapter.ordered_lock_peek("orders:9")[:last_completed]).to eq(0)
-      expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
+      expect(RubyReactor::Adapters::Sidekiq::Worker).to have_received(:perform_in)
     end
 
     it "snoozes a waiting nonce at the base delay, not the poison-pill window" do
@@ -70,14 +70,14 @@ RSpec.describe "OrderedLock Integration" do
       OrderedReactor.run(account_id: 11, thing: :first)  # nonce 1
       OrderedReactor.run(account_id: 11, thing: :second) # nonce 2
 
-      second = RubyReactor::SidekiqWorkers::Worker.jobs.last
-      RubyReactor::SidekiqWorkers::Worker.jobs.clear
+      second = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
 
       delays = []
-      allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in) do |delay, *_|
+      allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in) do |delay, *_|
         delays << delay
       end
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*second["args"])
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*second["args"])
 
       expect(delays).to contain_exactly(0.01)
     end
@@ -90,7 +90,7 @@ RSpec.describe "OrderedLock Integration" do
       # The fake queue preserves enqueue order. Drain in order:
       RubyReactor.configuration.lock_snooze_base_delay = 0.01
       RubyReactor.configuration.lock_snooze_jitter = 0
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       expect(OrderedLockCounters.runs).to eq([1, 2, 3])
     end
@@ -100,8 +100,8 @@ RSpec.describe "OrderedLock Integration" do
       RubyReactor.configuration.lock_snooze_jitter = 0
 
       OrderedReactor.run(account_id: 21, thing: :only) # nonce 1, lone batch
-      job = RubyReactor::SidekiqWorkers::Worker.jobs.last
-      RubyReactor::SidekiqWorkers::Worker.drain
+      job = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       expect(OrderedLockCounters.runs).to eq([:only])
       expect(adapter.ordered_lock_peek("orders:21")).to be_ordered_lock_drained
@@ -111,7 +111,7 @@ RSpec.describe "OrderedLock Integration" do
       # reached :completed, so this must be skipped — NOT re-run — and must not
       # clobber the terminal record.
       context_id = job["args"].first # identity-only payload: args.first IS the id
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*job["args"])
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*job["args"])
 
       expect(OrderedLockCounters.runs).to eq([:only]) # step did not run again
       expect(OrderedReactor.find(context_id).context.status.to_s).to eq("completed")
@@ -142,7 +142,7 @@ RSpec.describe "OrderedLock Integration" do
       StrictOrderedReactor.run(account_id: 1, thing: :two)
       StrictOrderedReactor.run(account_id: 1, thing: :three)
 
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       expect(OrderedLockCounters.runs).to eq([:one])
       expect(adapter.ordered_lock_peek("strict:1")).to be_ordered_lock_drained
@@ -152,9 +152,9 @@ RSpec.describe "OrderedLock Integration" do
       StrictOrderedReactor.run(account_id: 2, thing: :one, fail: true)
       StrictOrderedReactor.run(account_id: 2, thing: :two)
 
-      first_job = RubyReactor::SidekiqWorkers::Worker.jobs.first
-      RubyReactor::SidekiqWorkers::Worker.jobs.shift
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*first_job["args"])
+      first_job = RubyReactor::Adapters::Sidekiq::Worker.jobs.first
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.shift
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*first_job["args"])
 
       expect(adapter.ordered_lock_peek("strict:2")[:first_failed]).to eq(1)
     end
@@ -162,7 +162,7 @@ RSpec.describe "OrderedLock Integration" do
     it "drains the marker after a full batch completes (strict skips advance the cursor)" do
       StrictOrderedReactor.run(account_id: 3, thing: :one, fail: true)
       StrictOrderedReactor.run(account_id: 3, thing: :two)
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       # Sequence drained; a fresh assign should start at 1 (counters GC'd).
       n, = adapter.ordered_lock_assign("strict:3")
@@ -181,7 +181,7 @@ RSpec.describe "OrderedLock Integration" do
       NonStrictOrderedReactor.run(account_id: 1, thing: :two)
       NonStrictOrderedReactor.run(account_id: 1, thing: :three)
 
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       expect(OrderedLockCounters.runs).to eq(%i[one two three])
     end
@@ -190,16 +190,16 @@ RSpec.describe "OrderedLock Integration" do
       NonStrictOrderedReactor.run(account_id: 2, thing: :one, fail: true)
       NonStrictOrderedReactor.run(account_id: 2, thing: :two)
 
-      first_job = RubyReactor::SidekiqWorkers::Worker.jobs.first
-      RubyReactor::SidekiqWorkers::Worker.jobs.shift
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*first_job["args"])
+      first_job = RubyReactor::Adapters::Sidekiq::Worker.jobs.first
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.shift
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*first_job["args"])
 
       expect(adapter.ordered_lock_peek("lenient:2")[:first_failed]).to eq(1)
 
       # Now run nonce 2 — it should NOT be skipped despite first_failed > 0.
-      second_job = RubyReactor::SidekiqWorkers::Worker.jobs.first
-      RubyReactor::SidekiqWorkers::Worker.jobs.clear
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*second_job["args"])
+      second_job = RubyReactor::Adapters::Sidekiq::Worker.jobs.first
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*second_job["args"])
 
       expect(OrderedLockCounters.runs).to eq(%i[one two])
     end
@@ -208,7 +208,7 @@ RSpec.describe "OrderedLock Integration" do
   describe "drain + reset" do
     it "restarts at nonce 1 after a full drain" do
       2.times { |i| OrderedReactor.run(account_id: 5, thing: i + 1) }
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
 
       n, = adapter.ordered_lock_assign("orders:5")
       expect(n).to eq(1)
@@ -252,8 +252,8 @@ RSpec.describe "OrderedLock Integration" do
       # Batch A: a single nonce, run to completion so the key fully drains
       # (counters GC'd, generation epoch kept).
       OrderedReactor.run(account_id: 77, thing: :a)
-      straggler = RubyReactor::SidekiqWorkers::Worker.jobs.last
-      RubyReactor::SidekiqWorkers::Worker.drain
+      straggler = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
+      RubyReactor::Adapters::Sidekiq::Worker.drain
       expect(adapter.ordered_lock_peek("orders:77")).to be_ordered_lock_drained
 
       # Batch B reuses nonce 1 under a NEW epoch; leave its job queued.
@@ -262,7 +262,7 @@ RSpec.describe "OrderedLock Integration" do
       OrderedLockCounters.runs.clear
 
       # Replay batch A's straggler (same serialized context -> stale epoch).
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*straggler["args"])
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*straggler["args"])
 
       # It must neither run its step nor advance batch B's cursor.
       expect(OrderedLockCounters.runs).to be_empty
@@ -275,15 +275,15 @@ RSpec.describe "OrderedLock Integration" do
 
       # Batch A: single nonce, run to completion (counters GC'd, epoch kept).
       OrderedReactor.run(account_id: 78, thing: :a)
-      duplicate = RubyReactor::SidekiqWorkers::Worker.jobs.last
-      RubyReactor::SidekiqWorkers::Worker.drain
+      duplicate = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
+      RubyReactor::Adapters::Sidekiq::Worker.drain
       expect(adapter.ordered_lock_peek("orders:78")).to be_ordered_lock_drained
 
       # Sidekiq at-least-once redelivery of nonce 1 in the drain->next-batch
       # window: SAME epoch, so the stale-batch fence cannot catch it. Its
       # terminal advance (my == last + 1 against the GC'd cursor) must not
       # resurrect last_completed.
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*duplicate["args"])
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*duplicate["args"])
       expect(adapter.ordered_lock_peek("orders:78")[:last_completed]).to eq(0)
 
       # Batch B: nonce 2 alone must still snooze behind nonce 1 (pre-fix the
@@ -292,13 +292,13 @@ RSpec.describe "OrderedLock Integration" do
       OrderedReactor.run(account_id: 78, thing: :b2) # nonce 2
       OrderedLockCounters.runs.clear
 
-      second = RubyReactor::SidekiqWorkers::Worker.jobs.last
-      RubyReactor::SidekiqWorkers::Worker.jobs.clear
-      allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in).and_call_original
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*second["args"])
+      second = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
+      allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in).and_call_original
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*second["args"])
 
       expect(OrderedLockCounters.runs).to be_empty
-      expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
+      expect(RubyReactor::Adapters::Sidekiq::Worker).to have_received(:perform_in)
     end
 
     it "does not downgrade an already-completed context when a stale duplicate is redelivered" do
@@ -306,9 +306,9 @@ RSpec.describe "OrderedLock Integration" do
       RubyReactor.configuration.lock_snooze_jitter = 0
 
       OrderedReactor.run(account_id: 88, thing: :a)
-      duplicate = RubyReactor::SidekiqWorkers::Worker.jobs.last
+      duplicate = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
       ctx_id = duplicate["args"].first # identity-only payload: args.first IS the id
-      RubyReactor::SidekiqWorkers::Worker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain
       expect(adapter.retrieve_context(ctx_id, "OrderedReactor")["status"]).to eq("completed")
 
       # New batch bumps the epoch, so the duplicate's gate resolves to stale.
@@ -316,7 +316,7 @@ RSpec.describe "OrderedLock Integration" do
 
       # Redeliver the completed job. Its stale-batch short-circuit must NOT
       # overwrite the stored :completed record with :skipped.
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*duplicate["args"])
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*duplicate["args"])
 
       expect(adapter.retrieve_context(ctx_id, "OrderedReactor")["status"]).to eq("completed")
     end
@@ -330,20 +330,20 @@ RSpec.describe "OrderedLock Integration" do
       OrderedLockWithLockReactor.run(account_id: 1, thing: :a) # nonce 1
       OrderedLockWithLockReactor.run(account_id: 1, thing: :b) # nonce 2
 
-      jobs = RubyReactor::SidekiqWorkers::Worker.jobs
+      jobs = RubyReactor::Adapters::Sidekiq::Worker.jobs
       _job1 = jobs.shift
       job2 = jobs.shift
 
       # Put nonce 2 back; do NOT execute nonce 1. Ordered gate must reject
       # nonce 2 since last_completed == 0.
-      RubyReactor::SidekiqWorkers::Worker.jobs.clear
-      RubyReactor::SidekiqWorkers::Worker.jobs << job2
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
+      RubyReactor::Adapters::Sidekiq::Worker.jobs << job2
 
       RubyReactor.configuration.lock_snooze_base_delay = 0.01
       RubyReactor.configuration.lock_snooze_jitter = 0
       RubyReactor.configuration.lock_snooze_max_attempts = 2
 
-      expect { RubyReactor::SidekiqWorkers::Worker.drain }.not_to raise_error
+      expect { RubyReactor::Adapters::Sidekiq::Worker.drain }.not_to raise_error
 
       # The lock was never acquired because the ordered gate rejected first.
       expect(adapter.lock_info("lock:combo:1")).to be_nil
@@ -366,11 +366,11 @@ RSpec.describe "OrderedLock Integration" do
       OrderedLockWithLockReactor.run(account_id: 1, thing: :one) # nonce 1
       OrderedLockWithLockReactor.run(account_id: 1, thing: :two) # nonce 2
 
-      job1 = RubyReactor::SidekiqWorkers::Worker.jobs.first
-      RubyReactor::SidekiqWorkers::Worker.jobs.clear
+      job1 = RubyReactor::Adapters::Sidekiq::Worker.jobs.first
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
 
       # Drive nonce 1 at the cap so the next snooze escalates.
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*job1["args"].first(2), 2)
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*job1["args"].first(2), 2)
 
       state = adapter.ordered_lock_peek("combo:1")
       # Escalation must advance the cursor (nonce 1 no longer in flight) AND
@@ -397,13 +397,13 @@ RSpec.describe "OrderedLock Integration" do
       # nonce 1 + 2; run nonce 2's job alone — its ordered gate raises WaitError.
       OrderedReactor.run(account_id: 555, thing: :first)
       OrderedReactor.run(account_id: 555, thing: :second)
-      job2 = RubyReactor::SidekiqWorkers::Worker.jobs.last
-      RubyReactor::SidekiqWorkers::Worker.jobs.clear
+      job2 = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
 
       RubyReactor.configuration.lock_snooze_base_delay = 0.01
       RubyReactor.configuration.lock_snooze_jitter = 0
-      allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
-      RubyReactor::SidekiqWorkers::Worker.new.perform(*job2["args"])
+      allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in)
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*job2["args"])
 
       expect(events).to include(:snooze_reactor)
       expect(events).not_to include(:failed_reactor)
