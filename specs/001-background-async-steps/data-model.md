@@ -12,9 +12,11 @@ Reactor-class-level declaration, one per reactor.
 
 **Storage**: not persisted as its own record — it's compiled into which step's completion triggers `StepExecutor#handle_async_step`-style enqueue. Enforced-single via a class-level guard (raising if `background` is declared twice).
 
-**Validation rules**:
+**Validation rules** (all definition-time errors):
 - Exactly zero or one `background after:` per reactor class (FR-002).
 - `after:` step name must exist in `steps` at the time `background` is evaluated, or at class-definition-close time if steps can be declared afterward (implementation detail for tasks phase).
+- `background` combined with whole-reactor `async true` is rejected — the hand-off point would be silently meaningless inside a reactor that already runs entirely in a worker (spec Edge Cases).
+- `returns` naming an `async_step` or `async_reactor` is rejected — the return value must come from a same-process step (spec Edge Cases).
 
 ## Async Step
 
@@ -62,8 +64,8 @@ The durable record backing `async_step` completion. (`async_reactor` needs no eq
 | Field | Type | Notes |
 |---|---|---|
 | `context_id` | String (UUID) | The **parent** reactor's context id — the bucket is scoped per parent execution. |
-| `step_name` | Symbol/String | The `async_step`/`async_reactor` step's name within that parent. |
-| `status` | Enum: `dispatched`, `completed` | `dispatched` written synchronously at enqueue time (so `result()` knows "pending, keep polling" vs. "never dispatched, don't wait"); `completed` written by the async unit's own worker. |
+| `step_name` | Symbol/String | The `async_step`'s name within that parent. |
+| `status` | Enum: `dispatched`, `completed` | `dispatched` written synchronously **before** the job is enqueued (same checkpoint-before-enqueue ordering the existing hand-off uses, F2) — so a crash after enqueue can never find a job with no record, and recovery seeing `dispatched` re-attaches instead of re-dispatching (spec Edge Cases). `completed` written by the step's own worker. |
 | `serialized_result` | String (via `ContextSerializer.serialize_value`) | The step's `Success`/`Failure` value, same serialization the existing map-result bucket uses. |
 | `reactor_class_name` | String | Needed for storage-key namespacing, mirrors every other storage primitive's `reactor_class_name` parameter. |
 
@@ -84,7 +86,7 @@ Modeled directly on the existing `store_map_result(map_id, index, serialized_res
 
 ## State/behavior changes to existing entities
 
-- **`StepConfig`** (`lib/ruby_reactor/dsl/step_builder.rb`): the `async`/`async?` accessor is removed; using `async true` inside a `step` block raises a definition-time error naming the replacement DSL (FR-003). `ComposeBuilder#async` (`dsl/compose_builder.rb:31-33`) is **unaffected** — it configures the existing step-level hand-off behavior for a `compose` step and is a separate, already-consistent mechanism (single flag, no multi-step ambiguity), out of scope for this feature.
+- **`StepConfig`** (`lib/ruby_reactor/dsl/step_builder.rb`): the `async`/`async?` accessor is removed; using `async true` inside a `step` block raises a definition-time error naming the replacement DSL (FR-003). `ComposeBuilder#async` (`dsl/compose_builder.rb:31-33`) is **removed too** — it sets the very `StepConfig` `async:` flag being deleted (`compose_builder.rb:62`), so it cannot survive the removal; it raises the same definition-time error (migration: `background after: <preceding step>`, or whole-reactor `async true`). `MapBuilder#async` (`dsl/map_builder.rb:43`) is genuinely unaffected: it is a map-internal element-dispatch mode passed as a step *argument*, and the map's own `StepConfig` is hardcoded `async: false` (`map_builder.rb:111`) — it never touched the removed flag. (An earlier pass of this document had the compose/map carve-outs backwards; corrected after verifying both builders.)
 - **`DependencyGraph`**: no schema change; `complete_step` is now called for an `async_step` at dispatch time rather than at true completion — a deliberate, documented divergence from every other step type, captured here so it isn't mistaken for a bug during implementation review.
 - **Reactor-class DSL** (`lib/ruby_reactor/dsl/reactor.rb`): three new class macros — `background(after:)`, `async_step(name, impl = nil, &block)`, `async_reactor(name, child_reactor_class, &block)` — alongside the existing `step`, `compose`, `map`, `interrupt`. The existing reactor-level `async`/`async?` (whole-reactor async) is unchanged.
 - **`Context#composed_contexts`**: gains two new `type:` tags in its value union — `:async_step_ref` and `:async_reactor_ref` — alongside the existing `:composed` and `:map_ref`. No schema/serialization change (it's already a generic `Hash`, already serialized/deserialized as-is); this is purely a new convention for the `type:` field's allowed values, consumed by `Web::API.hydrate_composed_contexts` and by the new `TestSubject#async_step`/`#async_reactor` traversal helpers (mirroring `#composed`/`#map`).

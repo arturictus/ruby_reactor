@@ -24,7 +24,7 @@ Replace the confusing per-step `async: true` flag (only the first flagged step i
 
 **Performance Goals**: Not a throughput-sensitive change — dispatch overhead should stay within the same order of magnitude as the existing `map` per-element dispatch path it reuses patterns from. No new SLO introduced.
 
-**Constraints**: Blocking waits on `result()` (FR-005) must use a bounded poll loop against Redis, never an unbounded `sleep`/`BLPOP`, honoring a single library-wide `Configuration#async_wait_timeout` (new knob, see data-model.md). Must not change behavior of the untouched reactor-level `async` flag (`self.class.async?`, "Full Reactor Async") or of `compose`/`map`.
+**Constraints**: Blocking waits on `result()` (FR-005) must use a bounded poll loop against Redis, never an unbounded `sleep`/`BLPOP`, honoring a single library-wide `Configuration#async_wait_timeout` (new knob, see data-model.md). Must not change behavior of the untouched reactor-level `async` flag (`self.class.async?`, "Full Reactor Async"), of `compose`'s execution/compensation semantics (its `async` flag is removed with the shared `StepConfig` flag, per FR-003 — see contracts/public-dsl.md), or of `map` (including its map-internal `async` element-dispatch option, which is a different mechanism and stays).
 
 **Scale/Scope**: Single-gem change; touches DSL (`dsl/reactor.rb`, `dsl/step_builder.rb`), executor (`executor/step_executor.rb`, `dependency_graph.rb`), a new async-step worker/adapter pair (mirroring `Adapters::{Sidekiq,ActiveJob}::MapElementWorker`), `template/result.rb`, `storage/adapter.rb` + `storage/redis_adapter.rb`, `configuration.rb`, RSpec helpers, the bundled web dashboard (`lib/ruby_reactor/web/api.rb` + `gui/src/components/{DagVisualizer,StepInspector}.tsx`, per FR-014), `demo_app/`, `documentation/`, `README.md`.
 
@@ -60,16 +60,21 @@ specs/001-background-async-steps/
 ```text
 lib/ruby_reactor/
 ├── dsl/
-│   ├── reactor.rb                  # ADD: `background after:`, `async_step`, `async_reactor` class macros;
-│   │                                #      REMOVE: reactor-level nothing (whole-reactor `async` stays)
-│   └── step_builder.rb             # REMOVE: `async` step-level flag (raise on use, FR-003)
+│   ├── reactor.rb                  # ADD: `background after:`, `async_step`, `async_reactor` class macros
+│   │                                #      + definition-time guards (dup background, unknown step,
+│   │                                #      background×async-true, returns×async-unit);
+│   │                                #      whole-reactor `async` stays
+│   ├── step_builder.rb             # REMOVE: `async` step-level flag (raise on use, FR-003)
+│   └── compose_builder.rb          # REMOVE: `async` flag too — it sets the same StepConfig flag
+│                                    #         (raise on use, FR-003); map_builder.rb untouched
 ├── executor/
-│   ├── step_executor.rb            # REPLACE: `handle_async_step` keyed off reactor's single
-│   │                                #          `background_after` step, not per-step `async?`;
-│   │                                #          ADD: async_step dispatch (fire-and-continue) and
-│   │                                #          async_reactor dispatch (fire-and-continue)
-│   └── (dependency_graph.rb)       # ADD: mark an async_step "graph-complete" at dispatch time so
-│                                    #      sibling steps aren't blocked, independent of result readiness
+│   └── step_executor.rb            # REPLACE: `handle_async_step` keyed off reactor's single
+│                                    #          `background_after` step, not per-step `async?`;
+│                                    #          ADD: async_step dispatch (fire-and-continue, marks the
+│                                    #          node complete in the DependencyGraph at dispatch time so
+│                                    #          siblings aren't blocked) and async_reactor dispatch
+├── dependency_graph.rb             # UNCHANGED (no schema change; dispatch-time complete_step is
+│                                    # called by the executor, see data-model.md)
 ├── adapters/
 │   ├── sidekiq/step_worker.rb      # NEW: independent one-shot worker for a single async_step
 │   └── active_job/step_worker.rb   # NEW: ActiveJob counterpart

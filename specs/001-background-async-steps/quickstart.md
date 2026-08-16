@@ -1,6 +1,6 @@
 # Quickstart: Validating Background Execution & Real Async Steps
 
-Prerequisites: repo checked out on this branch, `bundle install` run (repo root and `demo_app/`), Redis running (`docker-compose up -d` at repo root, or point `RUBYREACTOR_REDIS_URL` at an existing instance per the constitution's storage requirement — real Redis, not mocked, for these specs).
+Prerequisites: repo checked out on this branch, `bundle install` run (repo root and `demo_app/`), Redis running (`docker-compose up -d` at repo root; the gem's suite reads `RUBY_REACTOR_TEST_REDIS_URL`, defaulting to `redis://localhost:6780` — see `spec/spec_helper.rb:13`). Real Redis, not mocked, per the constitution's storage requirement.
 
 ## 1. Gem-level unit/integration specs
 

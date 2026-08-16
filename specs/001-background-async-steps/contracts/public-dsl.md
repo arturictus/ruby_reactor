@@ -12,7 +12,17 @@ class MyReactor < RubyReactor::Reactor
 end
 ```
 
-**Error contract**: attempting to call `async` inside a `step` block MUST raise a `RubyReactor::Error::ValidationError` (or a new dedicated error subclass — implementation's choice, but it MUST be raised at reactor **class-definition** time, not at `run` time) whose message names both the removed syntax and its replacement(s): `background after:`, `async_step`, `async_reactor`.
+```ruby
+class MyReactor < RubyReactor::Reactor
+  compose :sub_flow, SubReactor do
+    async true   # ALSO REMOVED — same StepConfig hand-off flag, same definition-time error
+  end
+end
+```
+
+**Error contract**: attempting to call `async` inside a `step` **or `compose`** block MUST raise a `RubyReactor::Error::ValidationError` (or a new dedicated error subclass — implementation's choice, but it MUST be raised at reactor **class-definition** time, not at `run` time) whose message names both the removed syntax and its replacement(s): `background after:`, `async_step`, `async_reactor`. (`ComposeBuilder#async` sets the very `StepConfig` flag this feature removes — `dsl/compose_builder.rb:62` — so it cannot survive; migration for a compose that handed off is `background after: <the step preceding it>`, or whole-reactor `async true` if the compose was first.)
+
+**Not removed**: the `async` option inside a `map` block (`MapBuilder#async`, `dsl/map_builder.rb:43`) is a map-internal element-dispatch mode passed as a step *argument* — the map's own `StepConfig` is hardcoded `async: false` (`map_builder.rb:111`), so it does not touch the removed flag and keeps working unchanged.
 
 ## Added: `background after:`
 
@@ -26,8 +36,8 @@ end
 ```
 
 - **Signature**: `self.background(after:)` — reactor class macro.
-- **Constraint**: at most one `background` declaration per reactor class; a second declaration, or an `after:` value naming a step not defined in the class, MUST raise at class-definition time (FR-002).
-- **Runtime contract**: steps up to and including `after:` execute in the calling process; `MyReactor.run` returns an `AsyncResult` once the `after:` step completes; steps declared after `background` execute in an independent worker job dispatched via `configuration.async_router`. Compensation for these later steps' failures works exactly as it does for any same-process step failure — `background` only changes *where* code runs, not the saga/compensation contract (US1 acceptance scenario 1).
+- **Constraint**: at most one `background` declaration per reactor class; a second declaration, or an `after:` value naming a step not defined in the class, MUST raise at class-definition time (FR-002). Declaring `background` in a reactor marked whole-reactor `async true` also raises at definition time (the hand-off point would be silently meaningless inside a reactor that already runs entirely in a worker — see spec Edge Cases).
+- **Runtime contract**: hand-off is triggered by the *completion of the named step*, not by the declaration's lexical position — `background after: :second` anywhere in the class body means: when `:second` completes, checkpoint, enqueue the remainder via `configuration.async_router`, and return an `AsyncResult` to the caller. In a DAG with parallel branches, any independent step that became ready and executed before `:second` completed has already run in the calling process; everything not yet executed at the trigger moment runs in the worker. Compensation for worker-side step failures works exactly as it does for any same-process step failure — `background` only changes *where* code runs, not the saga/compensation contract (US1 acceptance scenario 1). Inside the worker the hand-off never re-triggers (the existing `inline_async_execution` guard).
 
 ## Added: `async_step`
 
@@ -52,7 +62,10 @@ end
 - **Signature**: `self.async_step(name, impl = nil, &block)` — same call shape as `step`, builds the same `StepConfig` fields (`argument`, `run`, `compensate`, `undo`, `validate_args`, `validate_output`, `retries`, etc. all still work identically inside the block).
 - **Runtime contract**:
   - Dispatches the step's work to an independent worker job; does **not** halt the calling reactor's execution of other ready steps that don't depend on it (US2 acceptance scenario 1).
-  - Any step that references `result(:async_step_name)` blocks (bounded poll, `Configuration#async_wait_timeout`) until the async step's terminal result is available, then receives the same deserialized value a same-process step's result would produce (US2 acceptance scenario 2, FR-006).
+  - Any step that references `result(:async_step_name)` blocks (bounded poll, `Configuration#async_wait_timeout`) until the async step's terminal result is available. **Read semantics**: on `Success`, the reader receives the same deserialized raw value a same-process step's result would produce (US2 acceptance scenario 2, FR-006); on `Failure`, the reader receives the `Failure` object itself as the argument value — a same-process step's failure would have halted the reactor before any reader ran, so there is no sync-behavior to mirror here, and injecting the `Failure` is what lets the reader "see the failure and decide" per the spec's clarified compensation model (US2 acceptance scenario 3). This matches `async_reactor`'s wrapped-result-on-inspection pattern.
+  - `returns :async_step_name` raises at class-definition time — the reactor's return value must come from a same-process step (spec Edge Cases).
+  - Dispatch is **not** suppressed inside a worker: an `async_step` declared after a `background` hand-off point (or reached during a worker resume) still dispatches to its own independent job — the existing `inline_async_execution` guard suppresses only the *hand-off* re-trigger, never `async_step`/`async_reactor` dispatch (spec Edge Cases).
+  - Reactor-level `lock`/`semaphore`/`rate_limit` windows are held by the process executing the reactor's own steps — the async step's work runs *outside* those windows (in its own job, which acquires nothing). A step body that needs mutual exclusion must arrange it itself.
   - If the async step fails and no later step reads its result, the parent reactor's compensation is **not** automatically triggered (US2 acceptance scenario 3, FR-011). A later step that does read the result and observes failure may itself return `Failure` to trigger compensation.
   - `compensate`/`undo` blocks declared on an `async_step` still register normally — they only run if the step's own failure is surfaced into the parent's compensation path via the opt-in mechanism above, never automatically.
   - A reference to the dispatched unit is recorded on the parent's own context (`composed_contexts[:send_email] = { type: :async_step_ref, ... }`) at dispatch time, and the web dashboard renders `send_email` as an `async_step`-typed node (FR-008, FR-014).
@@ -86,10 +99,12 @@ end
   - If nothing in the parent reads `result(:name)`, the child's eventual failure never affects the parent (US3 acceptance scenario 1).
   - If a later step reads `result(:name)`, it blocks (same policy as `async_step`) until the child reactor reaches a terminal state, then receives the child's actual `Success`/`Failure` result object (not the enqueue-time `AsyncResult`), and may inspect `.success?`/`.value`/`.error` to decide whether to itself return `Failure` (US3 acceptance scenarios 2-3, FR-010).
   - A reference is recorded on the parent's own context (`composed_contexts[:create_profile] = { type: :async_reactor_ref, execution_id:, reactor_class_name:, ... }`) at dispatch time — the web dashboard renders `create_profile`/`create_account` as `async_reactor`-typed nodes and lets an operator open the linked child execution, the same drill-down `compose`/`map` already offer (FR-008, FR-014, US3 acceptance scenario 4).
+  - `returns :async_reactor_name` raises at class-definition time, same as for `async_step`.
+  - A child that *pauses* at an interrupt step is not terminal: a reader keeps polling and hits the FR-005 timeout unless the child is resumed within the bound (spec Edge Cases). The child is an ordinary independently-recoverable execution — the existing sweeper/durability machinery covers its crash recovery with no new mechanism.
 
 ## Unchanged (explicitly out of scope, called out to prevent accidental regression)
 
-- Reactor-level `async true` ("Full Reactor Async") — `self.class.async?`, `lib/ruby_reactor/dsl/reactor.rb:44-50`.
-- `compose` and its own step-level `async` flag (`ComposeBuilder#async`) — a single, unambiguous flag on a single compose step, not the confusing multi-step case this feature fixes.
-- `map`'s dispatch/collection machinery — reused as an architectural pattern (see research.md) but its public DSL (`map`, `element`) is untouched.
+- Reactor-level `async true` ("Full Reactor Async") — `self.class.async?`, `lib/ruby_reactor/dsl/reactor.rb:44-50`. (Its only new interaction: combining it with `background after:` is a definition-time error, see above.)
+- `compose` itself — synchronous, fully compensation-linked nested execution, untouched. (Its `async` flag is removed — see the Removed section — but everything else about `compose` is unchanged.)
+- `map`'s dispatch/collection machinery and its full DSL including the map-internal `async` element-dispatch option — reused as an architectural pattern (see research.md) but untouched.
 - `result(:name)` for a **synchronous** step's result — resolves exactly as it does today (`Template::Result#resolve`), with zero added latency; the new blocking-poll path only activates for `async_step`/`async_reactor` references.
