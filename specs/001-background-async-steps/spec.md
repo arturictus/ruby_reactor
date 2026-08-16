@@ -86,18 +86,19 @@ A reactor author wants to kick off an entire nested reactor (e.g. `create_profil
 - **FR-005**: When any step declares `argument :x, result(:name)` referencing an `async_step` or `async_reactor` named `:name` that has not yet completed, System MUST block the executing process/thread in a bounded poll loop against the durable store, without implicitly changing the reactor's synchronous execution mode, up to a single library-wide configurable timeout (set via the existing global `Configuration`, no per-reactor or per-reference override in this feature), then fail that step with a clear timeout error if the bound is exceeded.
 - **FR-006**: System MUST persist `async_step` and `async_reactor` results using the existing durable step-result storage and serialization mechanism, so that dependent steps deserialize the same result shape as a same-process step would produce.
 - **FR-007**: System MUST provide an `async_reactor` declaration that dispatches a nested reactor to run in an independent worker process.
-- **FR-008**: System MUST link an `async_reactor`'s execution id to the parent reactor's execution/context for traceability (logs, dashboard) without adding that nested execution to the parent's compensation graph.
+- **FR-008**: System MUST link an `async_reactor`'s execution id to the parent reactor's execution/context for traceability (logs, dashboard) without adding that nested execution to the parent's compensation graph. This link MUST be recorded on the parent's own context (in the same structural location the system already uses to reference other child executions, e.g. `compose`/`map`), not only in an external log line, so it survives independently of logging configuration and can be reloaded/queried later.
 - **FR-009**: System MUST NOT automatically trigger parent-reactor compensation when an `async_reactor`'s execution fails; the parent's own steps MUST remain the only place compensation for that parent is decided.
 - **FR-010**: A step in the parent reactor MUST be able to reference an `async_reactor`'s result via `result(:name)` the same way it references an `async_step`'s result, subject to the wait/timeout policy in FR-005, and inspect that result's success/failure to decide whether to return `Success` or `Failure` itself.
 - **FR-011**: If an `async_step` fails in its independent worker, System MUST NOT automatically trigger the owning reactor's saga compensation — the same fire-and-forget compensation model as `async_reactor` (see FR-009). Compensation for an `async_step` failure MUST only happen when a later step explicitly reads its result via `result(:name)` and itself decides to return `Failure`.
 - **FR-012**: System MUST emit structured log entries (reactor name, step name, execution id) for: background hand-off, `async_step` dispatch and completion, and `async_reactor` dispatch and completion.
 - **FR-013**: System MUST document the breaking change (removal of the per-step `async` flag) with a migration note, per the project's semantic-versioning policy for public API changes.
+- **FR-014**: The existing web dashboard MUST render `async_step` and `async_reactor` as distinct, recognizable step types (not fall back to a generic/unknown type), and MUST let an operator drill into an `async_reactor`'s linked execution the same way it already lets them drill into a `compose`d or `map`ped child, using the FR-008 link recorded on the parent's context.
 
 ### Key Entities
 
 - **Background Hand-off Point**: The single `background after: <step_name>` declaration in a reactor that marks where remaining execution moves from the calling process to an independent worker.
 - **Async Step**: A step whose unit of work executes in an independent worker process, producing a durably stored result that other steps in the same reactor may depend on and wait for.
-- **Async Reactor**: A nested reactor execution dispatched to an independent worker, linked to its parent by execution id for traceability, but excluded from the parent's automatic compensation graph.
+- **Async Reactor**: A nested reactor execution dispatched to an independent worker, linked to its parent's context by execution id (in the same structural location `compose`/`map` already use, so the dashboard can render and drill into it) for traceability, but excluded from the parent's automatic compensation graph.
 - **Step Result Record**: The durable, serialized record of a completed step's or nested reactor's output, keyed for lookup by any step that references it via `result(:name)`.
 
 ## Success Criteria *(mandatory)*
@@ -109,11 +110,12 @@ A reactor author wants to kick off an entire nested reactor (e.g. `create_profil
 - **SC-003**: An `async_step`'s or `async_reactor`'s failure never causes the parent reactor's completed steps to be rolled back unless a later step explicitly reads its result and triggers compensation itself — verified across repeated failure-injection runs with zero unintended rollbacks.
 - **SC-004**: 100% of reactor definitions still written against the old per-step async flag fail fast at definition time with an actionable error, rather than silently running with incorrect behavior.
 - **SC-005**: A step waiting on an async result is never left hanging indefinitely — it either receives the result or a clear timeout failure within the configured bound, in all tested scenarios.
+- **SC-006**: An operator viewing a running reactor in the dashboard can identify every `async_step` and `async_reactor` it launched and, for `async_reactor`, open the linked execution — with zero manual log-correlation required.
 
 ## Assumptions
 
-- Sidekiq remains the independent worker backend for background hand-off, `async_step`, and `async_reactor` dispatch, consistent with the project's existing core dependency on Sidekiq.
+- The project's existing pluggable job backend (Sidekiq or ActiveJob, selected via `configuration.async_router`) remains the independent worker mechanism for background hand-off, `async_step`, and `async_reactor` dispatch — this feature does not hardcode Sidekiq and must work identically on either configured backend.
 - Redis remains the durable store for step/reactor results, consistent with the project's existing durability model.
-- "Independent process" means a separate worker job (a new Sidekiq job), not a thread or fiber within the originating process.
+- "Independent process" means a separate worker job (a new Sidekiq or ActiveJob job, per the configured backend), not a thread or fiber within the originating process.
 - This is a breaking (MAJOR, per SemVer) change to the public step DSL; updating `README.md`, `CHANGELOG.md`, and `demo_app/` to the new syntax is required delivery work but not itself a testable acceptance criterion of this spec.
 - The wait timeout for `result()` references to async work (FR-005) is a single library-wide value exposed via the existing global `Configuration`; per-reactor or per-reference overrides are out of scope for this feature.

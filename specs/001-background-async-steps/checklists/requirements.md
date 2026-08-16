@@ -32,4 +32,5 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
-- Note: the spec names concrete terms (`Sidekiq`, `Redis`) only inside the **Assumptions** section, where they describe existing constraints already codified in the project constitution, not new implementation choices being introduced by this feature. All requirement- and success-criteria-level language remains technology-agnostic.
+- Note: the spec names concrete terms (`Sidekiq`, `ActiveJob`, `Redis`) only inside the **Assumptions** section, where they describe existing constraints already codified in the project constitution, not new implementation choices being introduced by this feature. All requirement- and success-criteria-level language remains technology-agnostic.
+- 2026-08-16 (post-plan review): added FR-014/SC-006 covering dashboard visibility for `async_step`/`async_reactor`, a gap found while reviewing plan.md against the constitution's Observability principle. Re-validated against this checklist — all items still pass.
