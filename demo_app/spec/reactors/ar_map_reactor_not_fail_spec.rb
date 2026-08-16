@@ -7,6 +7,10 @@ describe ArMapReactorNotFail do
         Product.find_or_create_by(name: "Product #{n}", stock: n >= 15 ? 6 : 0)
       end
 
+      # 6 products match the filter; force a deterministic mix of pass/fail
+      # so the "randomly_fail" step's `rand > 0.5` isn't a flaky coin flip.
+      allow_any_instance_of(Object).to receive(:rand).and_return(0.1, 0.9, 0.1, 0.9, 0.1, 0.9)
+
       reactor = test_reactor(described_class, { filter: { stock: 5 } })
 
       expect(reactor).to be_success
