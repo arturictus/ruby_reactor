@@ -1,6 +1,6 @@
 # Async Reactors
 
-RubyReactor supports two asynchronous execution models: **Full Reactor Async** and **Step-Level Async**. Both models use Sidekiq for background processing with non-blocking retry mechanisms.
+RubyReactor supports two asynchronous execution models: **Full Reactor Async** and **Step-Level Async**. Both models run on a pluggable background job backend — **Sidekiq** by default, or **ActiveJob** (any ActiveJob-compatible queue: Resque, Solid Queue, GoodJob, etc.) — with non-blocking retry mechanisms. The mechanics below are described in Sidekiq terms since it's the default, but everything (queueing, snoozing, retries, durability) works identically on ActiveJob; see [Backend Configuration](#backend-configuration) to switch.
 
 ## Overview
 
@@ -348,29 +348,34 @@ end
 
 ### Job Visibility
 
-Retries are visible in Sidekiq web UI with:
+On the Sidekiq adapter, retries are visible in the Sidekiq web UI with:
 - Step name and attempt number
 - Retry delay and timing
 - Success/failure status
 - Execution context
 
+On the ActiveJob adapter, visibility depends on your underlying queue adapter (e.g. Solid Queue's dashboard, Sidekiq's own UI if that's the adapter underneath ActiveJob, etc.) — RubyReactor's own execution trace (`reactor.execution_trace`, see [Getting Started](getting_started.md#inspecting-the-context)) is backend-agnostic either way.
+
 ## Configuration
 
-### Sidekiq Worker Setup
+### Backend Configuration
 
 ```ruby
-# config/initializers/ruby_reactor.rb (Rails) or load before booting Sidekiq
+# config/initializers/ruby_reactor.rb (Rails) or load before booting your worker
 RubyReactor.configure do |config|
   config.storage.adapter = :redis
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
 
-  config.sidekiq_queue = :default
-  config.sidekiq_retry_count = 3
+  config.queue_name = :default
+  config.job_retry_count = 3
   config.logger = Logger.new('log/ruby_reactor.log')
+
+  # Default is the Sidekiq adapter. Swap to ActiveJob:
+  # config.async_router = RubyReactor::Adapters::ActiveJob::Router
 end
 ```
 
-Sidekiq workers are loaded automatically via Zeitwerk when `ruby_reactor` is required — no extra `require` is needed.
+Worker classes (`Adapters::Sidekiq::Worker` and `Adapters::ActiveJob::Worker`) are loaded automatically via Zeitwerk when `ruby_reactor` is required — no extra `require` is needed. On the ActiveJob adapter, jobs run through whatever `config.active_job.queue_adapter` your Rails app already uses (Sidekiq, Resque, Solid Queue, GoodJob, `:test`, ...).
 
 ## Performance Considerations
 

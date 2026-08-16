@@ -18,7 +18,9 @@ gem install ruby_reactor
 
 ## Configuration
 
-RubyReactor uses Redis for state persistence and Sidekiq for async execution. Configure both before running any reactors:
+RubyReactor uses Redis for state persistence and a background job backend for
+async execution — Sidekiq by default, or ActiveJob. Configure storage and the
+job queue before running any reactors:
 
 ```ruby
 RubyReactor.configure do |config|
@@ -27,9 +29,12 @@ RubyReactor.configure do |config|
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
   config.storage.redis_options = { timeout: 1 }
 
-  # Sidekiq configuration for async execution
-  config.sidekiq_queue = :default
-  config.sidekiq_retry_count = 3
+  # Background job configuration for async execution
+  config.queue_name = :default
+  config.job_retry_count = 3
+
+  # Uncomment to run on ActiveJob instead of the Sidekiq default:
+  # config.async_router = RubyReactor::Adapters::ActiveJob::Router
 
   # Logger
   config.logger = Logger.new($stdout)
@@ -137,11 +142,11 @@ end
 
 ### Asynchronous Execution
 
-For async execution, configure Sidekiq and either mark the reactor `async true` or mark individual steps async:
+For async execution, configure a job backend (Sidekiq or ActiveJob — see [Configuration](#configuration) above) and either mark the reactor `async true` or mark individual steps async:
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
-  async true  # Entire reactor runs in a Sidekiq worker
+  async true  # Entire reactor runs in a background worker
 
   # ... steps defined above
 end

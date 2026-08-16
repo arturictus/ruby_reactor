@@ -7,7 +7,7 @@ RubyReactor provides powerful data pipeline capabilities through the `map` featu
 The data pipeline system is built around the `map` step, which iterates over an input collection and processes each element through a defined sub-reactor or inline steps.
 
 Key features:
-- **Parallel Processing**: Execute steps asynchronously via Sidekiq
+- **Parallel Processing**: Execute steps asynchronously via Queue or ActiveJob
 - **Batch Control**: Manage system load with configurable batch sizes
 - **Error Handling**: Choose between failing fast or collecting partial results
 - **Retries**: Configure granular retry policies for individual steps
@@ -73,7 +73,7 @@ When an `ActiveRecord::Relation` is returned, RubyReactor efficiently batches th
 
 ## Batch Processing Mechanism
 
-When processing large datasets asynchronously, you can control the parallelism using `batch_size`. This limits how many Sidekiq jobs are enqueued simultaneously, preventing system overload.
+When processing large datasets asynchronously, you can control the parallelism using `batch_size`. This limits how many background jobs are enqueued simultaneously, preventing system overload.
 
 ```ruby
 map :bulk_import do
@@ -92,7 +92,7 @@ end
 ### Async Without `batch_size`
 
 `batch_size` is optional. When you enable `async true` without it, RubyReactor
-defaults the batch size to the full source size and fans out **one Sidekiq
+defaults the batch size to the full source size and fans out **one background
 worker per element** immediately. Every element runs through the same
 per-element path — so elements whose sub-reactor contains async steps or async
 retries are handled correctly — and a collector aggregates the outcomes into a
@@ -119,7 +119,7 @@ mechanism described below.
 
 ### Back Pressure & Resource Management
 
-When `async true` is used with a `batch_size`, RubyReactor implements an intelligent **back pressure** mechanism. Instead of flooding Redis and Sidekiq with millions of jobs immediately (which is the standard behavior for many background job systems), the system processes data in controlled chunks.
+When `async true` is used with a `batch_size`, RubyReactor implements an intelligent **back pressure** mechanism. Instead of flooding Redis and the queue backend with millions of jobs immediately (which is the standard behavior for many background job systems), the system processes data in controlled chunks.
 
 This approach provides critical benefits for stability and scalability:
 
@@ -136,10 +136,10 @@ graph TD
     subgraph "Back Pressure Loop"
         BatchManager[Batch Manager] -->|Fetch N Items| DB[(Database)]
         DB --> Records
-        Records -->|Enqueue N Jobs| Sidekiq
+        Records -->|Enqueue N Jobs| Queue
         
-        Sidekiq --> W1[Worker 1]
-        Sidekiq --> W2[Worker 2]
+        Queue --> W1[Worker 1]
+        Queue --> W2[Worker 2]
         
         W1 -.->|Complete| Check{Batch Done?}
         W2 -.->|Complete| Check
@@ -252,7 +252,7 @@ end
 
 ### Retry Behavior
 
-- **Async Mode**: Retries are handled by requeuing the Sidekiq job with a delay. This is non-blocking and efficient.
+- **Async Mode**: Retries are handled by requeuing the background job with a delay. This is non-blocking and efficient.
 - **Sync Mode**: Retries happen immediately within the execution thread (blocking).
 
 

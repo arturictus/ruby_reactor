@@ -216,7 +216,7 @@ This ensures proper ordering and state consistency across async boundaries.
 
 One of the powerful features of composition in RubyReactor is the handling of asynchronous retries within nested reactors.
 
-When a step inside a composed reactor fails and is configured to retry asynchronously (e.g., via Sidekiq), RubyReactor ensures that the entire execution context is preserved.
+When a step inside a composed reactor fails and is configured to retry asynchronously (via Sidekiq or ActiveJob), RubyReactor ensures that the entire execution context is preserved.
 
 1.  **Context Serialization**: The entire reactor tree, including the state of the parent reactor and the composed reactor, is serialized.
 2.  **Resume on Retry**: When the retry job executes, it resumes execution exactly from the failed step within the composed reactor.

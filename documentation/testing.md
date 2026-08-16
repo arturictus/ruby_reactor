@@ -73,7 +73,7 @@ The `test_reactor` helper accepts the following options:
 | `inputs` | Hash | The inputs to pass to the reactor |
 | `context` | Hash | Optional context data for the execution |
 | `async` | Boolean | Force async (`true`) or sync (`false`) execution |
-| `process_jobs` | Boolean | Whether to automatically process Sidekiq jobs (default: `true`) |
+| `process_jobs` | Boolean | Whether to automatically process queued async jobs (default: `true`) |
 
 ```ruby
 # Force synchronous execution
@@ -111,9 +111,9 @@ subject = test_reactor(MyReactor, params, async: false)
 subject = test_reactor(MyReactor, params).run_async(false)
 ```
 
-### Sidekiq Job Processing
+### Async Job Processing
 
-By default, `TestSubject` automatically processes Sidekiq jobs in fake mode. This ensures that async steps complete during the test:
+By default, `TestSubject` automatically processes queued async jobs — whichever backend is active. It detects Sidekiq fake mode (`Sidekiq::Testing.fake!`) or ActiveJob's `:test` queue adapter and drains through that; you don't configure which one, it just works with whatever `config.async_router` you've set. This ensures that async steps complete during the test:
 
 ```ruby
 # Jobs are processed automatically
@@ -584,7 +584,7 @@ Reactors that declare `with_lock`, `with_semaphore`, `with_rate_limit`, `with_pe
 The matchers ship with the standard test setup — once `RubyReactor::RSpec.configure(config)` runs in your `spec_helper.rb`, they're available. They require:
 
 - A real Redis (the in-memory test mode does not back the primitives).
-- The `type: :reactor` tag on the example group. It enables Sidekiq fake mode, wipes the storage adapter between examples (so leftover lock owners, semaphore tokens, rate-limit counters and period markers don't leak), resets the snooze knobs, and includes the async-job helpers (`drain_async_jobs`, `pending_async_jobs`) described below.
+- The `type: :reactor` tag on the example group. It enables Sidekiq fake mode (if the `sidekiq` gem is loaded) and clears any pending ActiveJob `:test`-adapter jobs, wipes the storage adapter between examples (so leftover lock owners, semaphore tokens, rate-limit counters and period markers don't leak), resets the snooze knobs, and includes the async-job helpers (`drain_async_jobs`, `pending_async_jobs`) described below — these dispatch to whichever backend `config.async_router` is set to.
 
 ```ruby
 RSpec.describe RefundOrderReactor, type: :reactor do
@@ -592,7 +592,7 @@ RSpec.describe RefundOrderReactor, type: :reactor do
 end
 ```
 
-All execution in these examples goes through the `test_reactor` helper — never reach into `RubyReactor::SidekiqWorkers::Worker` directly. For async reactors, `test_reactor` processes the queued jobs for you by default; pass `process_jobs: false` when you need to inspect or drive the queue yourself.
+All execution in these examples goes through the `test_reactor` helper — never reach into `RubyReactor::Adapters::Sidekiq::Worker` (or `RubyReactor::Adapters::ActiveJob::Worker`) directly. For async reactors, `test_reactor` processes the queued jobs for you by default; pass `process_jobs: false` when you need to inspect or drive the queue yourself.
 
 ### The `Skipped` result
 
@@ -727,7 +727,7 @@ end
 
 `with_ordered_lock` exposes its counters through four matchers, all taking the **user-provided ordered-lock key** as their subject (no prefix). They all read live Redis via `RubyReactor::OrderedLock.peek(key)` under the hood.
 
-`OrderedReactor` here is `async`, so its work runs through queued Sidekiq jobs. Pass `process_jobs: false` to `test_reactor` when you want to assign nonces without running the jobs, then drive the queue with `drain_async_jobs` (run everything to completion) or `pending_async_jobs` (perform individual jobs out of order).
+`OrderedReactor` here is `async`, so its work runs through queued async jobs. Pass `process_jobs: false` to `test_reactor` when you want to assign nonces without running the jobs, then drive the queue with `drain_async_jobs` (run everything to completion) or `pending_async_jobs` (perform individual jobs out of order).
 
 ```ruby
 it "assigns nonces in caller order" do
@@ -808,7 +808,9 @@ it "reschedules with a snooze delay when the lock is held" do
   job = pending_async_jobs.first
 
   # The next snooze re-enqueues the same job with an incremented attempt count.
-  expect(RubyReactor::SidekiqWorkers::Worker)
+  # Stub whichever worker class backs `config.async_router` — here the Sidekiq
+  # default (`RubyReactor::Adapters::ActiveJob::Worker` if using ActiveJob).
+  expect(RubyReactor::Adapters::Sidekiq::Worker)
     .to receive(:perform_in)
     .with(5.0, *job.args, 1)
 

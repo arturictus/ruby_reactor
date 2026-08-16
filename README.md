@@ -5,7 +5,7 @@
 
 # RubyReactor
 
-A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq** for asynchronous execution and **Redis** for state persistence.
+A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq or ActiveJob** for asynchronous execution and **Redis** for state persistence.
 
 ![Payment workflow reactor](documentation/images/payment_workflow.png)
 
@@ -18,7 +18,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 ## Features
 
 - **DAG-based Execution**: Steps are executed based on their dependencies, allowing for parallel execution of independent steps.
-- **Async Execution**: Steps can be executed asynchronously in the background using Sidekiq.
+- **Async Execution**: Steps can be executed asynchronously in the background using Sidekiq or ActiveJob (so any ActiveJob-compatible queue — Resque, Solid Queue, GoodJob, etc. — works too).
 - **Map & Parallel Execution**: Iterate over collections in parallel with the `map` step, distributing work across multiple workers.
 - **Retries**: Configurable retry logic for failed steps, with exponential backoff.
 - **Compensation**: Automatic rollback of completed steps when a failure occurs.
@@ -35,7 +35,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 | Interrupts (pause/resume)| Yes          | No              | No          | Manual              |
 | Locks / sem / rate / per | Yes          | No              | No          | Manual              |
 | Built-in web dashboard   | Yes          | No              | No          | No                  |
-| Async with Sidekiq       | Yes          | No              | Limited     | Yes                 |
+| Async (Sidekiq/AJ)       | Yes          | No              | Limited     | Yes                 |
 | Durable crash recovery   | Yes          | No              | No          | Manual              |
 
 ## Real-World Use Cases
@@ -115,18 +115,21 @@ RubyReactor.configure do |config|
   ## Extra options passed to Redis.new. Default: {}.
   # config.storage.redis_options = { timeout: 1 }
 
-  ## === Sidekiq ===
+  ## === Background job backend (Sidekiq by default, or ActiveJob) ===
 
-  ## Sidekiq queue used by RubyReactor's async worker. Default: :default.
-  # config.sidekiq_queue = :default
+  ## Queue used by RubyReactor's async worker. Default: :default.
+  # config.queue_name = :default
 
-  ## Sidekiq retry count for infrastructure failures only (deserialization,
-  ## Redis, network). Step retries are managed separately. Default: 3.
-  # config.sidekiq_retry_count = 3
+  ## Retry count for infrastructure failures only (deserialization, Redis,
+  ## network). Step retries are managed separately. Default: 3.
+  # config.job_retry_count = 3
+
+  ## `sidekiq_queue` / `sidekiq_retry_count` still work as deprecated aliases
+  ## for `queue_name` / `job_retry_count` above.
 
   ## === Contention snooze (locks / semaphores / rate limits / ordered locks) ===
 
-  ## When a Sidekiq worker cannot acquire a primitive it re-enqueues itself with
+  ## When a worker cannot acquire a primitive it re-enqueues itself with
   ## `lock_snooze_base_delay + rand(0..lock_snooze_jitter)` seconds (rate-limit
   ## uses a precise `retry_after_seconds` hint from the error; ordered-lock waits
   ## re-poll at the base delay so a successor catches its blocker finishing fast),
@@ -162,10 +165,11 @@ RubyReactor.configure do |config|
   ## Logger. Default: Logger.new($stdout).
   # config.logger = Logger.new($stdout)
 
-  ## Async router. Default: RubyReactor::SidekiqAdapter. Swap for a custom adapter
-  ## if you don't use Sidekiq — it only needs to respond to
+  ## Async router. Default: RubyReactor::Adapters::Sidekiq::Router. Swap in the
+  ## built-in ActiveJob adapter (see "Async Execution" below), or point at any
+  ## custom adapter — it only needs to respond to
   ## `perform_async(context_id, reactor_class_name, **)`.
-  # config.async_router = MyCustomAdapter
+  # config.async_router = RubyReactor::Adapters::ActiveJob::Router
 
   ## === Examples (no default — set these to use the feature) ===
 
@@ -181,8 +185,9 @@ You can also leave out the `configure` block entirely — defaults work for loca
 
 > **Crash recovery needs a kick.** The `sweeper_*` settings above only configure
 > the recovery sweeper — they do not start it. Call `RubyReactor.start_sweeper!`
-> once at boot (ideally from a Sidekiq `on(:startup)` hook) or no crashed reactor
-> will ever resume. See [Durability & Recovery](#durability--recovery).
+> once at boot (ideally from a worker-process startup hook — a Sidekiq
+> `on(:startup)` hook, or a Rails initializer for ActiveJob) or no crashed
+> reactor will ever resume. See [Durability & Recovery](#durability--recovery).
 
 
 ## Quick Start
@@ -380,7 +385,18 @@ end
 
 ### Async Execution
 
-Execute reactors in the background using Sidekiq.
+Execute reactors in the background using Sidekiq or ActiveJob. The backend is
+chosen via `config.async_router` (defaults to the Sidekiq adapter); to run on
+ActiveJob instead:
+
+```ruby
+RubyReactor.configure do |config|
+  config.async_router = RubyReactor::Adapters::ActiveJob::Router
+end
+```
+
+That's the only switch — everything below (full-reactor async, step-level
+async, durability, retries, snoozing) works identically on either backend.
 
 #### Full Reactor Async
 
@@ -455,8 +471,8 @@ reactor only resumes when the recovery sweeper notices the lapsed liveness lock
 and re-enqueues it. The sweeper is a self-rescheduling chain — **kick it once per
 process boot:**
 
-The recommended spot is a Sidekiq server startup hook, so only the worker
-process runs recovery (not your web/console/client processes):
+The recommended spot is a worker-process startup hook, so only the worker
+process runs recovery (not your web/console/client processes). On Sidekiq:
 
 ```ruby
 # config/initializers/sidekiq.rb
@@ -465,7 +481,18 @@ Sidekiq.configure_server do |config|
 end
 ```
 
-Anywhere that runs once at boot works too — e.g. a Rails initializer:
+ActiveJob has no equivalent server-only hook — call it from wherever your
+queue adapter's worker process boots (e.g. `bin/jobs` for Solid Queue, or a
+dedicated initializer guarded by an env var so it doesn't also run in web
+processes):
+
+```ruby
+# config/initializers/ruby_reactor.rb
+RubyReactor.start_sweeper! if ENV["RUBY_REACTOR_WORKER"]
+```
+
+Anywhere that runs once at boot works too (idempotent, so it's safe even if
+every process calls it) — e.g. an unconditional Rails initializer:
 
 ```ruby
 # config/initializers/ruby_reactor.rb
@@ -599,7 +626,7 @@ class ChargeReactor < RubyReactor::Reactor
 
   # Respect upstream Stripe rate limits: 3/sec and 100/min.
   # Async workers snooze for exactly retry_after seconds instead of
-  # consuming Sidekiq retry budget.
+  # consuming the backend's retry budget.
   with_rate_limit(
     limits: { second: 3, minute: 100 }
   ) { |inputs| "stripe:#{inputs[:account_id]}" }
@@ -657,7 +684,7 @@ Referencing an unregistered name raises `RubyReactor::RateLimitRegistry::Unknown
 On contention:
 
 - **Inline** (`Reactor.run`) raises `RubyReactor::Lock::AcquisitionError` / `RubyReactor::Semaphore::AcquisitionError` / `RubyReactor::RateLimit::ExceededError` / `RubyReactor::OrderedLock::WaitError`.
-- **Async** (Sidekiq) snoozes the job via `perform_in(delay, ...)`. For rate limits the delay uses the error's `retry_after_seconds` hint (precise wakeup — the bucket roll time is known exactly); for locks, semaphores, and ordered-lock waits it's `lock_snooze_base_delay + jitter` (a short re-poll, since a held lock or a live blocker nonce typically clears in milliseconds). Snoozes do not count against the Sidekiq retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed (ordered-lock waits bypass the cap — see the ordered-lock docs).
+- **Async** (Sidekiq or ActiveJob) snoozes the job via `perform_in(delay, ...)`. For rate limits the delay uses the error's `retry_after_seconds` hint (precise wakeup — the bucket roll time is known exactly); for locks, semaphores, and ordered-lock waits it's `lock_snooze_base_delay + jitter` (a short re-poll, since a held lock or a live blocker nonce typically clears in milliseconds). Snoozes do not count against the backend's retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed (ordered-lock waits bypass the cap — see the ordered-lock docs).
 
 On dedup hits (period gate already marked), the reactor returns a `RubyReactor::Skipped` result instead — no steps run, no exception:
 
@@ -1176,7 +1203,7 @@ Learn about the fundamental building blocks of RubyReactor: Reactors, Steps, Con
 Deep dive into how RubyReactor manages dependencies. This guide explains how the Directed Acyclic Graph is constructed to ensure steps execute in the correct topological order, enabling automatic parallelization of independent steps.
 
 ### [Async Reactors](documentation/async_reactors.md)
-Explore the two asynchronous execution models: Full Reactor Async and Step-Level Async. Learn how RubyReactor leverages Sidekiq for background processing, non-blocking execution, and scalable worker management.
+Explore the two asynchronous execution models: Full Reactor Async and Step-Level Async. Learn how RubyReactor leverages Sidekiq or ActiveJob for background processing, non-blocking execution, and scalable worker management.
 
 ### [Composition](documentation/composition.md)
 Discover how to build complex, modular workflows by composing reactors within other reactors. This guide covers inline composition, class-based composition, and how to manage dependencies between composed workflows.
@@ -1219,9 +1246,9 @@ Hook into the execution lifecycle with observer middlewares. Covers the full set
 - [ ] Multiple storage adapters
   - [X] Redis
   - [ ] ActiveRecord
-- [ ] Multiple Async adapters
+- [X] Multiple Async adapters
   - [X] Sidekiq
-  - [ ] ActiveJob
+  - [X] ActiveJob
 - [X] OpenTelemetry support
 - [X] locks
 

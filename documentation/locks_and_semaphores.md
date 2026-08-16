@@ -12,6 +12,8 @@ RubyReactor ships with five Redis-backed coordination primitives — each tackli
 
 They are orthogonal and composable: a reactor can declare any combination.
 
+> **A note on terminology below:** contention/snooze behavior is described in terms of "the Sidekiq worker" throughout this guide since Sidekiq is the default `config.async_router`. Everything described applies identically on the ActiveJob adapter (`RubyReactor::Adapters::ActiveJob::Router`) — read "Sidekiq worker" as "async worker" wherever it appears.
+
 A typical use case:
 
 - Only one `RefundOrderReactor` should run per order at a time → exclusive lock keyed by order id.
@@ -23,7 +25,7 @@ A typical use case:
 The lock/semaphore primitives:
 
 - Are acquired before any step runs and released in an `ensure` block (so a crash, failure, or interrupt does not leak a holder).
-- Snooze (re-enqueue) instead of fail when contention is encountered inside a Sidekiq worker.
+- Snooze (re-enqueue) instead of fail when contention is encountered inside an async worker (Sidekiq or ActiveJob).
 - Carry a TTL so a crashed Ruby process cannot block the resource forever.
 
 The period primitive is different: it is **dedup**, not concurrency. It records a marker after a successful run and skips subsequent runs in the same calendar bucket.
@@ -118,10 +120,10 @@ If the Ruby process dies, the extender dies with it, so the TTL still kicks in a
 
 The behavior on a "lock already held" condition depends on **where** the reactor is running:
 
-| Caller                | Behavior on contention                                                                                          |
-| --------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Inline (`Reactor.run`) | Raises `RubyReactor::Lock::AcquisitionError`. The caller decides whether to retry, switch to async, or give up. |
-| Sidekiq worker        | Snoozes the job via `perform_in(delay, ...)`. **Does not** consume the Sidekiq retry budget.                    |
+| Caller                           | Behavior on contention                                                                                          |
+|----------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| Inline (`Reactor.run`)           | Raises `RubyReactor::Lock::AcquisitionError`. The caller decides whether to retry, switch to async, or give up. |
+| Async worker (Sidekiq/ActiveJob) | Snoozes the job via `perform_in(delay, ...)`. **Does not** consume the backend's retry budget.                  |
 
 The async path also force-disables `wait:` (no `sleep`/BLPOP inside a worker thread) — better to snooze the job than to tie up a worker.
 
@@ -134,7 +136,7 @@ begin
 rescue RubyReactor::Lock::AcquisitionError
   # Someone else is refunding this order; surface a 409, retry later, or hand
   # off to async:
-  RubyReactor::SidekiqWorkers::Worker.perform_async(...)
+  RubyReactor::Adapters::Sidekiq::Worker.perform_async(...)
 end
 ```
 
