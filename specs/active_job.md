@@ -11,8 +11,8 @@ duplicating the reactor-resume/snooze/escalate logic per adapter.
 
 The **enqueue side** is already behind a seam:
 
-- `RubyReactor.configuration.async_router` (default `RubyReactor::SidekiqAdapter`,
-  [configuration.rb:106-108](../lib/ruby_reactor/configuration.rb#L106-L108)) is the
+- `RubyReactor.configuration.async_router` (default `RubyReactor::Adapters::Sidekiq::Router`,
+  [configuration.rb:126-128](../lib/ruby_reactor/configuration.rb#L126-L128)) is the
   only thing the core engine calls to go async. Call sites:
   [reactor.rb:117](../lib/ruby_reactor/reactor.rb#L117),
   [reactor.rb:319](../lib/ruby_reactor/reactor.rb#L319),

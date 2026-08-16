@@ -31,16 +31,16 @@ module RubyReactor
         return
       end
 
-      # If reactor_class_name is provided, use it to get the reactor class
-      # This handles cases where the class can't be found via const_get
-      if reactor_class_name && context.reactor_class.nil?
-        begin
-          context.reactor_class = Object.const_get(reactor_class_name)
-        rescue NameError
-          # If not found, try to find it in the current namespace
-          # This is a fallback for test environments
-          context.reactor_class = reactor_class_name.constantize if reactor_class_name.respond_to?(:constantize)
-        end
+      resolve_reactor_class!(context, reactor_class_name)
+      unless context.reactor_class
+        # Still unresolved (class not loaded, or an anonymous reactor with no
+        # storage name to look up) — Executor.new below would blow up on a nil
+        # class and burn the job's retry budget forever. Fail the context now.
+        error = RubyReactor::Error::DeserializationError.new(
+          "reactor class '#{reactor_class_name}' could not be resolved"
+        )
+        handle_deserialization_failure(context_id, reactor_class_name, error)
+        return
       end
 
       # Mark that we're executing inline to prevent nested async calls
@@ -78,6 +78,20 @@ module RubyReactor
     end
 
     private
+
+    # If reactor_class_name is provided, use it to get the reactor class.
+    # This handles cases where the class can't be found via const_get.
+    def resolve_reactor_class!(context, reactor_class_name)
+      return unless reactor_class_name && context.reactor_class.nil?
+
+      begin
+        context.reactor_class = Object.const_get(reactor_class_name)
+      rescue NameError
+        # If not found, try to find it in the current namespace
+        # This is a fallback for test environments
+        context.reactor_class = reactor_class_name.constantize if reactor_class_name.respond_to?(:constantize)
+      end
+    end
 
     def handle_snooze(context_id, reactor_class_name, context, snooze_count, error)
       config = RubyReactor.configuration

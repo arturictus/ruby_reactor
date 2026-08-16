@@ -76,7 +76,7 @@ RSpec.describe LockDemoReactor, type: :reactor do
       RubyReactor.configuration.lock_snooze_base_delay = 5
       RubyReactor.configuration.lock_snooze_jitter = 0
 
-      allow(RubyReactor::SidekiqWorkers::Worker).to receive(:perform_in)
+      allow(RubyReactor::Adapters::Sidekiq::Worker).to receive(:perform_in)
 
       context = RubyReactor::Context.new({ order_id: "order_42", hold_seconds: 0 }, described_class)
       context.intermediate_results[:prepare_refund] = { prepared: true, order_id: "order_42" }
@@ -89,10 +89,10 @@ RSpec.describe LockDemoReactor, type: :reactor do
         context.context_id, serialized_context, described_class.name
       )
 
-      worker = RubyReactor::SidekiqWorkers::Worker.new
+      worker = RubyReactor::Adapters::Sidekiq::Worker.new
       worker.perform(context.context_id, described_class.name)
 
-      expect(RubyReactor::SidekiqWorkers::Worker).to have_received(:perform_in)
+      expect(RubyReactor::Adapters::Sidekiq::Worker).to have_received(:perform_in)
         .with(5.0, instance_of(String), described_class.name, 1)
     end
   end

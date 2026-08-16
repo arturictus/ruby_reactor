@@ -369,11 +369,33 @@ module RubyReactor
   # The sweeper job class living alongside the configured `async_router`
   # (e.g. `Adapters::Sidekiq::Router` -> `Adapters::Sidekiq::SweeperWorker`),
   # so the chain is kicked through whichever backend is configured instead of
-  # a hardcoded Sidekiq class.
+  # a hardcoded Sidekiq class. Known built-in routers are mapped explicitly;
+  # a custom `configuration.async_router` falls back to a sibling-namespace
+  # lookup, with a clear error (instead of a bare NameError) when that
+  # convention doesn't hold.
   def self.sweeper_job_class
     router = configuration.async_router
-    namespace = Object.const_get(router.name.rpartition("::").first)
-    namespace.const_get(:SweeperWorker)
+    case router.name
+    when "RubyReactor::Adapters::Sidekiq::Router" then Adapters::Sidekiq::SweeperWorker
+    when "RubyReactor::Adapters::ActiveJob::Router" then Adapters::ActiveJob::SweeperWorker
+    else
+      inferred_sweeper_job_class(router)
+    end
+  end
+
+  def self.inferred_sweeper_job_class(router)
+    namespace_name = router.name.to_s.rpartition("::").first
+    raise sweeper_job_class_error(router) if namespace_name.empty?
+
+    Object.const_get(namespace_name).const_get(:SweeperWorker)
+  rescue NameError
+    raise sweeper_job_class_error(router)
+  end
+
+  def self.sweeper_job_class_error(router)
+    "RubyReactor: cannot infer a sweeper job class for custom async_router " \
+      "#{router.inspect}. Define a `SweeperWorker` class alongside it " \
+      "(same namespace), or override `RubyReactor.sweeper_job_class`."
   end
 
   # Run both recovery sweepers exactly once and return their counts. The
