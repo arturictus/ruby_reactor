@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/arturictus/ruby_reactor/compare/v0.5.4...v0.6.0) (2026-08-16)
+
+
+### Features
+
+* ActiveJob Support ([#42](https://github.com/arturictus/ruby_reactor/issues/42)) ([0fb6dc4](https://github.com/arturictus/ruby_reactor/commit/0fb6dc4ae4b16c34e0aa33a66f95df3e14ae0807))
+
 ## [0.5.4](https://github.com/arturictus/ruby_reactor/compare/v0.5.3...v0.5.4) (2026-06-18)
 
 
