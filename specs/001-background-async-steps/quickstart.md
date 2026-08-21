@@ -21,6 +21,9 @@ Expected outcomes, mapped to spec.md acceptance scenarios:
 - An `async_step` failure with no downstream reader does NOT flip the parent to `failed`/trigger compensation; a downstream reader that inspects the failure and returns `Failure` DOES trigger compensation (US2 acceptance scenario 3, Clarifications).
 - An `async_reactor` with no reader: forcing the child to fail does not compensate the parent. An `async_reactor` with a reader: the reader's `run` block sees the child's real `Success`/`Failure` and can choose to propagate (US3, SC-003).
 - A `result()` reference to a never-completing async unit fails with a timeout error, not an indefinite hang (SC-005) — verify by pointing `Configuration#async_wait_timeout` at a short value in the spec and never draining the corresponding job.
+- The notified wait is race-free (FR-005, Session 2026-08-20 clarification): a completion that lands *before* the waiter subscribes is still found (subscribe-then-check), and a dropped signal is caught by the fallback re-check — verify with a spec that completes the async unit before the reader step runs, and one that publishes nothing and relies on the record alone.
+- An `async_reactor` whose child declares the same `lock` key the parent holds fails at dispatch with an error naming the key and both reactors (FR-015) — not a wait-then-timeout.
+- Dispatching an `async_reactor` with invalid child inputs fails the dispatching step in the parent (FR-016), while a child that fails *during execution* still never auto-compensates the parent (FR-009).
 
 ## 2. Sidekiq AND ActiveJob backends both pass
 

@@ -52,6 +52,10 @@ A step declared with `async_reactor :name, ChildReactorClass`.
 | `child_reactor_class` | Class | Must be a `RubyReactor::Reactor` subclass. |
 | `argument_mappings` | Hash | Same shape as `compose`'s `argument_mappings` — maps parent-visible sources to the child's inputs. |
 
+**Dispatch-time behavior** (FR-015, FR-016 — 2026-08-20 session):
+- Dispatch reuses the full pre-enqueue sequence of a top-level async run (child input validation → ordered-lock nonce assignment where the child declares one → persist child context → enqueue), never raw `perform_async` — see research.md decision 3. A validation failure fails the dispatching step itself (normal parent saga handling), distinct from child-execution failure (FR-009).
+- Deadlock guard: the child's `lock_config[:key_proc]` (and `semaphore_config` with `limit: 1`) is resolved against the mapped child inputs; a key matching one the dispatching execution currently holds fails the dispatch step immediately with an error naming the key and both reactor classes (research.md decision 9). No lock-owner sharing across the async boundary — reentrancy stays `compose`-only.
+
 **Relationships**:
 - Linked to the parent via `context.composed_contexts[step_name] = { type: :async_reactor_ref, name:, execution_id:, reactor_class_name:, dispatched_at: }` — written synchronously by the dispatching step, same field and pattern `compose`/`map` already use (research.md decision 8). Unlike `async_step`, no separate Step Result Record is needed for the *outcome*: the child is a normal, independently addressable `Reactor` with its own context row, so its terminal result is reached via the existing `storage.retrieve_context(execution_id, reactor_class_name)` / `ChildReactorClass.find(execution_id)` — the same lookup any other reactor execution uses.
 - **Not** added to the parent's compensation graph — no `compensate`/`undo` block is registered for this step (see spec Clarifications: compensation is opt-in via a later step reading the result, never automatic).
@@ -77,6 +81,17 @@ retrieve_step_result(context_id, step_name, reactor_class_name)
 ```
 
 Modeled directly on the existing `store_map_result(map_id, index, serialized_result, reactor_class_name, strict_ordering:)` / `retrieve_map_results(...)` pair (`lib/ruby_reactor/storage/adapter.rb:14-20`) — same TTL policy as `context_ttl` (records must not outlive the parent context's own retention window).
+
+## Completion Signal (new, ephemeral — not a stored entity)
+
+The wake-up channel for FR-005's notified wait (research.md decision 4). Pure latency optimization: at-most-once, unpersisted, never load-bearing — every path falls back to the durable record above (or the child's context row).
+
+| Channel | Published by | When |
+|---|---|---|
+| `rr:done:<parent_context_id>:<step_name>` | the `async_step`'s StepWorker | after `store_step_result` write |
+| `rr:done:<child_execution_id>` | the `async_reactor` child's executor | after its terminal context save (unconditional — no-subscriber publish is near-free) |
+
+Uses the existing, currently-unused `Storage::Adapter#publish`/`#subscribe` primitives (`adapter.rb:38-44`, implemented at `redis_adapter.rb:177-183`). Ordering contract: durable write **before** publish; waiter subscribes **before** its first record check; waiter re-checks the record on a coarse fallback interval. The subscriber MUST use a dedicated Redis connection (`SUBSCRIBE` puts a connection into subscriber mode — blocking the shared client would poison all other storage calls).
 
 ## Configuration additions
 
