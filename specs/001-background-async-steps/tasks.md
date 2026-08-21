@@ -174,7 +174,7 @@ Single-project Ruby gem: `lib/ruby_reactor/**` (implementation), `spec/**` (gem 
 - [X] T072 Rewrite the "Step-Level Async" subsection and add `async_step`/`async_reactor` coverage in `README.md`
 - [X] T073 Add the breaking-change entry with a migration note (per-step and compose `async` → `background after:` / `async_step` / `async_reactor`) under the correct semantic heading in `CHANGELOG.md` (FR-013)
 - [X] T074 Run `bundle exec rubocop` (no `--disable-pending-cops`) and fix all offenses across the changed files
-- [ ] T075 Execute the full `quickstart.md` validation: both backends green, `demo_app` specs green, and the dashboard verified in a browser (do not close FR-014 on passing specs alone)
+- [X] T075 Execute the full `quickstart.md` validation: both backends green, `demo_app` specs green, and the dashboard verified in a browser (do not close FR-014 on passing specs alone)
 
 ---
 

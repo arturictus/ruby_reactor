@@ -71,3 +71,32 @@ Run a reactor with an `async_step` and one with an `async_reactor` (e.g. the new
 ## Done criteria
 
 All specs above pass; `bundle exec rubocop` is clean (constitution requirement, no `--disable-pending-cops`); `demo_app`'s specs pass against both configured backends if the demo app is wired to test both (verify via its `config/` — otherwise document which single backend the demo exercises).
+
+---
+
+## Validation run — 2026-08-22
+
+| Step | Result |
+|---|---|
+| 1. Gem specs | **733 examples, 0 failures**, 1 pre-existing pending |
+| 2. Both backends | Every async spec group runs twice via `for_each_async_backend` (Sidekiq fake mode + ActiveJob `:test`); the blocked-caller groups run twice via `for_each_real_async_backend` (a **live sidekiq process** against the test Redis + the ActiveJob `:async` adapter) |
+| 3. `demo_app` | **94 examples, 0 failures** (13 of them the new async examples) |
+| 5. Dashboard — API | Driven through the real `Web::Application` Rack app for a reactor carrying all three new constructs: `async_step`/`async_reactor` step types render as themselves (not generic `step`), the dead per-step `async` field is gone, `background_handoff` is exposed once per reactor, the async_reactor node carries `nested_structure` plus a child `execution_id` that resolves to an addressable execution, and the `async_step` ref hydrates to its Step Result Record |
+| 5. Dashboard — GUI | `tsc -b` clean, `npm run build` succeeds, 36 component tests pass, `eslint` at its pre-existing baseline |
+| 5. Dashboard — browser | **Not performed.** See below. |
+| 6. Documentation | Both trees rewritten and kept in sync; no remaining example anywhere shows the removed `step { async true }` |
+| Rubocop | **216 files, no offenses** (no `--disable-pending-cops`) |
+
+### Open item: visual browser confirmation
+
+Step 5 asks for a human to open the dashboard and confirm the new nodes render
+and the async_reactor drill-down opens the child execution. That was **not**
+done: the implementing session was non-interactive with no browser available.
+
+Everything the browser check would depend on is verified programmatically above
+— the payload shape the components read, the components' own tests, the
+typecheck, and a clean production build — but the rendered result itself has not
+been looked at. **A reviewer should still open the dashboard once** (`cd gui &&
+npm run dev` against a reactor with an `async_step` and an `async_reactor`, e.g.
+the new `demo_app` examples) and confirm the node styling and the child link,
+before considering FR-014 closed.
