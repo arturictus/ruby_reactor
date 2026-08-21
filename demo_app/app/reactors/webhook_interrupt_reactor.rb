@@ -3,7 +3,6 @@ class WebhookInterruptReactor < RubyReactor::Reactor
   input :fail_at, :symbol, optional: true
 
   step :async_step_before do
-    async true
     argument :fail_at, input(:fail_at)
     run do |args, _|
       if args[:fail_at] == :async_step_before
@@ -60,7 +59,6 @@ class WebhookInterruptReactor < RubyReactor::Reactor
   end
 
   step :async_step_after do
-    async true
     argument :webhook_data, result(:wait_for_webhook)
     argument :fail_at, input(:fail_at)
     run do |args, _|
@@ -71,6 +69,8 @@ class WebhookInterruptReactor < RubyReactor::Reactor
       end
     end
   end
+
+  background before: :async_step_before
 
   returns :process_response
 end

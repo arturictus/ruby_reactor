@@ -19,7 +19,6 @@ class FormInterruptReactor < RubyReactor::Reactor
   end
 
   step :async_step_before do
-    async true
     argument :fail_at, input(:fail_at)
     run do |args, _|
       if args[:fail_at] == :async_step_before
@@ -88,7 +87,6 @@ class FormInterruptReactor < RubyReactor::Reactor
   end
 
   step :async_step_after do
-    async true
     argument :user_input, result(:wait_for_user_input)
     argument :fail_at, input(:fail_at)
     run do |args, _|
@@ -99,6 +97,8 @@ class FormInterruptReactor < RubyReactor::Reactor
       end
     end
   end
+
+  background before: :async_step_before
 
   returns :finalize_application
 end

@@ -45,9 +45,17 @@ puts "-- FullAsyncReactor --"
 res = FullAsyncReactor.run(param: "test")
 puts "Result Class: #{res.class} (Expected: RubyReactor::AsyncResult)"
 
-puts "-- PartialAsyncReactor --"
-res = PartialAsyncReactor.run(user_id: "user_123")
+puts "-- BackgroundDemoReactor --"
+res = BackgroundDemoReactor.run(user_id: "user_123")
 puts "Result Class: #{res.class} (Expected: RubyReactor::AsyncResult)"
+
+puts "-- AsyncStepDemoReactor --"
+res = AsyncStepDemoReactor.run(email: "demo@example.com")
+puts "Result Class: #{res.class} (the reactor keeps running; :send_email is out in its own job)"
+
+puts "-- AsyncReactorDemoReactor --"
+res = AsyncReactorDemoReactor.run(user_id: "user_123")
+puts "Result Class: #{res.class} (children run independently, linked by execution id)"
 puts "\n"
 
 puts "=== 4. Running Composition ==="

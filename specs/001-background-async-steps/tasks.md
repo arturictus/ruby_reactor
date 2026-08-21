@@ -162,12 +162,12 @@ Single-project Ruby gem: `lib/ruby_reactor/**` (implementation), `spec/**` (gem 
 - [X] T060 [P] Render the `async_step` and `async_reactor` step types (icon, color, and for async_reactor a drill-down link to the linked execution) in `gui/src/components/DagVisualizer.tsx` (FR-014)
 - [X] T061 [P] Render the new step types and their status/result panels in `gui/src/components/StepInspector.tsx` (FR-014)
 - [X] T062 [P] Spec: `Web::API` returns the new step types and hydrates both new ref types, including the async_reactor child's nested structure — `spec/ruby_reactor/web/api_spec.rb`
-- [ ] T063 Replace `demo_app/app/reactors/partial_async_reactor.rb` with a `background after:`-based example (the old per-step `async true` syntax no longer parses) and rename it to `demo_app/app/reactors/background_demo_reactor.rb`
-- [ ] T064 [P] Add `demo_app/app/reactors/async_step_demo_reactor.rb` demonstrating `async_step` plus a `result()` reader (the `send_email` example from the spec)
-- [ ] T065 [P] Add `demo_app/app/reactors/async_reactor_demo_reactor.rb` demonstrating fire-and-forget alongside an awaited child whose outcome the parent inspects
-- [ ] T066 [P] Add `demo_app/spec/reactors/background_demo_reactor_spec.rb` using only the built-in `test_reactor` helper and matchers
-- [ ] T067 [P] Add `demo_app/spec/reactors/async_step_demo_reactor_spec.rb` using only the built-in spec helpers
-- [ ] T068 [P] Add `demo_app/spec/reactors/async_reactor_demo_reactor_spec.rb` using only the built-in spec helpers
+- [X] T063 Replace `demo_app/app/reactors/partial_async_reactor.rb` with a `background after:`-based example (the old per-step `async true` syntax no longer parses) and rename it to `demo_app/app/reactors/background_demo_reactor.rb`
+- [X] T064 [P] Add `demo_app/app/reactors/async_step_demo_reactor.rb` demonstrating `async_step` plus a `result()` reader (the `send_email` example from the spec)
+- [X] T065 [P] Add `demo_app/app/reactors/async_reactor_demo_reactor.rb` demonstrating fire-and-forget alongside an awaited child whose outcome the parent inspects
+- [X] T066 [P] Add `demo_app/spec/reactors/background_demo_reactor_spec.rb` using only the built-in `test_reactor` helper and matchers
+- [X] T067 [P] Add `demo_app/spec/reactors/async_step_demo_reactor_spec.rb` using only the built-in spec helpers
+- [X] T068 [P] Add `demo_app/spec/reactors/async_reactor_demo_reactor_spec.rb` using only the built-in spec helpers
 - [ ] T069 Rewrite the "Step-Level Async" section as `background after:`/`before:` (documenting which step each form pins, and the DAG caveat) and add new `async_step` / `async_reactor` sections (covering the notified wait, the opt-in compensation model, and the FR-015 lock guidance) in `documentation/async_reactors.md`
 - [ ] T070 [P] Add the `async_reactor` vs `compose` cross-reference (fire-and-forget/uncompensated vs synchronous/compensation-linked, and when a lock collision means you wanted `compose`) in `documentation/composition.md`
 - [ ] T071 Mirror the T069/T070 edits into the duplicate copies under `demo_app/documentation/` so the two trees do not drift (research.md decision 7)
