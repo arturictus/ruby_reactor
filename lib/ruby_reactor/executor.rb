@@ -279,6 +279,7 @@ module RubyReactor
     def publish_completion_signal(storage)
       return unless @context.finished?
 
+      log_completion
       storage.publish(RubyReactor.async_reactor_channel(@context.context_id), @context.status.to_s)
     rescue StandardError => e
       # The signal is an optimisation; losing it costs the waiter one fallback
@@ -405,6 +406,33 @@ module RubyReactor
     def period_key(config)
       base = config[:key_proc].call(@context.inputs)
       RubyReactor::Period.key(base, config[:every])
+    end
+
+    # FR-012: one machine-parseable line whenever an execution reaches a terminal
+    # state, carrying the parent link. A child dispatched fire-and-forget may
+    # have no other surface in its parent at all, so a failure entry also names
+    # the reason.
+    def log_completion
+      return unless @context.parent_context_id
+
+      fields = {
+        event: "ruby_reactor.async_reactor.completed",
+        reactor: @reactor_class&.name,
+        execution_id: @context.context_id,
+        parent_execution_id: @context.parent_context_id,
+        status: @context.status.to_s
+      }
+      fields[:failure] = failure_summary if @context.failed?
+
+      RubyReactor.configuration.logger.public_send(
+        @context.failed? ? :warn : :info,
+        fields.map { |k, v| "#{k}=#{v.inspect}" }.join(" ")
+      )
+    end
+
+    def failure_summary
+      reason = @context.failure_reason
+      reason.respond_to?(:error) ? reason.error.to_s : reason.to_s
     end
 
     # Per-execution liveness lock on the root context id. Owner is a fresh UUID

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, History, ChevronLeft, CheckCircle, ChevronDown, ChevronUp, Play } from 'lucide-react';
+import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, History, ChevronLeft, CheckCircle, ChevronDown, ChevronUp, Play, Send, Workflow, ExternalLink } from 'lucide-react';
 import { apiUrl } from '../lib/utils';
 import FailureCodeSnippet from './FailureCodeSnippet';
 import { normalizeFailureReason } from '../lib/failures';
@@ -113,6 +113,11 @@ export default function StepInspector({
           result: results[part],
           attempts: attempts[part] || 0,
           trace: trace.filter((t: any) => t.step === part),
+          // For a dispatched async unit the outcome is NOT in
+          // intermediate_results — it lives in the Step Result Record (async_step)
+          // or the child's own context row (async_reactor), both already resolved
+          // onto this reference by the API's hydration.
+          asyncRef: context?.composed_contexts?.[part],
           context: context
         };
       } else {
@@ -149,6 +154,14 @@ export default function StepInspector({
   const isFailedStep = (resolvedData?.context?.failure_reason?.step_name === stepName?.split('.').pop());
   const attempts = resolvedData?.attempts || 0;
   const retries = attempts > 1 ? attempts - 1 : 0;
+
+  // `async_step` / `async_reactor` do not run in this execution, so their panel
+  // reads from the dispatch reference rather than from intermediate_results.
+  const isAsyncUnit = stepConfig?.type === 'async_step' || stepConfig?.type === 'async_reactor';
+  const asyncRef = resolvedData?.asyncRef;
+  const asyncRecord = asyncRef?.record;
+  const asyncChildContext = asyncRef?.context?.value || asyncRef?.context;
+  const asyncStatus = asyncRecord?.status || asyncChildContext?.status || 'dispatched';
 
   // Find relevant trace events
   const stepEvents = resolvedData?.trace || [];
@@ -320,7 +333,12 @@ export default function StepInspector({
               <h2 className="font-bold text-white text-lg">{stepName?.split('.').pop()}</h2>
               <div className="flex items-center gap-2 text-xs text-slate-500 font-mono mt-0.5">
                 <span className="uppercase tracking-wider text-indigo-400">{stepConfig?.type || 'UNKNOWN'}</span>
-                {stepConfig?.async && <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">ASYNC</span>}
+                {isAsyncUnit && (
+                  <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 flex items-center gap-1">
+                    {stepConfig?.type === 'async_reactor' ? <Workflow className="w-3 h-3" /> : <Send className="w-3 h-3" />}
+                    DISPATCHED
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -333,6 +351,63 @@ export default function StepInspector({
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-8">
+
+        {/* Dispatched async unit — its outcome lives outside this execution */}
+        {isAsyncUnit && (
+          <div className="bg-slate-800/40 rounded-lg border border-slate-700 border-dashed p-4">
+            <h3 className="text-sm font-medium text-slate-200 mb-2 flex items-center gap-2">
+              {stepConfig?.type === 'async_reactor' ? <Workflow className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+              Dispatched independently
+            </h3>
+            <p className="text-xs text-slate-400 mb-3">
+              {stepConfig?.type === 'async_reactor'
+                ? 'This child reactor runs on its own and is not part of this reactor\'s compensation graph. Its failure only affects this reactor if a later step reads its result and decides to fail.'
+                : 'This step\'s work runs in its own job. This reactor kept executing other ready steps, and a failure here compensates nothing unless a later step reads the result and returns Failure.'}
+            </p>
+
+            <dl className="text-xs font-mono space-y-1">
+              <div className="flex gap-2">
+                <dt className="text-slate-500 w-28">status</dt>
+                <dd className="text-slate-300">{asyncStatus}</dd>
+              </div>
+              {asyncRef?.dispatched_at && (
+                <div className="flex gap-2">
+                  <dt className="text-slate-500 w-28">dispatched_at</dt>
+                  <dd className="text-slate-300">{asyncRef.dispatched_at?.value || String(asyncRef.dispatched_at)}</dd>
+                </div>
+              )}
+              {asyncRef?.execution_id && (
+                <div className="flex gap-2">
+                  <dt className="text-slate-500 w-28">execution_id</dt>
+                  <dd className="text-slate-300 break-all">{asyncRef.execution_id}</dd>
+                </div>
+              )}
+              {asyncRecord && 'success' in asyncRecord && (
+                <div className="flex gap-2">
+                  <dt className="text-slate-500 w-28">outcome</dt>
+                  <dd className={asyncRecord.success ? 'text-teal-400' : 'text-rose-400'}>
+                    {asyncRecord.success ? 'Success' : 'Failure'}
+                  </dd>
+                </div>
+              )}
+            </dl>
+
+            {asyncRecord?.result !== undefined && (
+              <pre className="mt-3 bg-slate-950 rounded p-3 text-xs text-slate-300 overflow-x-auto">
+                {JSON.stringify(asyncRecord.result, null, 2)}
+              </pre>
+            )}
+
+            {asyncRef?.execution_id && (
+              <a
+                href={`/reactors/${asyncRef.execution_id}`}
+                className="mt-3 inline-flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 underline"
+              >
+                Open the linked execution <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
+        )}
 
         {/* Resume Action */}
         {reactorStatus === 'paused' && stepConfig?.type === 'interrupt' && (

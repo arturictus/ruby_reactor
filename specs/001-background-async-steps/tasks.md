@@ -158,10 +158,10 @@ Single-project Ruby gem: `lib/ruby_reactor/**` (implementation), `spec/**` (gem 
 
 **Purpose**: Observability, the dashboard frontend, the demo app, documentation, and release hygiene.
 
-- [ ] T059 Emit structured log entries (reactor name, step name, execution id) for background hand-off, `async_step` dispatch/completion, and `async_reactor` dispatch/completion, following the existing middleware event pattern, across `lib/ruby_reactor/executor/step_executor.rb` and `lib/ruby_reactor/step_worker.rb` (FR-012)
-- [ ] T060 [P] Render the `async_step` and `async_reactor` step types (icon, color, and for async_reactor a drill-down link to the linked execution) in `gui/src/components/DagVisualizer.tsx` (FR-014)
-- [ ] T061 [P] Render the new step types and their status/result panels in `gui/src/components/StepInspector.tsx` (FR-014)
-- [ ] T062 [P] Spec: `Web::API` returns the new step types and hydrates both new ref types, including the async_reactor child's nested structure — `spec/ruby_reactor/web/api_spec.rb`
+- [X] T059 Emit structured log entries (reactor name, step name, execution id) for background hand-off, `async_step` dispatch/completion, and `async_reactor` dispatch/completion, following the existing middleware event pattern, across `lib/ruby_reactor/executor/step_executor.rb` and `lib/ruby_reactor/step_worker.rb` (FR-012)
+- [X] T060 [P] Render the `async_step` and `async_reactor` step types (icon, color, and for async_reactor a drill-down link to the linked execution) in `gui/src/components/DagVisualizer.tsx` (FR-014)
+- [X] T061 [P] Render the new step types and their status/result panels in `gui/src/components/StepInspector.tsx` (FR-014)
+- [X] T062 [P] Spec: `Web::API` returns the new step types and hydrates both new ref types, including the async_reactor child's nested structure — `spec/ruby_reactor/web/api_spec.rb`
 - [ ] T063 Replace `demo_app/app/reactors/partial_async_reactor.rb` with a `background after:`-based example (the old per-step `async true` syntax no longer parses) and rename it to `demo_app/app/reactors/background_demo_reactor.rb`
 - [ ] T064 [P] Add `demo_app/app/reactors/async_step_demo_reactor.rb` demonstrating `async_step` plus a `result()` reader (the `send_email` example from the spec)
 - [ ] T065 [P] Add `demo_app/app/reactors/async_reactor_demo_reactor.rb` demonstrating fire-and-forget alongside an awaited child whose outcome the parent inspects
