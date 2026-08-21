@@ -35,10 +35,10 @@ dispatched -> running -> completed(Success)
                        -> completed(Failure)
 ```
 
-- `dispatched`: parent process has, in one synchronous step: (1) enqueued the `StepWorker` job, (2) written a `composed_contexts[step_name] = { type: :async_step_ref, name:, dispatched_at: }` reference onto its own context (see Async Step ↔ context linkage below), and (3) marked the step graph-complete for scheduling purposes (siblings may now proceed). No result exists yet.
-- `running`/`completed`: opaque to the parent process except through the Step Result Record; the parent only observes "record exists with a terminal value" or "record absent" (treated as still-pending, subject to FR-005's timeout).
+- `dispatched`: parent process has, synchronously and in this order (durable-write-before-enqueue, F2): (1) written the Step Result Record with status `dispatched` and the `composed_contexts[step_name] = { type: :async_step_ref, name:, dispatched_at: }` reference onto its own context (see Async Step ↔ context linkage below), (2) enqueued the `StepWorker` job, (3) marked the step graph-complete for scheduling purposes (siblings may now proceed). No result exists yet.
+- `running`/`completed`: opaque to the parent process except through the Step Result Record; the parent only observes "record carries a terminal value" or "record still `dispatched`" (still-pending — keep waiting, subject to FR-005's timeout). A record *absent* entirely means the step was never dispatched — `result()` does not wait in that case.
 
-**Relationships**: An `async_step` is a dependency-graph node like any other step — other steps that declare `argument :x, result(:async_step_name)` get an automatic DAG edge (existing `DependencyGraph#add_step` behavior, unchanged) and, per FR-005, block-poll for the terminal record when they resolve that argument.
+**Relationships**: An `async_step` is a dependency-graph node like any other step — other steps that declare `argument :x, result(:async_step_name)` get an automatic DAG edge (existing `DependencyGraph#add_step` behavior, unchanged) and, per FR-005, enter the notified wait for the terminal record when they resolve that argument.
 
 **Async Step ↔ context linkage (FR-008, FR-014)**: the *reference* (not the result) lives in `context.composed_contexts[step_name]`, the same field `compose`/`map` already populate for their own children — see research.md decision 8. The dashboard's existing `hydrate_composed_contexts` pipeline (`lib/ruby_reactor/web/api.rb`) is extended with a branch for `type: :async_step_ref` that resolves the Step Result Record to show current status/result, mirroring how it already resolves `:map_ref`.
 
@@ -97,7 +97,7 @@ Uses the existing, currently-unused `Storage::Adapter#publish`/`#subscribe` prim
 
 | Knob | Default | Notes |
 |---|---|---|
-| `Configuration#async_wait_timeout` | TBD at implementation (documented explicitly, FR-005) | Seconds a `result()` block-poll will wait before failing the referencing step with a timeout. Single global value — no per-reactor/per-reference override (Clarifications, Question 3). |
+| `Configuration#async_wait_timeout` | TBD at implementation (documented explicitly, FR-005) | Seconds a `result()` notified wait will block before failing the referencing step with a timeout. Single global value — no per-reactor/per-reference override (Clarifications, Question 3). |
 
 ## State/behavior changes to existing entities
 

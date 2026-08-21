@@ -53,7 +53,7 @@ class MyReactor < RubyReactor::Reactor
   end
 
   step :check_email do
-    argument :email, result(:send_email)   # blocks (bounded poll) until :send_email is done
+    argument :email, result(:send_email)   # blocks (notified wait, bounded by timeout) until :send_email is done
     run { |args| ... }
   end
 end
@@ -110,4 +110,4 @@ end
 - Reactor-level `async true` ("Full Reactor Async") — `self.class.async?`, `lib/ruby_reactor/dsl/reactor.rb:44-50`. (Its only new interaction: combining it with `background after:` is a definition-time error, see above.)
 - `compose` itself — synchronous, fully compensation-linked nested execution, untouched. (Its `async` flag is removed — see the Removed section — but everything else about `compose` is unchanged.)
 - `map`'s dispatch/collection machinery and its full DSL including the map-internal `async` element-dispatch option — reused as an architectural pattern (see research.md) but untouched.
-- `result(:name)` for a **synchronous** step's result — resolves exactly as it does today (`Template::Result#resolve`), with zero added latency; the new blocking-poll path only activates for `async_step`/`async_reactor` references.
+- `result(:name)` for a **synchronous** step's result — resolves exactly as it does today (`Template::Result#resolve`), with zero added latency; the new notified-wait path only activates for `async_step`/`async_reactor` references.

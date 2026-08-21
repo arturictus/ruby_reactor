@@ -6,7 +6,7 @@
 
 ## Summary
 
-Replace the confusing per-step `async: true` flag (only the first flagged step in a reactor actually takes effect — the rest are silently ignored) with a single, unambiguous reactor-level `background after: :step_name` declaration that hands off all remaining steps to an independent worker job. Add two genuinely new capabilities on top of that: `async_step`, whose unit of work is dispatched to run in its own independent worker while the rest of the reactor keeps executing in the calling process; and `async_reactor`, which dispatches a whole nested reactor to run independently, linked to the parent by execution id but excluded from the parent's compensation graph. Both `async_step` and `async_reactor` results are consumed via the existing `result(:name)` template helper, which gains a blocking-poll wait when the referenced work hasn't finished yet. Per the clarified spec, neither `async_step` nor `async_reactor` failures auto-compensate the parent — compensation only happens if a later step explicitly reads the result and decides to fail. All dispatch continues to go through the existing pluggable `configuration.async_router` (Sidekiq or ActiveJob), unchanged.
+Replace the confusing per-step `async: true` flag (only the first flagged step in a reactor actually takes effect — the rest are silently ignored) with a single, unambiguous reactor-level `background after: :step_name` declaration that hands off all remaining steps to an independent worker job. Add two genuinely new capabilities on top of that: `async_step`, whose unit of work is dispatched to run in its own independent worker while the rest of the reactor keeps executing in the calling process; and `async_reactor`, which dispatches a whole nested reactor to run independently, linked to the parent by execution id but excluded from the parent's compensation graph. Both `async_step` and `async_reactor` results are consumed via the existing `result(:name)` template helper, which gains a notified wait (completion signal via the storage adapter's pub/sub, durable-record-first, bounded fallback re-check — see research.md decision 4) when the referenced work hasn't finished yet. Per the clarified spec, neither `async_step` nor `async_reactor` failures auto-compensate the parent — compensation only happens if a later step explicitly reads the result and decides to fail. Lock ownership is never shared across the async boundary; a same-key collision between parent and child fails at dispatch (FR-015), and dispatch reuses the full pre-enqueue sequence including child input validation (FR-016). All dispatch continues to go through the existing pluggable `configuration.async_router` (Sidekiq or ActiveJob), unchanged.
 
 ## Technical Context
 
@@ -26,7 +26,7 @@ Replace the confusing per-step `async: true` flag (only the first flagged step i
 
 **Constraints**: Blocking waits on `result()` (FR-005) are notified waits — completion signal via the storage adapter's existing (currently unused) `publish`/`subscribe` primitives, durable-record-first ordering, subscribe-before-check on the waiter, coarse fallback re-check, all bounded by a single library-wide `Configuration#async_wait_timeout` (new knob; see research.md decision 4 and data-model.md "Completion Signal"); the subscriber uses a dedicated Redis connection. Never an unbounded wait. Lock ownership is never shared across the async boundary (FR-015 dispatch-time deadlock guard; reentrancy stays `compose`-only). Must not change behavior of the untouched reactor-level `async` flag (`self.class.async?`, "Full Reactor Async"), of `compose`'s execution/compensation semantics (its `async` flag is removed with the shared `StepConfig` flag, per FR-003 — see contracts/public-dsl.md), or of `map` (including its map-internal `async` element-dispatch option, which is a different mechanism and stays).
 
-**Scale/Scope**: Single-gem change; touches DSL (`dsl/reactor.rb`, `dsl/step_builder.rb`), executor (`executor/step_executor.rb`, `dependency_graph.rb`), a new async-step worker/adapter pair (mirroring `Adapters::{Sidekiq,ActiveJob}::MapElementWorker`), `template/result.rb`, `storage/adapter.rb` + `storage/redis_adapter.rb`, `configuration.rb`, RSpec helpers, the bundled web dashboard (`lib/ruby_reactor/web/api.rb` + `gui/src/components/{DagVisualizer,StepInspector}.tsx`, per FR-014), `demo_app/`, `documentation/`, `README.md`.
+**Scale/Scope**: Single-gem change; touches DSL (`dsl/reactor.rb`, `dsl/step_builder.rb`, `dsl/compose_builder.rb`), executor (`executor/step_executor.rb` for dispatch, `executor.rb` for the completion-signal publish on terminal save; `dependency_graph.rb` itself unchanged), a new async-step worker/adapter pair (mirroring `Adapters::{Sidekiq,ActiveJob}::MapElementWorker`), `template/result.rb`, `storage/adapter.rb` + `storage/redis_adapter.rb`, `configuration.rb`, RSpec helpers, the bundled web dashboard (`lib/ruby_reactor/web/api.rb` + `gui/src/components/{DagVisualizer,StepInspector}.tsx`, per FR-014), `demo_app/`, `documentation/`, `README.md`.
 
 ## Constitution Check
 
@@ -73,14 +73,18 @@ lib/ruby_reactor/
 │                                    #          ADD: async_step dispatch (fire-and-continue, marks the
 │                                    #          node complete in the DependencyGraph at dispatch time so
 │                                    #          siblings aren't blocked) and async_reactor dispatch
+│                                    #          (FR-015 deadlock guard + FR-016 pre-enqueue sequence)
+├── executor.rb                     # ADD: publish completion signal after terminal context save
+│                                    #      (async_reactor completer side, research.md decision 4)
 ├── dependency_graph.rb             # UNCHANGED (no schema change; dispatch-time complete_step is
 │                                    # called by the executor, see data-model.md)
 ├── adapters/
 │   ├── sidekiq/step_worker.rb      # NEW: independent one-shot worker for a single async_step
 │   └── active_job/step_worker.rb   # NEW: ActiveJob counterpart
 ├── template/
-│   └── result.rb                   # UPDATE: block-poll wait when the referenced step/reactor result
-│                                    #         is not yet available (FR-005)
+│   └── result.rb                   # UPDATE: notified wait (subscribe-first, record check, fallback
+│                                    #         re-check, timeout) when the referenced async result
+│                                    #         is not yet available (FR-005, research.md decision 4)
 ├── storage/
 │   ├── adapter.rb                  # ADD: `store_step_result` / `retrieve_step_result` interface methods
 │   │                                #      (async_step outcome only — async_reactor reuses the existing
