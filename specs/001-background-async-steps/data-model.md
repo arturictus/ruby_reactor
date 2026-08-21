@@ -11,7 +11,7 @@ Reactor-class-level declaration, one per reactor.
 | `mode` | Symbol — `:after` or `:before` | Which side of the cut point the declaration named. Derived from which keyword the author supplied. |
 | `step` | Symbol | The named step. For `:after`, the last step to run in the calling process; for `:before`, the first step to run in the worker. Must reference a step defined in the same reactor (validated at class-definition time, FR-002). |
 
-Exposed to the runtime and the dashboard as a single normalized pair (e.g. `background_handoff → { mode:, step: }`) rather than two independent readers, so every consumer handles one concept with two trigger positions instead of two parallel features.
+Exposed to the runtime, `TestSubject`, and the dashboard as a single normalized reader — `background_handoff → { mode:, step: }` — never as a one-sided `background_after`. One concept with two trigger positions, not two parallel features: every consumer branches on `mode`, so no consumer can be accidentally implemented for `after:` only.
 
 **Storage**: not persisted as its own record — it compiles into which step reaching which position triggers the `StepExecutor#handle_async_step`-style enqueue. Enforced-single via a class-level guard.
 
@@ -40,7 +40,7 @@ dispatched -> running -> completed(Success)
 ```
 
 - `dispatched`: parent process has, synchronously and in this order (durable-write-before-enqueue, F2): (1) written the Step Result Record with status `dispatched` and the `composed_contexts[step_name] = { type: :async_step_ref, name:, dispatched_at: }` reference onto its own context (see Async Step ↔ context linkage below), (2) enqueued the `StepWorker` job, (3) marked the step graph-complete for scheduling purposes (siblings may now proceed). No result exists yet.
-- `running`/`completed`: opaque to the parent process except through the Step Result Record; the parent only observes "record carries a terminal value" or "record still `dispatched`" (still-pending — keep waiting, subject to FR-005's timeout). A record *absent* entirely means the step was never dispatched — `result()` does not wait in that case.
+- `running`/`completed`: opaque to the parent process except through the Step Result Record; the parent only observes "record carries a terminal value" or "record still `dispatched`" (still-pending — keep waiting, subject to FR-005's timeout). A record *absent* entirely means the step was never dispatched — `result()` does not wait in that case. The parent may reach its own terminal state while a record is still `dispatched`; that is the fire-and-forget contract (FR-018), and the parent's status makes no claim about the unit's outcome.
 
 **Relationships**: An `async_step` is a dependency-graph node like any other step — other steps that declare `argument :x, result(:async_step_name)` get an automatic DAG edge (existing `DependencyGraph#add_step` behavior, unchanged) and, per FR-005, enter the notified wait for the terminal record when they resolve that argument.
 
@@ -73,7 +73,7 @@ The durable record backing `async_step` completion. (`async_reactor` needs no eq
 |---|---|---|
 | `context_id` | String (UUID) | The **parent** reactor's context id — the bucket is scoped per parent execution. |
 | `step_name` | Symbol/String | The `async_step`'s name within that parent. |
-| `status` | Enum: `dispatched`, `completed` | `dispatched` written synchronously **before** the job is enqueued (same checkpoint-before-enqueue ordering the existing hand-off uses, F2) — so a crash after enqueue can never find a job with no record, and recovery seeing `dispatched` re-attaches instead of re-dispatching (spec Edge Cases). `completed` written by the step's own worker. |
+| `status` | Enum: `dispatched`, `completed` | `dispatched` written synchronously **before** the job is enqueued (same checkpoint-before-enqueue ordering the existing hand-off uses, F2) — so a crash after enqueue can never find a job with no record, and this record doubles as the **re-attach marker** (FR-017): on recovery/resume the dispatch path finds a record in any status and skips enqueue entirely, marking the node graph-complete as the original dispatch did, rather than duplicating the side effect. The `async_reactor` equivalent is the `:async_reactor_ref` entry in `composed_contexts` (research.md decision 10). `completed` written by the step's own worker. |
 | `serialized_result` | String (via `ContextSerializer.serialize_value`) | The step's `Success`/`Failure` value, same serialization the existing map-result bucket uses. |
 | `reactor_class_name` | String | Needed for storage-key namespacing, mirrors every other storage primitive's `reactor_class_name` parameter. |
 
@@ -85,6 +85,8 @@ retrieve_step_result(context_id, step_name, reactor_class_name)
 ```
 
 Modeled directly on the existing `store_map_result(map_id, index, serialized_result, reactor_class_name, strict_ordering:)` / `retrieve_map_results(...)` pair (`lib/ruby_reactor/storage/adapter.rb:14-20`) — same TTL policy as `context_ttl` (records must not outlive the parent context's own retention window).
+
+**Retention across a fire-and-forget parent (FR-018)**: the worker loads the *parent* context by id, so the parent must outlive the dispatched unit — including the common case where the parent completes immediately and nothing ever waits on the unit. Dispatch therefore refreshes the parent context's TTL, and the record is stamped with the same window. A worker that still finds no parent context (swept, or beyond the window) writes a `completed`/`Failure` record for its unit and logs it per FR-012 rather than raising — an unhandled raise would only hand the job to the backend's retry machinery to fail identically N more times. See research.md decision 10.
 
 ## Completion Signal (new, ephemeral — not a stored entity)
 
@@ -101,7 +103,9 @@ Uses the existing, currently-unused `Storage::Adapter#publish`/`#subscribe` prim
 
 | Knob | Default | Notes |
 |---|---|---|
-| `Configuration#async_wait_timeout` | TBD at implementation (documented explicitly, FR-005) | Seconds a `result()` notified wait will block before failing the referencing step with a timeout. Single global value — no per-reactor/per-reference override (Clarifications, Question 3). |
+| `Configuration#async_wait_timeout` | `30` (seconds) | Seconds a `result()` notified wait will block before failing the referencing step with a timeout. Single global value — no per-reactor/per-reference override (Clarifications, Question 3). Rationale for 30s in research.md decision 5. |
+
+**Derived (not configurable)**: the notified wait's fallback re-check interval is `async_wait_timeout / 10`, clamped to `1..5` seconds (3s at the default). It is a latency backstop for a lost signal, not a tuning surface — the clamp guarantees ≥10 re-checks inside any bound, so a dropped notification costs at most ~10% of the timeout. See research.md decision 4.
 
 ## State/behavior changes to existing entities
 
