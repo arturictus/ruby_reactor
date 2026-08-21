@@ -10,7 +10,7 @@ module RubyReactor
     attr_writer :queue_name, :job_retry_count, :logger, :async_router,
                 :lock_snooze_base_delay, :lock_snooze_jitter, :lock_snooze_max_attempts,
                 :middlewares, :context_ttl, :context_lock_ttl, :checkpoint_min_interval,
-                :sweeper_enabled, :sweeper_interval, :sweeper_limit
+                :sweeper_enabled, :sweeper_interval, :sweeper_limit, :async_wait_timeout
 
     def queue_name
       @queue_name ||= :default
@@ -87,6 +87,22 @@ module RubyReactor
     # typical workloads; raise it if you run long synchronous CPU-bound steps.
     def context_lock_ttl
       @context_lock_ttl ||= 60
+    end
+
+    # Seconds a step blocks in the FR-005 notified wait when it reads
+    # `result(:name)` for an `async_step` / `async_reactor` that has not finished
+    # yet. Never unbounded: on expiry the referencing step fails with an
+    # `Error::AsyncWaitTimeoutError`.
+    #
+    # 30s must comfortably exceed dispatch -> worker pickup -> completion for a
+    # small unit under a healthy queue, while staying under the request/job
+    # timeouts of typical hosts (Sidekiq's 25s shutdown grace, Puma's 60s) so a
+    # stuck wait fails loudly on our terms instead of being killed from outside.
+    #
+    # The wait's fallback re-check interval is DERIVED from this, not configured:
+    # `async_wait_timeout / 10` clamped to 1..5s (see AsyncWaiter).
+    def async_wait_timeout
+      @async_wait_timeout ||= 30
     end
 
     def job_retry_count
