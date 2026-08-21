@@ -126,8 +126,12 @@ module RubyReactor
           @context
         )
 
-        # Check if we should requeue (async retry)
-        is_async = reactor_class.async? || step_config.async? ||
+        # Check if we should requeue (async retry). The per-step `async` flag is
+        # gone: a step relocated by `background` fails inside the worker, where
+        # `inline_async_execution` already answers this — and a step failing
+        # BEFORE the hand-off point genuinely has no worker to requeue into, so
+        # it must retry synchronously.
+        is_async = reactor_class.async? ||
                    @context.root_context&.reactor_class&.async? ||
                    @context.inline_async_execution
 

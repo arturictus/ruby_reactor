@@ -62,9 +62,6 @@ module RubyReactor
       end
 
       def execute_step(step_config)
-        # If we're already in inline async execution mode (inside Worker),
-        # treat async steps as sync to avoid infinite recursion
-
         if @dependency_graph.completed.include?(step_config.name)
           return RubyReactor.Success(@context.get_result(step_config.name))
         end
@@ -76,11 +73,16 @@ module RubyReactor
         begin
           result = if step_config.interrupt?
                      handle_interrupt_step(step_config)
-                   elsif step_config.async? && !@context.inline_async_execution
-                     handle_async_step(step_config)
+                   elsif handoff_at?(step_config, :before)
+                     # `before: :x` hands off INSTEAD of running :x, leaving its
+                     # graph node incomplete for the worker to pick up.
+                     handle_background_handoff(step_config)
                    else
                      execute_step_with_retry(step_config, resolved_arguments)
                    end
+          # `after: :x` hands off once :x's result is recorded — the step really
+          # did run here, and only what remains moves to the worker.
+          result = handle_background_handoff(step_config) if handoff_after?(step_config, result)
           completed = true
           if result.is_a?(RubyReactor::Failure)
             @middlewares.on(:failed_step, step_config.name, result, @context)
@@ -95,6 +97,37 @@ module RubyReactor
       end
 
       private
+
+      # The reactor's single hand-off point, `{ mode: :after|:before, step: }`
+      # (FR-001). Nil for a reactor that never declares `background`.
+      def background_handoff
+        return @background_handoff if defined?(@background_handoff)
+
+        @background_handoff =
+          (@reactor_class.background_handoff if @reactor_class.respond_to?(:background_handoff))
+      end
+
+      # Hand-off is keyed to REACHING the named step, not to where the
+      # declaration sits in the class body. A step whose `where`/guard says it
+      # must not run never triggers it — the hand-off only ever relocates work
+      # that is actually going to happen. Inside the worker the whole thing is
+      # suppressed (`inline_async_execution`) so it cannot re-trigger.
+      def handoff_at?(step_config, mode)
+        point = background_handoff
+        return false unless point && point[:mode] == mode && point[:step] == step_config.name
+        return false if @context.inline_async_execution
+
+        step_config.should_run?(@context)
+      end
+
+      # Post-execution trigger for `after:`. Only a plain continue-Success means
+      # the named step actually completed here — a Failure, Skipped, interrupt,
+      # queued retry or an already-async result each own the flow instead.
+      def handoff_after?(step_config, result)
+        return false unless result.is_a?(RubyReactor::Success) && !result.is_a?(RubyReactor::Skipped)
+
+        handoff_at?(step_config, :after)
+      end
 
       def reconstruct_failure(data)
         return data if data.is_a?(RubyReactor::Failure)
@@ -197,9 +230,11 @@ module RubyReactor
         end
       end
 
-      def handle_async_step(step_config)
-        # Step-level async: hand off execution to worker
-
+      # Hand every step not yet executed to a worker job, and return the
+      # `AsyncResult` that halts `execute_all_steps` in the calling process.
+      # Shared verbatim by both `background` forms — they differ only in WHERE
+      # the trigger sits, never in what the hand-off does.
+      def handle_background_handoff(step_config)
         @context.current_step = step_config.name
         @context.undo_stack = @compensation_manager.undo_stack
 

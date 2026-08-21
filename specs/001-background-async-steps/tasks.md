@@ -29,10 +29,10 @@ Single-project Ruby gem: `lib/ruby_reactor/**` (implementation), `spec/**` (gem 
 
 **Purpose**: Small additions every later phase leans on. No behavior change yet.
 
-- [ ] T001 [P] Add `RubyReactor::Error::AsyncWaitTimeoutError` in `lib/ruby_reactor/error/async_wait_timeout_error.rb` and require it from `lib/ruby_reactor.rb` (raised when an FR-005 wait exceeds its bound)
-- [ ] T002 [P] Add `RubyReactor::Error::DeprecatedDslError` in `lib/ruby_reactor/error/deprecated_dsl_error.rb` (subclass of `Error::ValidationError` so existing rescues still catch it) and require it from `lib/ruby_reactor.rb`
-- [ ] T003 [P] Add `Configuration#async_wait_timeout` (memoized reader + `attr_writer`, matching the `context_ttl`/`context_lock_ttl` idiom) with a documented default in `lib/ruby_reactor/configuration.rb`
-- [ ] T004 [P] Add a shared RSpec context that runs an example group against both backends (Sidekiq fake mode and ActiveJob `:test` adapter) in `spec/support/async_backends.rb`, so every new async spec asserts backend-agnosticism per spec.md Assumptions
+- [X] T001 [P] Add `RubyReactor::Error::AsyncWaitTimeoutError` in `lib/ruby_reactor/error/async_wait_timeout_error.rb` and require it from `lib/ruby_reactor.rb` (raised when an FR-005 wait exceeds its bound)
+- [X] T002 [P] Add `RubyReactor::Error::DeprecatedDslError` in `lib/ruby_reactor/error/deprecated_dsl_error.rb` (subclass of `Error::ValidationError` so existing rescues still catch it) and require it from `lib/ruby_reactor.rb`
+- [X] T003 [P] Add `Configuration#async_wait_timeout` (memoized reader + `attr_writer`, matching the `context_ttl`/`context_lock_ttl` idiom) with a documented default in `lib/ruby_reactor/configuration.rb`
+- [X] T004 [P] Add a shared RSpec context that runs an example group against both backends (Sidekiq fake mode and ActiveJob `:test` adapter) in `spec/support/async_backends.rb`, so every new async spec asserts backend-agnosticism per spec.md Assumptions
 
 ---
 
@@ -44,20 +44,20 @@ Single-project Ruby gem: `lib/ruby_reactor/**` (implementation), `spec/**` (gem 
 
 ### Tests (write first, confirm failing)
 
-- [ ] T005 [P] Spec: `async true` inside a `step` block raises `DeprecatedDslError` at class-definition time (not run time), with a message naming `background after:`/`before:`, `async_step`, `async_reactor` — `spec/ruby_reactor/dsl/deprecated_async_flag_spec.rb`
-- [ ] T006 [P] Spec: `async true` inside a `compose` block raises the same definition-time error, and the `map`-internal `async` option still works untouched — `spec/ruby_reactor/dsl/deprecated_async_flag_spec.rb`
-- [ ] T007 [P] Spec: `AsyncWaiter` returns immediately when the durable target is already terminal, wakes on a published signal, still resolves when no signal is ever published (fallback re-check), and raises `AsyncWaitTimeoutError` at the bound — `spec/ruby_reactor/async_waiter_spec.rb`
+- [X] T005 [P] Spec: `async true` inside a `step` block raises `DeprecatedDslError` at class-definition time (not run time), with a message naming `background after:`/`before:`, `async_step`, `async_reactor` — `spec/ruby_reactor/dsl/deprecated_async_flag_spec.rb`
+- [X] T006 [P] Spec: `async true` inside a `compose` block raises the same definition-time error, and the `map`-internal `async` option still works untouched — `spec/ruby_reactor/dsl/deprecated_async_flag_spec.rb`
+- [X] T007 [P] Spec: `AsyncWaiter` returns immediately when the durable target is already terminal, wakes on a published signal, still resolves when no signal is ever published (fallback re-check), and raises `AsyncWaitTimeoutError` at the bound — `spec/ruby_reactor/async_waiter_spec.rb`
 
 ### Implementation
 
-- [ ] T008 Remove the `async` DSL method and `@async`/`async?` from `StepBuilder` and `StepConfig`, raising `DeprecatedDslError` from a retained `async` method stub, in `lib/ruby_reactor/dsl/step_builder.rb` (FR-003)
-- [ ] T009 Remove the `async` DSL method from `ComposeBuilder` (raise `DeprecatedDslError`) and drop the `async:` key from its built step config in `lib/ruby_reactor/dsl/compose_builder.rb` (FR-003; it set the same `StepConfig` flag — see research.md decision 1)
-- [ ] T010 Add `:async_step_ref` / `:async_reactor_ref` to the documented `composed_contexts` `type:` union (alongside `:composed` and `:map_ref`) in `lib/ruby_reactor/context.rb` — comment-level convention plus any shared constants; no serialization change
-- [ ] T011 Implement `RubyReactor::AsyncWaiter` in `lib/ruby_reactor/async_waiter.rb`: subscribe-first, then check the durable target, then block on the signal with a coarse fallback re-check, bounded by `Configuration#async_wait_timeout`; takes a channel and a terminal-check callable so US2 and US3 share one core (research.md decision 4)
-- [ ] T012 Add dedicated-connection subscribe support to `lib/ruby_reactor/storage/redis_adapter.rb` so `subscribe` never blocks the shared client (`SUBSCRIBE` puts a connection into subscriber mode); keep the existing `Storage::Adapter#subscribe`/`#publish` interface signatures intact
-- [ ] T013 Update `Web::API.determine_step_type` (drop the `config.async?` branch) and `build_structure` (drop the per-step `async:` field) in `lib/ruby_reactor/web/api.rb` so the dashboard survives the flag removal
-- [ ] T014 Update `TestSubject#prepare_execution_class` (`force_sync` branch) and `#apply_mock_interceptor` to stop mutating the removed `@async` step flag in `lib/ruby_reactor/rspec/test_subject.rb` (research.md decision 6)
-- [ ] T015 Migrate every existing gem fixture and spec that uses the removed per-step flag to the new DSL across `spec/support/**` and `spec/ruby_reactor/**`, and run `bundle exec rspec` to confirm no other call sites remain
+- [X] T008 Remove the `async` DSL method and `@async`/`async?` from `StepBuilder` and `StepConfig`, raising `DeprecatedDslError` from a retained `async` method stub, in `lib/ruby_reactor/dsl/step_builder.rb` (FR-003)
+- [X] T009 Remove the `async` DSL method from `ComposeBuilder` (raise `DeprecatedDslError`) and drop the `async:` key from its built step config in `lib/ruby_reactor/dsl/compose_builder.rb` (FR-003; it set the same `StepConfig` flag — see research.md decision 1)
+- [X] T010 Add `:async_step_ref` / `:async_reactor_ref` to the documented `composed_contexts` `type:` union (alongside `:composed` and `:map_ref`) in `lib/ruby_reactor/context.rb` — comment-level convention plus any shared constants; no serialization change
+- [X] T011 Implement `RubyReactor::AsyncWaiter` in `lib/ruby_reactor/async_waiter.rb`: subscribe-first, then check the durable target, then block on the signal with a coarse fallback re-check, bounded by `Configuration#async_wait_timeout`; takes a channel and a terminal-check callable so US2 and US3 share one core (research.md decision 4)
+- [X] T012 Add dedicated-connection subscribe support to `lib/ruby_reactor/storage/redis_adapter.rb` so `subscribe` never blocks the shared client (`SUBSCRIBE` puts a connection into subscriber mode); keep the existing `Storage::Adapter#subscribe`/`#publish` interface signatures intact
+- [X] T013 Update `Web::API.determine_step_type` (drop the `config.async?` branch) and `build_structure` (drop the per-step `async:` field) in `lib/ruby_reactor/web/api.rb` so the dashboard survives the flag removal
+- [X] T014 Update `TestSubject#prepare_execution_class` (`force_sync` branch) and `#apply_mock_interceptor` to stop mutating the removed `@async` step flag in `lib/ruby_reactor/rspec/test_subject.rb` (research.md decision 6)
+- [X] T015 Migrate every existing gem fixture and spec that uses the removed per-step flag to the new DSL across `spec/support/**` and `spec/ruby_reactor/**`, and run `bundle exec rspec` to confirm no other call sites remain
 
 **Checkpoint**: Old flag is gone, suite is green, notified-wait core exists. User stories can begin.
 
@@ -79,10 +79,10 @@ Single-project Ruby gem: `lib/ruby_reactor/**` (implementation), `spec/**` (gem 
 
 ### Implementation for User Story 1
 
-- [ ] T021 [US1] Add the `background(after: nil, before: nil)` class macro in `lib/ruby_reactor/dsl/reactor.rb`, storing a normalized `{ mode: :after|:before, step: }` hand-off point behind one reader, plus its definition-time guards (single declaration, known step, exactly one of the two keys, no whole-reactor-`async` combination) (FR-001, FR-002)
-- [ ] T022 [US1] Re-key the hand-off trigger in `lib/ruby_reactor/executor/step_executor.rb` from the removed per-step `async?` to the reactor's hand-off point — a **post-execution** check when `mode == :after` (fire once the named step's result is recorded) and a **pre-execution** check when `mode == :before` (fire instead of running the named step, leaving its graph node incomplete for the worker) — reusing the existing `handle_async_step` body (checkpoint-before-enqueue → `async_router.perform_async` → `AsyncResult`) unchanged for both, inside the existing `inline_async_execution` guard (FR-001, research.md decision 1)
-- [ ] T023 [US1] Expose the hand-off point once per reactor as the normalized `{ mode:, step: }` pair in `Web::API.build_structure` in `lib/ruby_reactor/web/api.rb`, replacing the per-step `async:` field dropped in T013
-- [ ] T024 [US1] Redefine `TestSubject`'s `async: false` / `run_async(false)` to suppress the `background` hand-off (running the reactor fully in-process) in `lib/ruby_reactor/rspec/test_subject.rb`, preserving the option's existing purpose under the new DSL
+- [X] T021 [US1] Add the `background(after: nil, before: nil)` class macro in `lib/ruby_reactor/dsl/reactor.rb`, storing a normalized `{ mode: :after|:before, step: }` hand-off point behind one reader, plus its definition-time guards (single declaration, known step, exactly one of the two keys, no whole-reactor-`async` combination) (FR-001, FR-002)
+- [X] T022 [US1] Re-key the hand-off trigger in `lib/ruby_reactor/executor/step_executor.rb` from the removed per-step `async?` to the reactor's hand-off point — a **post-execution** check when `mode == :after` (fire once the named step's result is recorded) and a **pre-execution** check when `mode == :before` (fire instead of running the named step, leaving its graph node incomplete for the worker) — reusing the existing `handle_async_step` body (checkpoint-before-enqueue → `async_router.perform_async` → `AsyncResult`) unchanged for both, inside the existing `inline_async_execution` guard (FR-001, research.md decision 1)
+- [X] T023 [US1] Expose the hand-off point once per reactor as the normalized `{ mode:, step: }` pair in `Web::API.build_structure` in `lib/ruby_reactor/web/api.rb`, replacing the per-step `async:` field dropped in T013
+- [X] T024 [US1] Redefine `TestSubject`'s `async: false` / `run_async(false)` to suppress the `background` hand-off (running the reactor fully in-process) in `lib/ruby_reactor/rspec/test_subject.rb`, preserving the option's existing purpose under the new DSL
 
 **Checkpoint**: `background after:` and `background before:` both fully work and are independently testable. This is a shippable MVP — the rename/bugfix half of the feature.
 

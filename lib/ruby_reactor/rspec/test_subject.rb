@@ -441,7 +441,8 @@ module RubyReactor
       end
 
       def prepare_execution_class
-        # Even if no interceptors, we might need to subclass to override async steps
+        # Even if no interceptors, we might need to subclass to force the whole
+        # reactor to run in-process.
         return @reactor_class if @interceptors.empty? && @async != false
 
         interceptors = @interceptors
@@ -455,6 +456,7 @@ module RubyReactor
           @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
           @async = superclass.async?
+          @background_handoff = superclass.background_handoff
           @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
 
           # 2. Add Name Handling with Unique Registry Entry
@@ -464,15 +466,16 @@ module RubyReactor
           define_singleton_method(:name) { unique_name }
           RubyReactor::Registry.register(unique_name, self)
 
-          # 3. Apply Force Sync (Disable async on all steps)
+          # 3. `async: false` / `run_async(false)` means "run this reactor's full
+          # logic here, in one process". Under the new DSL that is three things:
+          # suppress the `background` hand-off, and run `async_step` /
+          # `async_reactor` units inline instead of dispatching them.
           if force_sync
+            @background_handoff = nil
             @steps.each do |name, config|
-              next unless config.async?
+              next unless config.respond_to?(:async_dispatch?) && config.async_dispatch?
 
-              # Clone and modify
-              new_config = config.clone
-              new_config.instance_variable_set(:@async, false)
-              @steps[name] = new_config
+              @steps[name] = config.clone.tap { |c| c.instance_variable_set(:@async_dispatch, nil) }
             end
           end
         end
@@ -503,7 +506,8 @@ module RubyReactor
 
           if nested_interceptors.any?
             apply_nested_interceptors(step_config, nested_interceptors)
-            step_config.instance_variable_set(:@async, false)
+            # A mocked inner step only takes effect if the child runs here.
+            step_config.instance_variable_set(:@async_dispatch, nil)
           end
 
           # Apply direct interceptors (mocks/failures on this step)
@@ -552,6 +556,7 @@ module RubyReactor
           @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
           @async = superclass.async?
+          @background_handoff = superclass.background_handoff
           @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
         end
 
@@ -606,7 +611,9 @@ module RubyReactor
         end
 
         step_config.instance_variable_set(:@run_block, wrapper_impl)
-        step_config.instance_variable_set(:@async, false)
+        # The mock replaces the step's body, so it must run where the spec can
+        # observe it rather than being dispatched to a worker.
+        step_config.instance_variable_set(:@async_dispatch, nil)
       end
     end
     # rubocop:enable Metrics/ClassLength

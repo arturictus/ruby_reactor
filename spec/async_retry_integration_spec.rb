@@ -77,13 +77,14 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       unless defined?(FailingAsyncRetryReactor)
         FailingAsyncRetryReactor = Class.new(RubyReactor::Reactor) do
           step :failing_async_step do
-            async true
             retries max_attempts: 3, backoff: :fixed, base_delay: 1
 
             run do |_args, _context|
               RubyReactor::Failure("Step always fails")
             end
           end
+
+          background before: :failing_async_step
         end
       end
 

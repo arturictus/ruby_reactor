@@ -11,6 +11,7 @@ module RubyReactor
 
       def initialize(redis_config)
         super()
+        @redis_config = redis_config
         @redis = Redis.new(redis_config)
       end
 
@@ -174,8 +175,22 @@ module RubyReactor
         @redis.del(key)
       end
 
+      # SUBSCRIBE puts a connection into subscriber mode — every other command on
+      # it then fails — so this MUST NOT use the shared client, or one waiter
+      # would poison storage for the whole process. A dedicated connection is
+      # opened per subscription and closed on the way out.
+      #
+      # Blocks the calling thread until the block returns truthy for a message
+      # (completion signals are one-shot) or the thread is killed.
       def subscribe(channel, &block)
-        @redis.subscribe(channel, &block)
+        connection = Redis.new(@redis_config)
+        connection.subscribe(channel) do |on|
+          on.message do |_channel, message|
+            connection.unsubscribe if block.call(message)
+          end
+        end
+      ensure
+        connection&.close
       end
 
       def publish(channel, message)

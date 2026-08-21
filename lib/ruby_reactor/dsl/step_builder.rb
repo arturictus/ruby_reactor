@@ -24,7 +24,6 @@ module RubyReactor
         @validate_args_input = nil
         @args_validator = nil
         @output_validator = nil
-        @async = false
         @retry_config = {}
       end
 
@@ -85,8 +84,22 @@ module RubyReactor
           end
       end
 
-      def async(async = true)
-        @async = async
+      # FR-003: the per-step hand-off flag is gone. Only the FIRST flagged step
+      # in a reactor ever took effect — every later one was silently ignored —
+      # so this must fail at class-definition time rather than surprise someone
+      # at run time. Kept as a stub purely to say what to use instead.
+      def async(*)
+        raise RubyReactor::Error::DeprecatedDslError.new(
+          "`async` inside a `step` block has been removed: it was ambiguous (only the first " \
+          "flagged step in a reactor ever took effect). Replacements:\n" \
+          "  * `background after: :#{@name}` — hand every REMAINING step to a worker once " \
+          ":#{@name} finishes in the calling process (declared on the reactor, not the step);\n" \
+          "  * `background before: :#{@name}` — hand off starting WITH :#{@name};\n" \
+          "  * `async_step :#{@name}` — dispatch just this step's work to its own job while the " \
+          "reactor keeps running;\n" \
+          "  * `async_reactor :name, ChildReactor` — dispatch a whole nested reactor independently.",
+          step: @name
+        )
       end
 
       def retries(max_attempts: 3, backoff: :exponential, base_delay: 1)
@@ -110,7 +123,6 @@ module RubyReactor
           dependencies: @dependencies,
           args_validator: @args_validator || build_args_validator(@arg_validations, @validate_args_input),
           output_validator: @output_validator,
-          async: @async,
           retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
         }
 
@@ -120,7 +132,7 @@ module RubyReactor
 
     class StepConfig
       attr_reader :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
-                  :dependencies, :args_validator, :output_validator, :async, :retry_config
+                  :dependencies, :args_validator, :output_validator, :retry_config
 
       def initialize(config)
         @name = config[:name]
@@ -134,7 +146,6 @@ module RubyReactor
         @dependencies = config[:dependencies] || []
         @args_validator = config[:args_validator]
         @output_validator = config[:output_validator]
-        @async = config[:async] || false
         @retry_config = { max_attempts: 1 }.merge(config[:retry_config] || {})
       end
 
@@ -144,10 +155,6 @@ module RubyReactor
 
       def has_run_block?
         !@run_block.nil?
-      end
-
-      def async?
-        @async
       end
 
       def retryable?

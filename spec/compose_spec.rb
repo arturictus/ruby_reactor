@@ -71,7 +71,6 @@ RSpec.describe "Compose" do
       end
 
       compose :update_user_profile do
-        async true
         argument :id, result(:validate_id)
 
         step :get_linkedin do
@@ -84,6 +83,8 @@ RSpec.describe "Compose" do
           end
         end
       end
+
+      background before: :update_user_profile
     end
 
     # Execute

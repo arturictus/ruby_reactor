@@ -64,7 +64,6 @@ class TestStepAsyncReactor < RubyReactor::Reactor
   end
 
   step :create_user do
-    async true
     argument :validation, result(:validate_input)
 
     run do |args, _context|
@@ -73,6 +72,8 @@ class TestStepAsyncReactor < RubyReactor::Reactor
       Success(user)
     end
   end
+
+  background before: :create_user
 
   step :send_welcome_email do
     argument :user, result(:create_user)
@@ -177,7 +178,6 @@ class TestInnerReactorWithAsync < RubyReactor::Reactor
   end
 
   step :async_step do
-    async true
     argument :doubled, result(:sync_step)
 
     run do |args, _context|
@@ -186,6 +186,8 @@ class TestInnerReactorWithAsync < RubyReactor::Reactor
     end
   end
 
+  background before: :async_step
+
   returns :async_step
 end
 
@@ -193,9 +195,10 @@ class TestOuterReactorWithAsyncCompose < RubyReactor::Reactor
   input :number
 
   compose :async_process, TestInnerReactorWithAsync do
-    async true
     argument :value, input(:number)
   end
+
+  background before: :async_process
 
   returns :async_process
 end
@@ -225,10 +228,11 @@ class TestRetryOuterReactor < RubyReactor::Reactor
   input :number
 
   compose :retry_process, TestRetryInnerReactor do
-    async true
     # retries max_attempts: 2, backoff: :fixed, base_delay: 1
     argument :value, input(:number)
   end
+
+  background before: :retry_process
 
   returns :retry_process
 end

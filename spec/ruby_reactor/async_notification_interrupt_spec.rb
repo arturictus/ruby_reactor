@@ -93,22 +93,18 @@ RSpec.describe "Async Notification Interrupt Reactor" do
 
         expect(reactor_class.trace).to eq(%i[retrieve_context send_notifications])
 
-        # 3. Resume with approval
-        # Resumes manager_approval -> queues process_approval (async)
+        # 3. Resume with approval. A reactor has exactly ONE hand-off point, and
+        # this one already passed it (:send_notifications ran in the worker), so
+        # the resumed remainder finishes in the resuming process rather than
+        # queuing a second hand-off — the old per-step flag's behavior here was
+        # a second, undeclared hand-off point.
         resume_result = reactor_class.continue(
           id: execution_id,
           step_name: :manager_approval,
           payload: { status: "approved" }
         )
 
-        expect(resume_result).to be_a(RubyReactor::AsyncResult)
-
-        # process_approval hasn't run yet (it's queued)
-        expect(reactor_class.trace).to eq(%i[retrieve_context send_notifications])
-
-        # 4. Drain again to run process_approval
-        RubyReactor::Adapters::Sidekiq::Worker.drain
-
+        expect(resume_result).to be_a(RubyReactor::Success)
         expect(reactor_class.trace).to eq(%i[retrieve_context send_notifications process_approval])
 
         # Verify final result

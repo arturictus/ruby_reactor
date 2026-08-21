@@ -86,9 +86,10 @@ end
 
 class TelemetryAsyncRetryReactor < RubyReactor::Reactor
   step :flaky_async, TelemetryAsyncRetryStep do
-    async true
     retries max_attempts: 3, base_delay: 0
   end
+
+  background before: :flaky_async
 end
 
 class TelemetryInnerReactor < RubyReactor::Reactor
@@ -143,11 +144,12 @@ end
 class TelemetryAsyncStepReactor < RubyReactor::Reactor
   input :value
   step :async_step do
-    async true
     run do |args, _context|
       RubyReactor.Success(args[:value].to_i + 10)
     end
   end
+
+  background before: :async_step
 end
 
 class TelemetryInlineCompensateReactor < RubyReactor::Reactor

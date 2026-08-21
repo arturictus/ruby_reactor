@@ -37,9 +37,10 @@ RSpec.describe RubyReactor::RSpec::Helpers do
   class HelpersAsyncStepReactor < RubyReactor::Reactor
     input :value
     step :add_one do
-      async true
       run { |inputs| RubyReactor::Success(inputs[:value] + 1) }
     end
+
+    background before: :add_one
   end
 
   # Map Reactor

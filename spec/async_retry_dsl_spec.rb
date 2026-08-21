@@ -26,17 +26,28 @@ RSpec.describe "RubyReactor Async and Retry DSL" do
   end
 
   describe "Step DSL extensions" do
-    it "supports async option in step builder" do
+    it "rejects the removed per-step async option" do
+      expect do
+        Class.new(RubyReactor::Reactor) do
+          step :test_step do
+            async true
+
+            run { |_args, _context| RubyReactor.Success("done") }
+          end
+        end
+      end.to raise_error(RubyReactor::Error::DeprecatedDslError)
+    end
+
+    it "supports the reactor-level background hand-off that replaced it" do
       reactor_class = Class.new(RubyReactor::Reactor) do
         step :test_step do
-          async true
-
           run { |_args, _context| RubyReactor.Success("done") }
         end
+
+        background before: :test_step
       end
 
-      step_config = reactor_class.steps[:test_step]
-      expect(step_config.async?).to be true
+      expect(reactor_class.background_handoff).to eq({ mode: :before, step: :test_step })
     end
 
     it "supports retry configuration in step builder" do

@@ -50,6 +50,9 @@ module RubyReactor
                 inputs: data[:inputs],
                 intermediate_results: data[:intermediate_results],
                 structure: structure,
+                # Once per reactor, never per step: the old per-step `async`
+                # field is gone because there is now exactly one hand-off point.
+                background_handoff: self.class.background_handoff_for(reactor_class),
                 steps: data[:execution_trace] || [],
                 composed_contexts: self.class.hydrate_composed_contexts(
                   data[:composed_contexts] || {},
@@ -183,8 +186,7 @@ module RubyReactor
           step_data = {
             name: name,
             type: type,
-            depends_on: graph.dependencies[name],
-            async: config.async?
+            depends_on: graph.dependencies[name]
           }
 
           if type == "compose"
@@ -199,6 +201,16 @@ module RubyReactor
         end
       end
 
+      # The reactor's normalized `{ mode: :after|:before, step: }` hand-off pair,
+      # or nil. Kept out of `build_structure` deliberately — that hash is keyed
+      # by step name and the dashboard iterates it, so a non-step key there
+      # would render as a phantom node.
+      def self.background_handoff_for(reactor_class)
+        return nil unless reactor_class.respond_to?(:background_handoff)
+
+        reactor_class.background_handoff
+      end
+
       def self.determine_step_type(config)
         if config.respond_to?(:interrupt?) && config.interrupt?
           "interrupt"
@@ -206,8 +218,6 @@ module RubyReactor
           "compose"
         elsif config.arguments&.key?(:mapped_reactor_class)
           "map"
-        elsif config.async?
-          "async"
         else
           "step"
         end

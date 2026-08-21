@@ -52,7 +52,6 @@ module RubyReactor
           validation_schema: @validation_schema,
           max_attempts: @max_attempts,
           dependencies: @dependencies,
-          async: false, # Interrupts are effectively boundaries, not async jobs themselves (until resumed)
           conditions: @conditions,
           guards: @guards
         }
