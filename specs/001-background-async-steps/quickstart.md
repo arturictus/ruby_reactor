@@ -5,7 +5,7 @@ Prerequisites: repo checked out on this branch, `bundle install` run (repo root 
 ## 1. Gem-level unit/integration specs
 
 ```bash
-bundle exec rspec spec/ruby_reactor/dsl/reactor_background_spec.rb        # background after:
+bundle exec rspec spec/ruby_reactor/dsl/reactor_background_spec.rb        # background after:/before:
 bundle exec rspec spec/ruby_reactor/dsl/async_step_spec.rb                # async_step
 bundle exec rspec spec/ruby_reactor/dsl/async_reactor_spec.rb             # async_reactor
 bundle exec rspec spec/ruby_reactor/rspec/test_subject_async_spec.rb      # TestSubject support for the new DSL
@@ -15,8 +15,10 @@ bundle exec rspec spec/ruby_reactor/rspec/test_subject_async_spec.rb      # Test
 
 Expected outcomes, mapped to spec.md acceptance scenarios:
 
-- A reactor with `background after: :second` runs `:first`/`:second` inline and `:third` via a dispatched job; `MyReactor.run` returns an `AsyncResult`; `TestSubject`'s `drain_async_jobs` completes it (US1, SC-001).
-- A reactor still using `step { async true }` raises a `ValidationError` at class-definition time, not at run time (US1 acceptance scenario 2, SC-004).
+- A reactor with `background after: :second` runs `:first`/`:second` inline and `:third` via a dispatched job; `MyReactor.run` returns an `AsyncResult`; `TestSubject`'s `drain_async_jobs` completes it (US1 scenario 1, SC-001).
+- The same reactor declared `background before: :third` behaves identically in this linear case, and `:third` never executes in the calling process (US1 scenario 2). In a branching fixture the two forms pin different steps — assert the specific step each one guarantees.
+- A `background` declaration that is duplicated, names an unknown step, carries both `after:` and `before:`, carries neither, or sits on a whole-reactor-`async` reactor each raise at class-definition time (US1 scenarios 4-5, FR-002).
+- A reactor still using `step { async true }` raises a `ValidationError` at class-definition time, not at run time (US1 scenario 3, SC-004).
 - An `async_step` reactor: a sibling step with no dependency on it completes without waiting; a step declaring `argument :x, result(:async_step_name)` receives the correct value once available (US2, SC-002).
 - An `async_step` failure with no downstream reader does NOT flip the parent to `failed`/trigger compensation; a downstream reader that inspects the failure and returns `Failure` DOES trigger compensation (US2 acceptance scenario 3, Clarifications).
 - An `async_reactor` with no reader: forcing the child to fail does not compensate the parent. An `async_reactor` with a reader: the reader's `run` block sees the child's real `Success`/`Failure` and can choose to propagate (US3, SC-003).
@@ -34,7 +36,7 @@ Per Assumptions (spec.md) and Technical Context (plan.md), this feature must not
 ```bash
 cd demo_app
 bin/rails db:test:prepare   # if needed
-bundle exec rspec spec/reactors/background_after_demo_reactor_spec.rb
+bundle exec rspec spec/reactors/background_demo_reactor_spec.rb
 bundle exec rspec spec/reactors/async_step_demo_reactor_spec.rb
 bundle exec rspec spec/reactors/async_reactor_demo_reactor_spec.rb
 ```
@@ -63,7 +65,7 @@ Run a reactor with an `async_step` and one with an `async_reactor` (e.g. the new
 ## 6. Documentation review
 
 - `documentation/async_reactors.md` and its duplicate `demo_app/documentation/async_reactors.md` render correctly and no longer show `step { async true }` as the recommended step-level pattern.
-- `README.md`'s "Step-Level Async" subsection reflects `background after:`.
+- `README.md`'s "Step-Level Async" subsection reflects `background after:`/`before:`.
 - `CHANGELOG.md` has a breaking-change entry under the correct semantic heading (constitution Development Workflow requirement).
 
 ## Done criteria

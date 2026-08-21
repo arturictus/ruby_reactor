@@ -20,24 +20,42 @@ class MyReactor < RubyReactor::Reactor
 end
 ```
 
-**Error contract**: attempting to call `async` inside a `step` **or `compose`** block MUST raise a `RubyReactor::Error::ValidationError` (or a new dedicated error subclass — implementation's choice, but it MUST be raised at reactor **class-definition** time, not at `run` time) whose message names both the removed syntax and its replacement(s): `background after:`, `async_step`, `async_reactor`. (`ComposeBuilder#async` sets the very `StepConfig` flag this feature removes — `dsl/compose_builder.rb:62` — so it cannot survive; migration for a compose that handed off is `background after: <the step preceding it>`, or whole-reactor `async true` if the compose was first.)
+**Error contract**: attempting to call `async` inside a `step` **or `compose`** block MUST raise a `RubyReactor::Error::ValidationError` (or a new dedicated error subclass — implementation's choice, but it MUST be raised at reactor **class-definition** time, not at `run` time) whose message names both the removed syntax and its replacement(s): `background after:`/`background before:`, `async_step`, `async_reactor`. (`ComposeBuilder#async` sets the very `StepConfig` flag this feature removes — `dsl/compose_builder.rb:62` — so it cannot survive; the exact migration for a compose that handed off is `background before: :<that compose step>`, which reproduces the old semantics precisely — the flagged step and everything after it moved to the worker — without the author having to identify a predecessor.)
 
 **Not removed**: the `async` option inside a `map` block (`MapBuilder#async`, `dsl/map_builder.rb:43`) is a map-internal element-dispatch mode passed as a step *argument* — the map's own `StepConfig` is hardcoded `async: false` (`map_builder.rb:111`), so it does not touch the removed flag and keeps working unchanged.
 
-## Added: `background after:`
+## Added: `background after:` / `background before:`
 
 ```ruby
 class MyReactor < RubyReactor::Reactor
   step :first
   step :second
-  background after: :second
+  background after: :second     # :second is the LAST step in the calling process
+  step :third
+end
+
+class EquivalentInLinearFlow < RubyReactor::Reactor
+  step :first
+  step :second
+  background before: :third     # :third is the FIRST step in the worker
   step :third
 end
 ```
 
-- **Signature**: `self.background(after:)` — reactor class macro.
-- **Constraint**: at most one `background` declaration per reactor class; a second declaration, or an `after:` value naming a step not defined in the class, MUST raise at class-definition time (FR-002). Declaring `background` in a reactor marked whole-reactor `async true` also raises at definition time (the hand-off point would be silently meaningless inside a reactor that already runs entirely in a worker — see spec Edge Cases).
-- **Runtime contract**: hand-off is triggered by the *completion of the named step*, not by the declaration's lexical position — `background after: :second` anywhere in the class body means: when `:second` completes, checkpoint, enqueue the remainder via `configuration.async_router`, and return an `AsyncResult` to the caller. In a DAG with parallel branches, any independent step that became ready and executed before `:second` completed has already run in the calling process; everything not yet executed at the trigger moment runs in the worker. Compensation for worker-side step failures works exactly as it does for any same-process step failure — `background` only changes *where* code runs, not the saga/compensation contract (US1 acceptance scenario 1). Inside the worker the hand-off never re-triggers (the existing `inline_async_execution` guard).
+- **Signature**: `self.background(after: nil, before: nil)` — reactor class macro, exactly one keyword supplied.
+- **The two forms** name one cut point from opposite sides, and each carries a *guarantee about the step it names*:
+  - `after: :x` — `:x` runs in the calling process, and is the last step to do so.
+  - `before: :x` — `:x` runs in the worker, and is the first step to do so; it never executes in the calling process.
+
+  In a linear reactor where `:third` immediately follows `:second`, `after: :second` and `before: :third` are equivalent. In a branching workflow they are not, and the author picks whichever step they actually need pinned.
+- **Constraints** (all raise at class-definition time, FR-002):
+  - at most one `background` declaration per reactor class;
+  - the named step must be defined in the class (either keyword);
+  - exactly one of `after:`/`before:` — supplying both, or neither, raises;
+  - combining `background` with whole-reactor `async true` raises (the hand-off point would be silently meaningless inside a reactor that already runs entirely in a worker — see spec Edge Cases).
+- **Runtime contract**: hand-off is triggered by *reaching the named step*, not by the declaration's lexical position — the declaration may sit anywhere in the class body. For `after: :x`, the trigger fires when `:x` completes; for `before: :x`, it fires when `:x` is selected to run, and `:x` is left unexecuted for the worker to run. Either way: checkpoint, enqueue the remainder via `configuration.async_router`, return an `AsyncResult` to the caller. In a DAG with parallel branches, any independent step that became ready and executed before the trigger fired has already run in the calling process; everything not yet executed at the trigger moment runs in the worker — this caveat is identical for both forms. Compensation for worker-side step failures works exactly as it does for any same-process step failure — `background` only changes *where* code runs, not the saga/compensation contract (US1 acceptance scenarios 1-2). Inside the worker the hand-off never re-triggers (the existing `inline_async_execution` guard).
+- **Never-reached trigger**: if the named step is skipped by a `where`/guard condition, or the reactor fails before reaching it, the hand-off simply never fires and the run completes in the calling process. No step is stranded — the hand-off only ever relocates *remaining* work.
+- **`before:` naming the first step** is legal, and is not the same as whole-reactor `async true`: every step body runs in the worker, but input validation still happens in the calling process, so invalid inputs fail the caller synchronously instead of failing inside a worker.
 
 ## Added: `async_step`
 
