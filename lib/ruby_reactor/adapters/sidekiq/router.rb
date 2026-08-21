@@ -19,6 +19,21 @@ module RubyReactor
                                        execution_id: context_id)
         end
 
+        # One `async_step`'s work, dispatched as its own independent unit. The
+        # payload is identity-only for the same reason every other dispatch here
+        # is: the worker rehydrates the parent context from storage.
+        def self.perform_step_async(root_context_id:, reactor_class_name:, step_context_id:, step_name:)
+          job_id = RubyReactor::Adapters::Sidekiq::StepWorker.perform_async(
+            {
+              "root_context_id" => root_context_id,
+              "reactor_class_name" => reactor_class_name,
+              "step_context_id" => step_context_id,
+              "step_name" => step_name.to_s
+            }
+          )
+          RubyReactor::AsyncResult.new(job_id: job_id)
+        end
+
         # rubocop:disable Metrics/ParameterLists
         def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                            strict_ordering:, parent_context_id:, parent_reactor_class_name:,

@@ -15,6 +15,23 @@ module RubyReactor
         raise NotImplementedError
       end
 
+      # The durable outcome of one `async_step`, keyed by (parent context, step
+      # name). A separate worker writes it concurrently with the still-running
+      # parent, so it deliberately lives OUTSIDE the parent's context blob —
+      # writing into that blob from two processes would race.
+      #
+      # `record` is a plain hash: at minimum `status` ("dispatched" or
+      # "completed"); a completed record also carries the serialized outcome.
+      # The `dispatched` record is written before the job is enqueued, so it
+      # doubles as the re-attach marker on recovery (FR-017).
+      def store_step_result(context_id, step_name, record, reactor_class_name)
+        raise NotImplementedError
+      end
+
+      def retrieve_step_result(context_id, step_name, reactor_class_name)
+        raise NotImplementedError
+      end
+
       def retrieve_map_results(map_id, reactor_class_name, strict_ordering: true)
         raise NotImplementedError
       end

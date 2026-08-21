@@ -195,6 +195,11 @@ module RubyReactor
           elsif type == "map"
             inner_class = extract_inner_class(config, :mapped_reactor_class)
             step_data[:nested_structure] = build_structure(inner_class) if inner_class
+          elsif type == "async_reactor"
+            # The child is a full reactor, so the dashboard can drill into its
+            # own step graph exactly as it does for compose/map.
+            inner_class = extract_inner_class(config, :async_reactor_class)
+            step_data[:nested_structure] = build_structure(inner_class) if inner_class
           end
 
           [name, step_data]
@@ -218,8 +223,18 @@ module RubyReactor
           "compose"
         elsif config.arguments&.key?(:mapped_reactor_class)
           "map"
+        elsif config.respond_to?(:async_dispatch)
+          async_step_type(config)
         else
           "step"
+        end
+      end
+
+      def self.async_step_type(config)
+        case config.async_dispatch
+        when :step then "async_step"
+        when :reactor then "async_reactor"
+        else "step"
         end
       end
 
@@ -234,13 +249,42 @@ module RubyReactor
         return {} unless composed_contexts.is_a?(Hash)
 
         composed_contexts.transform_values do |value|
-          type = value[:type] || value["type"]
-          if ["map_ref", :map_ref].include?(type)
-            hydrate_map_ref(value, reactor_class_name)
-          else
-            value
+          case (value[:type] || value["type"]).to_s
+          when "map_ref" then hydrate_map_ref(value, reactor_class_name)
+          when "async_step_ref" then hydrate_async_step_ref(value, reactor_class_name)
+          when "async_reactor_ref" then hydrate_async_reactor_ref(value)
+          else value
           end
         end
+      end
+
+      # The reference lives on the parent's context; the outcome lives in the
+      # Step Result Record. Resolve it so the dashboard can show whether the
+      # unit is still dispatched or has landed, mirroring hydrate_map_ref.
+      def self.hydrate_async_step_ref(ref_data, reactor_class_name)
+        context_id = ref_data[:context_id] || ref_data["context_id"]
+        name = ref_data[:name] || ref_data["name"]
+        return ref_data unless context_id && name
+
+        record = RubyReactor.configuration.storage_adapter.retrieve_step_result(
+          context_id, name, reactor_class_name
+        )
+        return ref_data unless record
+
+        ref_data.merge("record" => record)
+      end
+
+      # An async_reactor child is an ordinary addressable execution, so its
+      # state is just its own context row — the same lookup any reactor uses.
+      def self.hydrate_async_reactor_ref(ref_data)
+        execution_id = ref_data[:execution_id] || ref_data["execution_id"]
+        child_class = ref_data[:reactor_class_name] || ref_data["reactor_class_name"]
+        return ref_data unless execution_id && child_class
+
+        child = RubyReactor.configuration.storage_adapter.retrieve_context(execution_id, child_class)
+        return ref_data unless child
+
+        ref_data.merge("context" => child)
       end
 
       def self.hydrate_map_ref(ref_data, reactor_class_name)

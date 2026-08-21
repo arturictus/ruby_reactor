@@ -199,6 +199,23 @@ module RubyReactor
           step_config
         end
 
+        # FR-004: a step whose work is dispatched to its own independent worker
+        # job while this reactor keeps executing every other ready step. Same
+        # call shape and same block DSL as `step` — `argument`, `run`,
+        # `compensate`, `undo`, `retries`, validators all behave identically;
+        # only WHERE the body runs changes.
+        #
+        # Any step reading `result(:name)` blocks (bounded) until the unit
+        # finishes. A failure with no reader does NOT compensate this reactor —
+        # compensation is opt-in, via a reader that inspects the result and
+        # returns `Failure` itself.
+        def async_step(name, impl = nil, &block)
+          builder = RubyReactor::Dsl::StepBuilder.new(name, impl, self)
+          builder.instance_eval(&block) if block_given?
+
+          steps[name] = builder.build(async_dispatch: :step)
+        end
+
         def compose(name, composed_reactor_class = nil, &block)
           builder = RubyReactor::Dsl::ComposeBuilder.new(name, composed_reactor_class, self, &block)
 
@@ -229,9 +246,29 @@ module RubyReactor
         end
 
         def returns(step_name = nil)
-          @return_step = step_name if step_name
+          if step_name
+            reject_async_return_step!(step_name)
+            @return_step = step_name
+          end
           @return_step
         end
+
+        # A reactor's return value must come from a step that ran in the calling
+        # process. An `async_step` / `async_reactor` may still be in flight when
+        # this reactor finishes — that is the whole point of dispatching it — so
+        # returning it would either mean returning nothing or silently turning
+        # the fire-and-forget contract into a blocking wait.
+        def reject_async_return_step!(step_name)
+          config = steps[step_name]
+          return unless config.respond_to?(:async_dispatch?) && config.async_dispatch?
+
+          kind = config.async_dispatch == :reactor ? "async_reactor" : "async_step"
+          raise RubyReactor::Error::ValidationError,
+                "`returns :#{step_name}` is invalid: :#{step_name} is an `#{kind}`, which may still be " \
+                "running when this reactor finishes. Return a same-process step instead — if you need the " \
+                "dispatched outcome, add a step that reads `result(:#{step_name})` and return that."
+        end
+        private :reject_async_return_step!
 
         def middleware(middleware_class, **options)
           middlewares << if options.empty?

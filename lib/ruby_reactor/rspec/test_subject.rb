@@ -130,6 +130,56 @@ module RubyReactor
         elements[index]
       end
 
+      # The durable record for a dispatched `async_step`, or nil if the step was
+      # never dispatched (e.g. under `async: false`, where it ran inline and its
+      # value is an ordinary `step_result`). Mirrors `#composed` / `#map` in
+      # reading the reference off `composed_contexts`.
+      #
+      #   subject.async_step(:send_email)          # => the raw record hash
+      #   subject.async_step(:send_email, :status) # => "dispatched" / "completed"
+      def async_step(step_name, key = nil)
+        ensure_executed!
+
+        entry = composed_entry(step_name)
+        return nil unless entry && entry[:type] == :async_step_ref
+
+        record = RubyReactor.configuration.storage_adapter.retrieve_step_result(
+          entry[:context_id] || @reactor_instance.context.context_id,
+          step_name,
+          RubyReactor.reactor_storage_name(@reactor_instance.class)
+        )
+        key && record ? record[key.to_s] : record
+      end
+
+      # The child execution a dispatched `async_reactor` created, as its own
+      # TestSubject — the same drill-down `#composed` gives for an inline child.
+      def async_reactor(step_name)
+        ensure_executed!
+
+        entry = composed_entry(step_name)
+        return nil unless entry && entry[:type] == :async_reactor_ref
+
+        child_class = RubyReactor::Context.resolve_reactor_class(entry[:reactor_class_name])
+        return nil unless child_class
+
+        child_instance = child_class.find(entry[:execution_id])
+        self.class.new(
+          reactor_class: child_instance.class,
+          inputs: child_instance.context.inputs,
+          context: child_instance.context,
+          async: @async,
+          process_jobs: @process_jobs
+        ).tap do |s|
+          s.instance_variable_set(:@executed, true)
+          s.instance_variable_set(:@reactor_instance, child_instance)
+        end
+      end
+
+      def composed_entry(step_name)
+        contexts = @reactor_instance.context.composed_contexts
+        contexts[step_name] || contexts[step_name.to_s] || contexts[step_name.to_sym]
+      end
+
       private
 
       def traverse_composed(step_name)

@@ -110,8 +110,12 @@ module RubyReactor
         }
       end
 
-      def build
+      # `async_dispatch` marks a step whose work is dispatched as an independent
+      # unit rather than run inline — `:step` for `async_step`, `:reactor` for
+      # `async_reactor`. Nil for an ordinary step.
+      def build(async_dispatch: nil)
         step_config = {
+          async_dispatch: async_dispatch,
           name: @name,
           impl: @impl,
           arguments: @arguments,
@@ -132,9 +136,10 @@ module RubyReactor
 
     class StepConfig
       attr_reader :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
-                  :dependencies, :args_validator, :output_validator, :retry_config
+                  :dependencies, :args_validator, :output_validator, :retry_config, :async_dispatch
 
       def initialize(config)
+        @async_dispatch = config[:async_dispatch]
         @name = config[:name]
         @impl = config[:impl]
         @arguments = config[:arguments] || {}
@@ -147,6 +152,13 @@ module RubyReactor
         @args_validator = config[:args_validator]
         @output_validator = config[:output_validator]
         @retry_config = { max_attempts: 1 }.merge(config[:retry_config] || {})
+      end
+
+      # True for `async_step` / `async_reactor` — the step's work leaves this
+      # process instead of running inline. `RSpec::TestSubject`'s `async: false`
+      # clears the marker to run the whole reactor in one process.
+      def async_dispatch?
+        !@async_dispatch.nil?
       end
 
       def has_impl?

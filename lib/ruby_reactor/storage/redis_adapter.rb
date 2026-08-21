@@ -51,6 +51,21 @@ module RubyReactor
         results.keys.sort_by(&:to_i).map { |k| JSON.parse(results[k]) }
       end
 
+      # One `async_step`'s durable record. Shares `context_ttl` with the parent
+      # context — the record must not outlive what it belongs to, and must not
+      # expire before it.
+      def store_step_result(context_id, step_name, record, reactor_class_name)
+        key = step_result_key(context_id, step_name, reactor_class_name)
+        @redis.set(key, JSON.generate(record), ex: durability_ttl)
+      end
+
+      def retrieve_step_result(context_id, step_name, reactor_class_name)
+        json = @redis.get(step_result_key(context_id, step_name, reactor_class_name))
+        return nil unless json
+
+        JSON.parse(json)
+      end
+
       # Indices that have NO stored result yet: the authoritative, idempotent
       # signal for what the map sweeper must (re)dispatch.
       def missing_map_indices(map_id, count, reactor_class_name)
@@ -356,6 +371,10 @@ module RubyReactor
 
       def context_key(context_id, reactor_class_name)
         "reactor:#{reactor_class_name}:context:#{context_id}"
+      end
+
+      def step_result_key(context_id, step_name, reactor_class_name)
+        "reactor:#{reactor_class_name}:context:#{context_id}:step_result:#{step_name}"
       end
 
       def map_results_key(map_id, reactor_class_name)
