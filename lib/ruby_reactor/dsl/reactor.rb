@@ -216,6 +216,21 @@ module RubyReactor
           steps[name] = builder.build(async_dispatch: :step)
         end
 
+        # FR-007: dispatch a whole nested reactor to run INDEPENDENTLY — linked
+        # to this one by execution id for traceability, but excluded from its
+        # compensation graph. Fire-and-forget unless a later step reads
+        # `result(:name)`, which blocks until the child is terminal and hands
+        # over the child's real Success/Failure to inspect.
+        #
+        # Contrast with `compose`, which runs the child inline, synchronously,
+        # and fully wired into the parent's rollback path.
+        def async_reactor(name, child_reactor_class, &block)
+          builder = RubyReactor::Dsl::AsyncReactorBuilder.new(name, child_reactor_class, self)
+          builder.instance_eval(&block) if block_given?
+
+          steps[name] = builder.build
+        end
+
         def compose(name, composed_reactor_class = nil, &block)
           builder = RubyReactor::Dsl::ComposeBuilder.new(name, composed_reactor_class, self, &block)
 

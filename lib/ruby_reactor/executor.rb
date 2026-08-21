@@ -101,6 +101,7 @@ module RubyReactor
       input_validator = InputValidator.new(@reactor_class, @context)
       input_validator.validate!
 
+      reset_held_lock_keys!
       acquire_locks_with_telemetry
 
       # Re-check the period gate now that we hold the lock. The pre-lock check
@@ -192,6 +193,8 @@ module RubyReactor
       # and must not contend on the root's own key.
       acquire_context_lock
 
+      reset_held_lock_keys!
+
       # Resumes intentionally skip check_rate_limit (a paused run must not
       # block itself on resume), so acquire lock/semaphore directly rather
       # than via acquire_locks.
@@ -265,6 +268,24 @@ module RubyReactor
       # Serialize context
       serialized_context = ContextSerializer.serialize(@context)
       storage.store_context(@context.context_id, serialized_context, reactor_class_name)
+      publish_completion_signal(storage)
+    end
+
+    # Wake any parent blocked in the FR-005 wait on this execution. Published
+    # AFTER the durable save, never before: the context row is the answer and
+    # the signal only saves the waiter a fallback interval. Unconditional —
+    # publishing to a channel with no subscribers is near-free, so there is no
+    # need for an "am I awaited?" marker.
+    def publish_completion_signal(storage)
+      return unless @context.finished?
+
+      storage.publish(RubyReactor.async_reactor_channel(@context.context_id), @context.status.to_s)
+    rescue StandardError => e
+      # The signal is an optimisation; losing it costs the waiter one fallback
+      # interval and must never fail the run that just completed.
+      RubyReactor.configuration.logger.warn(
+        "RubyReactor: could not publish completion signal for #{@context.context_id}: #{e.message}"
+      )
     end
 
     # Durable per-step checkpoint. Unlike save_context (which serializes THIS
@@ -439,6 +460,7 @@ module RubyReactor
       begin
         lock.acquire
         @acquired_lock = lock
+        held_lock_keys << key
         middlewares.on(:lock_acquired, key, @context)
       rescue RubyReactor::Lock::AcquisitionError => e
         middlewares.on(:lock_failed, key, e, @context)
@@ -455,6 +477,10 @@ module RubyReactor
       begin
         semaphore.acquire
         @acquired_semaphore = semaphore
+        # Only a single-slot semaphore has the circular-wait shape the
+        # async_reactor deadlock guard can act on; higher limits are ordinary
+        # contention and must keep snoozing.
+        held_lock_keys << key if limit == 1
         middlewares.on(:semaphore_acquired, key, limit, @context)
       rescue RubyReactor::Semaphore::AcquisitionError => e
         middlewares.on(:semaphore_failed, key, limit, e, @context)
@@ -475,6 +501,7 @@ module RubyReactor
       if @acquired_semaphore
         key = @acquired_semaphore.key
         release_one("semaphore", @acquired_semaphore)
+        held_lock_keys.delete(key)
         middlewares.on(:semaphore_released, key, @context)
       end
       @acquired_semaphore = nil
@@ -483,8 +510,27 @@ module RubyReactor
 
       key = @acquired_lock.key
       release_one("lock", @acquired_lock)
+      held_lock_keys.delete(key)
       @acquired_lock = nil
       middlewares.on(:lock_released, key, @context)
+    end
+
+    # Exclusive keys this EXECUTION currently holds, recorded on the root
+    # context so a dispatching step anywhere in the tree can see the whole
+    # chain. Read by the async_reactor deadlock guard (FR-015); nothing else
+    # depends on it, so a stale entry can only cost a false positive — hence
+    # the reset on the way in.
+    def held_lock_keys
+      root = @context.root_context || @context
+      root.private_data[:held_lock_keys] ||= []
+    end
+
+    # A rehydrated context can carry keys from the process that died holding
+    # them. Only the root executor resets, and only on the way in.
+    def reset_held_lock_keys!
+      return unless (@context.root_context || @context).equal?(@context)
+
+      (@context.root_context || @context).private_data[:held_lock_keys] = []
     end
 
     def release_one(kind, primitive)
