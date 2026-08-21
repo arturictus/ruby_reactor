@@ -47,6 +47,11 @@ module RedisHelpers
   end
 end
 
+# ActiveJob's per-job enqueue/perform logging drowns the spec output once a
+# group runs against the ActiveJob backend; the assertions, not the log, are
+# what tell us the job ran.
+ActiveJob::Base.logger = Logger.new(IO::NULL) if defined?(ActiveJob::Base)
+
 # Load support files
 Dir[File.expand_path("support/**/*.rb", __dir__)].each { |f| require f }
 

@@ -37,23 +37,21 @@ RSpec.shared_context "an async backend" do |backend|
 
   around do |example|
     original_adapter = ActiveJob::Base.queue_adapter
-    if backend == :active_job
-      ActiveJob::Base.queue_adapter = :test
-      # spec_helper leaves Sidekiq in fake mode for every example, and
-      # `AsyncTestHelpers` prefers Sidekiq whenever it is faking — so the
-      # ActiveJob lane only actually exercises ActiveJob once Sidekiq's test
-      # mode is off.
-      Sidekiq::Testing.disable!
-    end
+    ActiveJob::Base.queue_adapter = :test if backend == :active_job
     example.run
   ensure
     ActiveJob::Base.queue_adapter = original_adapter
     Sidekiq::Testing.fake!
   end
 
+  # A `before` and not the `around`: the suite-wide hook that puts Sidekiq into
+  # fake mode runs INSIDE any around block, and `AsyncTestHelpers` prefers
+  # Sidekiq whenever it is faking — so the ActiveJob lane only really exercises
+  # ActiveJob if Sidekiq's test mode is turned off after that hook has run.
   before do
     allow(RubyReactor.configuration).to receive(:async_router).and_return(AsyncBackends::BACKENDS.fetch(backend))
     if backend == :active_job
+      Sidekiq::Testing.disable!
       ActiveJob::Base.queue_adapter.enqueued_jobs.clear
     else
       Sidekiq::Worker.clear_all
