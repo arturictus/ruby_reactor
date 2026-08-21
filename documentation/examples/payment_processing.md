@@ -558,10 +558,10 @@ end
 ### Async Processing
 
 ```ruby
-# Use async for non-critical steps
-step :send_receipt do
-  async true  # Don't block payment completion on email delivery
-
+# Dispatch non-critical work to its own job so it never blocks payment
+# completion. A failure here does NOT compensate the payment — nothing reads
+# `result(:send_receipt)`.
+async_step :send_receipt do
   run do
     # Email sending logic
   end

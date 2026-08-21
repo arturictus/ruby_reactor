@@ -24,4 +24,4 @@ end
 # Fixture reactors only — these are plain reactor classes with no RSpec
 # dependency, which is why the orchestration-lane fixtures live under
 # spec/support/reactors/ rather than inline in a spec file.
-Dir[File.expand_path("reactors/*.rb", __dir__)].sort.each { |file| require file }
+Dir[File.expand_path("reactors/*.rb", __dir__)].each { |file| require file }

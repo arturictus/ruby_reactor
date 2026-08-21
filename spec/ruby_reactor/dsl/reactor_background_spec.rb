@@ -19,7 +19,7 @@ RSpec.describe "reactor-level `background` hand-off" do
         result = BackgroundAfterReactor.run
 
         expect(result).to be_a(RubyReactor::AsyncResult)
-        expect(BackgroundFixtures.trace[:after]).to eq([[:first, :here], [:second, :here]])
+        expect(BackgroundFixtures.trace[:after]).to eq([%i[first here], %i[second here]])
       end
 
       it "runs the remaining steps in the dispatched job" do
@@ -27,7 +27,7 @@ RSpec.describe "reactor-level `background` hand-off" do
         RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs
 
         expect(BackgroundFixtures.trace[:after]).to eq(
-          [[:first, :here], [:second, :here], [:third, :worker]]
+          [%i[first here], %i[second here], %i[third worker]]
         )
         expect(BackgroundAfterReactor.find(result.execution_id).context.status.to_s).to eq("completed")
       end
@@ -48,7 +48,7 @@ RSpec.describe "reactor-level `background` hand-off" do
       it "never executes the named step in the calling process" do
         BackgroundBeforeReactor.run
 
-        expect(BackgroundFixtures.trace[:before]).to eq([[:first, :here], [:second, :here]])
+        expect(BackgroundFixtures.trace[:before]).to eq([%i[first here], %i[second here]])
       end
 
       it "runs the named step first in the worker" do
@@ -56,7 +56,7 @@ RSpec.describe "reactor-level `background` hand-off" do
         RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs
 
         expect(BackgroundFixtures.trace[:before]).to eq(
-          [[:first, :here], [:second, :here], [:third, :worker]]
+          [%i[first here], %i[second here], %i[third worker]]
         )
       end
 
@@ -100,7 +100,7 @@ RSpec.describe "reactor-level `background` hand-off" do
         RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs
 
         expect(BackgroundFixtures.trace[:declared_first]).to eq(
-          [[:only_first, :here], [:then_this, :worker]]
+          [%i[only_first here], %i[then_this worker]]
         )
       end
 
@@ -117,7 +117,7 @@ RSpec.describe "reactor-level `background` hand-off" do
 
         # A re-trigger would leave :third unrun and queue another job forever.
         expect(RubyReactor::RSpec::AsyncTestHelpers.pending_async_jobs).to be_empty
-        expect(BackgroundFixtures.trace[:after].last).to eq([:third, :worker])
+        expect(BackgroundFixtures.trace[:after].last).to eq(%i[third worker])
       end
     end
   end

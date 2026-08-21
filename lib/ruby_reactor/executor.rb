@@ -6,6 +6,7 @@ require_relative "executor/graph_manager"
 require_relative "executor/retry_manager"
 require_relative "executor/compensation_manager"
 require_relative "executor/result_handler"
+require_relative "executor/async_step_dispatch"
 require_relative "executor/step_executor"
 require_relative "executor/ordered_lock_support"
 

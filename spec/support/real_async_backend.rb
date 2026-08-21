@@ -22,6 +22,10 @@ module RealAsyncBackend
   WORKER_WAIT_TIMEOUT = 20
 
   class << self
+    def live?
+      !@sidekiq.nil?
+    end
+
     def start_sidekiq!
       return @sidekiq if @sidekiq&.fetch(:pid) && process_alive?(@sidekiq[:pid])
 
@@ -34,7 +38,10 @@ module RealAsyncBackend
       )
       @sidekiq = { pid: pid }
       wait_until_consuming(pid) ? @sidekiq : nil
-    rescue Errno::ENOENT, StandardError
+    rescue StandardError
+      # No sidekiq binary, no Redis, a boot crash — every one of them means the
+      # same thing to the caller: this lane is unavailable, skip rather than
+      # silently fall back to a fake.
       nil
     end
 
@@ -75,13 +82,13 @@ module RealAsyncBackend
   end
 end
 
-RSpec.shared_context "a real async worker" do |backend|
+RSpec.shared_context "with a real async worker" do |backend|
   let(:real_async_backend) { backend }
 
   before(:context) do
     if backend == :sidekiq
       FileUtils.mkdir_p("log")
-      @live_sidekiq = RealAsyncBackend.start_sidekiq!
+      RealAsyncBackend.start_sidekiq!
     end
   end
 
@@ -104,7 +111,7 @@ RSpec.shared_context "a real async worker" do |backend|
   end
 
   before do
-    skip "live sidekiq worker unavailable" if backend == :sidekiq && @live_sidekiq.nil?
+    skip "live sidekiq worker unavailable" if backend == :sidekiq && !RealAsyncBackend.live?
 
     # Real dispatch, not a fake queue: the client must actually push to the
     # test Redis the live worker is consuming.
@@ -117,7 +124,7 @@ module RealAsyncBackends
   def for_each_real_async_backend(&block)
     AsyncBackends::BACKENDS.each_key do |backend|
       context "with a real #{backend} worker" do
-        include_context "a real async worker", backend
+        include_context "with a real async worker", backend
 
         instance_eval(&block)
       end

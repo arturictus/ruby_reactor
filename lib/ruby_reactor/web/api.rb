@@ -170,6 +170,13 @@ module RubyReactor
         inputs.transform_keys(&:to_sym)
       end
 
+      # Step type -> the argument holding the child reactor class to recurse into.
+      NESTED_STRUCTURE_KEYS = {
+        "compose" => :composed_reactor_class,
+        "map" => :mapped_reactor_class,
+        "async_reactor" => :async_reactor_class
+      }.freeze
+
       def self.build_structure(reactor_class)
         return {} unless reactor_class.respond_to?(:steps)
 
@@ -189,17 +196,11 @@ module RubyReactor
             depends_on: graph.dependencies[name]
           }
 
-          if type == "compose"
-            inner_class = extract_inner_class(config, :composed_reactor_class)
-            step_data[:nested_structure] = build_structure(inner_class) if inner_class
-          elsif type == "map"
-            inner_class = extract_inner_class(config, :mapped_reactor_class)
-            step_data[:nested_structure] = build_structure(inner_class) if inner_class
-          elsif type == "async_reactor"
-            # The child is a full reactor, so the dashboard can drill into its
-            # own step graph exactly as it does for compose/map.
-            inner_class = extract_inner_class(config, :async_reactor_class)
-            step_data[:nested_structure] = build_structure(inner_class) if inner_class
+          # An async_reactor child is a full reactor, so the dashboard drills
+          # into its own step graph exactly as it does for compose/map.
+          inner_key = NESTED_STRUCTURE_KEYS[type]
+          if inner_key && (inner_class = extract_inner_class(config, inner_key))
+            step_data[:nested_structure] = build_structure(inner_class)
           end
 
           [name, step_data]

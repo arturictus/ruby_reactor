@@ -23,15 +23,15 @@ class UpdateUserReactor < RubyReactor::Reactor
     argument :user_id, input(:user_id)
   end
 
+  # To run this sub-workflow (and everything after it) in a worker, declare the
+  # reactor's hand-off point: `background before: :update_profile`. `compose`'s
+  # own `async` flag has been removed — see the note below.
   # Define a sub-workflow inline
   compose :update_profile do
     # You can define inputs for the inline reactor
     argument :user_id, input(:user_id)
     argument :data, input(:profile_data)
 
-    # Configure async execution for the sub-workflow
-    async true
-    
     # Configure retries for steps within the sub-workflow
     retries max_attempts: 3
 
@@ -128,8 +128,6 @@ class OrderProcessingReactor < RubyReactor::Reactor
     argument :order_id, input(:order_id)
     argument :payment_info, input(:payment_info)
     
-    async true  # This sub-workflow can run async
-    
     step :authorize_payment do
       run { |args| ... }
     end
@@ -186,31 +184,60 @@ step :final_step do
 end
 ```
 
-3. **Async Execution**: If a composed reactor is marked with `async true`, execution will pause at that compose step, serialize the entire reactor context, and queue a background job. The worker will resume execution from that compose step and continue sequentially through remaining steps. Only one worker executes the main reactor at a time.
+3. **Background Hand-off**: `compose`'s own `async` flag has been removed (it set the same ambiguous per-step flag `step`'s did). To move a compose step and everything after it to a worker, declare `background before: :that_compose_step` on the reactor — see [`async_reactor` vs `compose`](#async_reactor-vs-compose) below for the case where you want the child to run *independently* instead.
 
 4. **Shared Context**: All composed reactors share access to the parent reactor's inputs and results of previous steps and can be configured with different retry strategies.
 
+### `async_reactor` vs `compose`
+
+Both run a nested reactor. They differ in exactly one thing that then determines
+everything else: whether the child runs **inside** this reactor's thread of
+control.
+
+| | `compose` | `async_reactor` |
+|---|---|---|
+| Where the child runs | inline, in this process, synchronously | its own job, concurrently |
+| Result availability | immediately, as the step's own result | via `result(:name)`, which waits (bounded) |
+| Compensation | fully linked — a child failure rolls the parent back | **not** linked; opt in by reading the result and returning `Failure` |
+| Lock reentrancy | yes — same logical thread of control, so the child re-enters the parent's lock | never — the two run concurrently, so sharing an owner would break mutual exclusion |
+| Failure with no reader | impossible; the parent always sees it | the parent completes unaffected |
+
+Use `compose` when the child is part of this unit of work. Use `async_reactor`
+when it genuinely should outlive this reactor and its failure should not, by
+itself, undo what this reactor did.
+
+**A lock collision usually means you wanted `compose`.** If an `async_reactor`
+child declares a lock key the parent holds, dispatch fails immediately with an
+error rather than deadlocking. The most common cause is dispatching a child that
+belongs inside the parent's critical section — and if a later step reads the
+child's result anyway, the work is sequential regardless, so `compose` expresses
+it directly and correctly. See
+[Async Reactors](async_reactors.md#locks-across-the-async-boundary) for the other
+two remedies.
+
 ### Async Compose Execution Flow
 
-When you mark a compose as async:
+When a reactor declares its hand-off point at a compose step:
 
 ```ruby
 compose :process_payment do
-  async true
   # ... steps
 end
+
+background before: :process_payment
 ```
 
 The execution flow is:
 
 1. Parent reactor executes steps up to `process_payment`
-2. Serializes entire context and queues a background job
-3. Returns `AsyncResult` to caller
-4. Worker picks up job and resumes from `process_payment`
-5. After `process_payment` completes, continues to next step sequentially
-6. If another async step is encountered, the process repeats
+2. Serializes the entire context and queues ONE background job
+3. Returns `AsyncResult` to the caller
+4. Worker picks up the job and resumes at `process_payment`
+5. The worker continues sequentially through every remaining step
 
-This ensures proper ordering and state consistency across async boundaries.
+A reactor has exactly one hand-off point, so this happens once per execution —
+there is no "if another async step is encountered". That ambiguity is precisely
+what `background` replaced.
 
 ## Nested Async Retries
 

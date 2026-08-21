@@ -39,7 +39,7 @@ module RubyReactor
         private
 
         def build_child_inputs(mappings, context)
-          mappings.to_h { |input_name, source| [input_name, source.resolve(context)] }
+          mappings.transform_values { |source| source.resolve(context) }
         end
 
         def validate_child_inputs(child_class, child_inputs)
@@ -192,7 +192,7 @@ module RubyReactor
         def log_dispatch(context, child_class, child_context)
           RubyReactor.configuration.logger.info(
             "event=\"ruby_reactor.async_reactor.dispatched\" " \
-            "reactor=#{(context.reactor_class&.name).inspect} step=#{context.current_step.inspect} " \
+            "reactor=#{context.reactor_class&.name.inspect} step=#{context.current_step.inspect} " \
             "execution_id=#{context.context_id.inspect} child_reactor=#{child_class.name.inspect} " \
             "child_execution_id=#{child_context.context_id.inspect}"
           )

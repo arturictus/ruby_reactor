@@ -168,12 +168,12 @@ Single-project Ruby gem: `lib/ruby_reactor/**` (implementation), `spec/**` (gem 
 - [X] T066 [P] Add `demo_app/spec/reactors/background_demo_reactor_spec.rb` using only the built-in `test_reactor` helper and matchers
 - [X] T067 [P] Add `demo_app/spec/reactors/async_step_demo_reactor_spec.rb` using only the built-in spec helpers
 - [X] T068 [P] Add `demo_app/spec/reactors/async_reactor_demo_reactor_spec.rb` using only the built-in spec helpers
-- [ ] T069 Rewrite the "Step-Level Async" section as `background after:`/`before:` (documenting which step each form pins, and the DAG caveat) and add new `async_step` / `async_reactor` sections (covering the notified wait, the opt-in compensation model, and the FR-015 lock guidance) in `documentation/async_reactors.md`
-- [ ] T070 [P] Add the `async_reactor` vs `compose` cross-reference (fire-and-forget/uncompensated vs synchronous/compensation-linked, and when a lock collision means you wanted `compose`) in `documentation/composition.md`
-- [ ] T071 Mirror the T069/T070 edits into the duplicate copies under `demo_app/documentation/` so the two trees do not drift (research.md decision 7)
-- [ ] T072 Rewrite the "Step-Level Async" subsection and add `async_step`/`async_reactor` coverage in `README.md`
-- [ ] T073 Add the breaking-change entry with a migration note (per-step and compose `async` → `background after:` / `async_step` / `async_reactor`) under the correct semantic heading in `CHANGELOG.md` (FR-013)
-- [ ] T074 Run `bundle exec rubocop` (no `--disable-pending-cops`) and fix all offenses across the changed files
+- [X] T069 Rewrite the "Step-Level Async" section as `background after:`/`before:` (documenting which step each form pins, and the DAG caveat) and add new `async_step` / `async_reactor` sections (covering the notified wait, the opt-in compensation model, and the FR-015 lock guidance) in `documentation/async_reactors.md`
+- [X] T070 [P] Add the `async_reactor` vs `compose` cross-reference (fire-and-forget/uncompensated vs synchronous/compensation-linked, and when a lock collision means you wanted `compose`) in `documentation/composition.md`
+- [X] T071 Mirror the T069/T070 edits into the duplicate copies under `demo_app/documentation/` so the two trees do not drift (research.md decision 7)
+- [X] T072 Rewrite the "Step-Level Async" subsection and add `async_step`/`async_reactor` coverage in `README.md`
+- [X] T073 Add the breaking-change entry with a migration note (per-step and compose `async` → `background after:` / `async_step` / `async_reactor`) under the correct semantic heading in `CHANGELOG.md` (FR-013)
+- [X] T074 Run `bundle exec rubocop` (no `--disable-pending-cops`) and fix all offenses across the changed files
 - [ ] T075 Execute the full `quickstart.md` validation: both backends green, `demo_app` specs green, and the dashboard verified in a browser (do not close FR-014 on passing specs alone)
 
 ---

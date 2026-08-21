@@ -24,7 +24,7 @@ module AsyncBackends
   def for_each_async_backend(&block)
     BACKENDS.each_key do |backend|
       context "with the #{backend} backend" do
-        include_context "an async backend", backend
+        include_context "with an async backend", backend
 
         instance_eval(&block)
       end
@@ -32,7 +32,7 @@ module AsyncBackends
   end
 end
 
-RSpec.shared_context "an async backend" do |backend|
+RSpec.shared_context "with an async backend" do |backend|
   let(:async_backend) { backend }
 
   around do |example|

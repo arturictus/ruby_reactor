@@ -59,7 +59,9 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
   - [Basic Example: User Registration](#basic-example-user-registration)
   - [Async Execution](#async-execution)
     - [Full Reactor Async](#full-reactor-async)
-    - [Step-Level Async](#step-level-async)
+    - [Background Hand-off](#background-hand-off)
+    - [`async_step`](#async_step-one-step-dispatched-on-its-own)
+    - [`async_reactor`](#async_reactor-a-whole-nested-reactor-running-independently)
   - [Durability & Recovery](#durability--recovery)
   - [Interrupts (Pause & Resume)](#interrupts-pause--resume)
   - [Locks, Semaphores & Ordered Locks](#locks-semaphores--ordered-locks)
@@ -413,9 +415,12 @@ end
 result = AsyncReactor.run(params)
 ```
 
-#### Step-Level Async
+#### Background Hand-off
 
-You can also mark individual steps as async. Execution will proceed synchronously until the first async step is encountered, at which point the reactor execution is offloaded to a background job.
+A reactor can name **one** point where execution stops running in the caller's
+process and is handed to a worker. Everything before it runs in the caller;
+everything after it runs in a single background job. The cut point is nameable
+from either side.
 
 ```ruby
 class CreateUserReactor < RubyReactor::Reactor
@@ -430,15 +435,16 @@ class CreateUserReactor < RubyReactor::Reactor
     run { |args| User.create(args[:params]) }
   end
 
-  # From here on will run async
+  # :create_user is the LAST step to run in the calling process.
+  # Equivalently here: `background before: :open_account`.
+  background after: :create_user
+
   step :open_account do
-    async true
     argument :user, result(:create_user)
     run { |args| Bank.open_account(args[:user]) }
   end
 
   step :report_new_user do
-    async true
     argument :user, result(:create_user)
     wait_for :open_account
     run { |args| Analytics.track(args[:user]) }
@@ -447,15 +453,100 @@ end
 
 # Usage
 def create(params)
-   # Returns an AsyncResult immediately when 'open_account' is reached
-   result = CreateUserReactor.run(params)
-   
-   # Access synchronous results immediately
-   user = result.intermediate_results[:create_user]
-   
-   # do something with user
+  # Returns an AsyncResult immediately once :create_user completes
+  result = CreateUserReactor.run(params)
+
+  # Access synchronous results immediately
+  user = result.intermediate_results[:create_user]
+
+  # do something with user
 end
 ```
+
+`after: :x` guarantees `:x` runs in the calling process and is the last to do so.
+`before: :x` guarantees `:x` runs in the worker and is the first to do so. They
+coincide in a linear chain; **in a DAG they pin different steps**, so pick
+whichever step you actually need pinned. Compensation is unchanged — `background`
+changes where code runs, not the saga contract.
+
+> **Breaking change:** the per-step `async true` flag has been **removed**. It was
+> ambiguous — only the *first* flagged step in a reactor ever took effect and the
+> rest were silently ignored — and it now raises at class-definition time. The
+> exact replacement for a flagged step `:x` is `background before: :x`. The same
+> applies to `async` inside a `compose` block.
+
+#### `async_step`: one step, dispatched on its own
+
+Where `background` relocates the *rest* of a reactor, `async_step` dispatches one
+step's work to its own job while the reactor keeps running every other ready step.
+
+```ruby
+class SignupReactor < RubyReactor::Reactor
+  input :email
+
+  async_step :send_email do
+    argument :to, input(:email)
+    run { |args| Mailer.welcome(args[:to]).deliver_now; Success(:sent) }
+  end
+
+  # Does NOT wait — it has no dependency on :send_email.
+  step :record_signup do
+    argument :email, input(:email)
+    run { |args| Success(Signup.create!(email: args[:email])) }
+  end
+
+  # DOES wait, because it reads the result.
+  step :confirm_delivery do
+    argument :delivery, result(:send_email)
+    run { |args| Success("confirmed") }
+  end
+end
+```
+
+Reading `result(:send_email)` is what makes a step wait, and the wait is bounded
+by `config.async_wait_timeout` (default 30s) — never unbounded. On success the
+reader gets the raw value; on failure it gets the `Failure` **object**, so it can
+inspect it and decide.
+
+**Compensation is opt-in.** If a dispatched step fails and nothing reads its
+result, the reactor is not compensated — it was dispatched precisely so the
+reactor would not depend on it. A reader that returns `Failure` triggers
+compensation normally.
+
+#### `async_reactor`: a whole nested reactor, running independently
+
+```ruby
+class SignupReactor < RubyReactor::Reactor
+  input :user_id
+
+  # Fire-and-forget: nothing reads it, so its failure never affects this reactor.
+  async_reactor :backfill_profile, ProfileBackfillReactor do
+    argument :user_id, input(:user_id)
+  end
+
+  async_reactor :provision_account, AccountProvisioningReactor do
+    argument :user_id, input(:user_id)
+  end
+
+  step :verify do
+    argument :account, result(:provision_account)   # waits for the child
+    run do |args|
+      args[:account].success? ? Success(args[:account].value) : Failure(args[:account].error)
+    end
+  end
+end
+```
+
+The child is an ordinary, independently addressable execution, linked to the
+parent by execution id (drillable in the dashboard) but excluded from its
+compensation graph. Reach for `compose` instead when the child belongs to this
+unit of work — its result is available immediately and its failure rolls the
+parent back.
+
+Lock ownership is never shared across the async boundary: a child declaring a key
+the parent holds fails at dispatch with an explanatory error rather than
+deadlocking. See [Async Reactors](documentation/async_reactors.md) for the full
+rules.
 
 ### Durability & Recovery
 
@@ -1203,7 +1294,7 @@ Learn about the fundamental building blocks of RubyReactor: Reactors, Steps, Con
 Deep dive into how RubyReactor manages dependencies. This guide explains how the Directed Acyclic Graph is constructed to ensure steps execute in the correct topological order, enabling automatic parallelization of independent steps.
 
 ### [Async Reactors](documentation/async_reactors.md)
-Explore the two asynchronous execution models: Full Reactor Async and Step-Level Async. Learn how RubyReactor leverages Sidekiq or ActiveJob for background processing, non-blocking execution, and scalable worker management.
+Explore the ways to move work off the calling process: Full Reactor Async, the `background` hand-off, `async_step`, and `async_reactor`. Learn how RubyReactor leverages Sidekiq or ActiveJob for background processing, non-blocking execution, and scalable worker management.
 
 ### [Composition](documentation/composition.md)
 Discover how to build complex, modular workflows by composing reactors within other reactors. This guide covers inline composition, class-based composition, and how to manage dependencies between composed workflows.

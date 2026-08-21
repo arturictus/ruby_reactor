@@ -91,13 +91,13 @@ module RubyReactor
       def async(*)
         raise RubyReactor::Error::DeprecatedDslError.new(
           "`async` inside a `step` block has been removed: it was ambiguous (only the first " \
-          "flagged step in a reactor ever took effect). Replacements:\n" \
-          "  * `background after: :#{@name}` — hand every REMAINING step to a worker once " \
-          ":#{@name} finishes in the calling process (declared on the reactor, not the step);\n" \
-          "  * `background before: :#{@name}` — hand off starting WITH :#{@name};\n" \
-          "  * `async_step :#{@name}` — dispatch just this step's work to its own job while the " \
-          "reactor keeps running;\n" \
-          "  * `async_reactor :name, ChildReactor` — dispatch a whole nested reactor independently.",
+          "flagged step in a reactor ever took effect). Replacements:\n  " \
+          "* `background after: :#{@name}` — hand every REMAINING step to a worker once " \
+          ":#{@name} finishes in the calling process (declared on the reactor, not the step);\n  " \
+          "* `background before: :#{@name}` — hand off starting WITH :#{@name};\n  " \
+          "* `async_step :#{@name}` — dispatch just this step's work to its own job while the " \
+          "reactor keeps running;\n  " \
+          "* `async_reactor :name, ChildReactor` — dispatch a whole nested reactor independently.",
           step: @name
         )
       end

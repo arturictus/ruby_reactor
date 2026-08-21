@@ -8,6 +8,8 @@ module RubyReactor
     class RedisAdapter < Adapter
       include RedisLocking
       include RedisOrderedLocking
+      include RedisStepResults
+      include RedisPubSub
 
       def initialize(redis_config)
         super()
@@ -49,21 +51,6 @@ module RubyReactor
         results = @redis.hgetall(key)
         # Index-keyed for both modes; sort by index so reads are deterministic.
         results.keys.sort_by(&:to_i).map { |k| JSON.parse(results[k]) }
-      end
-
-      # One `async_step`'s durable record. Shares `context_ttl` with the parent
-      # context — the record must not outlive what it belongs to, and must not
-      # expire before it.
-      def store_step_result(context_id, step_name, record, reactor_class_name)
-        key = step_result_key(context_id, step_name, reactor_class_name)
-        @redis.set(key, JSON.generate(record), ex: durability_ttl)
-      end
-
-      def retrieve_step_result(context_id, step_name, reactor_class_name)
-        json = @redis.get(step_result_key(context_id, step_name, reactor_class_name))
-        return nil unless json
-
-        JSON.parse(json)
       end
 
       # Indices that have NO stored result yet: the authoritative, idempotent
@@ -188,28 +175,6 @@ module RubyReactor
       def delete_context(context_id, reactor_class_name)
         key = context_key(context_id, reactor_class_name)
         @redis.del(key)
-      end
-
-      # SUBSCRIBE puts a connection into subscriber mode — every other command on
-      # it then fails — so this MUST NOT use the shared client, or one waiter
-      # would poison storage for the whole process. A dedicated connection is
-      # opened per subscription and closed on the way out.
-      #
-      # Blocks the calling thread until the block returns truthy for a message
-      # (completion signals are one-shot) or the thread is killed.
-      def subscribe(channel, &block)
-        connection = Redis.new(@redis_config)
-        connection.subscribe(channel) do |on|
-          on.message do |_channel, message|
-            connection.unsubscribe if block.call(message)
-          end
-        end
-      ensure
-        connection&.close
-      end
-
-      def publish(channel, message)
-        @redis.publish(channel, message)
       end
 
       def expire(key, seconds)
@@ -371,10 +336,6 @@ module RubyReactor
 
       def context_key(context_id, reactor_class_name)
         "reactor:#{reactor_class_name}:context:#{context_id}"
-      end
-
-      def step_result_key(context_id, step_name, reactor_class_name)
-        "reactor:#{reactor_class_name}:context:#{context_id}:step_result:#{step_name}"
       end
 
       def map_results_key(map_id, reactor_class_name)
