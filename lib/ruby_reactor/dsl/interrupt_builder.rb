@@ -3,12 +3,13 @@
 module RubyReactor
   module Dsl
     class InterruptBuilder < StepBuilder
-      def initialize(name, reactor = nil)
+      def initialize(name, reactor = nil, resume: :inline)
         super(name, nil, reactor)
         @correlation_id_block = nil
         @timeout_config = nil
         @validation_schema = nil
         @max_attempts = 1
+        @resume_mode = resume
       end
 
       def max_attempts(count)
@@ -51,6 +52,7 @@ module RubyReactor
           timeout_config: @timeout_config,
           validation_schema: @validation_schema,
           max_attempts: @max_attempts,
+          resume_mode: @resume_mode,
           dependencies: @dependencies,
           conditions: @conditions,
           guards: @guards

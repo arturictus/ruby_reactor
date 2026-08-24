@@ -148,8 +148,18 @@ module RubyReactor
           step_config
         end
 
-        def interrupt(name, &block)
-          builder = RubyReactor::Dsl::InterruptBuilder.new(name, self)
+        # `resume: :background` — after `continue` validates and stores the
+        # payload, the remaining work is enqueued to a worker instead of
+        # running inline in the delivering process (webhook, admin UI).
+        def interrupt(name, resume: :inline, &block)
+          unless %i[inline background].include?(resume)
+            raise RubyReactor::Error::ValidationError,
+                  "interrupt :#{name} has invalid `resume: #{resume.inspect}` — " \
+                  "use `:inline` (default, resume runs in the calling process) or " \
+                  "`:background` (resume is enqueued to a worker)."
+          end
+
+          builder = RubyReactor::Dsl::InterruptBuilder.new(name, self, resume: resume)
           builder.instance_eval(&block) if block_given?
 
           step_config = builder.build

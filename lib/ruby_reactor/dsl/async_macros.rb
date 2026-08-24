@@ -74,6 +74,8 @@ module RubyReactor
                 "`background` declaration."
         end
 
+        reject_interrupt_handoff_point!(point)
+
         if async?
           raise RubyReactor::Error::ValidationError,
                 "`background` cannot be combined with whole-reactor `async true` on " \
@@ -84,6 +86,23 @@ module RubyReactor
         point
       end
       private :validate_background_declaration!
+
+      # An interrupt re-enters the reactor from a foreground process, so an
+      # edge-triggered hand-off keyed to it either never fires (`after:` — the
+      # resume path skips the already-resulted step) or enqueues a worker that
+      # instantly pauses and swallows the InterruptResult (`before:`). Both are
+      # the silent-failure class `background` exists to remove.
+      def reject_interrupt_handoff_point!(point)
+        config = steps[point[:step]]
+        return unless config.respond_to?(:interrupt?) && config.interrupt?
+
+        raise RubyReactor::Error::ValidationError,
+              "`background #{point[:mode]}: :#{point[:step]}` names an interrupt step, which cannot be a " \
+              "hand-off point. To resume :#{point[:step]} in a worker, declare " \
+              "`interrupt :#{point[:step]}, resume: :background` instead; to hand off around it, name an " \
+              "ordinary step on the side you need."
+      end
+      private :reject_interrupt_handoff_point!
       # FR-004: a step whose work is dispatched to its own independent worker
       # job while this reactor keeps executing every other ready step. Same
       # call shape and same block DSL as `step` — `argument`, `run`,

@@ -167,6 +167,14 @@ module RubyReactor
       target_step = step_name
       @context.set_result(target_step, payload)
 
+      # `interrupt :x, resume: :background` — payload is validated and stored
+      # (above, in this process); the remaining work goes to a worker instead
+      # of running inline in the delivering process.
+      step_config = self.class.steps[step_name.to_sym]
+      if step_config.respond_to?(:background_resume?) && step_config.background_resume?
+        return @result = enqueue_background_resume
+      end
+
       # Resume execution
       executor = Executor.new(self.class, {}, @context)
       @result = executor.resume_execution
@@ -309,6 +317,21 @@ module RubyReactor
         validation_errors: result.error.field_errors
       }
       save_context
+    end
+
+    # Mirror of perform_async_run for the interrupt-resume path: persist the
+    # context (now carrying the validated payload) BEFORE enqueue — the job
+    # payload is identity-only (F2) — then hand the remainder to a worker.
+    def enqueue_background_resume
+      @context.status = :running
+      Executor.middlewares_for(self.class).on(:before_async_enqueue, @context)
+      save_context
+
+      @result = configuration.async_router.perform_async(@context.context_id,
+                                                         RubyReactor.reactor_storage_name(self.class),
+                                                         intermediate_results: @context.intermediate_results)
+
+      check_for_inline_completion || @result
     end
 
     def perform_async_run

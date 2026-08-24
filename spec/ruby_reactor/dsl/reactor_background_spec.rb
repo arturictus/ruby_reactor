@@ -181,6 +181,28 @@ RSpec.describe "reactor-level `background` hand-off" do
       end.to raise_error(RubyReactor::Error::ValidationError, /requires either/)
     end
 
+    it "rejects an interrupt step named via `after:`" do
+      expect do
+        define_reactor do
+          step(:a) { run { RubyReactor.Success(:a) } }
+          interrupt :wait_here
+          background after: :wait_here
+        end
+      end.to raise_error(RubyReactor::Error::ValidationError,
+                         /names an interrupt step.*resume: :background/m)
+    end
+
+    it "rejects an interrupt step named via `before:`" do
+      expect do
+        define_reactor do
+          step(:a) { run { RubyReactor.Success(:a) } }
+          interrupt :wait_here
+          background before: :wait_here
+        end
+      end.to raise_error(RubyReactor::Error::ValidationError,
+                         /names an interrupt step.*resume: :background/m)
+    end
+
     it "rejects `background` on a reactor already declared `async true`" do
       expect do
         define_reactor do
