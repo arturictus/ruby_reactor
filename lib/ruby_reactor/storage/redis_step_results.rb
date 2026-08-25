@@ -8,7 +8,7 @@ module RubyReactor
     # writers on one blob race.
     #
     # The `dispatched` record is written before the job is enqueued, so it also
-    # serves as the re-attach marker on recovery (FR-017) — "a record exists" is
+    # serves as the re-attach marker on recovery — "a record exists" is
     # exactly the question "was this already dispatched?".
     module RedisStepResults
       def store_step_result(context_id, step_name, record, reactor_class_name)

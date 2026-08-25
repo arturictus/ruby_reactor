@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module RubyReactor
-  # The shared FR-005 wait core behind `result(:name)` for an `async_step` or an
+  # The shared wait core behind `result(:name)` for an `async_step` or an
   # `async_reactor` that has not finished yet. Both callers hand it a pub/sub
   # channel and a callable that returns the terminal value (or nil while the work
   # is still in flight), so there is exactly one implementation of the wait.

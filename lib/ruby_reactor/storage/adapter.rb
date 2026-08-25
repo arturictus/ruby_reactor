@@ -23,7 +23,7 @@ module RubyReactor
       # `record` is a plain hash: at minimum `status` ("dispatched" or
       # "completed"); a completed record also carries the serialized outcome.
       # The `dispatched` record is written before the job is enqueued, so it
-      # doubles as the re-attach marker on recovery (FR-017).
+      # doubles as the re-attach marker on recovery.
       def store_step_result(context_id, step_name, record, reactor_class_name)
         raise NotImplementedError
       end

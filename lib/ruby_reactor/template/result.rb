@@ -33,7 +33,7 @@ module RubyReactor
 
       private
 
-      # FR-005/FR-010: block (bounded) until the dispatched unit is terminal,
+      # Block (bounded) until the dispatched unit is terminal,
       # then inject its outcome.
       def resolve_async_reference(context)
         ref = async_reference(context)
@@ -52,12 +52,12 @@ module RubyReactor
         ref if ref.is_a?(Hash)
       end
 
-      # Read semantics (FR-006): on Success the reader gets the same raw
+      # Read semantics: on Success the reader gets the same raw
       # deserialized value a same-process step would have produced. On Failure it
       # gets the `Failure` OBJECT — a same-process failure would have halted the
       # reactor before any reader ran, so there is no sync behavior to mirror,
       # and handing over the Failure is precisely what lets the reader see it and
-      # decide whether to compensate (FR-011).
+      # decide whether to compensate.
       def await_async_step(context)
         reactor_class_name = RubyReactor.reactor_storage_name(context.reactor_class)
         record = RubyReactor::AsyncWaiter.new(

@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-# FR-015. Lock ownership is never shared across the async boundary: parent and
+# Lock ownership is never shared across the async boundary: parent and
 # child run CONCURRENTLY, so sharing an owner would put both inside the critical
 # section at once — mutual exclusion silently broken, which is strictly worse
 # than a stall. The one guaranteed deadlock is therefore caught at dispatch,

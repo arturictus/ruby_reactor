@@ -27,7 +27,7 @@ module RubyReactor
         @argument_mappings[composed_input_name] = source
       end
 
-      # FR-003: `compose`'s `async` set the very same per-step hand-off flag the
+      # `compose`'s `async` set the very same per-step hand-off flag the
       # step DSL's did, so it goes with it. The exact migration is
       # `background before: :<this compose step>` — that reproduces the old
       # semantics precisely (this step and everything after it move to the

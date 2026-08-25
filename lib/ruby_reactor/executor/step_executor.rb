@@ -102,8 +102,8 @@ module RubyReactor
 
       private
 
-      # The reactor's single hand-off point, `{ mode: :after|:before, step: }`
-      # (FR-001). Nil for a reactor that never declares `background`.
+      # The reactor's single hand-off point, `{ mode: :after|:before, step: }`.
+      # Nil for a reactor that never declares `background`.
       def background_handoff
         return @background_handoff if defined?(@background_handoff)
 

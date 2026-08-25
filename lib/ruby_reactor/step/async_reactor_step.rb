@@ -8,7 +8,7 @@ module RubyReactor
     # primitive, and no entry in the parent's compensation graph.
     #
     # Dispatch reuses the full pre-enqueue sequence of a top-level async run
-    # (FR-016) rather than a raw `perform_async`, because `Reactor#run` does
+    # rather than a raw `perform_async`, because `Reactor#run` does
     # three load-bearing things a naive `Context.new` + enqueue would silently
     # skip: validate the child's inputs (the worker's resume path never
     # validates, so skipping here starts a child on garbage), assign the
@@ -23,7 +23,7 @@ module RubyReactor
           child_inputs = build_child_inputs(arguments[:argument_mappings] || {}, context)
 
           # A dispatch-time failure fails the DISPATCHING step, i.e. normal saga
-          # handling in the parent. That is deliberately outside FR-009's
+          # handling in the parent. That is deliberately outside the
           # no-auto-compensation rule, which governs the child's own execution.
           validation = validate_child_inputs(child_class, child_inputs)
           return validation if validation
@@ -54,7 +54,7 @@ module RubyReactor
           )
         end
 
-        # FR-015. Lock ownership is NOT shared across the async boundary: parent
+        # Lock ownership is NOT shared across the async boundary: parent
         # and child run concurrently, so giving the child the parent's owner
         # would put both inside the critical section at once — mutual exclusion
         # silently broken, which is worse than a stall. Instead the one
@@ -186,7 +186,7 @@ module RubyReactor
           )
         end
 
-        # FR-012: the link between parent and child, machine-parseable. Matters
+        # The link between parent and child, machine-parseable. Matters
         # most here — a fire-and-forget child's failure may have no other surface
         # in the parent at all.
         def log_dispatch(context, child_class, child_context)

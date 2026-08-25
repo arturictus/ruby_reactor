@@ -7,7 +7,7 @@ module RubyReactor
     # builder warns that a child's `with_ordered_lock` is ignored (true for an
     # inline child, which bypasses `Reactor#run`) whereas an `async_reactor`
     # child is dispatched through the full pre-enqueue sequence and DOES get its
-    # ordering nonce (FR-016).
+    # ordering nonce.
     class AsyncReactorBuilder
       include RubyReactor::Dsl::TemplateHelpers
 
@@ -40,7 +40,7 @@ module RubyReactor
           },
           run_block: nil,
           # No compensate/undo: the child is deliberately outside the parent's
-          # compensation graph (FR-009). Compensation is opt-in, via a later step
+          # compensation graph. Compensation is opt-in, via a later step
           # that reads `result(:name)` and decides to fail.
           compensate_block: nil,
           undo_block: nil,

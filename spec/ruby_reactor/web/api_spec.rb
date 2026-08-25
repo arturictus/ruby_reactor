@@ -196,7 +196,7 @@ RSpec.describe RubyReactor::Web::API, type: :request do
     end
   end
 
-  # FR-014: the dashboard must stay current with the reactor state model. The
+  # The dashboard must stay current with the reactor state model. The
   # fire-and-forget model makes this load-bearing rather than cosmetic — a
   # dispatched unit's outcome may have no other surface in the parent at all.
   describe "the new async step types" do

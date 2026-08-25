@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-# FR-005/SC-005: the notified wait is bounded, and it is the DURABLE RECORD that
+# The notified wait is bounded, and it is the DURABLE RECORD that
 # answers — the completion signal is only a latency optimisation. Each example
 # here removes one of the three things that could go wrong (signal too early,
 # signal never sent, work never finishes) and shows the wait still behaves.

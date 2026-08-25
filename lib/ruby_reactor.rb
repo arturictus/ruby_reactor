@@ -348,7 +348,7 @@ module RubyReactor
   # (A truly anonymous class can't be reconstituted by name in another process,
   # so cross-process resume of one is inherently unsupported; this only keeps
   # the keys self-consistent within a process — e.g. inline tests.)
-  # Completion-signal channels for the FR-005 notified wait. One place, because
+  # Completion-signal channels for the notified wait. One place, because
   # the publishing side and the waiting side must agree exactly and they live in
   # different files (StepWorker / Executor vs Template::Result).
   def self.async_step_channel(context_id, step_name)

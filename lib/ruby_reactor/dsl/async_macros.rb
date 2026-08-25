@@ -13,7 +13,7 @@ module RubyReactor
     # in `Dsl::Reactor` itself: it predates all of this and interacts with
     # `background` only through a guard.
     module AsyncMacros
-      # FR-001/FR-002: the single, unambiguous cut point between what runs in
+      # The single, unambiguous cut point between what runs in
       # the calling process and what is handed to a worker. Replaces the
       # per-step `async` flag, where only the first flagged step ever took
       # effect and the rest were silently ignored.
@@ -103,7 +103,7 @@ module RubyReactor
               "ordinary step on the side you need."
       end
       private :reject_interrupt_handoff_point!
-      # FR-004: a step whose work is dispatched to its own independent worker
+      # A step whose work is dispatched to its own independent worker
       # job while this reactor keeps executing every other ready step. Same
       # call shape and same block DSL as `step` — `argument`, `run`,
       # `compensate`, `undo`, `retries`, validators all behave identically;
@@ -120,7 +120,7 @@ module RubyReactor
         steps[name] = builder.build(async_dispatch: :step)
       end
 
-      # FR-007: dispatch a whole nested reactor to run INDEPENDENTLY — linked
+      # Dispatch a whole nested reactor to run INDEPENDENTLY — linked
       # to this one by execution id for traceability, but excluded from its
       # compensation graph. Fire-and-forget unless a later step reads
       # `result(:name)`, which blocks until the child is terminal and hands

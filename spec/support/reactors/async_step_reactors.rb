@@ -121,7 +121,7 @@ class AsyncStepFailingWithReaderReactor < RubyReactor::Reactor
   end
 end
 
-# Nothing ever completes this step's record, so a reader must hit the FR-005
+# Nothing ever completes this step's record, so a reader must hit the wait
 # bound instead of hanging.
 class AsyncStepNeverCompletesReactor < RubyReactor::Reactor
   async_step :never do

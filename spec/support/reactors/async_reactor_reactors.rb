@@ -53,7 +53,7 @@ class AsyncChildRequiringEmailReactor < RubyReactor::Reactor
 end
 
 # Fire-and-forget: nothing reads the child's result, so its failure must never
-# reach the parent's compensation path (FR-009/FR-011).
+# reach the parent's compensation path.
 class AsyncReactorFireAndForgetReactor < RubyReactor::Reactor
   input :user_id
 
@@ -124,7 +124,7 @@ class AsyncReactorAwaitedFailingReactor < RubyReactor::Reactor
   end
 end
 
-# FR-015: child and parent resolve to the SAME exclusive key.
+# Child and parent resolve to the SAME exclusive key.
 class AsyncLockedChildReactor < RubyReactor::Reactor
   input :account_id
 
@@ -185,7 +185,7 @@ class AsyncReactorDifferentKeyReactor < RubyReactor::Reactor
   end
 end
 
-# FR-016: the child's inputs are validated in the PARENT's process, at dispatch.
+# The child's inputs are validated in the PARENT's process, at dispatch.
 class AsyncReactorInvalidChildInputsReactor < RubyReactor::Reactor
   async_reactor :notify, AsyncChildRequiringEmailReactor do
     argument :email, value("not-an-email")

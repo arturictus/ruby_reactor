@@ -272,7 +272,7 @@ module RubyReactor
       publish_completion_signal(storage)
     end
 
-    # Wake any parent blocked in the FR-005 wait on this execution. Published
+    # Wake any parent blocked in the notified wait on this execution. Published
     # AFTER the durable save, never before: the context row is the answer and
     # the signal only saves the waiter a fallback interval. Unconditional —
     # publishing to a channel with no subscribers is near-free, so there is no
@@ -409,7 +409,7 @@ module RubyReactor
       RubyReactor::Period.key(base, config[:every])
     end
 
-    # FR-012: one machine-parseable line whenever an execution reaches a terminal
+    # One machine-parseable line whenever an execution reaches a terminal
     # state, carrying the parent link. A child dispatched fire-and-forget may
     # have no other surface in its parent at all, so a failure entry also names
     # the reason.
@@ -546,7 +546,7 @@ module RubyReactor
 
     # Exclusive keys this EXECUTION currently holds, recorded on the root
     # context so a dispatching step anywhere in the tree can see the whole
-    # chain. Read by the async_reactor deadlock guard (FR-015); nothing else
+    # chain. Read by the async_reactor deadlock guard; nothing else
     # depends on it, so a stale entry can only cost a false positive — hence
     # the reset on the way in.
     def held_lock_keys

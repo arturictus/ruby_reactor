@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-# FR-003: the per-step `async` flag is removed. Only the FIRST flagged step in a
+# The per-step `async` flag is removed. Only the FIRST flagged step in a
 # reactor ever took effect and the rest were silently ignored, so the failure has
 # to be loud and it has to happen at class-definition time — a reactor that still
 # carries the old syntax must never load, let alone run.

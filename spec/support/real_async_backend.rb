@@ -5,7 +5,7 @@ require "open3"
 # The ORCHESTRATION lane: a real worker consuming a real queue.
 #
 # The in-memory fakes cannot express this feature's core behavior. A caller
-# blocked in the FR-005 notified wait is the thing that would have to call
+# blocked in the notified wait is the thing that would have to call
 # `drain_async_jobs`, so under a fake queue the awaited job never runs and every
 # such example times out instead of passing. Constitution Principle III forbids
 # mocked queue state on async orchestration paths for the same reason.

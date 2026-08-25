@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-# The shared FR-005 wait core, exercised against real Redis pub/sub. Its
+# The shared wait core, exercised against real Redis pub/sub. Its
 # contract is "the durable record is the answer, the signal is only latency":
 # every path here must end at the durable check, so a lost/absent signal costs
 # time and never correctness.

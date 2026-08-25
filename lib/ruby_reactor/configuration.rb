@@ -89,7 +89,7 @@ module RubyReactor
       @context_lock_ttl ||= 60
     end
 
-    # Seconds a step blocks in the FR-005 notified wait when it reads
+    # Seconds a step blocks in the notified wait when it reads
     # `result(:name)` for an `async_step` / `async_reactor` that has not finished
     # yet. Never unbounded: on expiry the referencing step fails with an
     # `Error::AsyncWaitTimeoutError`.

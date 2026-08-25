@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-# FR-016: dispatch reuses the FULL pre-enqueue sequence of a top-level async run
+# Dispatch reuses the FULL pre-enqueue sequence of a top-level async run
 # — validate the child's inputs, assign its ordering nonce, persist, then
 # enqueue — never a raw `perform_async`. The worker's resume path never
 # validates, so skipping validation here would start a child on garbage inputs.

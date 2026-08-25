@@ -84,7 +84,7 @@ module RubyReactor
           end
       end
 
-      # FR-003: the per-step hand-off flag is gone. Only the FIRST flagged step
+      # The per-step hand-off flag is gone. Only the FIRST flagged step
       # in a reactor ever took effect — every later one was silently ignored —
       # so this must fail at class-definition time rather than surprise someone
       # at run time. Kept as a stub purely to say what to use instead.

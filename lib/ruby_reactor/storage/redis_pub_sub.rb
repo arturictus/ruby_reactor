@@ -2,7 +2,7 @@
 
 module RubyReactor
   module Storage
-    # The completion-signal channel behind the FR-005 notified wait. Pure latency
+    # The completion-signal channel behind the notified wait. Pure latency
     # optimisation: at-most-once, unpersisted, never load-bearing — every waiting
     # path ends at a durable record, so a lost signal costs a fallback interval
     # and never correctness.

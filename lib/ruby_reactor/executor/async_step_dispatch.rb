@@ -5,16 +5,16 @@ module RubyReactor
     # The dispatching half of `async_step`, mixed into StepExecutor. Split out
     # because it is a self-contained concern — write the durable record and the
     # context reference, enqueue, then mark the node graph-complete — and because
-    # it is where the FR-012 structured logging for every hand-off lives.
+    # it is where the structured logging for every hand-off lives.
     module AsyncStepDispatch
       private
 
-      # FR-004/FR-008: send one step's work off as its own job and KEEP GOING.
+      # Send one step's work off as its own job and KEEP GOING.
       #
       # The ordering below is load-bearing (F2): the durable record and the
       # context reference are written BEFORE the enqueue, so a crash in between
       # can never leave a job with no record — and that same record is what
-      # tells a recovery pass the work is already out there (FR-017), so it
+      # tells a recovery pass the work is already out there, so it
       # re-attaches instead of dispatching a duplicate side effect.
       #
       # Deliberately NOT gated on `inline_async_execution`: that flag stops the
@@ -61,7 +61,7 @@ module RubyReactor
         # The worker loads the parent by id, so the parent must be durable
         # before the job exists AND must outlive the dispatched unit — including
         # the fire-and-forget case where this reactor finishes immediately and
-        # nothing ever waits (FR-018).
+        # nothing ever waits.
         root = @context.root_context || @context
         checkpoint_root!(root, RubyReactor.reactor_storage_name(root.reactor_class))
       end
@@ -88,7 +88,7 @@ module RubyReactor
         RubyReactor::Configuration.instance.storage_adapter
       end
 
-      # FR-012: one machine-parseable line per hand-off / dispatch, carrying the
+      # One machine-parseable line per hand-off / dispatch, carrying the
       # three identifiers needed to correlate it with everything else.
       def log_async_event(event, step_name)
         configuration.logger.info(

@@ -109,7 +109,7 @@ module RubyReactor
     end
 
     def record_missing_parent
-      # FR-018: the parent was swept or outlived its retention window, so this
+      # The parent was swept or outlived its retention window, so this
       # unit's arguments can never be resolved. A record saying so beats a
       # reader waiting out the full timeout for an answer that will never come.
       log(:error, "parent_context_missing")
@@ -172,7 +172,7 @@ module RubyReactor
       RubyReactor.configuration.storage_adapter
     end
 
-    # FR-012: machine-parseable, and carrying enough identity to correlate a
+    # Machine-parseable, and carrying enough identity to correlate a
     # worker-side outcome with the parent execution — which matters more here
     # than elsewhere, because a fire-and-forget failure may have no other surface.
     def log(level, event, **extra)
