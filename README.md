@@ -404,7 +404,7 @@ async, durability, retries, snoozing) works identically on either backend.
 
 ```ruby
 class AsyncReactor < RubyReactor::Reactor
-  async true # Entire reactor runs in background
+  background all: true # Entire reactor runs in background
 
   step :long_running_task do
     run { perform_heavy_work }
@@ -474,6 +474,11 @@ changes where code runs, not the saga contract.
 > rest were silently ignored — and it now raises at class-definition time. The
 > exact replacement for a flagged step `:x` is `background before: :x`. The same
 > applies to `async` inside a `compose` block.
+>
+> **Breaking change:** whole-reactor `async true` has also been **removed** — it
+> named the same idea as `background`'s cut point with a different word, right next
+> to `async_step`/`async_reactor`, whose names mean something else. It now raises
+> at class-definition time. The exact replacement is `background all: true`.
 
 #### `async_step`: one step, dispatched on its own
 

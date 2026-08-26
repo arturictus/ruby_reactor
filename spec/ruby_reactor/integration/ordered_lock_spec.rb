@@ -585,7 +585,7 @@ RSpec.describe "OrderedLock Integration" do
     before do
       stub_const("InvalidOrderedReactor", Class.new(RubyReactor::Reactor) do
         def self.name = "InvalidOrderedReactor"
-        async
+        background all: true
         with_ordered_lock { |_| "validation_key" }
         input :email, validate: proc { required(:email).filled(format?: /@/) }
         step(:noop) { run { RubyReactor.Success(:ok) } }

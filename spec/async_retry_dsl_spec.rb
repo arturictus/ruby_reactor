@@ -4,12 +4,20 @@ require "spec_helper"
 
 RSpec.describe "RubyReactor Async and Retry DSL" do
   describe "Reactor DSL extensions" do
-    it "supports async class method" do
+    it "supports whole-reactor async via `background all: true`" do
       reactor_class = Class.new(RubyReactor::Reactor) do
-        async true
+        background all: true
       end
 
       expect(reactor_class.async?).to be true
+    end
+
+    it "rejects the removed reactor-level `async true`" do
+      expect do
+        Class.new(RubyReactor::Reactor) do
+          async true
+        end
+      end.to raise_error(RubyReactor::Error::DeprecatedDslError, /background all: true/)
     end
 
     it "supports retry_defaults class method" do

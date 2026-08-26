@@ -352,7 +352,7 @@ For asynchronous reactors, retries are queued as background jobs with calculated
 
 ```ruby
 class AsyncPaymentReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :charge_card do
     retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds

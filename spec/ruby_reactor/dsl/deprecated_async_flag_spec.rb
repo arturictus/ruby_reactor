@@ -117,14 +117,28 @@ RSpec.describe "the removed per-step `async` flag" do
     end
   end
 
-  it "leaves reactor-level `async true` alone" do
-    reactor = define_reactor do
-      async true
-      step :only do
-        run { RubyReactor.Success(:ok) }
-      end
+  describe "reactor-level `async true`" do
+    it "raises at class-definition time" do
+      expect do
+        define_reactor do
+          async true
+          step :only do
+            run { RubyReactor.Success(:ok) }
+          end
+        end
+      end.to raise_error(RubyReactor::Error::DeprecatedDslError)
     end
 
-    expect(reactor.async?).to be true
+    it "names the exact replacement in the message" do
+      expect do
+        define_reactor { async true }
+      end.to raise_error(RubyReactor::Error::DeprecatedDslError, /background all: true/)
+    end
+
+    it "raises even for `async false`, so no stale call site survives quietly" do
+      expect do
+        define_reactor { async false }
+      end.to raise_error(RubyReactor::Error::DeprecatedDslError)
+    end
   end
 end

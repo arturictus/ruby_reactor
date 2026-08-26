@@ -1,5 +1,5 @@
 class FullAsyncReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   input :param
 

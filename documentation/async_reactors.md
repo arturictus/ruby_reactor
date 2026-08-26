@@ -13,7 +13,7 @@ Async execution provides several benefits:
 
 ## Full Reactor Async
 
-When a reactor is marked as `async true`, the entire execution happens in a Sidekiq worker, including input validation.
+When a reactor declares `background all: true`, the entire execution happens in a Sidekiq worker, including input validation.
 
 ### Configuration
 
@@ -27,7 +27,7 @@ class ValidateOrderStep
 end
 
 class OrderProcessingReactor < RubyReactor::Reactor
-  async true  # Enable full reactor async
+  background all: true  # Enable full reactor async
 
   step :validate_order, ValidateOrderStep
 
@@ -133,15 +133,18 @@ In a linear chain the two coincide. **In a DAG they do not** — if `:audit` and
 > time. The exact replacement for a flagged step `:x` is `background before: :x`,
 > which reproduces the old behavior precisely (`:x` and everything after it move
 > to the worker). The same applies to `async` inside a `compose` block.
+>
+> **Migrating from whole-reactor `async true`:** also removed — it named the same
+> hand-off idea with a different word, and read confusingly next to `async_step`
+> / `async_reactor`. The exact replacement is `background all: true`, which
+> reproduces the old behavior precisely (everything, including input validation,
+> runs in the worker). Using the old flag now raises at class-definition time.
 
 ### Rules (all enforced at class-definition time)
 
 - At most one `background` declaration per reactor.
-- Exactly one of `after:` / `before:` — both, or neither, raises.
-- The named step must already be defined in the class.
-- `background` cannot be combined with whole-reactor `async true`: the reactor
-  already runs entirely in a worker, so a cut point inside it would be
-  meaningless.
+- Exactly one of `after:` / `before:` / `all:` — more than one, or none, raises.
+- For `after:` / `before:`, the named step must already be defined in the class.
 
 ### Runtime behavior
 
@@ -158,7 +161,7 @@ In a linear chain the two coincide. **In a DAG they do not** — if `:audit` and
   saga contract.
 - Inside the worker the hand-off never re-triggers.
 - `before:` naming the very first step is legal, and is **not** the same as
-  whole-reactor `async true`: input validation still happens in the calling
+  `background all: true`: input validation still happens in the calling
   process, so invalid inputs fail the caller synchronously.
 
 ### Execution flow
@@ -379,7 +382,7 @@ Both async models support sophisticated retry mechanisms with non-blocking job r
 
 ```ruby
 class PaymentProcessingReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :validate_payment do
     retries max_attempts: 3, backoff: :exponential, base_delay: 1.second
@@ -402,7 +405,7 @@ end
 
 ```ruby
 class PaymentProcessingReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   # Set defaults for all steps
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
@@ -434,7 +437,7 @@ Async reactors support full compensation and rollback in the worker context:
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :process_payment do
     argument :order, result(:validate_order)

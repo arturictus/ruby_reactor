@@ -8,7 +8,7 @@ end
 
 # Define test reactor classes as constants for serialization
 class TestAsyncReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   input :user_id
   input :email
@@ -86,7 +86,7 @@ class TestStepAsyncReactor < RubyReactor::Reactor
 end
 
 class RetryExponentialReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   input :attempt_count
 
@@ -108,7 +108,7 @@ class RetryExponentialReactor < RubyReactor::Reactor
 end
 
 class RetryLinearReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :linear_retry_step do
     retries max_attempts: 3, backoff: :linear, base_delay: 2
@@ -120,7 +120,7 @@ class RetryLinearReactor < RubyReactor::Reactor
 end
 
 class RetryFixedReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :fixed_retry_step do
     retries max_attempts: 3, backoff: :fixed, base_delay: 5
@@ -132,7 +132,7 @@ class RetryFixedReactor < RubyReactor::Reactor
 end
 
 class CompensatingReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   input :user_id
 

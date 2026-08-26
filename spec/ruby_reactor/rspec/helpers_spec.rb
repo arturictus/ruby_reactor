@@ -27,7 +27,7 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
   # Async Reactors
   class HelpersAsyncReactor < RubyReactor::Reactor
-    async
+    background all: true
     input :value
     step :add_one do
       run { |inputs| RubyReactor::Success(inputs[:value] + 1) }

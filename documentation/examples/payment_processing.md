@@ -75,7 +75,7 @@ class PreAuthorizeStep
 end
 
 class PaymentProcessingReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   # Payment processing needs careful retry configuration
   retry_defaults max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
@@ -227,7 +227,7 @@ end
 
 ```ruby
 class MultiAttemptPaymentReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 10.seconds
 
@@ -299,7 +299,7 @@ end
 
 ```ruby
 class SubscriptionPaymentReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 1.hour
 

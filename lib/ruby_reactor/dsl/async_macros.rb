@@ -6,53 +6,70 @@ module RubyReactor
     # together because they are one design decision seen from three distances:
     #
     #   background     — the rest of THIS reactor moves to a worker
+    #                    (`all: true` — EVERYTHING, incl. input validation)
     #   async_step     — ONE step's work becomes its own job
     #   async_reactor  — a whole nested reactor runs independently
     #
-    # Mixed into `Dsl::Reactor::ClassMethods`. Whole-reactor `async true` stays
-    # in `Dsl::Reactor` itself: it predates all of this and interacts with
-    # `background` only through a guard.
+    # Mixed into `Dsl::Reactor::ClassMethods`.
     module AsyncMacros
       # The single, unambiguous cut point between what runs in
       # the calling process and what is handed to a worker. Replaces the
       # per-step `async` flag, where only the first flagged step ever took
-      # effect and the rest were silently ignored.
+      # effect and the rest were silently ignored, and the whole-reactor
+      # `async true` flag, which named the same idea with a different word.
       #
       #   background after:  :second   # :second is the LAST step to run here
       #   background before: :third    # :third is the FIRST step in the worker
+      #   background all: true         # the ENTIRE reactor runs in the worker,
+      #                                 # including input validation
       #
-      # The two forms name one cut point from opposite sides — identical in a
-      # linear chain, different in a DAG, where each pins the step it names.
-      # Triggering is keyed to REACHING the named step, not to where this
-      # declaration sits in the class body.
-      def background(after: nil, before: nil)
-        point = validate_background_declaration!(after, before)
+      # `after:`/`before:` name one cut point from opposite sides — identical
+      # in a linear chain, different in a DAG, where each pins the step it
+      # names. `all:` names no step: there is nothing left to pin, everything
+      # moves. Triggering is keyed to REACHING the named step (or, for `all:`,
+      # to the run starting at all), not to where this declaration sits in
+      # the class body.
+      def background(after: nil, before: nil, all: false)
+        point = validate_background_declaration!(after, before, all)
 
         @background_handoff = point
       end
 
       # The normalized `{ mode:, step: }` pair — one reader, never a one-sided
       # `background_after`, so no consumer can be accidentally implemented for
-      # `after:` only.
+      # `after:` only. `step` is `nil` when `mode` is `:all`.
       def background_handoff
         @background_handoff
       end
 
-      def validate_background_declaration!(after, before)
-        if after && before
+      # True only for the whole-reactor hand-off (`background all: true`) —
+      # the entire run, including input validation, happens in a worker.
+      def async?
+        background_handoff&.fetch(:mode, nil) == :all
+      end
+
+      def validate_background_declaration!(after, before, all)
+        given = [after, before, all].count { |v| v }
+        if given > 1
           raise RubyReactor::Error::ValidationError,
-                "`background` takes exactly one of `after:` or `before:`, got both " \
-                "(after: :#{after}, before: :#{before}). They name the same cut point from opposite " \
-                "sides: `after: :x` keeps :x in the calling process, `before: :x` moves it to the worker."
+                "`background` takes exactly one of `after:`, `before:`, or `all:`, got more than one " \
+                "(after: #{after.inspect}, before: #{before.inspect}, all: #{all.inspect}). Each names a " \
+                "different hand-off shape: `after: :x` / `before: :x` pin a cut point around step :x; " \
+                "`all: true` sends the whole reactor, including input validation."
         end
 
-        unless after || before
+        if given.zero?
           raise RubyReactor::Error::ValidationError,
-                "`background` requires either `after: :step_name` (that step is the last to run in the " \
-                "calling process) or `before: :step_name` (that step is the first to run in the worker)."
+                "`background` requires one of `after: :step_name` (that step is the last to run in the " \
+                "calling process), `before: :step_name` (that step is the first to run in the worker), or " \
+                "`all: true` (the entire reactor, including input validation, runs in the worker)."
         end
 
-        point = { mode: after ? :after : :before, step: (after || before).to_sym }
+        point = if all
+                  { mode: :all, step: nil }
+                else
+                  { mode: after ? :after : :before, step: (after || before).to_sym }
+                end
 
         # Re-declaring the SAME point is a no-op — a class body can be
         # evaluated twice (Rails reloading, a spec reopening a fixture class)
@@ -61,11 +78,18 @@ module RubyReactor
         if background_handoff && background_handoff != point
           raise RubyReactor::Error::ValidationError,
                 "#{name || "This reactor"} already declares `background " \
-                "#{background_handoff[:mode]}: :#{background_handoff[:step]}` and cannot also declare " \
-                "`background #{point[:mode]}: :#{point[:step]}`. A reactor has exactly one hand-off " \
-                "point — a second would reintroduce the ambiguity `background` exists to remove."
+                "#{describe_handoff_point(background_handoff)}` and cannot also declare `background " \
+                "#{describe_handoff_point(point)}`. A reactor has exactly one hand-off point — a second " \
+                "would reintroduce the ambiguity `background` exists to remove."
         end
 
+        validate_step_handoff_point!(point) unless point[:mode] == :all
+
+        point
+      end
+      private :validate_background_declaration!
+
+      def validate_step_handoff_point!(point)
         step_name = point[:step]
         unless steps.key?(step_name)
           raise RubyReactor::Error::ValidationError,
@@ -75,17 +99,13 @@ module RubyReactor
         end
 
         reject_interrupt_handoff_point!(point)
-
-        if async?
-          raise RubyReactor::Error::ValidationError,
-                "`background` cannot be combined with whole-reactor `async true` on " \
-                "#{name || "this reactor"}: the reactor already runs entirely in a worker, so a hand-off " \
-                "point inside it would be silently meaningless. Drop one of the two."
-        end
-
-        point
       end
-      private :validate_background_declaration!
+      private :validate_step_handoff_point!
+
+      def describe_handoff_point(point)
+        point[:mode] == :all ? "all: true" : "#{point[:mode]}: :#{point[:step]}"
+      end
+      private :describe_handoff_point
 
       # An interrupt re-enters the reactor from a foreground process, so an
       # edge-triggered hand-off keyed to it either never fires (`after:` — the

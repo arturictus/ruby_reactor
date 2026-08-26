@@ -10,7 +10,6 @@ module RubyReactor
         base.instance_variable_set(:@return_step, nil)
         base.instance_variable_set(:@middlewares, [])
         base.instance_variable_set(:@input_validations, {})
-        base.instance_variable_set(:@async, false)
         base.instance_variable_set(:@background_handoff, nil)
         base.instance_variable_set(:@retry_defaults, { max_attempts: 3, backoff: :exponential, base_delay: 1 })
       end
@@ -43,20 +42,17 @@ module RubyReactor
           @input_validations ||= {}
         end
 
-        def async(async = true)
-          if async && background_handoff
-            raise RubyReactor::Error::ValidationError,
-                  "`async true` cannot be combined with `background " \
-                  "#{background_handoff[:mode]}: :#{background_handoff[:step]}` on #{name || "this reactor"}: " \
-                  "the whole reactor already runs in a worker, so a hand-off point inside it is meaningless. " \
-                  "Drop one of the two."
-          end
-
-          @async = async
-        end
-
-        def async?
-          @async ||= false
+        # Whole-reactor `async true` is gone: it named the same idea as
+        # `background`'s cut point with a different word, right next to the
+        # new `async_step`/`async_reactor` macros whose names mean something
+        # else entirely. `async?` (the reader) lives in `AsyncMacros`, driven
+        # off `background_handoff`.
+        def async(*)
+          raise RubyReactor::Error::DeprecatedDslError,
+                "`async true` on a reactor has been removed: it named the same idea as `background`'s cut " \
+                "point with a different word, and read confusingly next to the `async_step`/`async_reactor` " \
+                "step macros. Use `background all: true` instead — identical behavior, including validating " \
+                "inputs inside the worker."
         end
 
         def retry_defaults(**kwargs)

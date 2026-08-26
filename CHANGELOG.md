@@ -40,9 +40,9 @@
   point (`:x` stays in the calling process); the two coincide in a linear chain
   but pin different steps in a DAG.
 
-  Not affected: whole-reactor `async true`, and the map-internal `async` element
-  dispatch option (`map :items do async true, batch_size: 2 end`) — a different
-  mechanism that keeps working unchanged.
+  Not affected: the map-internal `async` element dispatch option
+  (`map :items do async true, batch_size: 2 end`) — a different mechanism that
+  keeps working unchanged.
 
   One behavior change falls out of "exactly one hand-off point per reactor":
   resuming a reactor past its hand-off point now finishes in the resuming
@@ -52,10 +52,35 @@
   dashboard's `Web::API` step structure are gone. The dashboard now exposes the
   reactor's normalized hand-off point once, as `background_handoff`.
 
+* **Whole-reactor `async true` is removed.** It named the same hand-off idea as
+  `background`, with a different word, and read confusingly next to the new
+  `async_step` / `async_reactor` step macros (both "async" + "reactor", meaning
+  different things). Using it now raises `RubyReactor::Error::DeprecatedDslError`
+  at class-definition time.
+
+  ```ruby
+  # Before
+  class OrderProcessingReactor < RubyReactor::Reactor
+    async true
+    # ...
+  end
+
+  # After — identical behavior, including validating inputs inside the worker
+  class OrderProcessingReactor < RubyReactor::Reactor
+    background all: true
+    # ...
+  end
+  ```
+
+  **Migration:** replace `async true` with `background all: true`. `async?` (the
+  reader) is unchanged and still answers the same question.
+
 ### Features
 
-* **`background after:` / `background before:`** — one unambiguous, reactor-level
-  cut point between what runs in the calling process and what runs in a worker.
+* **`background after:` / `background before:` / `background all:`** — one
+  unambiguous, reactor-level cut point between what runs in the calling process
+  and what runs in a worker (`all:` — the whole reactor, replacing the old
+  whole-reactor `async true`).
 * **`async_step`** — dispatch one step's work to its own job while the reactor
   keeps running every other ready step. Dependent steps read the outcome through
   the existing `result(:name)` helper, which gains a bounded notified wait.

@@ -142,13 +142,13 @@ end
 
 ### Asynchronous Execution
 
-For async execution, configure a job backend (Sidekiq or ActiveJob — see [Configuration](#configuration) above), then choose how much work leaves the calling process: mark the whole reactor `async true`, declare a hand-off point with `background after:`/`before:` (everything past it runs in a worker), or dispatch a single unit with `async_step` / `async_reactor`. See [Async Reactors](async_reactors.md).
+For async execution, configure a job backend (Sidekiq or ActiveJob — see [Configuration](#configuration) above), then choose how much work leaves the calling process: mark the whole reactor `background all: true`, declare a hand-off point with `background after:`/`before:` (everything past it runs in a worker), or dispatch a single unit with `async_step` / `async_reactor`. See [Async Reactors](async_reactors.md).
 
-> The old per-step `async true` flag has been removed — it was ambiguous, since only the first flagged step in a reactor ever took effect. Use `background before: :that_step` instead.
+> The old per-step `async true` flag has been removed — it was ambiguous, since only the first flagged step in a reactor ever took effect. Use `background before: :that_step` instead. The old whole-reactor `async true` flag has also been removed — use `background all: true`.
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
-  async true  # Entire reactor runs in a background worker
+  background all: true  # Entire reactor runs in a background worker
 
   # ... steps defined above
 end

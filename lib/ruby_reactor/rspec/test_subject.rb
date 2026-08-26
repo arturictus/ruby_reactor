@@ -505,7 +505,6 @@ module RubyReactor
           @input_validations = superclass.input_validations.dup
           @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
-          @async = superclass.async?
           @background_handoff = superclass.background_handoff
           @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
 
@@ -605,7 +604,6 @@ module RubyReactor
           @input_validations = superclass.input_validations.dup
           @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
-          @async = superclass.async?
           @background_handoff = superclass.background_handoff
           @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
         end

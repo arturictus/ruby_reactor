@@ -178,7 +178,7 @@ RSpec.describe "reactor-level `background` hand-off" do
           step(:a) { run { RubyReactor.Success(:a) } }
           background
         end
-      end.to raise_error(RubyReactor::Error::ValidationError, /requires either/)
+      end.to raise_error(RubyReactor::Error::ValidationError, /requires one of/)
     end
 
     it "rejects an interrupt step named via `after:`" do
@@ -203,24 +203,50 @@ RSpec.describe "reactor-level `background` hand-off" do
                          /names an interrupt step.*resume: :background/m)
     end
 
-    it "rejects `background` on a reactor already declared `async true`" do
+    it "rejects `background after:` on a reactor already declared `background all: true`" do
       expect do
         define_reactor do
-          async true
+          background all: true
           step(:a) { run { RubyReactor.Success(:a) } }
           background after: :a
         end
-      end.to raise_error(RubyReactor::Error::ValidationError, /already runs entirely in a worker/)
+      end.to raise_error(RubyReactor::Error::ValidationError, /exactly one hand-off point/)
     end
 
-    it "rejects `async true` on a reactor that already declared `background`" do
+    it "rejects `background all: true` on a reactor that already declared `background after:`" do
       expect do
         define_reactor do
           step(:a) { run { RubyReactor.Success(:a) } }
           background after: :a
-          async true
+          background all: true
         end
-      end.to raise_error(RubyReactor::Error::ValidationError, /cannot be combined/)
+      end.to raise_error(RubyReactor::Error::ValidationError, /exactly one hand-off point/)
+    end
+
+    it "rejects supplying both `after:` and `all:`" do
+      expect do
+        define_reactor do
+          step(:a) { run { RubyReactor.Success(:a) } }
+          background after: :a, all: true
+        end
+      end.to raise_error(RubyReactor::Error::ValidationError, /exactly one of/)
+    end
+  end
+
+  describe "`all: true`" do
+    it "is exposed as a stepless mode: :all pair" do
+      reactor = define_reactor do
+        background all: true
+      end
+
+      expect(reactor.background_handoff).to eq({ mode: :all, step: nil })
+      expect(reactor.async?).to be true
+    end
+
+    it "does not require a step to already be defined" do
+      expect do
+        define_reactor { background all: true }
+      end.not_to raise_error
     end
   end
 
