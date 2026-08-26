@@ -134,6 +134,34 @@ class AsyncStepNeverCompletesReactor < RubyReactor::Reactor
   end
 end
 
+# `retries` declared on an async_step must actually retry inside the worker
+# that runs its body — nothing else in the async_step path enforces it.
+class AsyncStepRetryReactor < RubyReactor::Reactor
+  def self.attempts
+    @attempts ||= 0
+  end
+
+  def self.reset!
+    @attempts = 0
+  end
+
+  def self.record_attempt
+    @attempts = attempts + 1
+  end
+
+  async_step :flaky do
+    retries max_attempts: 3, backoff: :fixed, base_delay: 0
+    run do
+      AsyncStepRetryReactor.record_attempt
+      if AsyncStepRetryReactor.attempts < 3
+        RubyReactor.Failure("not yet")
+      else
+        RubyReactor.Success(:ok)
+      end
+    end
+  end
+end
+
 # An async_step declared AFTER the hand-off point: it is first reached inside
 # the worker and must still get its own job there.
 class AsyncStepAfterBackgroundReactor < RubyReactor::Reactor

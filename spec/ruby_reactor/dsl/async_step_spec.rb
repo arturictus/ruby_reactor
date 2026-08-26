@@ -116,6 +116,23 @@ RSpec.describe "`async_step`" do
     end
   end
 
+  describe "retries" do
+    before { AsyncStepRetryReactor.reset! }
+
+    for_each_async_backend do
+      it "retries the body inside the worker until it succeeds" do
+        result = AsyncStepRetryReactor.run
+        drain
+
+        record = RubyReactor.configuration.storage_adapter.retrieve_step_result(
+          result.execution_id, :flaky, "AsyncStepRetryReactor"
+        )
+        expect(record["success"]).to be true
+        expect(AsyncStepRetryReactor.attempts).to eq(3)
+      end
+    end
+  end
+
   describe "definition-time guards" do
     it "rejects `returns` naming an async_step" do
       expect do

@@ -59,6 +59,23 @@ module RubyReactor
       arguments = resolve_arguments(step_config, context)
       log(:info, "running")
 
+      attempt = 0
+      result = nil
+
+      loop do
+        attempt += 1
+        result = execute_step_body(step_config, arguments, context)
+        break unless retry?(step_config, result, attempt)
+
+        delay = backoff_delay(step_config, attempt)
+        log(:warn, "retrying", attempt: attempt, delay: delay)
+        sleep(delay)
+      end
+
+      result
+    end
+
+    def execute_step_body(step_config, arguments, context)
       result =
         if step_config.has_run_block?
           args = arguments.empty? ? context.inputs : arguments
@@ -70,6 +87,24 @@ module RubyReactor
         end
 
       normalize(result)
+    rescue StandardError => e
+      RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name)
+    end
+
+    # Mirrors `Executor::RetryManager#can_retry_step?` for the one path that
+    # never reaches it: an `async_step`'s body runs entirely inside this
+    # worker, so retries here must be attempted synchronously in-process
+    # rather than requeued as a new job.
+    def retry?(step_config, result, attempt)
+      return false unless result.is_a?(RubyReactor::Failure) && result.retryable?
+
+      step_config.retryable? && attempt < step_config.retry_config[:max_attempts]
+    end
+
+    def backoff_delay(step_config, attempt)
+      RetryContext.calculate_backoff_delay(
+        attempt, step_config.retry_config[:backoff], step_config.retry_config[:base_delay]
+      )
     end
 
     def normalize(result)
