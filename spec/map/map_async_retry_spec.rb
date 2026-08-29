@@ -49,7 +49,7 @@ RSpec.describe "Map Async Retry Behavior" do
       reactor = AsyncRetryMapReactorV2.new
       result = reactor.run(items: %w[hello world], fail_until_attempt: 3)
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # No batch_size now runs through the same per-element path as batch_size
       # maps (batch_size defaults to the full source size), so drain the element
@@ -73,7 +73,7 @@ RSpec.describe "Map Async Retry Behavior" do
       reactor = AsyncRetryMapReactorV2.new
       result = reactor.run(items: %w[hello world], fail_until_attempt: 10)
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
       RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
@@ -143,7 +143,7 @@ RSpec.describe "Map Async Retry Behavior" do
       reactor = AsyncBatchRetryMapReactorV2.new
       result = reactor.run(items: %w[hello world foo bar], fail_until_attempt: 3)
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # Drain workers (multiple times might be needed for batches/retries)
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
@@ -170,7 +170,7 @@ RSpec.describe "Map Async Retry Behavior" do
       reactor = AsyncBatchRetryMapReactorV2.new
       result = reactor.run(items: %w[a b c d e], fail_until_attempt: 2)
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # Drain workers
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
@@ -254,7 +254,7 @@ RSpec.describe "Map Async Retry Behavior" do
         fail_until_attempt: 3
       )
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # Drain workers
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
@@ -279,7 +279,7 @@ RSpec.describe "Map Async Retry Behavior" do
         fail_until_attempt: 10 # Will exhaust retries
       )
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # Drain workers
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain

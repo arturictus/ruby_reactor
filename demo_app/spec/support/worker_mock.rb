@@ -66,7 +66,7 @@ module Support
           "serialized_context" => serialized_context
         }
       )
-      RubyReactor::AsyncResult.new(job_id: job_id)
+      RubyReactor::DispatchResult.new(job_id: job_id)
     end
 
     def self.perform_map_element_in(_delay, map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
@@ -102,7 +102,7 @@ module Support
           "timeout" => timeout
         }
       )
-      RubyReactor::AsyncResult.new(job_id: job_id)
+      RubyReactor::DispatchResult.new(job_id: job_id)
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -121,7 +121,7 @@ module Support
           "step_name" => step_name
         }
       )
-      RubyReactor::AsyncResult.new(job_id: job_id)
+      RubyReactor::DispatchResult.new(job_id: job_id)
     end
     # rubocop:enable Metrics/ParameterLists
     # rubocop:enable Lint/UnusedMethodArgument

@@ -99,7 +99,7 @@ module RubyReactor
           result
         when RubyReactor::Failure
           handle_failure_result(step_config, reactor_class, result)
-        when RetryQueuedResult, RubyReactor::AsyncResult
+        when RetryQueuedResult, RubyReactor::DispatchResult
           # Pass through async results
           result
         else
@@ -146,9 +146,9 @@ module RubyReactor
       def handle_async_retry(step_config, reactor_class, result)
         requeue_result = requeue_job_for_step_retry(step_config, result.error, reactor_class)
 
-        # If it returned an AsyncResult, we are truly async.
+        # If it returned an DispatchResult, we are truly async.
         # Otherwise, it ran inline and we should return the result of that execution.
-        if requeue_result.is_a?(RubyReactor::AsyncResult)
+        if requeue_result.is_a?(RubyReactor::DispatchResult)
           RetryQueuedResult.new(
             step_config.name,
             @context.retry_context.attempts_for_step(step_config.name),

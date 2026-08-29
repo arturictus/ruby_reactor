@@ -24,7 +24,7 @@ begin
     ar_query: Product.all
   )
   puts "Result Class: #{result.class}"
-  if result.is_a?(RubyReactor::AsyncResult)
+  if result.is_a?(RubyReactor::DispatchResult)
     puts "Reactor Status: Async Execution Started (Job ID: #{result.job_id})"
   else
     puts "Result: #{result.success? ? 'Success' : 'Failure'}"
@@ -43,11 +43,11 @@ puts "\n"
 puts "=== 3. Running Async Patterns ==="
 puts "-- FullAsyncReactor --"
 res = FullAsyncReactor.run(param: "test")
-puts "Result Class: #{res.class} (Expected: RubyReactor::AsyncResult)"
+puts "Result Class: #{res.class} (Expected: RubyReactor::DispatchResult)"
 
 puts "-- BackgroundDemoReactor --"
 res = BackgroundDemoReactor.run(user_id: "user_123")
-puts "Result Class: #{res.class} (Expected: RubyReactor::AsyncResult)"
+puts "Result Class: #{res.class} (Expected: RubyReactor::DispatchResult)"
 
 puts "-- AsyncStepDemoReactor --"
 res = AsyncStepDemoReactor.run(email: "demo@example.com")
@@ -84,7 +84,7 @@ res = OrderProcessingReactor.run(
   quantity: 5,
   amount: 100
 )
-if res.is_a?(RubyReactor::AsyncResult)
+if res.is_a?(RubyReactor::DispatchResult)
   puts "Async execution started: #{res.job_id}"
 else
   puts "Result: #{res.success? ? 'Success' : 'Failure'} - #{res.value}"

@@ -18,7 +18,7 @@ RSpec.describe "reactor-level `background` hand-off" do
       it "runs everything up to and including the named step in the calling process" do
         result = BackgroundAfterReactor.run
 
-        expect(result).to be_a(RubyReactor::AsyncResult)
+        expect(result).to be_a(RubyReactor::DispatchResult)
         expect(BackgroundFixtures.trace[:after]).to eq([%i[first here], %i[second here]])
       end
 
@@ -107,7 +107,7 @@ RSpec.describe "reactor-level `background` hand-off" do
       it "never fires when the named step is skipped by a guard" do
         result = BackgroundSkippedTriggerReactor.run(hand_off: false)
 
-        expect(result).not_to be_a(RubyReactor::AsyncResult)
+        expect(result).not_to be_a(RubyReactor::DispatchResult)
         expect(BackgroundFixtures.trace[:skipped_trigger].map(&:last).uniq).to eq([:here])
       end
 

@@ -22,11 +22,11 @@ RSpec.describe RubyReactor::Adapters::ActiveJob::Router do
     RubyReactor::Adapters::ActiveJob::Worker.queue_adapter.enqueued_jobs.clear
   end
 
-  it "queues a job immediately and returns an AsyncResult" do
+  it "queues a job immediately and returns an DispatchResult" do
     reactor = TestAsyncReactor.new
     result = reactor.run(user_id: 123, email: "test@example.com")
 
-    expect(result).to be_a(RubyReactor::AsyncResult)
+    expect(result).to be_a(RubyReactor::DispatchResult)
     expect(result.async?).to be true
     expect(RubyReactor::Adapters::ActiveJob::Worker.queue_adapter.enqueued_jobs.size).to eq(1)
   end

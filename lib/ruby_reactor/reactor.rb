@@ -118,7 +118,7 @@ module RubyReactor
                                                            RubyReactor.reactor_storage_name(self.class),
                                                            intermediate_results: @context.intermediate_results)
 
-        # Even if it's an AsyncResult, it might have finished inline (e.g. Sidekiq::Testing.inline!)
+        # Even if it's an DispatchResult, it might have finished inline (e.g. Sidekiq::Testing.inline!)
         # Check storage to see if it's already finished or paused (interrupted).
         begin
           reloaded = self.class.find(@context.context_id)
@@ -347,7 +347,7 @@ module RubyReactor
     end
 
     def check_for_inline_completion
-      # Even if it's an AsyncResult, it might have finished inline (e.g. Sidekiq::Testing.inline!)
+      # Even if it's an DispatchResult, it might have finished inline (e.g. Sidekiq::Testing.inline!)
       # Check storage to see if it's already finished or paused (interrupted).
       reloaded = self.class.find(@context.context_id)
       if reloaded.finished? || reloaded.context.status.to_s == "paused"

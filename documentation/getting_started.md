@@ -137,7 +137,7 @@ end
 
 - `RubyReactor::Success` — `result.success?` is `true`, `result.value` holds the step output for `returns` (or the full `intermediate_results` hash if no `returns` is set).
 - `RubyReactor::Failure` — `result.failure?` is `true`. Useful readers: `result.error`, `result.step_name`, `result.exception_class`, `result.backtrace`, `result.step_arguments`.
-- `RubyReactor::AsyncResult` — returned when the reactor (or a step) is async. Holds `job_id`, `execution_id`, and any `intermediate_results` available at handoff.
+- `RubyReactor::DispatchResult` — returned when the reactor (or a step) is async. Holds `job_id`, `execution_id`, and any `intermediate_results` available at handoff.
 - `RubyReactor::InterruptResult` — returned when an `interrupt` step pauses execution. Use `result.execution_id` and `result.correlation_id` to resume later.
 
 ### Asynchronous Execution

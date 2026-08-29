@@ -8,8 +8,8 @@ RSpec.describe "Nested Reactor Inline Execution" do
       reactor = Support::NestedInlineRootReactor.new
       result = reactor.run(id: "123")
 
-      # Need to reload result if it returned AsyncResult initially (though inline! usually prevents this)
-      if result.is_a?(RubyReactor::AsyncResult)
+      # Need to reload result if it returned DispatchResult initially (though inline! usually prevents this)
+      if result.is_a?(RubyReactor::DispatchResult)
         result = Support::NestedInlineRootReactor.find(result.execution_id).result
       end
 
@@ -24,7 +24,7 @@ RSpec.describe "Nested Reactor Inline Execution" do
     Sidekiq::Testing.inline! do
       result = Support::MultipleComposeRootReactor.run(id: "root")
 
-      if result.is_a?(RubyReactor::AsyncResult)
+      if result.is_a?(RubyReactor::DispatchResult)
         result = Support::MultipleComposeRootReactor.find(result.execution_id).result
       end
 

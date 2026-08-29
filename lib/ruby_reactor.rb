@@ -292,8 +292,10 @@ module RubyReactor
     end
   end
 
-  # Async result for background job execution
-  class AsyncResult
+  # Sentinel returned when a step's work is handed off to a worker job and is
+  # not yet resolved — produced by `background`, `async_step`, `async_reactor`,
+  # and map's async element dispatch alike.
+  class DispatchResult
     attr_reader :job_id, :intermediate_results, :execution_id
 
     def initialize(job_id:, intermediate_results: {}, execution_id: nil)

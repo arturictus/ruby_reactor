@@ -29,7 +29,7 @@ The **enqueue side** is already behind a seam:
   ([sidekiq_adapter.rb](../lib/ruby_reactor/sidekiq_adapter.rb)):
   `perform_async`, `perform_in`, `perform_map_element_async`,
   `perform_map_element_in`, `perform_map_collection_async`. All return
-  `RubyReactor::AsyncResult`.
+  `RubyReactor::DispatchResult`.
 - An adapter for any other queueing backend just needs to implement that
   same 5-method contract and assign it to `config.async_router`. **This part
   needs no rework.**

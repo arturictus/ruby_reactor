@@ -60,7 +60,7 @@ when "paused"    then puts "Waiting on interrupt"
 end
 ```
 
-> **Note:** `AsyncResult` itself does not poll. It only carries the job handle and any results computed before handoff (`job_id`, `execution_id`, `intermediate_results`). To check progress, reload via `Reactor.find(execution_id)` and inspect `context.status`, or use the web dashboard.
+> **Note:** `DispatchResult` itself does not poll. It only carries the job handle and any results computed before handoff (`job_id`, `execution_id`, `intermediate_results`). To check progress, reload via `Reactor.find(execution_id)` and inspect `context.status`, or use the web dashboard.
 
 ### Architecture
 
@@ -302,7 +302,7 @@ The child runs as an ordinary, independently addressable reactor execution. It i
 linked to the parent by execution id — visible and drillable in the dashboard —
 but **excluded from the parent's compensation graph**, on the same opt-in model
 as `async_step`. A reader receives the child's real `Success` / `Failure`, not
-the enqueue-time `AsyncResult`.
+the enqueue-time `DispatchResult`.
 
 See [Composition](composition.md) for when to reach for `compose` instead.
 

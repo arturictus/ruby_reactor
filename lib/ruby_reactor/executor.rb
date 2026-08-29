@@ -581,7 +581,7 @@ module RubyReactor
       return unless result
 
       case result
-      when RubyReactor::AsyncResult
+      when RubyReactor::DispatchResult
         @context.status = :running
       when RubyReactor::Skipped
         @context.status = :skipped
@@ -622,7 +622,7 @@ module RubyReactor
         when RubyReactor::Skipped,
              RetryQueuedResult,
              RubyReactor::Failure,
-             RubyReactor::AsyncResult,
+             RubyReactor::DispatchResult,
              RubyReactor::InterruptResult
           # Terminal: step was skipped, requeued, failed, paused, or handed
           # off to async. Return the result as-is.

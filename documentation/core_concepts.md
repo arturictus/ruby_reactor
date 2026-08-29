@@ -182,7 +182,7 @@ end
 - **`RubyReactor::Success`** — `success?` is `true`. `value` holds the output of the step named in `returns`, or the full `intermediate_results` hash if no `returns` is declared.
 - **`RubyReactor::Failure`** — `failure?` is `true`. Readers include `error`, `step_name`, `reactor_name`, `step_arguments`, `inputs`, `exception_class`, `file_path`, `line_number`, `backtrace`, `validation_errors`, and `retryable?`.
 - **`RubyReactor::Skipped`** — a "clean halt". A `Success` subclass, so `success?` is `true` **and** `skipped?` is `true`; `reason` and `step_name` say where/why. Returned when a step returns `Skipped(reason: "...")` or a `with_period` bucket is already claimed. Remaining steps don't run and completed steps are **not** compensated. See [Skipping a reactor cleanly](#skipping-a-reactor-cleanly).
-- **`RubyReactor::AsyncResult`** — returned by an async reactor or when a step hands off to a worker. Readers: `job_id`, `execution_id`, `intermediate_results`.
+- **`RubyReactor::DispatchResult`** — returned by an async reactor or when a step hands off to a worker. Readers: `job_id`, `execution_id`, `intermediate_results`.
 - **`RubyReactor::InterruptResult`** — returned when an `interrupt` step pauses execution. Readers: `execution_id`, `correlation_id`, `status` (`:paused`), `timeout_at`, `intermediate_results`.
 
 Step-by-step state lives on the context, not the result object. Reload via `Reactor.find(execution_id)` to inspect:

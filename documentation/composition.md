@@ -231,7 +231,7 @@ The execution flow is:
 
 1. Parent reactor executes steps up to `process_payment`
 2. Serializes the entire context and queues ONE background job
-3. Returns `AsyncResult` to the caller
+3. Returns `DispatchResult` to the caller
 4. Worker picks up the job and resumes at `process_payment`
 5. The worker continues sequentially through every remaining step
 

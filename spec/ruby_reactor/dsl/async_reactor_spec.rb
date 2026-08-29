@@ -60,7 +60,7 @@ RSpec.describe "`async_reactor`" do
   # child while the caller waits.
   describe "awaited outcome" do
     for_each_real_async_backend do
-      it "hands the reader the child's real Success, not the enqueue-time AsyncResult" do
+      it "hands the reader the child's real Success, not the enqueue-time DispatchResult" do
         result = AsyncReactorAwaitedReactor.run(user_id: 7)
 
         expect(AsyncReactorFixtures.log).to include([:verify_all, "RubyReactor::Success"])

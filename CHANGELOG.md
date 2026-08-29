@@ -75,6 +75,16 @@
   **Migration:** replace `async true` with `background all: true`. `async?` (the
   reader) is unchanged and still answers the same question.
 
+* **`RubyReactor::AsyncResult` is renamed to `RubyReactor::DispatchResult`.** The
+  old name no longer fit: the class is the sentinel returned whenever a step's
+  work is handed to a worker and not yet resolved, produced alike by
+  `background`, `async_step`, `async_reactor`, and map's async element dispatch
+  — not specific to "async" as a concept.
+
+  **Migration:** replace any `RubyReactor::AsyncResult` reference (e.g. in a
+  custom `async_router`, or `result.is_a?(RubyReactor::AsyncResult)` checks)
+  with `RubyReactor::DispatchResult`.
+
 ### Features
 
 * **`background after:` / `background before:` / `background all:`** — one
@@ -147,7 +157,7 @@ failure is unrecoverable, just not automatic.
 
 ### Features
 
-* `AsyncResult` returning intermediate_results ([#10](https://github.com/arturictus/ruby_reactor/issues/10)) ([0cb96d6](https://github.com/arturictus/ruby_reactor/commit/0cb96d66e88097665998601276e38e1c2249c581))
+* `DispatchResult` returning intermediate_results ([#10](https://github.com/arturictus/ruby_reactor/issues/10)) ([0cb96d6](https://github.com/arturictus/ruby_reactor/commit/0cb96d66e88097665998601276e38e1c2249c581))
 * enhance deserialization error handling in Sidekiq worker ([#23](https://github.com/arturictus/ruby_reactor/issues/23)) ([60dde95](https://github.com/arturictus/ruby_reactor/commit/60dde95606d52cc6a9d352ad0117b4092a1ebb9d))
 * Enhance failure messages with step, reactor, redacted inputs, a… ([#11](https://github.com/arturictus/ruby_reactor/issues/11)) ([952feae](https://github.com/arturictus/ruby_reactor/commit/952feaeb6ebbe5fbe2daf470263d8e769ba64138))
 * Introduce reactor interrupt functionality, allowing pausing and… ([#13](https://github.com/arturictus/ruby_reactor/issues/13)) ([53d0861](https://github.com/arturictus/ruby_reactor/commit/53d0861f0238f0e2247e581b0a27cba2f42cfba6))

@@ -32,7 +32,7 @@ module RubyReactor
             result = execute_step(step_config)
 
             # If step execution was handed off to async, return the async result
-            return result if result.is_a?(RubyReactor::AsyncResult)
+            return result if result.is_a?(RubyReactor::DispatchResult)
 
             # If a step returns RetryQueuedResult, we need to stop and return it
             return result if result.is_a?(RetryQueuedResult)
@@ -162,7 +162,7 @@ module RubyReactor
           safe_execute_step_sync(step_config, resolved_arguments)
         end
 
-        unless result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::AsyncResult)
+        unless result.is_a?(RetryQueuedResult) || result.is_a?(RubyReactor::DispatchResult)
           @result_handler.handle_step_result(step_config, result, resolved_arguments)
         end
 
@@ -235,7 +235,7 @@ module RubyReactor
       end
 
       # Hand every step not yet executed to a worker job, and return the
-      # `AsyncResult` that halts `execute_all_steps` in the calling process.
+      # `DispatchResult` that halts `execute_all_steps` in the calling process.
       # Shared verbatim by both `background` forms — they differ only in WHERE
       # the trigger sits, never in what the hand-off does.
       def handle_background_handoff(step_config)

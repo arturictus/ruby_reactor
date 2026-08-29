@@ -43,7 +43,7 @@ RSpec.describe "interrupt resume: :background", type: :integration do
     )
 
     # The caller gets the hand-off, not the final result — :finalize has not run.
-    expect(result).to be_a(RubyReactor::AsyncResult)
+    expect(result).to be_a(RubyReactor::DispatchResult)
     expect(result.execution_id).to eq(execution.execution_id)
     expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(1)
 

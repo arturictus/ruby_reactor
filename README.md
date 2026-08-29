@@ -411,7 +411,7 @@ class AsyncReactor < RubyReactor::Reactor
   end
 end
 
-# Returns immediately with AsyncResult
+# Returns immediately with DispatchResult
 result = AsyncReactor.run(params)
 ```
 
@@ -453,7 +453,7 @@ end
 
 # Usage
 def create(params)
-  # Returns an AsyncResult immediately once :create_user completes
+  # Returns an DispatchResult immediately once :create_user completes
   result = CreateUserReactor.run(params)
 
   # Access synchronous results immediately

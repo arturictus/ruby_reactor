@@ -34,7 +34,7 @@ module RubyReactor
         # Mark complete for SCHEDULING only — no result is recorded, so
         # `result(:name)` still routes through the notified wait. This is what
         # lets unrelated siblings become ready and run while the unit is in
-        # flight, instead of the loop returning early on an AsyncResult.
+        # flight, instead of the loop returning early on an DispatchResult.
         @dependency_graph.complete_step(step_config.name)
         RubyReactor.Success(nil)
       end

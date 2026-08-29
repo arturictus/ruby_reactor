@@ -95,7 +95,7 @@ module RubyReactor
         %w[completed failed cancelled skipped].include?(fetch(data, :status).to_s)
       end
 
-      # The child's real Success/Failure, never the enqueue-time AsyncResult —
+      # The child's real Success/Failure, never the enqueue-time DispatchResult —
       # the reader is supposed to inspect `.success?` / `.value` / `.error`.
       def child_result(data)
         context = RubyReactor::Context.deserialize_from_retry(data)

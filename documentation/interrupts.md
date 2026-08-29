@@ -125,7 +125,7 @@ With `resume: :background`, `continue`:
     `max_attempts` compensation work exactly as with inline resume), and
     nothing is enqueued.
 2.  On a valid payload, stores it, persists the context, enqueues the resume
-    via the configured `async_router`, and returns an `AsyncResult`.
+    via the configured `async_router`, and returns an `DispatchResult`.
 
 The caller never executes post-interrupt steps, so a webhook can acknowledge
 instantly even when heavy work follows the interrupt.

@@ -792,7 +792,7 @@ RSpec.describe RubyReactor do
     end
   end
 
-  describe "AsyncResult returns job_id and intermediate_results" do
+  describe "DispatchResult returns job_id and intermediate_results" do
     let(:reactor_class) do
       Class.new(RubyReactor::Reactor) do
         input :value
@@ -821,7 +821,7 @@ RSpec.describe RubyReactor do
       reactor = reactor_class.new
       async_result = reactor.run(value: 10)
 
-      expect(async_result).to be_a(RubyReactor::AsyncResult)
+      expect(async_result).to be_a(RubyReactor::DispatchResult)
       expect(async_result.job_id).not_to be_nil
       expect(async_result.intermediate_results).to be_a(Hash)
       expect(async_result.intermediate_results).to have_key(:sync_step)

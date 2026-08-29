@@ -15,7 +15,7 @@ bundle exec rspec spec/ruby_reactor/rspec/test_subject_async_spec.rb      # Test
 
 Expected outcomes, mapped to spec.md acceptance scenarios:
 
-- A reactor with `background after: :second` runs `:first`/`:second` inline and `:third` via a dispatched job; `MyReactor.run` returns an `AsyncResult`; `TestSubject`'s `drain_async_jobs` completes it (US1 scenario 1, SC-001).
+- A reactor with `background after: :second` runs `:first`/`:second` inline and `:third` via a dispatched job; `MyReactor.run` returns an `DispatchResult`; `TestSubject`'s `drain_async_jobs` completes it (US1 scenario 1, SC-001).
 - The same reactor declared `background before: :third` behaves identically in this linear case, and `:third` never executes in the calling process (US1 scenario 2). In a branching fixture the two forms pin different steps — assert the specific step each one guarantees.
 - A `background` declaration that is duplicated, names an unknown step, carries both `after:` and `before:`, carries neither, or sits on a whole-reactor-`async` reactor each raise at class-definition time (US1 scenarios 4-5, FR-002).
 - A reactor still using `step { async true }` raises a `ValidationError` at class-definition time, not at run time (US1 scenario 3, SC-004).
@@ -48,7 +48,7 @@ These exercise the new example reactors (`app/reactors/*.rb`, replacing `partial
 ```ruby
 # bin/console or demo_app's bin/console
 result = MyReactor.run(...)
-result.class            # => RubyReactor::AsyncResult (background) or RubyReactor::Success (no background)
+result.class            # => RubyReactor::DispatchResult (background) or RubyReactor::Success (no background)
 RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs if defined?(RubyReactor::RSpec) # in a test/console context
 MyReactor.find(result.execution_id).result
 ```

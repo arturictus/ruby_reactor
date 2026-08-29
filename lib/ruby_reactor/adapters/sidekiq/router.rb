@@ -9,13 +9,13 @@ module RubyReactor
         # there is no blob to deserialize here.
         def self.perform_async(context_id, reactor_class_name = nil, intermediate_results: {})
           job_id = RubyReactor::Adapters::Sidekiq::Worker.perform_async(context_id, reactor_class_name)
-          RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: intermediate_results,
+          RubyReactor::DispatchResult.new(job_id: job_id, intermediate_results: intermediate_results,
                                        execution_id: context_id)
         end
 
         def self.perform_in(delay, context_id, reactor_class_name = nil, intermediate_results: {})
           job_id = RubyReactor::Adapters::Sidekiq::Worker.perform_in(delay, context_id, reactor_class_name)
-          RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: intermediate_results,
+          RubyReactor::DispatchResult.new(job_id: job_id, intermediate_results: intermediate_results,
                                        execution_id: context_id)
         end
 
@@ -31,7 +31,7 @@ module RubyReactor
               "step_name" => step_name.to_s
             }
           )
-          RubyReactor::AsyncResult.new(job_id: job_id)
+          RubyReactor::DispatchResult.new(job_id: job_id)
         end
 
         # rubocop:disable Metrics/ParameterLists
@@ -54,7 +54,7 @@ module RubyReactor
               "fail_fast" => fail_fast
             }
           )
-          RubyReactor::AsyncResult.new(job_id: job_id)
+          RubyReactor::DispatchResult.new(job_id: job_id)
         end
 
         def self.perform_map_element_in(delay, map_id:, element_id:, index:, serialized_inputs:,
@@ -78,9 +78,9 @@ module RubyReactor
               "fail_fast" => fail_fast
             }
           )
-          # Return an AsyncResult so RetryManager#handle_async_retry recognises the
+          # Return an DispatchResult so RetryManager#handle_async_retry recognises the
           # element was successfully requeued and yields a RetryQueuedResult.
-          RubyReactor::AsyncResult.new(job_id: job_id)
+          RubyReactor::DispatchResult.new(job_id: job_id)
         end
         # rubocop:enable Metrics/ParameterLists
 
@@ -97,7 +97,7 @@ module RubyReactor
               "timeout" => timeout
             }
           )
-          RubyReactor::AsyncResult.new(job_id: job_id)
+          RubyReactor::DispatchResult.new(job_id: job_id)
         end
         # rubocop:enable Metrics/ParameterLists
       end
