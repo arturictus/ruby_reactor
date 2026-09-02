@@ -18,7 +18,7 @@ namespace :demo do
 
       result = PaymentWorkflow.call(order_id: order_id, fail_at: fail_at)
 
-      if result.is_a?(RubyReactor::AsyncResult)
+      if result.is_a?(RubyReactor::DispatchResult)
         puts "⏳ ASYNC: Workflow started asynchronously."
         puts "   Execution ID: #{result.execution_id}"
       elsif result.success?
@@ -46,7 +46,7 @@ namespace :demo do
         amount: 100
       )
 
-      if result.is_a?(RubyReactor::AsyncResult)
+      if result.is_a?(RubyReactor::DispatchResult)
         puts "⏳ ASYNC: Workflow started asynchronously."
         puts "   Execution ID: #{result.execution_id}"
       elsif result.success?
@@ -112,7 +112,7 @@ namespace :demo do
       puts "\n>>> Running MapDemoReactor(#{params.inspect})"
       result = MapDemoReactor.call(params)
 
-      if result.is_a?(RubyReactor::AsyncResult)
+      if result.is_a?(RubyReactor::DispatchResult)
         puts "⏳ ASYNC: Map started asynchronously."
         puts "   Execution ID: #{result.execution_id}"
         puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
@@ -175,7 +175,7 @@ namespace :demo do
       puts "\n>>> Running #{name} (#{params.inspect})"
       result = reactor_class.call(params)
 
-      if result.is_a?(RubyReactor::AsyncResult)
+      if result.is_a?(RubyReactor::DispatchResult)
         puts "⏳ ASYNC: Workflow started/paused asynchronously."
         puts "   Execution ID: #{result.execution_id}"
       elsif result.success?
@@ -266,7 +266,7 @@ namespace :demo do
     puts "\n→ ordered_lock state right after submit: #{state.inspect}"
 
     puts "\n=== Draining workers ==="
-    RubyReactor::SidekiqWorkers::Worker.drain
+    RubyReactor::Adapters::Sidekiq::Worker.drain
 
     puts "\n=== Ledger after drain ==="
     LedgerTransactionReactor::Ledger.for(account_id).each_with_index do |entry, i|
@@ -289,7 +289,7 @@ namespace :demo do
       { amount: 2, type: "debit" }
     ]
     second_batch.each { |tx| LedgerTransactionReactor.call(account_id: account_id, transaction: tx) }
-    RubyReactor::SidekiqWorkers::Worker.drain
+    RubyReactor::Adapters::Sidekiq::Worker.drain
 
     new_nonces = LedgerTransactionReactor::Ledger.for(account_id)
                                                  .last(second_batch.size)
@@ -315,7 +315,7 @@ namespace :demo do
     puts "=== Submitting 1 refund for #{other_order} (runs in parallel) ==="
     RefundLockReactor.call(order_id: other_order, amount: 999, delay: 0.05)
 
-    RubyReactor::SidekiqWorkers::Worker.drain
+    RubyReactor::Adapters::Sidekiq::Worker.drain
 
     same_order_entries = RefundLockReactor::Log.entries.select { |e| e[:order_id] == same_order }
     other_order_entries = RefundLockReactor::Log.entries.select { |e| e[:order_id] == other_order }
@@ -347,7 +347,7 @@ namespace :demo do
         output_destinations: [:database, :search_index]
       )
 
-      if result.is_a?(RubyReactor::AsyncResult)
+      if result.is_a?(RubyReactor::DispatchResult)
         puts "⏳ ASYNC: ETL started successfully."
         puts "   Execution ID: #{result.execution_id}"
         puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
@@ -401,7 +401,7 @@ namespace :demo do
       begin
         result = reactor_class.call(params)
 
-        if result.is_a?(RubyReactor::AsyncResult)
+        if result.is_a?(RubyReactor::DispatchResult)
           puts "⏳ ASYNC: Reactor started asynchronously."
           puts "   Execution ID: #{result.execution_id}"
           puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
