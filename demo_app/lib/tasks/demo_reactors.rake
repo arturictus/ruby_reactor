@@ -235,8 +235,48 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :full_async] do
     puts "excuting all reactors"
+  end
+
+  def report_demo_result(result)
+    if result.is_a?(RubyReactor::DispatchResult)
+      puts "⏳ ASYNC: Reactor started asynchronously."
+      puts "   Execution ID: #{result.execution_id}"
+      puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
+    elsif result.success?
+      puts "✅ SUCCESS: #{result.value.inspect}"
+    else
+      err_msg = result.respond_to?(:error) ? result.error : result.inspect
+      puts "❌ FAILED: #{err_msg}"
+    end
+  end
+
+  desc "BackgroundDemoReactor — background after:/before: hand-off"
+  task background_demo: [:environment, :flush_redis] do
+    puts "\n>>> Running BackgroundDemoReactor(user_id: 'user_42')"
+    report_demo_result(BackgroundDemoReactor.call(user_id: "user_42"))
+
+    puts "\n>>> Running BackgroundDemoReactor(user_id: nil) [validation failure before hand-off]"
+    report_demo_result(BackgroundDemoReactor.call(user_id: nil))
+  end
+
+  desc "AsyncStepDemoReactor — async_step with a result() reader"
+  task async_step_demo: [:environment, :flush_redis] do
+    puts "\n>>> Running AsyncStepDemoReactor(email: 'demo@example.com')"
+    report_demo_result(AsyncStepDemoReactor.call(email: "demo@example.com"))
+  end
+
+  desc "AsyncReactorDemoReactor — fire-and-forget + awaited async_reactor children"
+  task async_reactor_demo: [:environment, :flush_redis] do
+    puts "\n>>> Running AsyncReactorDemoReactor(user_id: 'user_7')"
+    report_demo_result(AsyncReactorDemoReactor.call(user_id: "user_7"))
+  end
+
+  desc "FullAsyncReactor — background all: true"
+  task full_async: [:environment, :flush_redis] do
+    puts "\n>>> Running FullAsyncReactor(param: 'demo_param')"
+    report_demo_result(FullAsyncReactor.call(param: "demo_param"))
   end
 
   desc "OrderedLock — strict transaction ordering via with_ordered_lock"

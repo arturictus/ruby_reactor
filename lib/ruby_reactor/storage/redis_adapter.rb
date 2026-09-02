@@ -323,6 +323,10 @@ module RubyReactor
         json_results.compact.map do |json|
           data = JSON.parse(json)
           next if data["parent_context_id"] # Skip nested reactors
+          # Skip non-context records (e.g. async_step Step Result Records) whose
+          # keys are a "reactor:*:context:*" substring match on the SCAN glob
+          # (context:#{id}:step_result:#{name}) but aren't a reactor context.
+          next unless data["reactor_class"]
 
           {
             id: data["context_id"],
