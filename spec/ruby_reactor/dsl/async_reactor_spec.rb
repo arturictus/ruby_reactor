@@ -115,6 +115,63 @@ RSpec.describe "`async_reactor`" do
     end
   end
 
+  # Async units are independent units of work with independent compensation
+  # flows: the parent rolling back must not "undo" a dispatch whose unit runs
+  # (and may still succeed) elsewhere.
+  describe "compensation independence" do
+    for_each_real_async_backend do
+      it "compensates the parent's own steps but never the dispatch itself" do
+        result = AsyncReactorAwaitedFailingReactor.run(user_id: 7)
+
+        trace = AsyncReactorAwaitedFailingReactor.find(result.execution_id).context.execution_trace
+        undone = trace.select { |e| (e[:type] || e["type"]).to_s == "undo" }
+                      .map { |e| (e[:step] || e["step"]).to_s }
+        expect(undone).to include("setup")
+        expect(undone).not_to include("create_profile")
+      end
+    end
+  end
+
+  # A reader inside a WORKER must not pin its thread for the child's whole
+  # runtime: after PARK_GRACE it parks (job re-enqueued via the snooze path)
+  # with the exclusive lock kept held across the gap.
+  describe "parked wait inside a worker" do
+    def eventually(timeout:, interval: 0.2)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      loop do
+        value = yield
+        return value if value
+
+        raise "condition not met within #{timeout}s" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+        sleep interval
+      end
+    end
+
+    for_each_real_async_backend do
+      it "parks instead of blocking, keeps the lock held across the gap, and completes" do
+        dispatch = AsyncParkingParentReactor.run(user_id: "prk1")
+        expect(dispatch).to be_a(RubyReactor::DispatchResult)
+        redis = Redis.new(url: REDIS_TEST_URL)
+
+        eventually(timeout: 30) do
+          data = AsyncParkingParentReactor.find(dispatch.execution_id)&.context&.private_data || {}
+          data[:parked_primitives] || data["parked_primitives"]
+        end
+        # Parked: no live job is executing this context, yet the exclusive
+        # lock is still checked out — that is the whole point.
+        expect(redis.exists?("lock:parking:prk1")).to be(true)
+
+        eventually(timeout: 45) do
+          AsyncParkingParentReactor.find(dispatch.execution_id).context.status.to_s == "completed"
+        end
+        expect(redis.exists?("lock:parking:prk1")).to be(false)
+      ensure
+        redis&.close
+      end
+    end
+  end
+
   describe "definition-time guards" do
     it "rejects `returns` naming an async_reactor" do
       expect do

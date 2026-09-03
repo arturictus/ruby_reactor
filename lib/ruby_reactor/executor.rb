@@ -54,6 +54,7 @@ module RubyReactor
       @acquired_semaphore = nil
       @acquired_context_lock = nil
       @context_lock_owner = nil
+      @parked = false
       @contention_snooze = false
       @skip_context_persist = false
       @last_checkpoint_at = nil
@@ -134,6 +135,13 @@ module RubyReactor
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
       raise e
+    rescue Error::AsyncResultPending
+      # Only reachable when this executor runs nested inside a worker (a
+      # composed child; sync callers never park). Propagate to the ROOT
+      # resume, which owns the park. This child's own lock/semaphore (if any)
+      # ARE released below and re-competed for on redelivery.
+      @contention_snooze = true
+      raise
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
       update_context_status(@result)
@@ -198,9 +206,15 @@ module RubyReactor
 
       # Resumes intentionally skip check_rate_limit (a paused run must not
       # block itself on resume), so acquire lock/semaphore directly rather
-      # than via acquire_locks.
-      acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
-      acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+      # than via acquire_locks. A context parked on an async result kept its
+      # primitives held across the gap — re-adopt them instead of re-competing.
+      parked = consume_parked_primitives!
+      if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
+        acquire_exclusive_lock(reattach: parked[:lock])
+      end
+      if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+        acquire_semaphore(reattach_token: parked[:semaphore_token])
+      end
 
       # Post-lock re-check (see execute) — closes the period race for the
       # first run of a locked async reactor.
@@ -231,13 +245,21 @@ module RubyReactor
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
       raise e
+    rescue Error::AsyncResultPending => e
+      # An awaited async unit is not terminal yet: park. Exclusive lock and
+      # semaphore stay HELD (recorded on the context for the resuming job to
+      # re-adopt); the worker snoozes the job. The context lock is still
+      # released below — the redelivered job must be able to take it.
+      park_held_primitives!
+      @contention_snooze = true
+      raise e
     rescue StandardError => e
       handle_resume_error(e)
       update_context_status(@result)
       completed = true
       @result
     ensure
-      release_locks
+      release_locks unless @parked
       @acquired_context_lock&.release
       @acquired_context_lock = nil
       leave_ordered_lock_scope
@@ -472,7 +494,7 @@ module RubyReactor
       defined?(Sidekiq::Testing) && Sidekiq::Testing.respond_to?(:inline?) && Sidekiq::Testing.inline?
     end
 
-    def acquire_exclusive_lock
+    def acquire_exclusive_lock(reattach: false)
       config = @reactor_class.lock_config
       key = config[:key_proc].call(@context.inputs)
 
@@ -486,6 +508,17 @@ module RubyReactor
         wait: contention_wait(config[:wait]),
         auto_extend: config.fetch(:auto_extend, true)
       )
+
+      # Re-adopting a lock held across a parked gap: no :lock_acquired event —
+      # the original acquisition already emitted it, and the eventual release
+      # emits exactly one :lock_released. A lapsed TTL falls through to a
+      # fresh acquire.
+      if reattach && lock.reattach
+        @acquired_lock = lock
+        held_lock_keys << key
+        return
+      end
+
       begin
         lock.acquire
         @acquired_lock = lock
@@ -497,12 +530,22 @@ module RubyReactor
       end
     end
 
-    def acquire_semaphore
+    def acquire_semaphore(reattach_token: nil)
       config = @reactor_class.semaphore_config
       key = config[:key_proc].call(@context.inputs)
       limit = config[:limit]
 
       semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: contention_wait(config[:wait]))
+
+      # Same shape as the lock reattach above: keep the slot held across the
+      # parked gap, no duplicate :semaphore_acquired event, fall through to a
+      # fresh acquire when the token was lost in between.
+      if reattach_token && semaphore.reattach(reattach_token)
+        @acquired_semaphore = semaphore
+        held_lock_keys << key if limit == 1
+        return
+      end
+
       begin
         semaphore.acquire
         @acquired_semaphore = semaphore
@@ -524,6 +567,42 @@ module RubyReactor
       return 0 if @context.inline_async_execution
 
       configured_wait
+    end
+
+    # Park on a pending async result: keep exclusive lock / semaphore checked
+    # out through the gap, recording just enough on the (about-to-be-saved)
+    # context for the resuming job to re-adopt them. The lock's auto-extender
+    # dies with this process, so the parked gap is bounded by the lock TTL —
+    # the snooze redelivery (seconds) sits comfortably inside the default 60s.
+    def park_held_primitives!
+      @parked = true
+      parked = {}
+
+      if @acquired_lock
+        @acquired_lock.detach
+        parked[:lock] = true
+        @acquired_lock = nil
+      end
+
+      if @acquired_semaphore
+        parked[:semaphore_token] = @acquired_semaphore.token
+        @acquired_semaphore = nil
+      end
+
+      @context.private_data[:parked_primitives] = parked if parked.any?
+    end
+
+    # One-shot: the marker is deleted on read so a crash after this point
+    # degrades to a fresh acquire (reentrant by owner for the lock) rather
+    # than a stale reattach on some later, unrelated resume.
+    def consume_parked_primitives!
+      raw = @context.private_data.delete(:parked_primitives) ||
+            @context.private_data.delete("parked_primitives") || {}
+
+      {
+        lock: raw[:lock] || raw["lock"],
+        semaphore_token: raw[:semaphore_token] || raw["semaphore_token"]
+      }
     end
 
     def release_locks

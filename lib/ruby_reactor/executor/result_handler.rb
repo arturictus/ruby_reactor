@@ -97,9 +97,20 @@ module RubyReactor
       def handle_success(step_config, result, resolved_arguments)
         validate_step_output(step_config, result.value, resolved_arguments)
         @step_results[step_config.name] = result
-        @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments, result: result })
+        # `async_step` / `async_reactor` dispatches are independent units of
+        # work with their own compensation flows — the parent rolling back must
+        # not "undo" a dispatch whose unit runs (and may still succeed)
+        # elsewhere. They never enter the parent's undo stack.
+        unless async_unit?(step_config)
+          @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments,
+                                                    result: result })
+        end
         @context.set_result(step_config.name, result.value)
         @dependency_graph.complete_step(step_config.name)
+      end
+
+      def async_unit?(step_config)
+        step_config.respond_to?(:async_dispatch?) && step_config.async_dispatch?
       end
 
       def handle_retries_exhausted(step_config, result, resolved_arguments)

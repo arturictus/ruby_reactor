@@ -17,7 +17,12 @@ module RubyReactor
         include RubyReactor::Worker
 
         queue_as { RubyReactor.configuration.queue_name }
-        retry_on StandardError, attempts: RubyReactor.configuration.job_retry_count
+        retry_on StandardError, attempts: RubyReactor.configuration.job_retry_count do |job, error|
+          # Attempts exhausted and the job is done for — mark the context
+          # failed and signal any reader waiting on it (mirrors the Sidekiq
+          # adapter's retries-exhausted hook).
+          RubyReactor::Worker.record_retries_exhausted(job.arguments, error)
+        end
       end
     end
   end

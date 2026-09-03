@@ -123,6 +123,13 @@ module RubyReactor
         @redis.del("#{key}:init")
       end
 
+      # Whether a token is still checked out — used to re-adopt a slot held
+      # across a parked async wait.
+      def semaphore_held(key, token)
+        @redis.sismember("#{key}:held", token)
+      end
+      alias semaphore_held? semaphore_held
+
       def semaphore_acquire(key, timeout: 0)
         held_key = "#{key}:held"
 

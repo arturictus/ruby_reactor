@@ -1,34 +1,3 @@
-# The child of a fire-and-forget dispatch. Nothing in the parent reads its
-# result, so its failure never reaches the parent.
-class ProfileBackfillReactor < RubyReactor::Reactor
-  input :user_id
-
-  step :backfill do
-    argument :user_id, input(:user_id)
-    run do |args|
-      Rails.logger.info "ProfileBackfillReactor: backfilling profile for #{args[:user_id]}"
-      Success({ backfilled: args[:user_id] })
-    end
-  end
-
-  returns :backfill
-end
-
-# The child of an awaited dispatch — the parent inspects its real outcome.
-class AccountProvisioningReactor < RubyReactor::Reactor
-  input :user_id
-
-  step :provision do
-    argument :user_id, input(:user_id)
-    run do |args|
-      Rails.logger.info "AccountProvisioningReactor: provisioning account for #{args[:user_id]}"
-      Success({ account_id: "acct-#{args[:user_id]}" })
-    end
-  end
-
-  returns :provision
-end
-
 # `async_reactor` dispatches a WHOLE nested reactor to run independently. It is
 # linked to this one by execution id (visible in the dashboard, drillable) but
 # deliberately outside this reactor's compensation graph.

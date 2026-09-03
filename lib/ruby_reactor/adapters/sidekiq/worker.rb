@@ -16,8 +16,11 @@ module RubyReactor
         sidekiq_options retry: RubyReactor.configuration.job_retry_count, dead: false,
                         queue: RubyReactor.configuration.queue_name
 
-        sidekiq_retries_exhausted do |_, _exception|
-          # Handle infrastructure failures (network, Redis, etc.)
+        sidekiq_retries_exhausted do |msg, exception|
+          # With `dead: false` this job is discarded after its last retry, so
+          # this hook is the only place left to surface the failure: mark the
+          # context failed and signal any reader waiting on it.
+          RubyReactor::Worker.record_retries_exhausted(msg["args"], exception)
         end
       end
     end

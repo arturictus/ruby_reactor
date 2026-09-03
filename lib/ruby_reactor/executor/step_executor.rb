@@ -68,7 +68,14 @@ module RubyReactor
           return RubyReactor.Success(@context.get_result(step_config.name))
         end
 
-        resolved_arguments = resolve_arguments(step_config)
+        # Decided BEFORE argument resolution: resolving can block (or park) on
+        # an async `result(:name)`, and when the step body is about to be
+        # dispatched elsewhere — a `before:` hand-off, or an `async_step`'s
+        # own worker — that wait belongs to the process that will actually run
+        # it, not this one. (`async_reactor` still resolves here: its resolved
+        # values are the child's INPUTS, needed at dispatch.)
+        deferred_body = step_config.async_dispatch == :step || handoff_at?(step_config, :before)
+        resolved_arguments = deferred_body ? {} : resolve_arguments(step_config)
 
         @middlewares.on(:start_step, step_config.name, resolved_arguments, @context)
         completed = false

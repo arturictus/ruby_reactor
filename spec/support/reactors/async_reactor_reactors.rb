@@ -242,3 +242,45 @@ class AsyncReactorPausingChildParentReactor < RubyReactor::Reactor
     run { |args| RubyReactor.Success(args[:outcome]) }
   end
 end
+
+# --- Park-instead-of-block fixtures ---
+
+# Slow on purpose: long enough to outlast the reader's in-thread PARK_GRACE so
+# the parent genuinely parks, short enough to keep the orchestration lane fast.
+class AsyncSlowChildReactor < RubyReactor::Reactor
+  input :user_id
+
+  step :slow do
+    argument :user_id, input(:user_id)
+    run do |args|
+      sleep 8
+      RubyReactor.Success({ done: args[:user_id] })
+    end
+  end
+
+  returns :slow
+end
+
+# The awaited read happens INSIDE a worker (`background before: :verify`), so
+# it must park — job re-enqueued, exclusive lock kept held across the gap —
+# instead of pinning the worker thread for the child's whole runtime.
+class AsyncParkingParentReactor < RubyReactor::Reactor
+  input :user_id
+
+  with_lock(ttl: 60) { |inputs| "parking:#{inputs[:user_id]}" }
+
+  async_reactor :slow_child, AsyncSlowChildReactor do
+    argument :user_id, input(:user_id)
+  end
+
+  step :verify do
+    argument :child, result(:slow_child)
+    run do |args|
+      args[:child].success? ? RubyReactor.Success(args[:child].value) : RubyReactor.Failure(args[:child].error)
+    end
+  end
+
+  background before: :verify
+
+  returns :verify
+end

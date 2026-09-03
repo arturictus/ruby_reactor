@@ -10,7 +10,8 @@ module RubyReactor
     attr_writer :queue_name, :job_retry_count, :logger, :async_router,
                 :lock_snooze_base_delay, :lock_snooze_jitter, :lock_snooze_max_attempts,
                 :middlewares, :context_ttl, :context_lock_ttl, :checkpoint_min_interval,
-                :sweeper_enabled, :sweeper_interval, :sweeper_limit, :async_wait_timeout
+                :sweeper_enabled, :sweeper_interval, :sweeper_limit, :async_wait_timeout,
+                :async_park_timeout
 
     def queue_name
       @queue_name ||= :default
@@ -103,6 +104,18 @@ module RubyReactor
     # `async_wait_timeout / 10` clamped to 1..5s (see AsyncWaiter).
     def async_wait_timeout
       @async_wait_timeout ||= 30
+    end
+
+    # Total seconds a WORKER-side `result(:name)` wait may stay parked before
+    # failing with `Error::AsyncWaitTimeoutError`, measured from the unit's
+    # `dispatched_at`. Inside a worker a pending result does not block the
+    # thread for `async_wait_timeout` — after a short in-thread grace the job
+    # parks (re-enqueues itself, locks kept held) and re-checks on redelivery,
+    # so this bound can be generous where the blocking one must stay tight.
+    # `:infinity` removes the bound (the context TTL then remains the only
+    # backstop), mirroring `lock_snooze_max_attempts`.
+    def async_park_timeout
+      @async_park_timeout ||= 3600
     end
 
     def job_retry_count
