@@ -13,6 +13,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { cn } from '../lib/utils';
+import { reactorRoute } from '../lib/reactors';
 import { Activity, CheckCircle2, AlertCircle, Clock, Ban, Send, ExternalLink, Workflow } from 'lucide-react';
 
 interface DagVisualizerProps {
@@ -84,7 +85,7 @@ const StepNode = ({ data }: { data: any }) => {
           </div>
           {data.childExecutionId && (
             <a
-              href={`/reactors/${data.childExecutionId}`}
+              href={reactorRoute(data.childExecutionId)}
               onClick={(e) => e.stopPropagation()}
               className="mt-1 inline-flex items-center gap-1 text-[10px] underline opacity-70 hover:opacity-100"
             >

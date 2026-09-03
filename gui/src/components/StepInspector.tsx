@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, History, ChevronLeft, CheckCircle, ChevronDown, ChevronUp, Play, Send, Workflow, ExternalLink } from 'lucide-react';
 import { apiUrl } from '../lib/utils';
+import { reactorRoute } from '../lib/reactors';
 import FailureCodeSnippet from './FailureCodeSnippet';
 import { normalizeFailureReason } from '../lib/failures';
 
@@ -514,7 +515,7 @@ export default function StepInspector({
 
             {asyncRef?.execution_id && (
               <a
-                href={`/reactors/${asyncRef.execution_id}`}
+                href={reactorRoute(asyncRef.execution_id)}
                 className="mt-3 inline-flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 underline"
               >
                 Open the linked execution <ExternalLink className="w-3 h-3" />
