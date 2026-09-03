@@ -129,7 +129,7 @@ export default function ReactorDetail() {
                   : 'Workflow Failed'}
                 {reactor.error.step_name && <span className="text-red-400"> at step <span className="font-mono bg-red-500/10 px-1 rounded">{reactor.error.step_name}</span></span>}
               </h3>
-              <p className="text-xs text-red-400/80 font-mono truncate">{reactor.error.message}</p>
+              <p className="text-xs text-red-400/80 font-mono truncate">{reactor.error.message || reactor.error.error}</p>
             </div>
           </div>
         </div>
