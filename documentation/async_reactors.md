@@ -66,7 +66,7 @@ end
 
 ```mermaid
 graph LR
-    A[Client] --> B[Reactor.run<br/>async: true]
+    A[Client] --> B[Reactor.run<br/>background all: true]
     B --> C[Validate Inputs<br/>Synchronously]
     C --> D[Queue Sidekiq Job<br/>with Context]
     D --> E[Sidekiq Worker]
@@ -224,9 +224,21 @@ identically. Only *where the body runs* changes.
 Referencing `result(:async_step_name)` is what makes a step wait. The wait is a
 **notified wait**: the finishing worker writes its durable outcome and then
 publishes a completion signal, and the waiting step wakes on that signal (with a
-coarse fallback re-check in case the signal is lost). It is always bounded by
-`RubyReactor.configuration.async_wait_timeout` (default 30s) — never an
-unbounded wait.
+coarse fallback re-check in case the signal is lost). It is never unbounded, and
+it takes one of two forms depending on where the reader runs:
+
+- **Synchronous caller** (a request thread, a rake task, a plain `.call`): the
+  thread blocks, bounded tight by
+  `RubyReactor.configuration.async_wait_timeout` (default 30s) — it has a host
+  timeout (Puma, Sidekiq shutdown grace) to stay under.
+- **Inside a worker** (after a `background` hand-off, or any worker-resumed
+  run): the wait **parks instead of blocking**. After a short in-thread grace
+  (5s), the job re-enqueues itself and frees the worker thread; on redelivery
+  it re-checks. Any exclusive lock / semaphore the reactor holds **stays held
+  across the gap**. The total parked time is bounded by
+  `RubyReactor.configuration.async_park_timeout` (default 1 hour), measured
+  from the unit's dispatch — generous where the blocking bound must stay
+  tight, because a parked wait costs no thread.
 
 - On **success**, the reader receives the same raw value a same-process step
   would have produced.
@@ -255,6 +267,12 @@ compensated.** This is deliberate, not a gap: the unit was dispatched precisely
 so the reactor would not depend on it. A later step that reads the result and
 returns `Failure` triggers compensation normally — so no failure is ever
 unrecoverable, it is just not automatic.
+
+The independence cuts both ways: **the dispatch itself never enters the
+parent's undo stack**. When the parent rolls back for its own reasons, it
+compensates its own steps only — it does not "undo" a dispatch whose unit runs
+(and may still succeed) elsewhere. Async units are independent units of work
+with independent compensation flows.
 
 `compensate` / `undo` blocks declared on an `async_step` still register; they run
 only if the failure is surfaced into the parent's compensation path this way.
@@ -290,7 +308,7 @@ class SignupReactor < RubyReactor::Reactor
   end
 
   step :verify do
-    argument :account, result(:provision_account)   # blocks until the child is terminal
+    argument :account, result(:provision_account)   # waits until the child is terminal
     run do |args|
       args[:account].success? ? Success(args[:account].value) : Failure(args[:account].error)
     end
@@ -301,8 +319,10 @@ end
 The child runs as an ordinary, independently addressable reactor execution. It is
 linked to the parent by execution id — visible and drillable in the dashboard —
 but **excluded from the parent's compensation graph**, on the same opt-in model
-as `async_step`. A reader receives the child's real `Success` / `Failure`, not
-the enqueue-time `DispatchResult`.
+as `async_step`: a child failure reaches the parent only through a reader that
+turns it into its own `Failure`, and the parent rolling back never "undoes" the
+dispatch step itself. A reader receives the child's real `Success` / `Failure`,
+not the enqueue-time `DispatchResult`.
 
 See [Composition](composition.md) for when to reach for `compose` instead.
 
@@ -341,7 +361,14 @@ order of preference:
    outside the lock window.
 
 Transitive cycles across separate executions are out of the guard's reach.
-Acquire keys in a consistent order; the `async_wait_timeout` bound is the backstop.
+Acquire keys in a consistent order; the wait bounds (`async_wait_timeout` for a
+blocking reader, `async_park_timeout` for a parked one) are the backstop.
+
+Note that a **parked** wait does not weaken the parent's own locking: the
+parent's exclusive lock / semaphore stay checked out for the whole parked gap
+(see [Waiting on dispatched work](#waiting-on-dispatched-work)), which is
+exactly why the dispatch-time deadlock guard above matters — a child waiting on
+a key its parked parent holds would wait until the park bound expires.
 
 ### Other behavior
 
@@ -354,25 +381,60 @@ Acquire keys in a consistent order; the `async_wait_timeout` bound is the backst
 ## Waiting on dispatched work
 
 Both `async_step` and `async_reactor` results are read through the same
-`result(:name)` helper, and both use the same bounded notified wait:
+`result(:name)` helper, and both use the same bounded notified wait. What
+"waiting" costs depends on where the reader runs:
 
-| Knob | Default | Meaning |
-|---|---|---|
-| `RubyReactor.configuration.async_wait_timeout` | `30` (seconds) | How long a step blocks reading a dispatched result before failing with `Error::AsyncWaitTimeoutError` |
+| Reader | Behavior on a pending result | Bound | On expiry |
+| --- | --- | --- | --- |
+| Synchronous caller (request thread, rake, `.call`) | Blocks the thread in the notified wait | `config.async_wait_timeout` (default `30`s) | `Error::AsyncWaitTimeoutError` |
+| Inside a worker | **Parks**: after a 5s in-thread grace the job re-enqueues itself and frees the thread; redelivery re-checks | `config.async_park_timeout` (default `3600`s, measured from dispatch; `:infinity` removes the bound) | `Error::AsyncWaitTimeoutError` |
 
-There is no per-reactor or per-reference override — one global value. The wait's
-fallback re-check interval is derived from it (`timeout / 10`, clamped to 1..5s)
-rather than configured; it is a latency backstop for a lost notification, not a
-tuning surface.
+Why two bounds: a blocking wait pins a thread and must stay under the request /
+job timeouts of typical hosts (Puma's 60s, Sidekiq's 25s shutdown grace), so its
+default is tight and failing loudly on your terms is the point. A parked wait
+costs no thread — the job is simply not running between checks — so its bound
+can be generous enough for genuinely long-running children. Raise
+`async_wait_timeout` only if a *synchronous* caller must ride out slower work;
+raise (or remove) `async_park_timeout` for slow worker-side awaited children.
 
-30 seconds is chosen to comfortably exceed dispatch → worker pickup → completion
-for a small unit under a healthy queue, while staying under the request and job
-timeouts of typical hosts, so a stuck wait fails loudly on your terms instead of
-being killed from outside. Raise it if your dispatched work is legitimately
-slower.
+Parking details:
+
+- The park re-uses the contention-snooze machinery: redelivery comes after
+  `lock_snooze_base_delay + rand(0..lock_snooze_jitter)` seconds, uncapped by
+  `lock_snooze_max_attempts` (the park bound is time-based, not count-based).
+- **Locks stay in place.** The reactor's exclusive `lock` and `semaphore` stay
+  checked out across the gap and are re-adopted on redelivery — no other run
+  can sneak into the critical section while the reactor is parked waiting. The
+  parked gap is covered by the lock's `ttl` (the auto-extender is not running
+  between deliveries), which comfortably exceeds the snooze delay at defaults.
+- The dashboard shows a parked reactor as `running`; its context carries the
+  park marker until it resumes.
+
+There is no per-reactor or per-reference override — one global value per bound.
+The blocking wait's fallback re-check interval is derived (`timeout / 10`,
+clamped to 1..5s) rather than configured; it is a latency backstop for a lost
+notification, not a tuning surface.
 
 Reading a **synchronous** step's result is completely unaffected — the wait only
 engages for a name the context carries an async reference for.
+
+### When the unit can never finish
+
+A wait is only as good as the guarantee that the awaited record eventually turns
+terminal. Three failure modes are surfaced instead of leaving the reader to time
+out against a context stuck on `running`:
+
+- **Unresolvable reactor class in the worker** (e.g. a class name Zeitwerk
+  cannot autoload because the class is defined inside another file): the worker
+  marks the child's context `failed` with a "could not be resolved" reason on
+  the FIRST delivery and publishes the completion signal, so the reader fails
+  fast with the real cause. Keep one reactor class per file under Rails
+  autoloading.
+- **Job retry budget exhausted** on infrastructure failures: the
+  retries-exhausted hook (both adapters) marks the context `failed` and signals
+  readers — a discarded job never strands its context on `running`.
+- **Broken stored payload** (deserialization / schema version): same treatment,
+  on first delivery.
 
 ## Retry Configuration
 

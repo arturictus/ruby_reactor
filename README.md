@@ -141,6 +141,19 @@ RubyReactor.configure do |config|
   # config.lock_snooze_jitter = 5
   # config.lock_snooze_max_attempts = 20
 
+  ## === Waiting on async results (`result(:name)` on async_step / async_reactor) ===
+
+  ## How long a SYNCHRONOUS caller blocks on a still-pending async result before
+  ## failing with Error::AsyncWaitTimeoutError. Kept tight: a blocking wait pins
+  ## a thread and must stay under typical host timeouts. Default: 30.
+  # config.async_wait_timeout = 30
+
+  ## Total parked time allowed when the reader runs INSIDE a worker: the job
+  ## re-enqueues itself instead of blocking (locks stay held across the gap),
+  ## so this bound can be generous. Measured from the unit's dispatch.
+  ## :infinity removes the bound. Default: 3600.
+  # config.async_park_timeout = 3600
+
   ## === Durability & crash recovery (see "Durability & Recovery" below) ===
 
   ## Retention TTL (seconds) for stored reactor/map state. Must exceed your
@@ -508,15 +521,21 @@ class SignupReactor < RubyReactor::Reactor
 end
 ```
 
-Reading `result(:send_email)` is what makes a step wait, and the wait is bounded
-by `config.async_wait_timeout` (default 30s) — never unbounded. On success the
-reader gets the raw value; on failure it gets the `Failure` **object**, so it can
-inspect it and decide.
+Reading `result(:send_email)` is what makes a step wait — never unbounded, and
+never thread-hungry: a **synchronous caller** blocks, bounded by
+`config.async_wait_timeout` (default 30s); a reader **inside a worker** parks
+instead — after a short grace the job re-enqueues itself, freeing the thread and
+keeping any held lock/semaphore checked out, bounded by
+`config.async_park_timeout` (default 1h) so legitimately slow units get their
+time. On success the reader gets the raw value; on failure it gets the
+`Failure` **object**, so it can inspect it and decide.
 
 **Compensation is opt-in.** If a dispatched step fails and nothing reads its
 result, the reactor is not compensated — it was dispatched precisely so the
 reactor would not depend on it. A reader that returns `Failure` triggers
-compensation normally.
+compensation normally. The independence cuts both ways: async dispatches never
+enter the parent's undo stack, so a parent rolling back for its own reasons
+never "undoes" a unit that runs (and may still succeed) elsewhere.
 
 #### `async_reactor`: a whole nested reactor, running independently
 

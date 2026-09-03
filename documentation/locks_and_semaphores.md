@@ -147,7 +147,8 @@ The lock owner is the **root context id** of the currently-executing reactor —
 Two implications:
 
 - A user-triggered retry that creates a new top-level run has a **new** owner. If the previous run's lock has not expired yet (e.g. process crashed without auto-extend), the retry will see contention.
-- Across the async pause/resume boundary, the lock is released on pause and re-acquired on resume — a separate runner can sneak in between. Lean on `ttl` and idempotency to make this safe.
+- Across an interrupt's pause/resume boundary, the lock is released on pause and re-acquired on resume — a separate runner can sneak in between. Lean on `ttl` and idempotency to make this safe.
+- A **parked async wait** is the exception: when a worker-side `result(:name)` read parks on a still-pending `async_step` / `async_reactor` (see [Async Reactors](async_reactors.md#waiting-on-dispatched-work)), the lock and any semaphore slot **stay checked out** across the gap and are re-adopted on redelivery — nothing can sneak in. The parked gap is covered by the lock's `ttl` alone (the auto-extender is not running between deliveries), so keep `ttl` above the snooze delay — at defaults (60s ttl vs ~5–10s snooze) this holds comfortably.
 
 ## Semaphores
 
