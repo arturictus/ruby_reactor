@@ -28,6 +28,120 @@ interface StepInspectorProps {
   onAction?: () => void;
 }
 
+interface MapResultsSummary {
+  _type: 'map_results';
+  total: number;
+  succeeded: number;
+  failed: number;
+  failures: any[];
+  failures_truncated: boolean;
+}
+
+function isMapResults(value: any): value is MapResultsSummary {
+  return !!value && typeof value === 'object' && value._type === 'map_results';
+}
+
+// A map step's result is a summary, not a value: elements can fail individually
+// (each compensating its own steps) while the map itself completes, so the
+// counts and the failed elements are the only thing worth showing here.
+function MapResultsPanel({ summary }: { summary: MapResultsSummary }) {
+  const [expanded, setExpanded] = useState<number | null>(null);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { label: 'elements', value: summary.total, tone: 'text-slate-300' },
+          { label: 'succeeded', value: summary.succeeded, tone: 'text-teal-400' },
+          { label: 'failed', value: summary.failed, tone: summary.failed > 0 ? 'text-rose-400' : 'text-slate-500' }
+        ].map(stat => (
+          <div key={stat.label} className="bg-slate-950 rounded-lg border border-slate-800 p-3">
+            <div className={`text-xl font-bold font-mono ${stat.tone}`}>{stat.value}</div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">{stat.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {summary.failed > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] uppercase font-bold tracking-widest text-rose-400/70">
+              Failed elements
+            </span>
+            {summary.failures_truncated && (
+              <span className="text-[10px] text-slate-500 italic">
+                showing {summary.failures.length} of {summary.failed}
+              </span>
+            )}
+          </div>
+
+          {summary.failures.map((raw: any, idx: number) => {
+            const failure = normalizeFailureReason(raw);
+            const isOpen = expanded === idx;
+
+            return (
+              <div key={idx} className="bg-rose-500/5 border border-rose-500/20 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setExpanded(isOpen ? null : idx)}
+                  className="w-full text-left px-3 py-2 flex items-start gap-2 hover:bg-rose-500/10 transition-colors"
+                >
+                  {isOpen ? <ChevronUp className="w-3 h-3 mt-1 shrink-0 text-rose-400" /> : <ChevronDown className="w-3 h-3 mt-1 shrink-0 text-rose-400" />}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {raw.index !== undefined && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                          #{raw.index}
+                        </span>
+                      )}
+                      {failure?.step_name && (
+                        <span className="text-[10px] font-mono text-rose-400/80">{failure.step_name}</span>
+                      )}
+                      {failure?.exception_class && (
+                        <span className="text-[10px] font-mono text-slate-500">{failure.exception_class}</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-rose-300 font-mono mt-1 break-words">
+                      {failure?.message}
+                    </div>
+                  </div>
+                </button>
+
+                {isOpen && (
+                  <div className="px-3 pb-3 space-y-3 border-t border-rose-500/10 pt-3">
+                    {failure?.code_snippet && failure.code_snippet.length > 0 && (
+                      <FailureCodeSnippet
+                        snippet={failure.code_snippet}
+                        filePath={failure.file_path}
+                        lineNumber={failure.line_number}
+                      />
+                    )}
+                    {raw.inputs && Object.keys(raw.inputs).length > 0 && (
+                      <div>
+                        <span className="text-[10px] uppercase font-bold tracking-widest text-slate-500">Element inputs</span>
+                        <pre className="mt-1 bg-slate-950 rounded p-2 text-xs text-slate-300 overflow-x-auto">
+                          {JSON.stringify(raw.inputs, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                    {failure?.backtrace && failure.backtrace.length > 0 && (
+                      <div>
+                        <span className="text-[10px] uppercase font-bold tracking-widest text-slate-500">Stack trace</span>
+                        <div className="mt-1 bg-slate-950 rounded p-2 text-xs text-rose-400/70 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
+                          {failure.backtrace.join('\n')}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function StepInspector({
   stepName,
   structure,
@@ -562,7 +676,9 @@ export default function StepInspector({
             <Terminal className="w-4 h-4" />
             Result
           </h3>
-          {result !== undefined ? (
+          {isMapResults(result) ? (
+            <MapResultsPanel summary={result} />
+          ) : result !== undefined ? (
             <div className="bg-slate-950 rounded-lg p-4 font-mono text-xs border border-slate-800 overflow-x-auto">
               <pre className="text-emerald-400">{JSON.stringify(result, null, 2)}</pre>
             </div>

@@ -96,7 +96,11 @@ module RubyReactor
 
       def wrap_result(result)
         if result.is_a?(Hash) && result.key?("_error")
-          RubyReactor::Failure.new(result["_error"])
+          # `backtrace: []` is load-bearing: without it Failure falls back to
+          # `caller`, so a bare-message element failure would carry the stack of
+          # whoever happened to materialize the enumerator (the JSON encoder, in
+          # the dashboard's case) instead of the stack of the step that failed.
+          RubyReactor::Failure.new(result["_error"], backtrace: [])
         else
           RubyReactor::Success.new(ContextSerializer.deserialize_value(result))
         end

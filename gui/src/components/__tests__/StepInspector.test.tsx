@@ -433,4 +433,57 @@ describe('StepInspector', () => {
       expect(screen.getByText('- Single Error')).toBeInTheDocument();
     });
   });
+
+  describe('map result summary', () => {
+    const mapProps = {
+      ...defaultProps,
+      stepName: 'prepare_products',
+      structure: { prepare_products: { type: 'map', depends_on: [] } },
+      stepAttempts: {},
+      results: {
+        prepare_products: {
+          _type: 'map_results',
+          total: 151,
+          succeeded: 75,
+          failed: 76,
+          failures_truncated: true,
+          failures: [
+            {
+              index: 1,
+              error: 'Random error triggered!',
+              step_name: 'randomly_fail',
+              exception_class: 'RuntimeError',
+              backtrace: ['app/reactors/x.rb:47'],
+              inputs: { product: 467 }
+            }
+          ]
+        }
+      }
+    };
+
+    it('shows element counts instead of dumping the whole result set', () => {
+      render(<StepInspector {...mapProps} />);
+      expect(screen.getByText('151')).toBeInTheDocument();
+      expect(screen.getByText('75')).toBeInTheDocument();
+      expect(screen.getByText('76')).toBeInTheDocument();
+      expect(screen.getByText('showing 1 of 76')).toBeInTheDocument();
+    });
+
+    it('lists failed elements with their step and message', () => {
+      render(<StepInspector {...mapProps} />);
+      expect(screen.getByText('#1')).toBeInTheDocument();
+      expect(screen.getByText('randomly_fail')).toBeInTheDocument();
+      expect(screen.getByText('Random error triggered!')).toBeInTheDocument();
+    });
+
+    it('reveals element inputs and backtrace when a failure is expanded', () => {
+      render(<StepInspector {...mapProps} />);
+      expect(screen.queryByText('Element inputs')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByText('Random error triggered!'));
+
+      expect(screen.getByText('Element inputs')).toBeInTheDocument();
+      expect(screen.getByText('app/reactors/x.rb:47')).toBeInTheDocument();
+    });
+  });
 });

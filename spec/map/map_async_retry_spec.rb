@@ -88,12 +88,18 @@ RSpec.describe "Map Async Retry Behavior" do
       expect(context.status).to eq("failed")
       expect(context.failure_reason.error).to include("failed after 5 attempts")
 
-      # The per-element error is also recorded in the stored map results.
+      # The per-element error is also recorded in the stored map results — as the
+      # whole serialized Failure, so the step that failed survives the element's
+      # own context row.
       map_id = context_data["map_operations"]["processed"]
       map_results = storage.retrieve_map_results(map_id, AsyncRetryMapReactorV2.name)
       errors = map_results.select { |v| v.is_a?(Hash) && v["_error"] }
       expect(errors).not_to be_empty
-      expect(errors.first["_error"]).to include("failed after 5 attempts")
+      expect(errors.first["_error"]).to include(
+        "error" => a_string_including("failed after 5 attempts"),
+        "step_name" => "process_with_retry",
+        "reactor_name" => "AsyncRetryItemReactor"
+      )
     end
   end
 

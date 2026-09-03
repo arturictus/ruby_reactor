@@ -355,6 +355,14 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
           statusMap[fullId] = 'failed';
         }
 
+        // A map step still "completes" when individual elements failed
+        // (fail_fast false), so its result summary is the only signal that
+        // anything went wrong inside it.
+        const mapResult = currentResults?.[key];
+        if (mapResult?._type === 'map_results' && mapResult.failed > 0) {
+          statusMap[fullId] = 'failed';
+        }
+
         // 3. Handle global cancellation/failure states for unreached steps at this level
         if (statusMap[fullId] === 'pending' && (stepStatus === 'failed' || stepStatus === 'cancelled')) {
           statusMap[fullId] = 'cancelled';

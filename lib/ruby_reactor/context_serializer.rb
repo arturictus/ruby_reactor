@@ -185,6 +185,8 @@ module RubyReactor
       # Simplifies data for public API usage (removes wrappers, flattens types)
       def simplify_for_api(value)
         case value
+        when RubyReactor::Map::ResultEnumerator
+          RubyReactor::Map::ResultSummary.build(value)
         when Hash
           simplified = value.each_with_object({}) do |(k, v), hash|
             hash[k.to_s] = simplify_for_api(v)

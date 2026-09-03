@@ -146,7 +146,12 @@ module RubyReactor
                                    parent_class, strict_ordering: arguments[:strict_ordering])
         else
           executor.undo_all
-          storage.store_map_result(map_id, index, { _error: result.error }, parent_class,
+          # Store the whole serialized Failure, not just its message: step_name,
+          # backtrace, file_path and code_snippet are the only record of why this
+          # element failed once its context row expires, and the dashboard has
+          # nothing else to show for a non-fail_fast map.
+          storage.store_map_result(map_id, index,
+                                   { _error: ContextSerializer.serialize_value(result) }, parent_class,
                                    strict_ordering: arguments[:strict_ordering])
 
           if arguments[:fail_fast]
