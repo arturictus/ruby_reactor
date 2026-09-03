@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Play, XOctagon, AlertCircle } from 'lucide-react';
 import { useState } from 'react';
 import { apiUrl } from '../lib/utils';
-import { classRoute } from '../lib/reactors';
+import { classRoute, reactorRoute } from '../lib/reactors';
 import DagVisualizer from './DagVisualizer';
 import StepInspector from './StepInspector';
 import CoordinationPanel from './CoordinationPanel';
@@ -44,7 +44,7 @@ export default function ReactorDetail() {
         return;
       }
 
-      navigate(`/reactors/${payload.id}`);
+      navigate(reactorRoute(payload.id));
     } catch (e) {
       setRetryError('Failed to retry execution');
       console.error('Failed to retry', e);

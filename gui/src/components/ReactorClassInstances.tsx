@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Activity, AlertCircle, ChevronLeft, Search, Filter } from 'lucide-react';
 import { apiUrl } from '../lib/utils';
+import { reactorRoute } from '../lib/reactors';
 import StatusBadge from './StatusBadge';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
@@ -95,7 +96,7 @@ export default function ReactorClassInstances() {
                 {filteredReactors?.map((reactor: any) => (
                   <tr key={reactor.id} className="group hover:bg-slate-800/30 transition-colors cursor-pointer">
                     <td className="px-6 py-4 font-mono text-slate-500 group-hover:text-indigo-400 transition-colors">
-                      <Link to={`/reactors/${reactor.id}`} className="block relative">
+                      <Link to={reactorRoute(reactor.id)} className="block relative">
                         <span className="absolute -left-2 top-1/2 -translate-y-1/2 w-1 h-0 group-hover:h-4 bg-indigo-500 rounded-full transition-all duration-300 opacity-0 group-hover:opacity-100"></span>
                         {reactor.id.substring(0, 8)}...
                       </Link>
@@ -116,7 +117,7 @@ export default function ReactorClassInstances() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <Link
-                        to={`/reactors/${reactor.id}`}
+                        to={reactorRoute(reactor.id)}
                         className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-indigo-400 transition-colors px-3 py-1.5 rounded-md hover:bg-indigo-500/10"
                       >
                         Inspect

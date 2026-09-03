@@ -41,6 +41,16 @@ export function aggregateByClass(reactors: ReactorSummary[]): ClassAggregate[] {
   return Array.from(map.values()).sort((a, b) => a.className.localeCompare(b.className));
 }
 
+function getBasePath(): string {
+  return window.RUBY_REACTOR_BASE || '/';
+}
+
 export function classRoute(className: string) {
-  return `/reactors/by-class/${encodeURIComponent(className)}`;
+  const base = getBasePath().replace(/\/$/, '');
+  return `${base}/reactors/by-class/${encodeURIComponent(className)}`;
+}
+
+export function reactorRoute(id: string) {
+  const base = getBasePath().replace(/\/$/, '');
+  return `${base}/reactors/${id}`;
 }
