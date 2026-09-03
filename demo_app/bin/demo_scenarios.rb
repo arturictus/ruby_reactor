@@ -41,8 +41,8 @@ end
 puts "\n"
 
 puts "=== 3. Running Async Patterns ==="
-puts "-- FullAsyncReactor --"
-res = FullAsyncReactor.run(param: "test")
+puts "-- FullBackgroundReactor --"
+res = FullBackgroundReactor.run(param: "test")
 puts "Result Class: #{res.class} (Expected: RubyReactor::DispatchResult)"
 
 puts "-- BackgroundDemoReactor --"

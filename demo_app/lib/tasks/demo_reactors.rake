@@ -19,7 +19,7 @@ namespace :demo do
       result = PaymentWorkflow.call(order_id: order_id, fail_at: fail_at)
 
       if result.is_a?(RubyReactor::DispatchResult)
-        puts "⏳ ASYNC: Workflow started asynchronously."
+        puts "⏳ BACKGROUND: Workflow started in background."
         puts "   Execution ID: #{result.execution_id}"
       elsif result.success?
         puts "✅ SUCCESS: Workflow completed successfully."
@@ -47,7 +47,7 @@ namespace :demo do
       )
 
       if result.is_a?(RubyReactor::DispatchResult)
-        puts "⏳ ASYNC: Workflow started asynchronously."
+        puts "⏳ BACKGROUND: Workflow started in background."
         puts "   Execution ID: #{result.execution_id}"
       elsif result.success?
         puts "✅ SUCCESS: Workflow completed successfully."
@@ -176,7 +176,7 @@ namespace :demo do
       result = reactor_class.call(params)
 
       if result.is_a?(RubyReactor::DispatchResult)
-        puts "⏳ ASYNC: Workflow started/paused asynchronously."
+        puts "⏳ BACKGROUND: Workflow started/paused in background."
         puts "   Execution ID: #{result.execution_id}"
       elsif result.success?
         puts "✅ SUCCESS: Workflow completed successfully."
@@ -194,8 +194,8 @@ namespace :demo do
     # 1. Success (pauses at interrupt)
     run_interrupt_reactor("FormInterruptReactor [Success]", FormInterruptReactor, { user_name: "Alice" })
 
-    # # 2. Fail at async_step_before
-    run_interrupt_reactor("FormInterruptReactor [Fail: async_step_before]", FormInterruptReactor, { user_name: "Alice", fail_at: :async_step_before })
+    # # 2. Fail at background_step_before
+    run_interrupt_reactor("FormInterruptReactor [Fail: background_step_before]", FormInterruptReactor, { user_name: "Alice", fail_at: :background_step_before })
 
     # # 3. Fail at prepare_application
     run_interrupt_reactor("FormInterruptReactor [Fail: prepare_application]", FormInterruptReactor, { user_name: "Alice", fail_at: :prepare_application })
@@ -203,8 +203,8 @@ namespace :demo do
     # # 4. Fail at finalize_application (will pause first)
     run_interrupt_reactor("FormInterruptReactor [Fail: finalize_application]", FormInterruptReactor, { user_name: "Alice", fail_at: :finalize_application })
 
-    # # 5. Fail at async_step_after (will pause first)
-    run_interrupt_reactor("FormInterruptReactor [Fail: async_step_after]", FormInterruptReactor, { user_name: "Alice", fail_at: :async_step_after })
+    # # 5. Fail at background_step_after (will pause first)
+    run_interrupt_reactor("FormInterruptReactor [Fail: background_step_after]", FormInterruptReactor, { user_name: "Alice", fail_at: :background_step_after })
 
     # # 6. Validation Error
     run_interrupt_reactor("FormInterruptReactor [Validation Error]", FormInterruptReactor, {})
@@ -216,8 +216,8 @@ namespace :demo do
     # # 1. Success (pauses at interrupt)
     run_interrupt_reactor("WebhookInterruptReactor [Success]", WebhookInterruptReactor, { provider_id: "stripe" })
 
-    # # 2. Fail at async_step_before
-    run_interrupt_reactor("WebhookInterruptReactor [Fail: async_step_before]", WebhookInterruptReactor, { provider_id: "stripe", fail_at: :async_step_before })
+    # # 2. Fail at background_step_before
+    run_interrupt_reactor("WebhookInterruptReactor [Fail: background_step_before]", WebhookInterruptReactor, { provider_id: "stripe", fail_at: :background_step_before })
 
     # # 3. Fail at initiate_request
     run_interrupt_reactor("WebhookInterruptReactor [Fail: initiate_request]", WebhookInterruptReactor, { provider_id: "stripe", fail_at: :initiate_request })
@@ -225,8 +225,8 @@ namespace :demo do
     # # 4. Fail at process_response (will pause first)
     run_interrupt_reactor("WebhookInterruptReactor [Fail: process_response]", WebhookInterruptReactor, { provider_id: "stripe", fail_at: :process_response })
 
-    # # 5. Fail at async_step_after (will pause first)
-    run_interrupt_reactor("WebhookInterruptReactor [Fail: async_step_after]", WebhookInterruptReactor, { provider_id: "stripe", fail_at: :async_step_after })
+    # # 5. Fail at background_step_after (will pause first)
+    run_interrupt_reactor("WebhookInterruptReactor [Fail: background_step_after]", WebhookInterruptReactor, { provider_id: "stripe", fail_at: :background_step_after })
 
     # # 6. Validation Error
     run_interrupt_reactor("WebhookInterruptReactor [Validation Error]", WebhookInterruptReactor, {})
@@ -235,13 +235,13 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_async] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background] do
     puts "excuting all reactors"
   end
 
   def report_demo_result(result)
     if result.is_a?(RubyReactor::DispatchResult)
-      puts "⏳ ASYNC: Reactor started asynchronously."
+      puts "⏳ BACKGROUND: Reactor started in background."
       puts "   Execution ID: #{result.execution_id}"
       puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
     elsif result.success?
@@ -263,9 +263,6 @@ namespace :demo do
 
 
   desc "Run all async-related demo reactors"
-  task async: [:environment, :flush_redis, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo] do
-    puts "Executing all async-related demo reactors"
-  end
   task async: [:environment, :flush_redis, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo]
 
   desc "AsyncStepDemoReactor — async_step with a result() reader"
@@ -313,10 +310,10 @@ namespace :demo do
     report_demo_result(FireAndForgetAsyncReactorDemo.call(user_id: "user_11", fail_at: :backfill))
   end
 
-  desc "FullAsyncReactor — background all: true"
-  task full_async: [:environment, :flush_redis] do
-    puts "\n>>> Running FullAsyncReactor(param: 'demo_param')"
-    report_demo_result(FullAsyncReactor.call(param: "demo_param"))
+  desc "FullBackgroundReactor — background all: true"
+  task full_background: [:environment, :flush_redis] do
+    puts "\n>>> Running FullBackgroundReactor(param: 'demo_param')"
+    report_demo_result(FullBackgroundReactor.call(param: "demo_param"))
   end
 
   desc "OrderedLock — strict transaction ordering via with_ordered_lock"
@@ -428,7 +425,7 @@ namespace :demo do
       )
 
       if result.is_a?(RubyReactor::DispatchResult)
-        puts "⏳ ASYNC: ETL started successfully."
+        puts "⏳ BACKGROUND: ETL started in background."
         puts "   Execution ID: #{result.execution_id}"
         puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
       elsif result.success?
@@ -482,7 +479,7 @@ namespace :demo do
         result = reactor_class.call(params)
 
         if result.is_a?(RubyReactor::DispatchResult)
-          puts "⏳ ASYNC: Reactor started asynchronously."
+          puts "⏳ BACKGROUND: Reactor started in background."
           puts "   Execution ID: #{result.execution_id}"
           puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
         elsif result.respond_to?(:skipped?) && result.skipped?
@@ -523,7 +520,7 @@ namespace :demo do
     )
 
     puts "\n=== SemaphoreDemoReactor ==="
-    puts "Full-async pipeline (validate → charge → record). Launch three jobs to saturate the pool (limit: 2)."
+    puts "Full-background pipeline (validate → charge → record). Launch three jobs to saturate the pool (limit: 2)."
 
     run_coordination_reactor(
       "Gateway call 1",

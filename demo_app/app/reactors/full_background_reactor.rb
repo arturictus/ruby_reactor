@@ -1,4 +1,4 @@
-class FullAsyncReactor < RubyReactor::Reactor
+class FullBackgroundReactor < RubyReactor::Reactor
   background all: true
 
   input :param
@@ -7,7 +7,7 @@ class FullAsyncReactor < RubyReactor::Reactor
     argument :param, input(:param)
     run do |args|
       # logger is available in instance context
-      puts "FullAsyncReactor: Step 1 running in background for param #{args[:param]}"
+      puts "FullBackgroundReactor: Step 1 running in background for param #{args[:param]}"
       sleep 1
       Success("Step 1 done")
     end
@@ -16,7 +16,7 @@ class FullAsyncReactor < RubyReactor::Reactor
   step :background_task_2 do
     argument :prev, result(:background_task_1)
     run do |args|
-      puts "FullAsyncReactor: Step 2 running in background"
+      puts "FullBackgroundReactor: Step 2 running in background"
       Success("Step 2 done after #{args[:prev]}")
     end
   end
