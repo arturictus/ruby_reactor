@@ -235,7 +235,7 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :full_async] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_async] do
     puts "excuting all reactors"
   end
 
@@ -261,16 +261,56 @@ namespace :demo do
     report_demo_result(BackgroundDemoReactor.call(user_id: nil))
   end
 
+
+  desc "Run all async-related demo reactors"
+  task async: [:environment, :flush_redis, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo] do
+    puts "Executing all async-related demo reactors"
+  end
+  task async: [:environment, :flush_redis, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo]
+
   desc "AsyncStepDemoReactor — async_step with a result() reader"
   task async_step_demo: [:environment, :flush_redis] do
-    puts "\n>>> Running AsyncStepDemoReactor(email: 'demo@example.com')"
+    puts "\n>>> Running AsyncStepDemoReactor(email: 'demo@example.com') [success]"
     report_demo_result(AsyncStepDemoReactor.call(email: "demo@example.com"))
+
+    puts "\n>>> Running AsyncStepDemoReactor(email: 'bounce@example.com', fail_at: :send_email) " \
+         "[dispatched unit fails, awaited reader propagates + compensates :record_signup]"
+    report_demo_result(AsyncStepDemoReactor.call(email: "bounce@example.com", fail_at: :send_email))
   end
 
   desc "AsyncReactorDemoReactor — fire-and-forget + awaited async_reactor children"
   task async_reactor_demo: [:environment, :flush_redis] do
-    puts "\n>>> Running AsyncReactorDemoReactor(user_id: 'user_7')"
+    puts "\n>>> Running AsyncReactorDemoReactor(user_id: 'user_7') [success]"
     report_demo_result(AsyncReactorDemoReactor.call(user_id: "user_7"))
+
+    puts "\n>>> Running AsyncReactorDemoReactor(user_id: 'user_8', fail_at: :backfill) " \
+         "[fire-and-forget child fails, nothing reads it, parent still succeeds]"
+    report_demo_result(AsyncReactorDemoReactor.call(user_id: "user_8", fail_at: :backfill))
+
+    puts "\n>>> Running AsyncReactorDemoReactor(user_id: 'user_9', fail_at: :provision) " \
+         "[awaited child fails, parent fails + compensates :reserve_seat]"
+    report_demo_result(AsyncReactorDemoReactor.call(user_id: "user_9", fail_at: :provision))
+  end
+
+  desc "SlowAsyncStepReactor(+Timeout) — async_step slow enough to exceed async_wait_timeout"
+  task slow_async_demo: [:environment, :flush_redis] do
+    puts "\n>>> Running SlowAsyncStepReactor(job_id: 'job_1', sleep_seconds: 35) " \
+         "[nothing reads the slow task, returns immediately]"
+    report_demo_result(SlowAsyncStepReactor.call(job_id: "job_1", sleep_seconds: 35))
+
+    puts "\n>>> Running SlowAsyncStepTimeoutReactor(job_id: 'job_2', sleep_seconds: 35) " \
+         "[awaited past the default async_wait_timeout (30s) -> AsyncWaitTimeoutError -> compensates :acknowledge]"
+    report_demo_result(SlowAsyncStepTimeoutReactor.call(job_id: "job_2", sleep_seconds: 35))
+  end
+
+  desc "FireAndForgetAsyncReactorDemo — async_reactor that nothing ever awaits"
+  task fire_and_forget_demo: [:environment, :flush_redis] do
+    puts "\n>>> Running FireAndForgetAsyncReactorDemo(user_id: 'user_10') [child dispatched, nothing waits on it]"
+    report_demo_result(FireAndForgetAsyncReactorDemo.call(user_id: "user_10"))
+
+    puts "\n>>> Running FireAndForgetAsyncReactorDemo(user_id: 'user_11', fail_at: :backfill) " \
+         "[child fails, but nobody reads it, so the parent still succeeds]"
+    report_demo_result(FireAndForgetAsyncReactorDemo.call(user_id: "user_11", fail_at: :backfill))
   end
 
   desc "FullAsyncReactor — background all: true"

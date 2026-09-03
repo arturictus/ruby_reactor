@@ -32,4 +32,31 @@ RSpec.describe AsyncReactorDemoReactor, type: :reactor do
       expect(child).to be_success
     end
   end
+
+  describe "when the fire-and-forget child fails" do
+    let(:inputs) { { user_id: 8, fail_at: :backfill } }
+    subject(:reactor) { test_reactor(described_class, inputs, async: false) }
+
+    it "still succeeds — nothing reads the failing child's result" do
+      expect(reactor).to be_success
+      expect(reactor.async_reactor(:backfill_profile)).to be_failure
+    end
+  end
+
+  describe "when the awaited child fails" do
+    let(:inputs) { { user_id: 9, fail_at: :provision } }
+    subject(:reactor) { test_reactor(described_class, inputs, async: false) }
+
+    it "fails the reactor with the child's error" do
+      expect(reactor).to be_failure
+      expect(reactor.result.error).to include("Provisioning service declined the request")
+    end
+
+    it "compensates :reserve_seat, which already ran" do
+      allow(Rails.logger).to receive(:warn).and_call_original
+
+      expect(reactor).to be_failure
+      expect(Rails.logger).to have_received(:warn).with(/releasing provisioning seat/)
+    end
+  end
 end

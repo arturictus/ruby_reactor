@@ -31,4 +31,33 @@ RSpec.describe AsyncStepDemoReactor, type: :reactor do
       expect(reactor).to have_run_step(:confirm_delivery).after(:send_email)
     end
   end
+
+  # A real dispatch (not `async: false`), so the failure genuinely travels
+  # through the notified wait — the same path `:confirm_delivery` takes in
+  # production — rather than the ordinary immediate-failure short-circuit
+  # `async: false` would substitute for it.
+  describe "when the dispatched unit fails and the reader propagates it" do
+    let(:inputs) { { email: "bounce@example.com", fail_at: :send_email } }
+    subject(:reactor) { test_reactor(described_class, inputs) }
+
+    around do |example|
+      original = RubyReactor.configuration.async_wait_timeout
+      RubyReactor.configuration.async_wait_timeout = 5
+      example.run
+    ensure
+      RubyReactor.configuration.async_wait_timeout = original
+    end
+
+    it "fails the reactor with the async step's error and compensates :record_signup" do
+      allow(Rails.logger).to receive(:warn).and_call_original
+      Thread.new do
+        sleep 0.1
+        drain_async_jobs
+      end
+
+      expect(reactor).to be_failure
+      expect(reactor.result.error).to include("SMTP provider rejected the message")
+      expect(Rails.logger).to have_received(:warn).with(/undoing signup record/)
+    end
+  end
 end

@@ -5,12 +5,20 @@
 # Zeitwerk there and the job dies with a NameError.
 class AccountProvisioningReactor < RubyReactor::Reactor
   input :user_id
+  input :fail_at, optional: true
 
   step :provision do
     argument :user_id, input(:user_id)
+    argument :fail_at, input(:fail_at)
+
     run do |args|
-      Rails.logger.info "AccountProvisioningReactor: provisioning account for #{args[:user_id]}"
-      Success({ account_id: "acct-#{args[:user_id]}" })
+      if args[:fail_at]&.to_sym == :provision
+        Rails.logger.warn "AccountProvisioningReactor: provisioning declined for #{args[:user_id]}"
+        Failure("Provisioning service declined the request")
+      else
+        Rails.logger.info "AccountProvisioningReactor: provisioning account for #{args[:user_id]}"
+        Success({ account_id: "acct-#{args[:user_id]}" })
+      end
     end
   end
 
