@@ -1,9 +1,9 @@
 import useSWR from 'swr';
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Activity, AlertCircle, ChevronLeft, Search, Filter } from 'lucide-react';
 import { apiUrl } from '../lib/utils';
-import { reactorRoute } from '../lib/reactors';
+import { matchesStatusFilter, reactorRoute } from '../lib/reactors';
 import StatusBadge from './StatusBadge';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
@@ -13,14 +13,14 @@ export default function ReactorClassInstances() {
   const className = encodedClassName ? decodeURIComponent(encodedClassName) : '';
   const { data: reactors, error, isLoading } = useSWR(apiUrl('/api/reactors'), fetcher, { refreshInterval: 2000 });
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const statusFilter = searchParams.get('status') || 'all';
 
   const classReactors = reactors?.filter((reactor: any) => reactor.class === className);
 
   const filteredReactors = classReactors?.filter((reactor: any) => {
     const matchesSearch = reactor.id.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || reactor.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    return matchesSearch && matchesStatusFilter(reactor.status, statusFilter);
   });
 
   if (error) return (
@@ -61,13 +61,23 @@ export default function ReactorClassInstances() {
             <Filter className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                if (next === 'all') {
+                  setSearchParams({});
+                } else {
+                  setSearchParams({ status: next });
+                }
+              }}
               className="appearance-none bg-slate-900/50 border border-slate-800 text-slate-300 rounded-lg pl-9 pr-8 py-2 hover:bg-slate-800 hover:text-white transition-colors text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 cursor-pointer"
             >
               <option value="all">All Status</option>
+              <option value="success">Success</option>
               <option value="running">Running</option>
+              <option value="errors">Errors</option>
               <option value="completed">Completed</option>
               <option value="skipped">Skipped</option>
+              <option value="paused">Paused</option>
               <option value="failed">Failed</option>
               <option value="cancelled">Cancelled</option>
             </select>
