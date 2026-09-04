@@ -257,4 +257,32 @@ RSpec.describe RubyReactor::Web::API, type: :request do
         .to eq({ x: { type: :composed, name: :x } })
     end
   end
+
+  # A failed map records no result on the parent, so the failing step showed
+  # nothing in the dashboard while its element results sat in storage.
+  describe ".with_map_summaries" do
+    let(:storage) { instance_double(RubyReactor::Storage::RedisAdapter) }
+    let(:structure) { { prepare: { type: "map" }, show: { type: "step" } } }
+
+    before do
+      allow(RubyReactor.configuration).to receive(:storage_adapter).and_return(storage)
+    end
+
+    it "fills a map step's missing result from its stored elements" do
+      allow(storage).to receive(:count_map_results).with("ctx-1:prepare", "Parent").and_return(2)
+
+      results = described_class.with_map_summaries({}, structure, "ctx-1", "Parent")
+
+      expect(results[:prepare]).to be_a(RubyReactor::Map::ResultEnumerator)
+      expect(results[:prepare].map_id).to eq("ctx-1:prepare")
+    end
+
+    it "leaves a recorded result and maps with no stored elements alone" do
+      allow(storage).to receive(:count_map_results).and_return(0)
+
+      expect(described_class.with_map_summaries({ prepare: [1] }, structure, "ctx-1", "Parent"))
+        .to eq({ prepare: [1] })
+      expect(described_class.with_map_summaries({}, structure, "ctx-1", "Parent")).to eq({})
+    end
+  end
 end

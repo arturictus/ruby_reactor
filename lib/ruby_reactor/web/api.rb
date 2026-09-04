@@ -48,7 +48,9 @@ module RubyReactor
                 step_attempts: data.dig(:retry_context, :step_attempts) || {},
                 created_at: data[:started_at],
                 inputs: data[:inputs],
-                intermediate_results: data[:intermediate_results],
+                intermediate_results: self.class.with_map_summaries(
+                  data[:intermediate_results] || {}, structure, data[:context_id], data[:reactor_class].to_s
+                ),
                 structure: structure,
                 # Once per reactor, never per step: the old per-step `async`
                 # field is gone because there is now exactly one hand-off point.
@@ -211,6 +213,27 @@ module RubyReactor
       # or nil. Kept out of `build_structure` deliberately — that hash is keyed
       # by step name and the dashboard iterates it, so a non-step key there
       # would render as a phantom node.
+      # A map that fails never records a result on the parent, so the step that
+      # actually failed had nothing to show in the dashboard. The element
+      # results are still in storage — summarize them exactly as a completed
+      # map's, so the failed elements stay inspectable.
+      def self.with_map_summaries(results, structure, context_id, reactor_class_name)
+        storage = RubyReactor.configuration.storage_adapter
+        return results unless storage.respond_to?(:count_map_results)
+
+        results = results.dup
+        structure.each do |step_name, config|
+          next unless config[:type] == "map"
+          next if results.key?(step_name)
+
+          map_id = "#{context_id}:#{step_name}"
+          next if storage.count_map_results(map_id, reactor_class_name).to_i.zero?
+
+          results[step_name] = RubyReactor::Map::ResultEnumerator.new(map_id, reactor_class_name)
+        end
+        results
+      end
+
       def self.background_handoff_for(reactor_class)
         return nil unless reactor_class.respond_to?(:background_handoff)
 

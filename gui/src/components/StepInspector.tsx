@@ -565,8 +565,9 @@ export default function StepInspector({
           </div>
         )}
 
-        {/* Error Section */}
-        {isFailedStep && failureReason && (
+        {/* Error Section — a map's failure is whichever element tripped fail_fast,
+            one arbitrary sample of many; MapResultsPanel lists them all. */}
+        {isFailedStep && failureReason && !isMapResults(result) && (
           <div className="space-y-4">
             <h3 className="text-sm font-medium text-red-500 mb-3 flex items-center gap-2">
               <AlertCircle className="w-4 h-4" />

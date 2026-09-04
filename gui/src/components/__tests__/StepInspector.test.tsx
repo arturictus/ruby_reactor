@@ -485,5 +485,17 @@ describe('StepInspector', () => {
       expect(screen.getByText('Element inputs')).toBeInTheDocument();
       expect(screen.getByText('app/reactors/x.rb:47')).toBeInTheDocument();
     });
+
+    it('drops the single-failure panel — the map lists every failed element', () => {
+      render(
+        <StepInspector
+          {...mapProps}
+          error={{ step_name: 'prepare_products', error: 'Random error triggered!' }}
+        />
+      );
+
+      expect(screen.queryByText('Failure Details')).not.toBeInTheDocument();
+      expect(screen.getByText('Failed elements')).toBeInTheDocument();
+    });
   });
 });
