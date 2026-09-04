@@ -31,7 +31,7 @@ class LedgerTransactionReactor < RubyReactor::Reactor
     end
   end
 
-  async true
+  background all: true
 
   input :account_id do
     required(:account_id).filled(:string)

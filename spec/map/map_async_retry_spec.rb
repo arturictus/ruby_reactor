@@ -49,7 +49,7 @@ RSpec.describe "Map Async Retry Behavior" do
       reactor = AsyncRetryMapReactorV2.new
       result = reactor.run(items: %w[hello world], fail_until_attempt: 3)
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # No batch_size now runs through the same per-element path as batch_size
       # maps (batch_size defaults to the full source size), so drain the element
@@ -73,7 +73,7 @@ RSpec.describe "Map Async Retry Behavior" do
       reactor = AsyncRetryMapReactorV2.new
       result = reactor.run(items: %w[hello world], fail_until_attempt: 10)
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
       RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
@@ -88,12 +88,18 @@ RSpec.describe "Map Async Retry Behavior" do
       expect(context.status).to eq("failed")
       expect(context.failure_reason.error).to include("failed after 5 attempts")
 
-      # The per-element error is also recorded in the stored map results.
+      # The per-element error is also recorded in the stored map results — as the
+      # whole serialized Failure, so the step that failed survives the element's
+      # own context row.
       map_id = context_data["map_operations"]["processed"]
       map_results = storage.retrieve_map_results(map_id, AsyncRetryMapReactorV2.name)
       errors = map_results.select { |v| v.is_a?(Hash) && v["_error"] }
       expect(errors).not_to be_empty
-      expect(errors.first["_error"]).to include("failed after 5 attempts")
+      expect(errors.first["_error"]).to include(
+        "error" => a_string_including("failed after 5 attempts"),
+        "step_name" => "process_with_retry",
+        "reactor_name" => "AsyncRetryItemReactor"
+      )
     end
   end
 
@@ -143,7 +149,7 @@ RSpec.describe "Map Async Retry Behavior" do
       reactor = AsyncBatchRetryMapReactorV2.new
       result = reactor.run(items: %w[hello world foo bar], fail_until_attempt: 3)
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # Drain workers (multiple times might be needed for batches/retries)
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
@@ -170,7 +176,7 @@ RSpec.describe "Map Async Retry Behavior" do
       reactor = AsyncBatchRetryMapReactorV2.new
       result = reactor.run(items: %w[a b c d e], fail_until_attempt: 2)
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # Drain workers
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
@@ -254,7 +260,7 @@ RSpec.describe "Map Async Retry Behavior" do
         fail_until_attempt: 3
       )
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # Drain workers
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
@@ -279,7 +285,7 @@ RSpec.describe "Map Async Retry Behavior" do
         fail_until_attempt: 10 # Will exhaust retries
       )
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # Drain workers
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain

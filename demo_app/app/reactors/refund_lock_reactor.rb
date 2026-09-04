@@ -26,7 +26,7 @@ class RefundLockReactor < RubyReactor::Reactor
     end
   end
 
-  async true
+  background all: true
 
   input :order_id do
     required(:order_id).filled(:string)

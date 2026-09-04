@@ -95,7 +95,7 @@ module RubyReactor
 
           # Manually update execution trace to reflect completion
           # This is necessary because resume_execution continues from the NEXT step
-          # and the async step (which returned AsyncResult) needs to be marked as done with actual value
+          # and the async step (which returned DispatchResult) needs to be marked as done with actual value
           parent_context.execution_trace << {
             type: :result,
             step: step_name_sym,

@@ -69,7 +69,7 @@ module RubyReactor
       #
       # The strict-mode chain-skip only fires on a *fresh* start (no step
       # has run yet on this context). This lets an in-flight run that paused
-      # (Interrupt / AsyncResult) complete on resume regardless of chain
+      # (Interrupt / DispatchResult) complete on resume regardless of chain
       # failures that landed while it was parked, while still applying
       # strict to a fresh Sidekiq job (which enters via `resume_execution`
       # but has no prior step state).
@@ -296,7 +296,7 @@ module RubyReactor
 
       def terminal_for_ordered_lock?(result)
         case result
-        when RubyReactor::AsyncResult, RubyReactor::InterruptResult, RetryQueuedResult
+        when RubyReactor::DispatchResult, RubyReactor::InterruptResult, RetryQueuedResult
           false
         when RubyReactor::Success, RubyReactor::Failure
           true

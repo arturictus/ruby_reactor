@@ -20,7 +20,7 @@ RSpec.describe "Map Batch Size Execution" do
     numbers = (1..10).to_a
     result = MapTestReactors::BatchMapReactor.run(numbers: numbers)
 
-    expect(result).to be_a(RubyReactor::AsyncResult)
+    expect(result).to be_a(RubyReactor::DispatchResult)
 
     # Should only queue 2 jobs initially because batch_size is 2
     expect(RubyReactor::Adapters::Sidekiq::MapElementWorker.jobs.size).to eq(2)

@@ -167,6 +167,30 @@ RSpec.describe RubyReactor::Storage::RedisAdapter do
       expect(result.map { |item| item[:id] }).to include(retried_id)
       expect(result.map { |item| item[:id] }).not_to include(nested_id)
     end
+
+    it "excludes async_step Step Result Records, which glob-match the same 'reactor:*:context:*' pattern" do
+      context_id = "ctx-with-async-step"
+      reactor_class = "MyReactor"
+
+      redis_client.set(
+        "reactor:#{reactor_class}:context:#{context_id}",
+        {
+          "context_id" => context_id,
+          "reactor_class" => reactor_class,
+          "started_at" => Time.now.to_s,
+          "retry_count" => 0
+        }.to_json
+      )
+      redis_client.set(
+        "reactor:#{reactor_class}:context:#{context_id}:step_result:send_email",
+        { "status" => "dispatched", "dispatched_at" => Time.now.to_s }.to_json
+      )
+
+      result = adapter.scan_reactors(pattern: "reactor:*:context:*", count: 10)
+
+      expect(result.map { |item| item[:id] }).to eq([context_id])
+      expect(result).to all(satisfy { |item| !item[:class].nil? })
+    end
   end
 
   describe "#find_context_by_id" do

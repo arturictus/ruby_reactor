@@ -24,7 +24,7 @@ RSpec.describe "Async Notification Interrupt Reactor" do
     # 1. Run reactor
     # retrieve_context (sync) -> send_notifications (async) -> manager_approval (interrupt)
     # Sidekiq::Testing.inline! means the async job runs synchronously.
-    # However, AsyncRouter still returns AsyncResult packaging the job_id.
+    # However, AsyncRouter still returns DispatchResult packaging the job_id.
 
     execution = reactor_class.run
 
@@ -43,7 +43,7 @@ RSpec.describe "Async Notification Interrupt Reactor" do
     # 3. Resume with approval
     # This resumes 'manager_approval'.
     # Then 'process_approval' runs. It is ALSO async.
-    # So continue will return AsyncResult.
+    # So continue will return DispatchResult.
     result = reactor_class.continue(
       id: execution_id,
       step_name: :manager_approval,
@@ -58,7 +58,7 @@ RSpec.describe "Async Notification Interrupt Reactor" do
 
     expect(result.value).to eq("processed_approved_after_notifications_sent_to_123")
 
-    # Verify final result by reloading context or checking return value if we could (but AsyncResult hides it)
+    # Verify final result by reloading context or checking return value if we could (but DispatchResult hides it)
     reactor = reactor_class.find(execution_id)
     # The context should have the results set
     expect(reactor.context.result(:manager_approval)).to eq({ status: "approved" })
@@ -75,14 +75,14 @@ RSpec.describe "Async Notification Interrupt Reactor" do
       allow(RubyReactor::Configuration.instance).to receive(:async_router).and_return(RubyReactor::Adapters::Sidekiq::Router)
     end
 
-    it "returns AsyncResult initially, then pauses at interrupt after worker runs" do
+    it "returns DispatchResult initially, then pauses at interrupt after worker runs" do
       # Force fake mode to ensure job is queued not executed
       Sidekiq::Testing.fake! do
         # 1. Run reactor -> retrieve_context (sync) -> send_notifications (async queued)
         result = reactor_class.run
 
-        # Should return AsyncResult because send_notifications is async
-        expect(result).to be_a(RubyReactor::AsyncResult)
+        # Should return DispatchResult because send_notifications is async
+        expect(result).to be_a(RubyReactor::DispatchResult)
         execution_id = result.execution_id
 
         expect(reactor_class.trace).to eq([:retrieve_context])
@@ -93,22 +93,18 @@ RSpec.describe "Async Notification Interrupt Reactor" do
 
         expect(reactor_class.trace).to eq(%i[retrieve_context send_notifications])
 
-        # 3. Resume with approval
-        # Resumes manager_approval -> queues process_approval (async)
+        # 3. Resume with approval. A reactor has exactly ONE hand-off point, and
+        # this one already passed it (:send_notifications ran in the worker), so
+        # the resumed remainder finishes in the resuming process rather than
+        # queuing a second hand-off — the old per-step flag's behavior here was
+        # a second, undeclared hand-off point.
         resume_result = reactor_class.continue(
           id: execution_id,
           step_name: :manager_approval,
           payload: { status: "approved" }
         )
 
-        expect(resume_result).to be_a(RubyReactor::AsyncResult)
-
-        # process_approval hasn't run yet (it's queued)
-        expect(reactor_class.trace).to eq(%i[retrieve_context send_notifications])
-
-        # 4. Drain again to run process_approval
-        RubyReactor::Adapters::Sidekiq::Worker.drain
-
+        expect(resume_result).to be_a(RubyReactor::Success)
         expect(reactor_class.trace).to eq(%i[retrieve_context send_notifications process_approval])
 
         # Verify final result

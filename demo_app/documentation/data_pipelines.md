@@ -77,7 +77,7 @@ sequenceDiagram
 
     Reactor->>Redis: Store Context
     Reactor->>Sidekiq: Enqueue MapElementWorkers
-    Note over Reactor: Returns AsyncResult immediately
+    Note over Reactor: Returns DispatchResult immediately
     
     loop For each element
         Sidekiq->>Worker: Process Element

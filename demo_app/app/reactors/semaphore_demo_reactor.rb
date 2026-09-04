@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class SemaphoreDemoReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   input :request_id, :string
   input :hold_seconds, :integer, optional: true, gteq?: 0

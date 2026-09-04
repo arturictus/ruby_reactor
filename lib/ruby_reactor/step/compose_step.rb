@@ -108,7 +108,7 @@ module RubyReactor
         end
 
         def handle_execution_result(result)
-          return result if result.is_a?(RubyReactor::AsyncResult) || result.is_a?(RubyReactor::RetryQueuedResult)
+          return result if result.is_a?(RubyReactor::DispatchResult) || result.is_a?(RubyReactor::RetryQueuedResult)
 
           if result.success?
             RubyReactor.Success(result.value)

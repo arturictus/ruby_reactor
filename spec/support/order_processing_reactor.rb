@@ -82,7 +82,6 @@ module RubyReactor
     end
 
     step :reserve_inventory do
-      async true
       argument :inventory, result(:check_inventory)
       argument :fail_at, input(:fail_at)
       argument :success_at_retry, input(:success_at_retry)

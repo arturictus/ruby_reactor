@@ -1,6 +1,6 @@
 require "rails_helper"
 
-RSpec.describe FullAsyncReactor, type: :reactor do
+RSpec.describe FullBackgroundReactor, type: :reactor do
   subject(:reactor) { test_reactor(described_class, { param: 42 }) }
 
   it "runs all async steps end-to-end via Sidekiq fake mode" do

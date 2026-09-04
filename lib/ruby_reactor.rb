@@ -3,6 +3,7 @@
 require "zeitwerk"
 require "pathname"
 require "securerandom"
+require "time"
 require_relative "ruby_reactor/registry"
 require_relative "ruby_reactor/utils/code_extractor"
 require_relative "ruby_reactor/dsl/lockable" # Add this
@@ -292,8 +293,10 @@ module RubyReactor
     end
   end
 
-  # Async result for background job execution
-  class AsyncResult
+  # Sentinel returned when a step's work is handed off to a worker job and is
+  # not yet resolved — produced by `background`, `async_step`, `async_reactor`,
+  # and map's async element dispatch alike.
+  class DispatchResult
     attr_reader :job_id, :intermediate_results, :execution_id
 
     def initialize(job_id:, intermediate_results: {}, execution_id: nil)
@@ -348,6 +351,23 @@ module RubyReactor
   # (A truly anonymous class can't be reconstituted by name in another process,
   # so cross-process resume of one is inherently unsupported; this only keeps
   # the keys self-consistent within a process — e.g. inline tests.)
+  # Completion-signal channels for the notified wait. One place, because
+  # the publishing side and the waiting side must agree exactly and they live in
+  # different files (StepWorker / Executor vs Template::Result).
+  def self.async_step_channel(context_id, step_name)
+    "rr:done:#{context_id}:#{step_name}"
+  end
+
+  def self.async_reactor_channel(execution_id)
+    "rr:done:#{execution_id}"
+  end
+
+  # Liveness lock for one dispatched `async_step`. Held by StepWorker for the
+  # life of the unit, so StepSweeper can tell a slow unit from a lost job.
+  def self.async_step_lock_key(context_id, step_name)
+    "async_step:#{context_id}:#{step_name}"
+  end
+
   def self.reactor_storage_name(reactor_class)
     return "AnonymousReactor" if reactor_class.nil?
 
@@ -407,7 +427,8 @@ module RubyReactor
     limit ||= configuration.sweeper_limit
     {
       reactors: Sweeper.run_once(limit: limit),
-      maps: Map::Sweeper.run_once(limit: limit)
+      maps: Map::Sweeper.run_once(limit: limit),
+      async_steps: StepSweeper.run_once(limit: limit)
     }
   end
 

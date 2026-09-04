@@ -40,6 +40,16 @@ module RubyReactor
       release
     end
 
+    # Park support: re-adopt a token that stayed checked out across a parked
+    # gap. Verifies the token is still in the held set — a reset/expiry in
+    # between means the slot was lost and the caller must acquire fresh.
+    def reattach(token) # rubocop:disable Naming/PredicateMethod
+      return false unless token && adapter.semaphore_held?(@key, token)
+
+      @token = token
+      true
+    end
+
     private
 
     def ensure_initialized

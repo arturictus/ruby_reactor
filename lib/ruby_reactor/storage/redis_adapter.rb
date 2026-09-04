@@ -8,9 +8,12 @@ module RubyReactor
     class RedisAdapter < Adapter
       include RedisLocking
       include RedisOrderedLocking
+      include RedisStepResults
+      include RedisPubSub
 
       def initialize(redis_config)
         super()
+        @redis_config = redis_config
         @redis = Redis.new(redis_config)
       end
 
@@ -174,20 +177,12 @@ module RubyReactor
         @redis.del(key)
       end
 
-      def subscribe(channel, &block)
-        @redis.subscribe(channel, &block)
-      end
-
-      def publish(channel, message)
-        @redis.publish(channel, message)
-      end
-
       def expire(key, seconds)
         @redis.expire(key, seconds)
       end
 
       # New methods for API
-      def scan_reactors(pattern: "reactor:*:context:*", count: 50)
+      def scan_reactors(pattern: "reactor:*:context:*", count: 50, include_dispatched_children: false)
         # Use SCAN to find keys matching the pattern
         results = []
         batch_keys = []
@@ -199,7 +194,7 @@ module RubyReactor
 
           # specific batch size for MGET processing
           if batch_keys.size >= 50
-            results.concat(fetch_and_filter_reactors(batch_keys))
+            results.concat(fetch_and_filter_reactors(batch_keys, include_dispatched_children))
             batch_keys = []
 
             # Stop if we have enough results
@@ -208,7 +203,7 @@ module RubyReactor
         end
 
         # Process remaining keys
-        results.concat(fetch_and_filter_reactors(batch_keys)) if batch_keys.any?
+        results.concat(fetch_and_filter_reactors(batch_keys, include_dispatched_children)) if batch_keys.any?
 
         results.take(count)
       end
@@ -320,14 +315,18 @@ module RubyReactor
         RubyReactor.configuration.context_ttl
       end
 
-      def fetch_and_filter_reactors(keys)
+      def fetch_and_filter_reactors(keys, include_dispatched_children = false)
         return [] if keys.empty?
 
         json_results = @redis.mget(*keys)
 
         json_results.compact.map do |json|
           data = JSON.parse(json)
-          next if data["parent_context_id"] # Skip nested reactors
+          next if data["parent_context_id"] && !(include_dispatched_children && dispatched_child?(data))
+          # Skip non-context records (e.g. async_step Step Result Records) whose
+          # keys are a "reactor:*:context:*" substring match on the SCAN glob
+          # (context:#{id}:step_result:#{name}) but aren't a reactor context.
+          next unless data["reactor_class"]
 
           {
             id: data["context_id"],
@@ -338,6 +337,11 @@ module RubyReactor
           }
         end.compact
       end
+
+      # An `async_reactor` child owns its own job, so a lost job strands it like
+      # a top-level reactor. Compose children (inline) and map elements
+      # (Map::Sweeper's) carry no marker, so neither is swept.
+      def dispatched_child?(data) = data.dig("private_data", "async_dispatched")
 
       def context_key(context_id, reactor_class_name)
         "reactor:#{reactor_class_name}:context:#{context_id}"

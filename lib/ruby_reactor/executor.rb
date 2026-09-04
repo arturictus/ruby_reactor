@@ -6,6 +6,7 @@ require_relative "executor/graph_manager"
 require_relative "executor/retry_manager"
 require_relative "executor/compensation_manager"
 require_relative "executor/result_handler"
+require_relative "executor/async_step_dispatch"
 require_relative "executor/step_executor"
 require_relative "executor/ordered_lock_support"
 
@@ -53,6 +54,7 @@ module RubyReactor
       @acquired_semaphore = nil
       @acquired_context_lock = nil
       @context_lock_owner = nil
+      @parked = false
       @contention_snooze = false
       @skip_context_persist = false
       @last_checkpoint_at = nil
@@ -101,6 +103,7 @@ module RubyReactor
       input_validator = InputValidator.new(@reactor_class, @context)
       input_validator.validate!
 
+      reset_held_lock_keys!
       acquire_locks_with_telemetry
 
       # Re-check the period gate now that we hold the lock. The pre-lock check
@@ -132,6 +135,13 @@ module RubyReactor
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
       raise e
+    rescue Error::AsyncResultPending
+      # Only reachable when this executor runs nested inside a worker (a
+      # composed child; sync callers never park). Propagate to the ROOT
+      # resume, which owns the park. This child's own lock/semaphore (if any)
+      # ARE released below and re-competed for on redelivery.
+      @contention_snooze = true
+      raise
     rescue StandardError => e
       @result = @result_handler.handle_execution_error(e)
       update_context_status(@result)
@@ -192,11 +202,19 @@ module RubyReactor
       # and must not contend on the root's own key.
       acquire_context_lock
 
+      reset_held_lock_keys!
+
       # Resumes intentionally skip check_rate_limit (a paused run must not
       # block itself on resume), so acquire lock/semaphore directly rather
-      # than via acquire_locks.
-      acquire_exclusive_lock if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
-      acquire_semaphore if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+      # than via acquire_locks. A context parked on an async result kept its
+      # primitives held across the gap — re-adopt them instead of re-competing.
+      parked = consume_parked_primitives!
+      if @reactor_class.respond_to?(:lock_config) && @reactor_class.lock_config
+        acquire_exclusive_lock(reattach: parked[:lock])
+      end
+      if @reactor_class.respond_to?(:semaphore_config) && @reactor_class.semaphore_config
+        acquire_semaphore(reattach_token: parked[:semaphore_token])
+      end
 
       # Post-lock re-check (see execute) — closes the period race for the
       # first run of a locked async reactor.
@@ -227,13 +245,21 @@ module RubyReactor
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
       raise e
+    rescue Error::AsyncResultPending => e
+      # An awaited async unit is not terminal yet: park. Exclusive lock and
+      # semaphore stay HELD (recorded on the context for the resuming job to
+      # re-adopt); the worker snoozes the job. The context lock is still
+      # released below — the redelivered job must be able to take it.
+      park_held_primitives!
+      @contention_snooze = true
+      raise e
     rescue StandardError => e
       handle_resume_error(e)
       update_context_status(@result)
       completed = true
       @result
     ensure
-      release_locks
+      release_locks unless @parked
       @acquired_context_lock&.release
       @acquired_context_lock = nil
       leave_ordered_lock_scope
@@ -265,6 +291,25 @@ module RubyReactor
       # Serialize context
       serialized_context = ContextSerializer.serialize(@context)
       storage.store_context(@context.context_id, serialized_context, reactor_class_name)
+      publish_completion_signal(storage)
+    end
+
+    # Wake any parent blocked in the notified wait on this execution. Published
+    # AFTER the durable save, never before: the context row is the answer and
+    # the signal only saves the waiter a fallback interval. Unconditional —
+    # publishing to a channel with no subscribers is near-free, so there is no
+    # need for an "am I awaited?" marker.
+    def publish_completion_signal(storage)
+      return unless @context.finished?
+
+      log_completion
+      storage.publish(RubyReactor.async_reactor_channel(@context.context_id), @context.status.to_s)
+    rescue StandardError => e
+      # The signal is an optimisation; losing it costs the waiter one fallback
+      # interval and must never fail the run that just completed.
+      RubyReactor.configuration.logger.warn(
+        "RubyReactor: could not publish completion signal for #{@context.context_id}: #{e.message}"
+      )
     end
 
     # Durable per-step checkpoint. Unlike save_context (which serializes THIS
@@ -386,6 +431,33 @@ module RubyReactor
       RubyReactor::Period.key(base, config[:every])
     end
 
+    # One machine-parseable line whenever an execution reaches a terminal
+    # state, carrying the parent link. A child dispatched fire-and-forget may
+    # have no other surface in its parent at all, so a failure entry also names
+    # the reason.
+    def log_completion
+      return unless @context.parent_context_id
+
+      fields = {
+        event: "ruby_reactor.async_reactor.completed",
+        reactor: @reactor_class&.name,
+        execution_id: @context.context_id,
+        parent_execution_id: @context.parent_context_id,
+        status: @context.status.to_s
+      }
+      fields[:failure] = failure_summary if @context.failed?
+
+      RubyReactor.configuration.logger.public_send(
+        @context.failed? ? :warn : :info,
+        fields.map { |k, v| "#{k}=#{v.inspect}" }.join(" ")
+      )
+    end
+
+    def failure_summary
+      reason = @context.failure_reason
+      reason.respond_to?(:error) ? reason.error.to_s : reason.to_s
+    end
+
     # Per-execution liveness lock on the root context id. Owner is a fresh UUID
     # per execution (NOT the context_id): a duplicate delivery of the *same*
     # context from a different worker must be blocked, so reentrancy by id would
@@ -422,7 +494,7 @@ module RubyReactor
       defined?(Sidekiq::Testing) && Sidekiq::Testing.respond_to?(:inline?) && Sidekiq::Testing.inline?
     end
 
-    def acquire_exclusive_lock
+    def acquire_exclusive_lock(reattach: false)
       config = @reactor_class.lock_config
       key = config[:key_proc].call(@context.inputs)
 
@@ -436,9 +508,21 @@ module RubyReactor
         wait: contention_wait(config[:wait]),
         auto_extend: config.fetch(:auto_extend, true)
       )
+
+      # Re-adopting a lock held across a parked gap: no :lock_acquired event —
+      # the original acquisition already emitted it, and the eventual release
+      # emits exactly one :lock_released. A lapsed TTL falls through to a
+      # fresh acquire.
+      if reattach && lock.reattach
+        @acquired_lock = lock
+        held_lock_keys << key
+        return
+      end
+
       begin
         lock.acquire
         @acquired_lock = lock
+        held_lock_keys << key
         middlewares.on(:lock_acquired, key, @context)
       rescue RubyReactor::Lock::AcquisitionError => e
         middlewares.on(:lock_failed, key, e, @context)
@@ -446,15 +530,29 @@ module RubyReactor
       end
     end
 
-    def acquire_semaphore
+    def acquire_semaphore(reattach_token: nil)
       config = @reactor_class.semaphore_config
       key = config[:key_proc].call(@context.inputs)
       limit = config[:limit]
 
       semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: contention_wait(config[:wait]))
+
+      # Same shape as the lock reattach above: keep the slot held across the
+      # parked gap, no duplicate :semaphore_acquired event, fall through to a
+      # fresh acquire when the token was lost in between.
+      if reattach_token && semaphore.reattach(reattach_token)
+        @acquired_semaphore = semaphore
+        held_lock_keys << key if limit == 1
+        return
+      end
+
       begin
         semaphore.acquire
         @acquired_semaphore = semaphore
+        # Only a single-slot semaphore has the circular-wait shape the
+        # async_reactor deadlock guard can act on; higher limits are ordinary
+        # contention and must keep snoozing.
+        held_lock_keys << key if limit == 1
         middlewares.on(:semaphore_acquired, key, limit, @context)
       rescue RubyReactor::Semaphore::AcquisitionError => e
         middlewares.on(:semaphore_failed, key, limit, e, @context)
@@ -471,10 +569,47 @@ module RubyReactor
       configured_wait
     end
 
+    # Park on a pending async result: keep exclusive lock / semaphore checked
+    # out through the gap, recording just enough on the (about-to-be-saved)
+    # context for the resuming job to re-adopt them. The lock's auto-extender
+    # dies with this process, so the parked gap is bounded by the lock TTL —
+    # the snooze redelivery (seconds) sits comfortably inside the default 60s.
+    def park_held_primitives!
+      @parked = true
+      parked = {}
+
+      if @acquired_lock
+        @acquired_lock.detach
+        parked[:lock] = true
+        @acquired_lock = nil
+      end
+
+      if @acquired_semaphore
+        parked[:semaphore_token] = @acquired_semaphore.token
+        @acquired_semaphore = nil
+      end
+
+      @context.private_data[:parked_primitives] = parked if parked.any?
+    end
+
+    # One-shot: the marker is deleted on read so a crash after this point
+    # degrades to a fresh acquire (reentrant by owner for the lock) rather
+    # than a stale reattach on some later, unrelated resume.
+    def consume_parked_primitives!
+      raw = @context.private_data.delete(:parked_primitives) ||
+            @context.private_data.delete("parked_primitives") || {}
+
+      {
+        lock: raw[:lock] || raw["lock"],
+        semaphore_token: raw[:semaphore_token] || raw["semaphore_token"]
+      }
+    end
+
     def release_locks
       if @acquired_semaphore
         key = @acquired_semaphore.key
         release_one("semaphore", @acquired_semaphore)
+        held_lock_keys.delete(key)
         middlewares.on(:semaphore_released, key, @context)
       end
       @acquired_semaphore = nil
@@ -483,8 +618,27 @@ module RubyReactor
 
       key = @acquired_lock.key
       release_one("lock", @acquired_lock)
+      held_lock_keys.delete(key)
       @acquired_lock = nil
       middlewares.on(:lock_released, key, @context)
+    end
+
+    # Exclusive keys this EXECUTION currently holds, recorded on the root
+    # context so a dispatching step anywhere in the tree can see the whole
+    # chain. Read by the async_reactor deadlock guard; nothing else
+    # depends on it, so a stale entry can only cost a false positive — hence
+    # the reset on the way in.
+    def held_lock_keys
+      root = @context.root_context || @context
+      root.private_data[:held_lock_keys] ||= []
+    end
+
+    # A rehydrated context can carry keys from the process that died holding
+    # them. Only the root executor resets, and only on the way in.
+    def reset_held_lock_keys!
+      return unless (@context.root_context || @context).equal?(@context)
+
+      (@context.root_context || @context).private_data[:held_lock_keys] = []
     end
 
     def release_one(kind, primitive)
@@ -506,7 +660,7 @@ module RubyReactor
       return unless result
 
       case result
-      when RubyReactor::AsyncResult
+      when RubyReactor::DispatchResult
         @context.status = :running
       when RubyReactor::Skipped
         @context.status = :skipped
@@ -547,7 +701,7 @@ module RubyReactor
         when RubyReactor::Skipped,
              RetryQueuedResult,
              RubyReactor::Failure,
-             RubyReactor::AsyncResult,
+             RubyReactor::DispatchResult,
              RubyReactor::InterruptResult
           # Terminal: step was skipped, requeued, failed, paused, or handed
           # off to async. Return the result as-is.

@@ -2,6 +2,27 @@
 
 module RubyReactor
   class Context
+    # `composed_contexts[step_name]` is the one channel for "children of this
+    # context, referenced for later drill-down" — the dashboard's
+    # `hydrate_composed_contexts` and `RSpec::TestSubject`'s traversal both
+    # switch on the `type:` tag. Four tags, all plain data (no serialization
+    # change between them):
+    #
+    #   :composed          => { name:, type:, context: }  — an inline `compose` child
+    #   :map_ref           => { name:, type:, map_id:, element_reactor_class: }
+    #   :async_step_ref    => { name:, type:, dispatched_at: }
+    #     The reference only. The `async_step`'s actual outcome lives in the Step
+    #     Result Record bucket, keyed by (context_id, step_name), because a
+    #     separate worker writes it concurrently with this still-running context.
+    #   :async_reactor_ref => { name:, type:, execution_id:, reactor_class_name:, dispatched_at: }
+    #     The child is an ordinary addressable reactor, so its outcome is simply
+    #     its own context row — no extra storage primitive.
+    #
+    # Both async refs are written SYNCHRONOUSLY by the dispatching step, before
+    # it returns, so there is no cross-process write race on the reference
+    # itself (unlike the result).
+    COMPOSED_CONTEXT_TYPES = %i[composed map_ref async_step_ref async_reactor_ref].freeze
+
     attr_accessor :inputs, :intermediate_results, :private_data, :current_step, :retry_count, :concurrency_key,
                   :retry_context, :reactor_class, :execution_trace, :inline_async_execution, :undo_stack,
                   :parent_context, :root_context, :composed_contexts, :context_id, :map_operations, :map_metadata,

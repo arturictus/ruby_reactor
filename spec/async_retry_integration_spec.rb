@@ -14,11 +14,11 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
   end
 
   describe "Full reactor async execution" do
-    it "queues job immediately and returns AsyncResult" do
+    it "queues job immediately and returns DispatchResult" do
       reactor = TestAsyncReactor.new
       result = reactor.run(user_id: 123, email: "test@example.com")
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
       expect(result.async?).to be true
       expect(result.success?).to be false
       expect(result.failure?).to be false
@@ -40,11 +40,11 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
   end
 
   describe "Step-level async handoff" do
-    it "executes synchronously until async step, then returns AsyncResult" do
+    it "executes synchronously until async step, then returns DispatchResult" do
       reactor = TestStepAsyncReactor.new
       result = reactor.run(user_id: 123, email: "test@example.com")
 
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # Verify job was queued for async step
       expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(1)
@@ -77,13 +77,14 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       unless defined?(FailingAsyncRetryReactor)
         FailingAsyncRetryReactor = Class.new(RubyReactor::Reactor) do
           step :failing_async_step do
-            async true
             retries max_attempts: 3, backoff: :fixed, base_delay: 1
 
             run do |_args, _context|
               RubyReactor::Failure("Step always fails")
             end
           end
+
+          background before: :failing_async_step
         end
       end
 
@@ -94,8 +95,8 @@ RSpec.describe "RubyReactor Async and Retry Integration" do
       # Run the reactor - this should queue the initial job
       result = reactor.run
 
-      # Should return AsyncResult
-      expect(result).to be_a(RubyReactor::AsyncResult)
+      # Should return DispatchResult
+      expect(result).to be_a(RubyReactor::DispatchResult)
 
       # Should have 1 job queued
       expect(RubyReactor::Adapters::Sidekiq::Worker.jobs.size).to eq(1)

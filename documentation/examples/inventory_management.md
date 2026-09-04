@@ -46,7 +46,7 @@ graph TD
 
 ```ruby
 class InventoryManagementReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 1.second
 
@@ -237,7 +237,7 @@ end
 
 ```ruby
 class BulkInventoryReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :validate_bulk_request do
     validate_args do
@@ -310,7 +310,7 @@ end
 
 ```ruby
 class InventoryTransferReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :validate_transfer do
     validate_args do
@@ -456,7 +456,7 @@ end
 
 ```ruby
 class ReplenishmentReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 5.minutes
 

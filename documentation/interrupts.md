@@ -103,6 +103,33 @@ ReportReactor.continue_by_correlation_id(
 )
 ```
 
+### Background Resume
+
+By default, `continue` runs the remaining steps **inline in the calling
+process** (your webhook controller, admin action, etc.). Declare
+`resume: :background` to hand the remainder to a worker instead:
+
+```ruby
+interrupt :wait_for_report, resume: :background do
+  wait_for :request_report
+  validate_payload do
+    required(:status).filled(:string)
+  end
+end
+```
+
+With `resume: :background`, `continue`:
+
+1.  Validates the payload **synchronously in the calling process** — an
+    invalid payload is rejected immediately (attempt counting and
+    `max_attempts` compensation work exactly as with inline resume), and
+    nothing is enqueued.
+2.  On a valid payload, stores it, persists the context, enqueues the resume
+    via the configured `async_router`, and returns an `DispatchResult`.
+
+The caller never executes post-interrupt steps, so a webhook can acknowledge
+instantly even when heavy work follows the interrupt.
+
 ### Resuming Method Styles
 
 There are two ways to invoke continuation:

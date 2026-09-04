@@ -13,7 +13,8 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { cn } from '../lib/utils';
-import { Activity, CheckCircle2, AlertCircle, Clock, Ban } from 'lucide-react';
+import { reactorRoute } from '../lib/reactors';
+import { Activity, CheckCircle2, AlertCircle, Clock, Ban, Send, ExternalLink, Workflow } from 'lucide-react';
 
 interface DagVisualizerProps {
   structure: Record<string, any>;
@@ -27,9 +28,21 @@ interface DagVisualizerProps {
   composedContexts?: Record<string, any>;
 }
 
+// `async_step` and `async_reactor` do NOT run in this execution — their work is
+// dispatched elsewhere and may still be in flight when this reactor finishes.
+// The node says so explicitly rather than looking like any other step.
+const ASYNC_STEP_TYPES = ['async_step', 'async_reactor'];
+
+const ASYNC_TYPE_ICONS = {
+  async_step: Send,
+  async_reactor: Workflow
+};
+
 const StepNode = ({ data }: { data: any }) => {
   const isSelected = data.selected;
   const status = data.status;
+  const isAsync = ASYNC_STEP_TYPES.includes(data.type);
+  const AsyncIcon = ASYNC_TYPE_ICONS[data.type as keyof typeof ASYNC_TYPE_ICONS];
 
   const statusColors = {
     pending: "border-slate-700 bg-slate-900 text-slate-500",
@@ -51,6 +64,8 @@ const StepNode = ({ data }: { data: any }) => {
     <div className={cn(
       "px-4 py-3 rounded-lg border shadow-lg transition-all min-w-[150px]",
       statusColors[status as keyof typeof statusColors] || statusColors.pending,
+      // Dashed = the work is not happening here.
+      isAsync && "border-dashed",
       isSelected && "ring-2 ring-white/20 scale-105"
     )}>
       <Handle type="target" position={Position.Top} className="!bg-slate-500 !w-2 !h-2" />
@@ -61,10 +76,22 @@ const StepNode = ({ data }: { data: any }) => {
           status === 'running' && "animate-pulse"
         )} />
         <div>
-          <div className="font-medium text-sm">{data.label}</div>
+          <div className="font-medium text-sm flex items-center gap-1.5">
+            {data.label}
+            {AsyncIcon && <AsyncIcon className="w-3 h-3 opacity-70" />}
+          </div>
           <div className="text-[10px] opacity-70 uppercase tracking-wider">
             {status === 'cancelled' ? 'CANCELLED' : data.type}
           </div>
+          {data.childExecutionId && (
+            <a
+              href={reactorRoute(data.childExecutionId)}
+              onClick={(e) => e.stopPropagation()}
+              className="mt-1 inline-flex items-center gap-1 text-[10px] underline opacity-70 hover:opacity-100"
+            >
+              open child <ExternalLink className="w-2.5 h-2.5" />
+            </a>
+          )}
         </div>
       </div>
 
@@ -128,7 +155,9 @@ const performLayout = (
   nodes: Record<string, any>,
   parentId: string | null = null,
   nodeStatus: Record<string, string>,
-  path: string = ""
+  path: string = "",
+  // Step name -> child execution id, for async_reactor drill-down.
+  childLinks: Record<string, string> = {}
 ): LayoutResult => {
   if (!nodes || Object.keys(nodes).length === 0) {
     return { nodes: [], edges: [], width: 0, height: 0 };
@@ -149,7 +178,7 @@ const performLayout = (
 
     if (config.nested_structure) {
       // Recurse
-      childLayout = performLayout(config.nested_structure, fullId, nodeStatus, fullId);
+      childLayout = performLayout(config.nested_structure, fullId, nodeStatus, fullId, childLinks);
       width = childLayout.width + GROUP_PADDING * 2;
       height = childLayout.height + GROUP_PADDING * 2 + 30; // 30 for label header
 
@@ -233,6 +262,7 @@ const performLayout = (
           label: N.key,
           type: N.config.type,
           status: nodeStatus[N.fullId] || 'pending',
+          childExecutionId: childLinks[N.fullId],
           selected: false // handled by parent check
         },
         position: { x: currentX + N.width / 2 - (isGroup ? N.width / 2 : NODE_WIDTH / 2), y: currentY },
@@ -326,6 +356,14 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
           statusMap[fullId] = 'failed';
         }
 
+        // A map step still "completes" when individual elements failed
+        // (fail_fast false), so its result summary is the only signal that
+        // anything went wrong inside it.
+        const mapResult = currentResults?.[key];
+        if (mapResult?._type === 'map_results' && mapResult.failed > 0) {
+          statusMap[fullId] = 'failed';
+        }
+
         // 3. Handle global cancellation/failure states for unreached steps at this level
         if (statusMap[fullId] === 'pending' && (stepStatus === 'failed' || stepStatus === 'cancelled')) {
           statusMap[fullId] = 'cancelled';
@@ -375,10 +413,23 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
     return statusMap;
   }, [structure, steps, reactorStatus, error, results, composedContexts]);
 
+  // An async_reactor child is a full, independently addressable execution, so
+  // the node gets a link straight to it — the same drill-down compose and map
+  // already offer, just across a process boundary.
+  const childLinks = useMemo(() => {
+    const links: Record<string, string> = {};
+    Object.entries(composedContexts || {}).forEach(([key, value]) => {
+      const ref = value as { type?: string; execution_id?: string; context?: { context_id?: string } };
+      const executionId = ref?.execution_id || ref?.context?.context_id;
+      if (ref?.type === 'async_reactor_ref' && executionId) links[key] = executionId;
+    });
+    return links;
+  }, [composedContexts]);
+
   const { nodes, edges } = useMemo(() => {
     if (!structure) return { nodes: [], edges: [] };
 
-    const layout = performLayout(structure, null, nodeStatus);
+    const layout = performLayout(structure, null, nodeStatus, "", childLinks);
 
     // Post-process to set selection state which changes dynamically
     const finalNodes = layout.nodes.map(n => ({
@@ -390,7 +441,7 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
     }));
 
     return { nodes: finalNodes, edges: layout.edges };
-  }, [structure, nodeStatus, selectedStep]);
+  }, [structure, nodeStatus, childLinks, selectedStep]);
 
   const [nodesState, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edgesState, setEdges, onEdgesChange] = useEdgesState<Edge>([]);

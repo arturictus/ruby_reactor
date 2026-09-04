@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { aggregateByClass } from '../reactors';
+import { aggregateByClass, classRoute, matchesStatusFilter } from '../reactors';
 
 describe('aggregateByClass', () => {
   it('groups reactors by class and counts statuses', () => {
@@ -20,5 +20,29 @@ describe('aggregateByClass', () => {
 
   it('returns an empty array when no reactors exist', () => {
     expect(aggregateByClass([])).toEqual([]);
+  });
+});
+
+describe('matchesStatusFilter', () => {
+  it('matches dashboard success and error groups', () => {
+    expect(matchesStatusFilter('completed', 'success')).toBe(true);
+    expect(matchesStatusFilter('skipped', 'success')).toBe(true);
+    expect(matchesStatusFilter('failed', 'success')).toBe(false);
+    expect(matchesStatusFilter('failed', 'errors')).toBe(true);
+    expect(matchesStatusFilter('cancelled', 'errors')).toBe(true);
+    expect(matchesStatusFilter('paused', 'running')).toBe(true);
+  });
+
+  it('matches an exact status or all', () => {
+    expect(matchesStatusFilter('completed', 'completed')).toBe(true);
+    expect(matchesStatusFilter('failed', 'completed')).toBe(false);
+    expect(matchesStatusFilter('failed', 'all')).toBe(true);
+  });
+});
+
+describe('classRoute', () => {
+  it('appends a status query when a filter is active', () => {
+    expect(classRoute('ParentReactor')).toBe('/reactors/by-class/ParentReactor');
+    expect(classRoute('ParentReactor', 'success')).toBe('/reactors/by-class/ParentReactor?status=success');
   });
 });

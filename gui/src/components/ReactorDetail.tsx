@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Play, XOctagon, AlertCircle } from 'lucide-react';
 import { useState } from 'react';
 import { apiUrl } from '../lib/utils';
-import { classRoute } from '../lib/reactors';
+import { classRoute, reactorRoute } from '../lib/reactors';
 import DagVisualizer from './DagVisualizer';
 import StepInspector from './StepInspector';
 import CoordinationPanel from './CoordinationPanel';
@@ -44,7 +44,7 @@ export default function ReactorDetail() {
         return;
       }
 
-      navigate(`/reactors/${payload.id}`);
+      navigate(reactorRoute(payload.id));
     } catch (e) {
       setRetryError('Failed to retry execution');
       console.error('Failed to retry', e);
@@ -129,7 +129,7 @@ export default function ReactorDetail() {
                   : 'Workflow Failed'}
                 {reactor.error.step_name && <span className="text-red-400"> at step <span className="font-mono bg-red-500/10 px-1 rounded">{reactor.error.step_name}</span></span>}
               </h3>
-              <p className="text-xs text-red-400/80 font-mono truncate">{reactor.error.message}</p>
+              <p className="text-xs text-red-400/80 font-mono truncate">{reactor.error.message || reactor.error.error}</p>
             </div>
           </div>
         </div>

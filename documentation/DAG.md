@@ -365,7 +365,7 @@ graph TD
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :validate_order do
     run { validate_order_logic }
@@ -408,7 +408,7 @@ end
 
 ```ruby
 class ComplexWorkflowReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   # Level 1 - Independent steps
   step :validate_input do

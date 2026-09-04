@@ -47,6 +47,11 @@ module RedisHelpers
   end
 end
 
+# ActiveJob's per-job enqueue/perform logging drowns the spec output once a
+# group runs against the ActiveJob backend; the assertions, not the log, are
+# what tell us the job ran.
+ActiveJob::Base.logger = Logger.new(IO::NULL) if defined?(ActiveJob::Base)
+
 # Load support files
 Dir[File.expand_path("support/**/*.rb", __dir__)].each { |f| require f }
 
@@ -60,6 +65,10 @@ Sidekiq.configure_server do |config|
 end
 
 Sidekiq.configure_client do |config|
+  # The orchestration lane really enqueues, and a live worker really consumes,
+  # so the client must point at the same test Redis the rest of the suite uses.
+  # Harmless for the fake lane, which never opens a connection.
+  config.redis = { url: REDIS_TEST_URL }
   config.logger = Logger.new("log/sidekiq.log", 10, 1_024_000)
   config.logger.level = Logger::DEBUG
 end
