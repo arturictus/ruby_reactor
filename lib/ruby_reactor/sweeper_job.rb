@@ -38,6 +38,7 @@ module RubyReactor
     def run_sweeps(config)
       RubyReactor::Sweeper.run_once(limit: config.sweeper_limit)
       RubyReactor::Map::Sweeper.run_once(limit: config.sweeper_limit)
+      RubyReactor::StepSweeper.run_once(limit: config.sweeper_limit)
     rescue StandardError => e
       config.logger.error("RubyReactor sweeper sweep failed: #{e.class}: #{e.message}")
     end

@@ -5,6 +5,10 @@ namespace :demo do
     puts "Fushing redis at #{RubyReactor.configuration.storage.redis_url}"
     Redis.new(url: RubyReactor.configuration.storage.redis_url).flushdb
     Product.delete_all
+    # Sidekiq shares this database, so the flush also drops the schedule zset
+    # holding the sweeper's next self-scheduled tick. Without re-kicking, the
+    # chain stays dead until Sidekiq restarts and nothing recovers a lost job.
+    RubyReactor.start_sweeper!
     puts "✅ SUCCESS"
   end
 

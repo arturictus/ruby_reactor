@@ -44,6 +44,7 @@ module RubyReactor
       end
 
       def record_async_step_dispatch(step_config)
+        root = @context.root_context || @context
         @context.composed_contexts[step_config.name] = {
           name: step_config.name,
           type: :async_step_ref,
@@ -54,7 +55,16 @@ module RubyReactor
         }
         storage.store_step_result(
           @context.context_id, step_config.name,
-          { "status" => "dispatched", "dispatched_at" => Time.now.iso8601 },
+          {
+            "status" => "dispatched", "dispatched_at" => Time.now.iso8601,
+            # The re-dispatch arguments, verbatim. The record's own key names the
+            # reactor that OWNS the step, which for a composed child is not the
+            # root the worker must load, so recovery cannot re-derive them.
+            "root_context_id" => root.context_id,
+            "reactor_class_name" => RubyReactor.reactor_storage_name(root.reactor_class),
+            "step_context_id" => @context.context_id,
+            "step_name" => step_config.name.to_s
+          },
           async_step_class_name
         )
 
@@ -62,7 +72,6 @@ module RubyReactor
         # before the job exists AND must outlive the dispatched unit — including
         # the fire-and-forget case where this reactor finishes immediately and
         # nothing ever waits.
-        root = @context.root_context || @context
         checkpoint_root!(root, RubyReactor.reactor_storage_name(root.reactor_class))
       end
 

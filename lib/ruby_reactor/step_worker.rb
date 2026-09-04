@@ -37,7 +37,22 @@ module RubyReactor
       @step_name = step_name
     end
 
+    # The lock is what makes a lost unit recoverable: the record alone cannot say
+    # whether a `dispatched` unit is mid-flight or gone, so StepSweeper reads this
+    # lock as the liveness signal. It also drops a duplicate delivery rather than
+    # running the body a second time.
     def perform
+      lock = acquire_liveness_lock
+      return if lock == :contended
+
+      perform_unit
+    ensure
+      lock.release if lock.respond_to?(:release)
+    end
+
+    private
+
+    def perform_unit
       context = load_step_context
       return record_missing_parent unless context
 
@@ -53,7 +68,26 @@ module RubyReactor
       complete(RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name), nil)
     end
 
-    private
+    def acquire_liveness_lock
+      # Inline testing re-enters this frame synchronously, so the lock would
+      # self-contend; it only guards cross-process delivery, impossible inline.
+      return :inline if inline_testing_mode?
+
+      lock = RubyReactor::Lock.new(
+        RubyReactor.async_step_lock_key(@step_context_id, @step_name),
+        owner: SecureRandom.uuid, ttl: RubyReactor.configuration.context_lock_ttl,
+        wait: 0, auto_extend: true
+      )
+      lock.acquire
+      lock
+    rescue RubyReactor::Lock::AcquisitionError
+      log(:info, "duplicate_dropped")
+      :contended
+    end
+
+    def inline_testing_mode?
+      defined?(Sidekiq::Testing) && Sidekiq::Testing.respond_to?(:inline?) && Sidekiq::Testing.inline?
+    end
 
     def run_step(context, step_config)
       arguments = resolve_arguments(step_config, context)

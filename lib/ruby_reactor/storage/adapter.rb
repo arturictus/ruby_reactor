@@ -32,6 +32,10 @@ module RubyReactor
         raise NotImplementedError
       end
 
+      def scan_step_results(count: 1000)
+        raise NotImplementedError
+      end
+
       def retrieve_map_results(map_id, reactor_class_name, strict_ordering: true)
         raise NotImplementedError
       end
@@ -80,7 +84,7 @@ module RubyReactor
         raise NotImplementedError
       end
 
-      def scan_reactors(pattern: "*", count: 50)
+      def scan_reactors(pattern: "*", count: 50, include_dispatched_children: false)
         raise NotImplementedError
       end
 

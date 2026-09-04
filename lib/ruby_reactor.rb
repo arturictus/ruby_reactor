@@ -362,6 +362,12 @@ module RubyReactor
     "rr:done:#{execution_id}"
   end
 
+  # Liveness lock for one dispatched `async_step`. Held by StepWorker for the
+  # life of the unit, so StepSweeper can tell a slow unit from a lost job.
+  def self.async_step_lock_key(context_id, step_name)
+    "async_step:#{context_id}:#{step_name}"
+  end
+
   def self.reactor_storage_name(reactor_class)
     return "AnonymousReactor" if reactor_class.nil?
 
@@ -421,7 +427,8 @@ module RubyReactor
     limit ||= configuration.sweeper_limit
     {
       reactors: Sweeper.run_once(limit: limit),
-      maps: Map::Sweeper.run_once(limit: limit)
+      maps: Map::Sweeper.run_once(limit: limit),
+      async_steps: StepSweeper.run_once(limit: limit)
     }
   end
 

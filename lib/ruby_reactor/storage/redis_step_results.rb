@@ -25,6 +25,20 @@ module RubyReactor
         JSON.parse(json)
       end
 
+      # Every record, for StepSweeper — a unit whose job was lost leaves nothing
+      # else behind to find it by, since the parent only parks on the read side.
+      def scan_step_results(count: 1000)
+        records = []
+
+        @redis.scan_each(match: "reactor:*:context:*:step_result:*", count: 100) do |key|
+          json = @redis.get(key)
+          records << JSON.parse(json) if json
+          return records if records.size >= count
+        end
+
+        records
+      end
+
       private
 
       def step_result_key(context_id, step_name, reactor_class_name)

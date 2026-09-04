@@ -131,6 +131,10 @@ module RubyReactor
 
           # Persist BEFORE enqueue (F2) — the payload is identity-only.
           child_context.status = :running
+          # Marks the child as owned by a job of its own, which is what makes it
+          # sweepable: a compose child carries the same parent_context_id but runs
+          # inline in the parent, so re-enqueueing one would double-run it.
+          child_context.private_data[:async_dispatched] = true
           save(child_context, child_class)
 
           # The reference is written synchronously, by the process that is about
