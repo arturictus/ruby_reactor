@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0](https://github.com/arturictus/ruby_reactor/compare/v0.6.0...v0.7.0) (2026-09-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* `async` inside a `step` or `compose` block is removed. It was ambiguous — only the first flagged step in a reactor ever took effect and the rest were silently ignored — so it now raises `Error::DeprecatedDslError` at class-definition time, naming its replacements.
+
+### Features
+
+* Async steps and reactors, background DSL instead of `async` ([#46](https://github.com/arturictus/ruby_reactor/issues/46)) ([9326433](https://github.com/arturictus/ruby_reactor/commit/93264331ad69f648f30d9e365048705cd9b0d82d))
+
 ## [0.6.0](https://github.com/arturictus/ruby_reactor/compare/v0.5.4...v0.6.0) (2026-08-16)
 
 
