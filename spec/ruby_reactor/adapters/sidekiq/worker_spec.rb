@@ -32,6 +32,7 @@ RSpec.describe RubyReactor::Adapters::Sidekiq::Worker do
     allow(RubyReactor.configuration).to receive(:storage_adapter).and_return(adapter)
     allow(adapter).to receive(:retrieve_context).with(context_id, reactor_class_name).and_return(stored_data)
     allow(adapter).to receive(:store_context)
+    allow(adapter).to receive(:publish)
     allow(RubyReactor::ContextSerializer).to receive(:deserialize_hash).and_return(context)
     allow(RubyReactor::Executor).to receive(:new).and_return(executor)
     allow(executor).to receive(:checkpoint!)

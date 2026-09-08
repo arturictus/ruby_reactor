@@ -107,8 +107,7 @@ module RubyReactor
           guards: [],
           dependencies: dependencies.uniq,
           args_validator: nil,
-          output_validator: nil,
-          async: false # MapStep handles async internally via run_async
+          output_validator: nil
         }
       end
 

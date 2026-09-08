@@ -147,7 +147,8 @@ The lock owner is the **root context id** of the currently-executing reactor —
 Two implications:
 
 - A user-triggered retry that creates a new top-level run has a **new** owner. If the previous run's lock has not expired yet (e.g. process crashed without auto-extend), the retry will see contention.
-- Across the async pause/resume boundary, the lock is released on pause and re-acquired on resume — a separate runner can sneak in between. Lean on `ttl` and idempotency to make this safe.
+- Across an interrupt's pause/resume boundary, the lock is released on pause and re-acquired on resume — a separate runner can sneak in between. Lean on `ttl` and idempotency to make this safe.
+- A **parked async wait** is the exception: when a worker-side `result(:name)` read parks on a still-pending `async_step` / `async_reactor` (see [Async Reactors](async_reactors.md#waiting-on-dispatched-work)), the lock and any semaphore slot **stay checked out** across the gap and are re-adopted on redelivery — nothing can sneak in. The parked gap is covered by the lock's `ttl` alone (the auto-extender is not running between deliveries), so keep `ttl` above the snooze delay — at defaults (60s ttl vs ~5–10s snooze) this holds comfortably.
 
 ## Semaphores
 
@@ -585,7 +586,7 @@ The cursor moves forward only on results the executor considers **terminal** for
 The cursor does **not** move on:
 
 - `RubyReactor::InterruptResult` — the reactor is paused waiting for `continue()`. The same nonce stays in-flight; the poison-pill timeout is the long-term safety net here, so tune it accordingly for human-action workflows.
-- `RubyReactor::AsyncResult` — the run handed off to a different Sidekiq job; that job still carries the same nonce.
+- `RubyReactor::DispatchResult` — the run handed off to a different Sidekiq job; that job still carries the same nonce.
 - `RetryQueuedResult` — a step explicitly re-queued itself.
 - `OrderedLock::WaitError` / `Lock::AcquisitionError` / other contention errors — they propagate before the executor sets `@result`, so the `ensure` block sees nothing terminal and does not advance.
 
@@ -617,7 +618,7 @@ Notes on strict mode:
 - The poison marker is per **key**, not per reactor class. Different reactors that share a key share the marker.
 - Only the **first** failure sticks. A second failure does not move the marker; cleanup is automatic on full drain.
 - Skipped runs from this mechanism are real `Skipped` results (`status: :skipped`, `result.success?` true, `result.skipped?` true, `result.reason == :ordered_lock_chain_failed`). They **do** advance the cursor — the chain keeps draining, it just produces Skipped for each subsequent member.
-- The chain-skip check applies only on the **initial** `execute`. A run that already started and then paused (InterruptResult / AsyncResult) **completes on resume** even if the chain failed while it was parked — once a nonce is past the gate it owns its slot until terminal.
+- The chain-skip check applies only on the **initial** `execute`. A run that already started and then paused (InterruptResult / DispatchResult) **completes on resume** even if the chain failed while it was parked — once a nonce is past the gate it owns its slot until terminal.
 - The marker auto-clears on full drain (`last_completed == next`). The very next batch starts un-poisoned.
 - Operators can read the marker via `RubyReactor::OrderedLock.peek(key)[:first_failed]` (0 if no failure).
 

@@ -16,10 +16,12 @@ RSpec.describe RubyReactor::Sweeper do
   end
 
   # Persist a context with the given status and return its id.
-  def store_context(status:)
+  def store_context(status:, parent_context_id: nil, async_dispatched: false)
     context = RubyReactor::Context.new({ n: 1 }, reactor_class)
     context.status = status
     context.current_step = :work if status == :running
+    context.parent_context_id = parent_context_id
+    context.private_data[:async_dispatched] = true if async_dispatched
     storage.store_context(
       context.context_id, RubyReactor::ContextSerializer.serialize(context), reactor_class.name
     )
@@ -55,6 +57,22 @@ RSpec.describe RubyReactor::Sweeper do
         expect(sweeper.run_once).to eq(0)
         expect(enqueued).to be_empty
       end
+    end
+
+    it "re-enqueues a stranded async_reactor child" do
+      # Nothing waits on a fire-and-forget child, so if its job is lost the
+      # sweeper is the only thing that can ever restart it.
+      id = store_context(status: :running, parent_context_id: "parent-1", async_dispatched: true)
+
+      expect(sweeper.run_once).to eq(1)
+      expect(enqueued).to eq([[id, "SweeperTestReactor"]])
+    end
+
+    it "skips a compose child, which runs inline in its parent" do
+      store_context(status: :running, parent_context_id: "parent-1")
+
+      expect(sweeper.run_once).to eq(0)
+      expect(enqueued).to be_empty
     end
 
     it "is idempotent across back-to-back sweeps while the worker stays dead" do

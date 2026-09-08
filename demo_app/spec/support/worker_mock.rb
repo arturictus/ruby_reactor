@@ -66,7 +66,7 @@ module Support
           "serialized_context" => serialized_context
         }
       )
-      RubyReactor::AsyncResult.new(job_id: job_id)
+      RubyReactor::DispatchResult.new(job_id: job_id)
     end
 
     def self.perform_map_element_in(_delay, map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
@@ -102,7 +102,7 @@ module Support
           "timeout" => timeout
         }
       )
-      RubyReactor::AsyncResult.new(job_id: job_id)
+      RubyReactor::DispatchResult.new(job_id: job_id)
     end
     # rubocop:enable Metrics/ParameterLists
 
@@ -110,7 +110,7 @@ module Support
     def self.perform_map_execution_async(map_id:, serialized_inputs:, reactor_class_info:, strict_ordering:,
                                          parent_context_id:, parent_reactor_class_name:, step_name:)
       warn "[WORKER_MOCK] perform_map_execution_async CALLED"
-      job_id = RubyReactor::SidekiqWorkers::MapExecutionWorker.perform_async(
+      job_id = RubyReactor::Adapters::Sidekiq::MapElementWorker.perform_async(
         {
           "map_id" => map_id,
           "serialized_inputs" => serialized_inputs,
@@ -121,7 +121,7 @@ module Support
           "step_name" => step_name
         }
       )
-      RubyReactor::AsyncResult.new(job_id: job_id)
+      RubyReactor::DispatchResult.new(job_id: job_id)
     end
     # rubocop:enable Metrics/ParameterLists
     # rubocop:enable Lint/UnusedMethodArgument

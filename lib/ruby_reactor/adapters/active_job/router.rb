@@ -9,14 +9,29 @@ module RubyReactor
         # there is no blob to deserialize here.
         def self.perform_async(context_id, reactor_class_name = nil, intermediate_results: {})
           job_id = RubyReactor::Adapters::ActiveJob::Worker.perform_async(context_id, reactor_class_name)
-          RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: intermediate_results,
+          RubyReactor::DispatchResult.new(job_id: job_id, intermediate_results: intermediate_results,
                                        execution_id: context_id)
         end
 
         def self.perform_in(delay, context_id, reactor_class_name = nil, intermediate_results: {})
           job_id = RubyReactor::Adapters::ActiveJob::Worker.perform_in(delay, context_id, reactor_class_name)
-          RubyReactor::AsyncResult.new(job_id: job_id, intermediate_results: intermediate_results,
+          RubyReactor::DispatchResult.new(job_id: job_id, intermediate_results: intermediate_results,
                                        execution_id: context_id)
+        end
+
+        # One `async_step`'s work, dispatched as its own independent unit. The
+        # payload is identity-only for the same reason every other dispatch here
+        # is: the worker rehydrates the parent context from storage.
+        def self.perform_step_async(root_context_id:, reactor_class_name:, step_context_id:, step_name:)
+          job_id = RubyReactor::Adapters::ActiveJob::StepWorker.perform_async(
+            {
+              "root_context_id" => root_context_id,
+              "reactor_class_name" => reactor_class_name,
+              "step_context_id" => step_context_id,
+              "step_name" => step_name.to_s
+            }
+          )
+          RubyReactor::DispatchResult.new(job_id: job_id)
         end
 
         # rubocop:disable Metrics/ParameterLists
@@ -39,7 +54,7 @@ module RubyReactor
               "fail_fast" => fail_fast
             }
           )
-          RubyReactor::AsyncResult.new(job_id: job_id)
+          RubyReactor::DispatchResult.new(job_id: job_id)
         end
 
         def self.perform_map_element_in(delay, map_id:, element_id:, index:, serialized_inputs:,
@@ -63,9 +78,9 @@ module RubyReactor
               "fail_fast" => fail_fast
             }
           )
-          # Return an AsyncResult so RetryManager#handle_async_retry recognises the
+          # Return an DispatchResult so RetryManager#handle_async_retry recognises the
           # element was successfully requeued and yields a RetryQueuedResult.
-          RubyReactor::AsyncResult.new(job_id: job_id)
+          RubyReactor::DispatchResult.new(job_id: job_id)
         end
         # rubocop:enable Metrics/ParameterLists
 
@@ -82,7 +97,7 @@ module RubyReactor
               "timeout" => timeout
             }
           )
-          RubyReactor::AsyncResult.new(job_id: job_id)
+          RubyReactor::DispatchResult.new(job_id: job_id)
         end
         # rubocop:enable Metrics/ParameterLists
       end

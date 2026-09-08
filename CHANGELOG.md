@@ -6,6 +6,108 @@
 ### Features
 
 * ActiveJob Support ([#42](https://github.com/arturictus/ruby_reactor/issues/42)) ([0fb6dc4](https://github.com/arturictus/ruby_reactor/commit/0fb6dc4ae4b16c34e0aa33a66f95df3e14ae0807))
+## Unreleased
+
+### ⚠ BREAKING CHANGES
+
+* **The per-step `async` flag is removed.** `async true` inside a `step` **or a
+  `compose`** block now raises `RubyReactor::Error::DeprecatedDslError` (a
+  subclass of `Error::ValidationError`) at reactor **class-definition** time.
+
+  It was ambiguous: only the **first** flagged step in a reactor ever took
+  effect, and every later one was silently ignored. A reactor now declares one
+  hand-off point instead, nameable from either side:
+
+  ```ruby
+  # Before — only the first `async true` did anything
+  step :process_payment do
+    async true
+    # ...
+  end
+
+  # After — the exact equivalent
+  step :process_payment do
+    # ...
+  end
+
+  background before: :process_payment
+  ```
+
+  **Migration:** for a flagged step `:x`, use `background before: :x`. That
+  reproduces the old semantics precisely — `:x` and everything after it move to
+  the worker — without having to identify a predecessor step. The same applies to
+  `async` inside a `compose` block. `after: :x` is the other side of the same cut
+  point (`:x` stays in the calling process); the two coincide in a linear chain
+  but pin different steps in a DAG.
+
+  Not affected: the map-internal `async` element dispatch option
+  (`map :items do async true, batch_size: 2 end`) — a different mechanism that
+  keeps working unchanged.
+
+  One behavior change falls out of "exactly one hand-off point per reactor":
+  resuming a reactor past its hand-off point now finishes in the resuming
+  process, where the old per-step flag would queue a second, undeclared hand-off.
+
+* `RubyReactor::Dsl::StepConfig#async?` and the per-step `async:` field in the
+  dashboard's `Web::API` step structure are gone. The dashboard now exposes the
+  reactor's normalized hand-off point once, as `background_handoff`.
+
+* **Whole-reactor `async true` is removed.** It named the same hand-off idea as
+  `background`, with a different word, and read confusingly next to the new
+  `async_step` / `async_reactor` step macros (both "async" + "reactor", meaning
+  different things). Using it now raises `RubyReactor::Error::DeprecatedDslError`
+  at class-definition time.
+
+  ```ruby
+  # Before
+  class OrderProcessingReactor < RubyReactor::Reactor
+    async true
+    # ...
+  end
+
+  # After — identical behavior, including validating inputs inside the worker
+  class OrderProcessingReactor < RubyReactor::Reactor
+    background all: true
+    # ...
+  end
+  ```
+
+  **Migration:** replace `async true` with `background all: true`. `async?` (the
+  reader) is unchanged and still answers the same question.
+
+* **`RubyReactor::AsyncResult` is renamed to `RubyReactor::DispatchResult`.** The
+  old name no longer fit: the class is the sentinel returned whenever a step's
+  work is handed to a worker and not yet resolved, produced alike by
+  `background`, `async_step`, `async_reactor`, and map's async element dispatch
+  — not specific to "async" as a concept.
+
+  **Migration:** replace any `RubyReactor::AsyncResult` reference (e.g. in a
+  custom `async_router`, or `result.is_a?(RubyReactor::AsyncResult)` checks)
+  with `RubyReactor::DispatchResult`.
+
+### Features
+
+* **`background after:` / `background before:` / `background all:`** — one
+  unambiguous, reactor-level cut point between what runs in the calling process
+  and what runs in a worker (`all:` — the whole reactor, replacing the old
+  whole-reactor `async true`).
+* **`async_step`** — dispatch one step's work to its own job while the reactor
+  keeps running every other ready step. Dependent steps read the outcome through
+  the existing `result(:name)` helper, which gains a bounded notified wait.
+* **`async_reactor`** — dispatch a whole nested reactor to run independently,
+  linked to the parent by execution id for traceability but excluded from its
+  compensation graph. A dispatch-time guard fails loudly instead of deadlocking
+  when a child declares a lock key the parent holds.
+* **`Configuration#async_wait_timeout`** (default `30` seconds) — bounds how long
+  a step blocks reading a dispatched result. Never an unbounded wait.
+* The dashboard renders both new step types and drills into an `async_reactor`
+  child's own execution.
+
+**Compensation for the two new units is opt-in, by design.** A failing
+`async_step` / `async_reactor` does not automatically compensate its parent — it
+was dispatched precisely so the parent would not depend on it. A later step that
+reads the result and returns `Failure` triggers compensation normally, so no
+failure is unrecoverable, just not automatic.
 
 ## [0.5.4](https://github.com/arturictus/ruby_reactor/compare/v0.5.3...v0.5.4) (2026-06-18)
 
@@ -55,7 +157,7 @@
 
 ### Features
 
-* `AsyncResult` returning intermediate_results ([#10](https://github.com/arturictus/ruby_reactor/issues/10)) ([0cb96d6](https://github.com/arturictus/ruby_reactor/commit/0cb96d66e88097665998601276e38e1c2249c581))
+* `DispatchResult` returning intermediate_results ([#10](https://github.com/arturictus/ruby_reactor/issues/10)) ([0cb96d6](https://github.com/arturictus/ruby_reactor/commit/0cb96d66e88097665998601276e38e1c2249c581))
 * enhance deserialization error handling in Sidekiq worker ([#23](https://github.com/arturictus/ruby_reactor/issues/23)) ([60dde95](https://github.com/arturictus/ruby_reactor/commit/60dde95606d52cc6a9d352ad0117b4092a1ebb9d))
 * Enhance failure messages with step, reactor, redacted inputs, a… ([#11](https://github.com/arturictus/ruby_reactor/issues/11)) ([952feae](https://github.com/arturictus/ruby_reactor/commit/952feaeb6ebbe5fbe2daf470263d8e769ba64138))
 * Introduce reactor interrupt functionality, allowing pausing and… ([#13](https://github.com/arturictus/ruby_reactor/issues/13)) ([53d0861](https://github.com/arturictus/ruby_reactor/commit/53d0861f0238f0e2247e581b0a27cba2f42cfba6))

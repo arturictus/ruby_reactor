@@ -676,7 +676,6 @@ RSpec.describe RubyReactor do
       end
 
       step :async_step do
-        async true
         argument :doubled, result(:sync_step)
 
         run do |args, _context|
@@ -684,6 +683,8 @@ RSpec.describe RubyReactor do
           RubyReactor.Success(args[:doubled] + 1)
         end
       end
+
+      background before: :async_step
 
       returns :async_step
     end
@@ -702,9 +703,10 @@ RSpec.describe RubyReactor do
       end
 
       compose :async_process, TestInnerReactorWithAsync do
-        async true
         argument :value, result(:validate_number)
       end
+
+      background before: :async_process
 
       step :after_compose do
         argument :result, result(:async_process)
@@ -718,9 +720,9 @@ RSpec.describe RubyReactor do
     end
 
     it "executes async composed reactors in a single worker with internal async steps" do
-      # Check that the compose step is configured as async
-      step_config = TestOuterReactorWithAsyncCompose.steps[:async_process]
-      expect(step_config.async?).to be true
+      # The compose step is where this reactor hands off to a worker.
+      expect(TestOuterReactorWithAsyncCompose.background_handoff)
+        .to eq({ mode: :before, step: :async_process })
 
       # Run the reactor with inline Sidekiq
       result = Sidekiq::Testing.inline! do
@@ -757,10 +759,11 @@ RSpec.describe RubyReactor do
       input :number
 
       compose :retry_process, TestRetryInnerReactor do
-        async true
         # retries max_attempts: 2, backoff: :fixed, base_delay: 1
         argument :value, input(:number)
       end
+
+      background before: :retry_process
 
       step :after_compose do
         argument :result, result(:retry_process)
@@ -776,9 +779,7 @@ RSpec.describe RubyReactor do
     end
 
     it "retries async composed reactors by queuing new jobs" do
-      # Check that the compose step has retry configuration
-      step_config = TestRetryOuterReactor.steps[:retry_process]
-      expect(step_config.async?).to be true
+      expect(TestRetryOuterReactor.background_handoff).to eq({ mode: :before, step: :retry_process })
 
       # Run the reactor with inline Sidekiq
       result = Sidekiq::Testing.inline! do
@@ -791,7 +792,7 @@ RSpec.describe RubyReactor do
     end
   end
 
-  describe "AsyncResult returns job_id and intermediate_results" do
+  describe "DispatchResult returns job_id and intermediate_results" do
     let(:reactor_class) do
       Class.new(RubyReactor::Reactor) do
         input :value
@@ -802,12 +803,13 @@ RSpec.describe RubyReactor do
           end
         end
         step :async_step do
-          async true
           argument :value, result(:sync_step)
           run do |args, _context|
             Success(args[:value] * 2)
           end
         end
+
+        background before: :async_step
       end
     end
 
@@ -819,7 +821,7 @@ RSpec.describe RubyReactor do
       reactor = reactor_class.new
       async_result = reactor.run(value: 10)
 
-      expect(async_result).to be_a(RubyReactor::AsyncResult)
+      expect(async_result).to be_a(RubyReactor::DispatchResult)
       expect(async_result.job_id).not_to be_nil
       expect(async_result.intermediate_results).to be_a(Hash)
       expect(async_result.intermediate_results).to have_key(:sync_step)

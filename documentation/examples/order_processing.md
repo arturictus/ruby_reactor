@@ -95,7 +95,7 @@ class ProcessPaymentStep
 end
 
 class OrderProcessingReactor < RubyReactor::Reactor
-  async true  # Enable asynchronous execution
+  background all: true  # Enable asynchronous execution
 
   # Reactor-level retry defaults
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds

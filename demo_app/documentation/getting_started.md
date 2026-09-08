@@ -104,7 +104,7 @@ end
 
 # Run asynchronously
 async_result = OrderProcessingReactor.run(order_id: 123)
-# Returns immediately with AsyncResult
+# Returns immediately with DispatchResult
 # Check status later with async_result.status
 ```
 

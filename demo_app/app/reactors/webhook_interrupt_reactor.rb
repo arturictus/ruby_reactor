@@ -2,14 +2,13 @@ class WebhookInterruptReactor < RubyReactor::Reactor
   input :provider_id
   input :fail_at, :symbol, optional: true
 
-  step :async_step_before do
-    async true
+  step :background_step_before do
     argument :fail_at, input(:fail_at)
     run do |args, _|
-      if args[:fail_at] == :async_step_before
-        raise "Failure triggered for async_step_before"
+      if args[:fail_at] == :background_step_before
+        raise "Failure triggered for background_step_before"
       else
-        Success("Async step before completed")
+        Success("Background step before completed")
       end
     end
   end
@@ -59,18 +58,19 @@ class WebhookInterruptReactor < RubyReactor::Reactor
     end
   end
 
-  step :async_step_after do
-    async true
+  step :background_step_after do
     argument :webhook_data, result(:wait_for_webhook)
     argument :fail_at, input(:fail_at)
     run do |args, _|
-      if args[:fail_at] == :async_step_after
-        raise "Failure triggered for async_step_after"
+      if args[:fail_at] == :background_step_after
+        raise "Failure triggered for background_step_after"
       else
-        Success("Async step after completed")
+        Success("Background step after completed")
       end
     end
   end
+
+  background before: :background_step_before
 
   returns :process_response
 end

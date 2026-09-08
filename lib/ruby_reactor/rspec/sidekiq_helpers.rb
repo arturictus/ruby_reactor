@@ -38,7 +38,8 @@ module RubyReactor
         @worker_classes ||= [
           RubyReactor::Adapters::Sidekiq::Worker,
           RubyReactor::Adapters::Sidekiq::MapElementWorker,
-          RubyReactor::Adapters::Sidekiq::MapCollectorWorker
+          RubyReactor::Adapters::Sidekiq::MapCollectorWorker,
+          RubyReactor::Adapters::Sidekiq::StepWorker
         ]
       end
 

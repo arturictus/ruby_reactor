@@ -195,4 +195,94 @@ RSpec.describe RubyReactor::Web::API, type: :request do
       expect(retried_item["class"]).to eq("ApiTestReactor")
     end
   end
+
+  # The dashboard must stay current with the reactor state model. The
+  # fire-and-forget model makes this load-bearing rather than cosmetic — a
+  # dispatched unit's outcome may have no other surface in the parent at all.
+  describe "the new async step types" do
+    it "identifies an async_step" do
+      expect(described_class.determine_step_type(AsyncStepSiblingReactor.steps[:send_email]))
+        .to eq("async_step")
+    end
+
+    it "identifies an async_reactor" do
+      expect(described_class.determine_step_type(AsyncReactorAwaitedReactor.steps[:create_account]))
+        .to eq("async_reactor")
+    end
+
+    it "still identifies ordinary, compose and map steps" do
+      expect(described_class.determine_step_type(AsyncStepSiblingReactor.steps[:do_something_same_thread]))
+        .to eq("step")
+    end
+
+    it "exposes the hand-off point once per reactor, not per step" do
+      structure = described_class.build_structure(BackgroundAfterReactor)
+
+      expect(described_class.background_handoff_for(BackgroundAfterReactor))
+        .to eq({ mode: :after, step: :second })
+      expect(structure.values.map(&:keys).flatten.uniq).not_to include(:async)
+    end
+
+    it "recurses into an async_reactor child's own step graph" do
+      structure = described_class.build_structure(AsyncReactorAwaitedReactor)
+
+      expect(structure[:create_account][:nested_structure]).to have_key(:create)
+    end
+  end
+
+  describe "hydrating the new composed_contexts refs" do
+    it "resolves an async_step_ref to its Step Result Record" do
+      result = AsyncStepSiblingReactor.run(email: "a@b.c")
+      context = AsyncStepSiblingReactor.find(result.execution_id).context
+
+      hydrated = described_class.hydrate_composed_contexts(
+        context.composed_contexts, "AsyncStepSiblingReactor"
+      )
+      expect(hydrated[:send_email]["record"]["status"]).to eq("dispatched")
+    end
+
+    it "resolves an async_reactor_ref to the linked child execution" do
+      result = AsyncReactorFireAndForgetReactor.run(user_id: 7)
+      context = AsyncReactorFireAndForgetReactor.find(result.execution_id).context
+
+      hydrated = described_class.hydrate_composed_contexts(
+        context.composed_contexts, "AsyncReactorFireAndForgetReactor"
+      )
+      expect(hydrated[:create_profile]["context"]["context_id"])
+        .to eq(context.composed_contexts[:create_profile][:execution_id])
+    end
+
+    it "passes an unknown ref type through untouched" do
+      expect(described_class.hydrate_composed_contexts({ x: { type: :composed, name: :x } }, "Any"))
+        .to eq({ x: { type: :composed, name: :x } })
+    end
+  end
+
+  # A failed map records no result on the parent, so the failing step showed
+  # nothing in the dashboard while its element results sat in storage.
+  describe ".with_map_summaries" do
+    let(:storage) { instance_double(RubyReactor::Storage::RedisAdapter) }
+    let(:structure) { { prepare: { type: "map" }, show: { type: "step" } } }
+
+    before do
+      allow(RubyReactor.configuration).to receive(:storage_adapter).and_return(storage)
+    end
+
+    it "fills a map step's missing result from its stored elements" do
+      allow(storage).to receive(:count_map_results).with("ctx-1:prepare", "Parent").and_return(2)
+
+      results = described_class.with_map_summaries({}, structure, "ctx-1", "Parent")
+
+      expect(results[:prepare]).to be_a(RubyReactor::Map::ResultEnumerator)
+      expect(results[:prepare].map_id).to eq("ctx-1:prepare")
+    end
+
+    it "leaves a recorded result and maps with no stored elements alone" do
+      allow(storage).to receive(:count_map_results).and_return(0)
+
+      expect(described_class.with_map_summaries({ prepare: [1] }, structure, "ctx-1", "Parent"))
+        .to eq({ prepare: [1] })
+      expect(described_class.with_map_summaries({}, structure, "ctx-1", "Parent")).to eq({})
+    end
+  end
 end

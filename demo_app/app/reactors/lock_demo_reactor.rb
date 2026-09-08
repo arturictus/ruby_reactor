@@ -19,7 +19,6 @@ class LockDemoReactor < RubyReactor::Reactor
   end
 
   step :process_refund do
-    async true
     argument :order_id, input(:order_id)
     argument :hold_seconds, input(:hold_seconds)
     wait_for :verify_ledger
@@ -38,6 +37,8 @@ class LockDemoReactor < RubyReactor::Reactor
       Success(finalized: true, refund: args[:refund])
     end
   end
+
+  background before: :process_refund
 
   returns :finalize_refund
 end

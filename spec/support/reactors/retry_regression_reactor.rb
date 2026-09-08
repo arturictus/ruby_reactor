@@ -19,7 +19,6 @@ module Support
     end
 
     step :step2 do
-      async true
       run do |_args, _context|
         Support::RetryRegressionReactor.step_counts[:step2] += 1
         RubyReactor.Success("step2_done")

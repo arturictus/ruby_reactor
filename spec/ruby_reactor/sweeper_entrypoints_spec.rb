@@ -13,6 +13,7 @@ RSpec.describe "RubyReactor sweeper entrypoints" do
     worker.clear
     allow(RubyReactor::Sweeper).to receive(:run_once).and_return(2)
     allow(RubyReactor::Map::Sweeper).to receive(:run_once).and_return(3)
+    allow(RubyReactor::StepSweeper).to receive(:run_once).and_return(4)
   end
 
   describe ".start_sweeper!" do
@@ -43,8 +44,8 @@ RSpec.describe "RubyReactor sweeper entrypoints" do
   end
 
   describe ".sweep_once" do
-    it "runs both sweepers once and returns their counts" do
-      expect(RubyReactor.sweep_once).to eq(reactors: 2, maps: 3)
+    it "runs every sweeper once and returns their counts" do
+      expect(RubyReactor.sweep_once).to eq(reactors: 2, maps: 3, async_steps: 4)
     end
   end
 end

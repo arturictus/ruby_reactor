@@ -1,0 +1,39 @@
+# Specification Quality Checklist: Background Execution & Real Async Steps
+
+**Purpose**: Validate specification completeness and quality before proceeding to planning
+**Created**: 2026-08-16
+**Feature**: [spec.md](../spec.md)
+
+## Content Quality
+
+- [x] No implementation details (languages, frameworks, APIs)
+- [x] Focused on user value and business needs
+- [x] Written for non-technical stakeholders
+- [x] All mandatory sections completed
+
+## Requirement Completeness
+
+- [x] No [NEEDS CLARIFICATION] markers remain
+- [x] Requirements are testable and unambiguous
+- [x] Success criteria are measurable
+- [x] Success criteria are technology-agnostic (no implementation details)
+- [x] All acceptance scenarios are defined
+- [x] Edge cases are identified
+- [x] Scope is clearly bounded
+- [x] Dependencies and assumptions identified
+
+## Feature Readiness
+
+- [x] All functional requirements have clear acceptance criteria
+- [x] User scenarios cover primary flows
+- [x] Feature meets measurable outcomes defined in Success Criteria
+- [x] No implementation details leak into specification
+
+## Notes
+
+- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- Note: the spec names concrete terms (`Sidekiq`, `ActiveJob`, `Redis`) only inside the **Assumptions** section, where they describe existing constraints already codified in the project constitution, not new implementation choices being introduced by this feature. All requirement- and success-criteria-level language remains technology-agnostic.
+- 2026-08-16 (post-plan review): added FR-014/SC-006 covering dashboard visibility for `async_step`/`async_reactor`, a gap found while reviewing plan.md against the constitution's Observability principle. Re-validated against this checklist — all items still pass.
+- 2026-08-21 (final consistency pass): fixed stale "blocking-poll" wording left from the superseded wait design (plan Summary/tree, contract, data-model); fixed the async_step dispatch ordering in data-model (record + ref written BEFORE enqueue, matching the F2 rule its own Step Result Record row states); fixed "record absent = pending" to "record still `dispatched` = pending"; reconciled plan Scale/Scope with the tree (dependency_graph.rb unchanged; executor.rb added for the completion-signal publish); aligned FR-015 with contract/research on single-slot semaphores. All items re-verified passing.
+- 2026-08-20 (wait-mechanism & locks review): FR-005 revised from tight-poll to notified wait (record-first publish, subscribe-first check, fallback re-check — durable record stays the source of truth, timeout bound unchanged); added FR-015 (no lock-owner sharing across the async boundary + dispatch-time same-key deadlock guard; reentrancy stays compose-only) and FR-016 (async_reactor dispatch reuses the full pre-enqueue sequence: child input validation + ordered-lock nonce, a gap found during the locks review). Clarifications Session 2026-08-20 records both decisions. All checklist items re-verified passing.
+- 2026-08-16 (full-artifact review): fixed FR-006 (claimed a nonexistent "existing step-result storage"; now: new per-step record for `async_step`, own execution record for `async_reactor`); clarified FR-003 scope (compose's `async` flag is removed too — it sets the same flag; map's `async` is a different mechanism and stays); added edge cases for `returns` × async unit, `background` × whole-reactor `async true`, and a paused awaited `async_reactor` child. Contract additionally pins failure-read semantics for `result()` on async units and lock-window behavior. All checklist items re-verified passing.

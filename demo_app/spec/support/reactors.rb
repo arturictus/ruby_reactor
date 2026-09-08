@@ -8,7 +8,7 @@ end
 
 # Define test reactor classes as constants for serialization
 class TestAsyncReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   input :user_id
   input :email
@@ -64,7 +64,6 @@ class TestStepAsyncReactor < RubyReactor::Reactor
   end
 
   step :create_user do
-    async true
     argument :validation, result(:validate_input)
 
     run do |args, _context|
@@ -82,10 +81,12 @@ class TestStepAsyncReactor < RubyReactor::Reactor
       Success("Email sent to #{args[:user][:email]}")
     end
   end
+
+  background before: :create_user
 end
 
 class RetryExponentialReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   input :attempt_count
 
@@ -107,7 +108,7 @@ class RetryExponentialReactor < RubyReactor::Reactor
 end
 
 class RetryLinearReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :linear_retry_step do
     retries max_attempts: 3, backoff: :linear, base_delay: 2
@@ -119,7 +120,7 @@ class RetryLinearReactor < RubyReactor::Reactor
 end
 
 class RetryFixedReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :fixed_retry_step do
     retries max_attempts: 3, backoff: :fixed, base_delay: 5
@@ -131,7 +132,7 @@ class RetryFixedReactor < RubyReactor::Reactor
 end
 
 class CompensatingReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   input :user_id
 
@@ -177,7 +178,6 @@ class TestInnerReactorWithAsync < RubyReactor::Reactor
   end
 
   step :async_step do
-    async true
     argument :doubled, result(:sync_step)
 
     run do |args, _context|
@@ -186,6 +186,8 @@ class TestInnerReactorWithAsync < RubyReactor::Reactor
     end
   end
 
+  background before: :async_step
+
   returns :async_step
 end
 
@@ -193,9 +195,10 @@ class TestOuterReactorWithAsyncCompose < RubyReactor::Reactor
   input :number
 
   compose :async_process, TestInnerReactorWithAsync do
-    async true
     argument :value, input(:number)
   end
+
+  background before: :async_process
 
   returns :async_process
 end
@@ -225,10 +228,11 @@ class TestRetryOuterReactor < RubyReactor::Reactor
   input :number
 
   compose :retry_process, TestRetryInnerReactor do
-    async true
     # retries max_attempts: 2, backoff: :fixed, base_delay: 1
     argument :value, input(:number)
   end
+
+  background before: :retry_process
 
   returns :retry_process
 end

@@ -26,3 +26,5 @@ demo_app/config/credentials/*.key
 .claude/settings.local.json
 demo_app/.pi/.gitignore
 demo_app/.pi/config.json
+
+log/sidekiq-live.*

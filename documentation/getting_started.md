@@ -137,16 +137,18 @@ end
 
 - `RubyReactor::Success` — `result.success?` is `true`, `result.value` holds the step output for `returns` (or the full `intermediate_results` hash if no `returns` is set).
 - `RubyReactor::Failure` — `result.failure?` is `true`. Useful readers: `result.error`, `result.step_name`, `result.exception_class`, `result.backtrace`, `result.step_arguments`.
-- `RubyReactor::AsyncResult` — returned when the reactor (or a step) is async. Holds `job_id`, `execution_id`, and any `intermediate_results` available at handoff.
+- `RubyReactor::DispatchResult` — returned when the reactor (or a step) is async. Holds `job_id`, `execution_id`, and any `intermediate_results` available at handoff.
 - `RubyReactor::InterruptResult` — returned when an `interrupt` step pauses execution. Use `result.execution_id` and `result.correlation_id` to resume later.
 
 ### Asynchronous Execution
 
-For async execution, configure a job backend (Sidekiq or ActiveJob — see [Configuration](#configuration) above) and either mark the reactor `async true` or mark individual steps async:
+For async execution, configure a job backend (Sidekiq or ActiveJob — see [Configuration](#configuration) above), then choose how much work leaves the calling process: mark the whole reactor `background all: true`, declare a hand-off point with `background after:`/`before:` (everything past it runs in a worker), or dispatch a single unit with `async_step` / `async_reactor`. See [Async Reactors](async_reactors.md).
+
+> The old per-step `async true` flag has been removed — it was ambiguous, since only the first flagged step in a reactor ever took effect. Use `background before: :that_step` instead. The old whole-reactor `async true` flag has also been removed — use `background all: true`.
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
-  async true  # Entire reactor runs in a background worker
+  background all: true  # Entire reactor runs in a background worker
 
   # ... steps defined above
 end

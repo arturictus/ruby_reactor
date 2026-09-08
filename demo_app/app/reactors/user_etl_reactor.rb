@@ -273,13 +273,15 @@ class UserEtlReactor < RubyReactor::Reactor
   # FEATURE: Multiple async steps that can run in parallel
   step :load_to_database, LoadToDatabaseStep do
     argument :users, result(:process_results, [:successful])
-    async true
   end
 
   step :load_to_search_index, LoadToSearchIndexStep do
     argument :users, result(:process_results, [:successful])
-    async true
   end
+
+  # Under the old per-step flag only the FIRST flagged step ever handed off —
+  # the second was silently ignored. One declaration says exactly that.
+  background before: :load_to_database
 
   # FEATURE: wait_for to ensure dependencies complete before proceeding
   step :generate_report, GenerateProcessingReportStep do

@@ -147,7 +147,7 @@ module RubyReactor
       span = @step_spans.delete(step_name)
       return unless span
 
-      if result.is_a?(RubyReactor::AsyncResult)
+      if result.is_a?(RubyReactor::DispatchResult)
         # The step was handed off to a background worker; the run block did not
         # execute here. Rename the span so it is not confused with the real
         # execution span emitted later under the resumed reactor span.

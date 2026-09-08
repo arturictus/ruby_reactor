@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ReactorDetail from '../ReactorDetail.tsx';
+import { reactorRoute } from '../../lib/reactors';
 import useSWR from 'swr';
 
 const mockNavigate = vi.fn();
@@ -177,7 +178,7 @@ describe('ReactorDetail', () => {
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith('/api/reactors/test-reactor-123/retry', { method: 'POST' });
-      expect(mockNavigate).toHaveBeenCalledWith('/reactors/new-reactor-456');
+      expect(mockNavigate).toHaveBeenCalledWith(reactorRoute('new-reactor-456'));
     });
   });
 

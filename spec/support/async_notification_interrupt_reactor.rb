@@ -13,7 +13,6 @@ class AsyncNotificationInterruptReactor < RubyReactor::Reactor
   end
 
   step :send_notifications do
-    async true
     argument :user_id, result(:retrieve_context)
     run do |args, context|
       context.reactor_class.trace << :send_notifications
@@ -40,7 +39,6 @@ class AsyncNotificationInterruptReactor < RubyReactor::Reactor
   end
 
   step :process_approval do
-    async true
     argument :notification_status, result(:send_notifications)
     argument :approval_payload, result(:manager_approval)
 
@@ -49,6 +47,8 @@ class AsyncNotificationInterruptReactor < RubyReactor::Reactor
       Success("processed_#{args[:approval_payload][:status]}_after_#{args[:notification_status]}")
     end
   end
+
+  background before: :send_notifications
 
   returns :process_approval
 end

@@ -8,6 +8,36 @@ module RubyReactor
   # `Adapters::ActiveJob::Compat` on ActiveJob::Base) — nothing here references
   # a specific backend.
   module Worker
+    TERMINAL_STATUSES = %w[completed failed cancelled skipped].freeze
+
+    # Last line of observability when a job burns its whole retry budget on an
+    # infrastructure failure and the backend then discards it (Sidekiq runs
+    # with `dead: false`): without this, the context would stay "running"
+    # forever with zero surface anywhere, and every reader would wait out its
+    # full timeout. Called from the backends' retries-exhausted hooks with the
+    # job's own args. Best-effort — never raises back into the backend.
+    def self.record_retries_exhausted(args, exception)
+      context_id, reactor_class_name = args
+      return unless context_id
+
+      reactor_class_name ||= RubyReactor.reactor_storage_name(nil)
+      storage = RubyReactor.configuration.storage_adapter
+      data = storage.retrieve_context(context_id, reactor_class_name)
+      return if data.nil? || TERMINAL_STATUSES.include?((data["status"] || data[:status]).to_s)
+
+      data["status"] = "failed"
+      data["failure_reason"] = {
+        "message" => "job retries exhausted: #{exception.class.name}: #{exception.message}",
+        "exception_class" => exception.class.name
+      }
+      storage.store_context(context_id, JSON.generate(data), reactor_class_name)
+      storage.publish(RubyReactor.async_reactor_channel(context_id), "failed")
+    rescue StandardError => e
+      RubyReactor.configuration.logger.error(
+        "RubyReactor: could not record retries-exhausted failure for #{context_id}: #{e.class.name}: #{e.message}"
+      )
+    end
+
     # Identity-only payload: storage is the source of truth. Rehydrate the live
     # context from storage by id, then resume. A nil read means the context was
     # swept, expired, or already terminal-and-collected — nothing to resume.
@@ -62,7 +92,8 @@ module RubyReactor
       rescue RubyReactor::Lock::AcquisitionError,
              RubyReactor::Semaphore::AcquisitionError,
              RubyReactor::RateLimit::ExceededError,
-             RubyReactor::OrderedLock::WaitError => e
+             RubyReactor::OrderedLock::WaitError,
+             RubyReactor::Error::AsyncResultPending => e
         # Snooze on expected concurrency, rate, or ordering contention.
         # OrderedLock::WaitError carries a poison-pill-derived retry hint,
         # consumed by compute_snooze_delay below. We avoid the framework's native
@@ -89,7 +120,16 @@ module RubyReactor
       rescue NameError
         # If not found, try to find it in the current namespace
         # This is a fallback for test environments
-        context.reactor_class = reactor_class_name.constantize if reactor_class_name.respond_to?(:constantize)
+        begin
+          context.reactor_class = reactor_class_name.constantize if reactor_class_name.respond_to?(:constantize)
+        rescue NameError
+          # Leave reactor_class nil: the caller's guard fails the context with
+          # a durable record. Letting this second NameError escape would burn
+          # the job's whole retry budget on an error retries can never fix,
+          # then vanish — leaving the context "running" forever and any reader
+          # waiting out its full timeout.
+          nil
+        end
       end
     end
 
@@ -107,8 +147,12 @@ module RubyReactor
       # duplicate of the *same* execution may wait arbitrarily long for the
       # live original to finish (e.g. a sweeper re-enqueue racing a slow but
       # alive worker). Capping it would fail a legitimately-waiting duplicate.
+      # A parked async wait is likewise uncapped HERE: its bound is
+      # `async_park_timeout`, enforced against `dispatched_at` at the wait
+      # site — counting snoozes would double-bound it with the wrong unit.
       capped = !(error.is_a?(RubyReactor::OrderedLock::WaitError) ||
-                 error.is_a?(RubyReactor::Lock::ContextLockContention))
+                 error.is_a?(RubyReactor::Lock::ContextLockContention) ||
+                 error.is_a?(RubyReactor::Error::AsyncResultPending))
 
       if capped && max != :infinity && snooze_count >= max
         escalate_snooze(context, snooze_count, error)
@@ -202,6 +246,12 @@ module RubyReactor
         context_id,
         payload,
         reactor_class_name
+      )
+      # Written first, signalled second — wake any reader blocked (or parked)
+      # on this execution so it fails fast with the real cause instead of
+      # waiting out its timeout.
+      RubyReactor.configuration.storage_adapter.publish(
+        RubyReactor.async_reactor_channel(context_id), "failed"
       )
     rescue StandardError => e
       # Don't let a persistence failure mask the original deserialization error.

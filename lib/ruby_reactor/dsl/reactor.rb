@@ -10,13 +10,14 @@ module RubyReactor
         base.instance_variable_set(:@return_step, nil)
         base.instance_variable_set(:@middlewares, [])
         base.instance_variable_set(:@input_validations, {})
-        base.instance_variable_set(:@async, false)
+        base.instance_variable_set(:@background_handoff, nil)
         base.instance_variable_set(:@retry_defaults, { max_attempts: 3, backoff: :exponential, base_delay: 1 })
       end
 
       module ClassMethods
         include RubyReactor::Dsl::TemplateHelpers
         include RubyReactor::Dsl::ValidationHelpers
+        include RubyReactor::Dsl::AsyncMacros
 
         require_relative "interrupt_builder"
         require_relative "interrupt_step_config"
@@ -41,12 +42,17 @@ module RubyReactor
           @input_validations ||= {}
         end
 
-        def async(async = true)
-          @async = async
-        end
-
-        def async?
-          @async ||= false
+        # Whole-reactor `async true` is gone: it named the same idea as
+        # `background`'s cut point with a different word, right next to the
+        # new `async_step`/`async_reactor` macros whose names mean something
+        # else entirely. `async?` (the reader) lives in `AsyncMacros`, driven
+        # off `background_handoff`.
+        def async(*)
+          raise RubyReactor::Error::DeprecatedDslError,
+                "`async true` on a reactor has been removed: it named the same idea as `background`'s cut " \
+                "point with a different word, and read confusingly next to the `async_step`/`async_reactor` " \
+                "step macros. Use `background all: true` instead — identical behavior, including validating " \
+                "inputs inside the worker."
         end
 
         def retry_defaults(**kwargs)
@@ -138,8 +144,18 @@ module RubyReactor
           step_config
         end
 
-        def interrupt(name, &block)
-          builder = RubyReactor::Dsl::InterruptBuilder.new(name, self)
+        # `resume: :background` — after `continue` validates and stores the
+        # payload, the remaining work is enqueued to a worker instead of
+        # running inline in the delivering process (webhook, admin UI).
+        def interrupt(name, resume: :inline, &block)
+          unless %i[inline background].include?(resume)
+            raise RubyReactor::Error::ValidationError,
+                  "interrupt :#{name} has invalid `resume: #{resume.inspect}` — " \
+                  "use `:inline` (default, resume runs in the calling process) or " \
+                  "`:background` (resume is enqueued to a worker)."
+          end
+
+          builder = RubyReactor::Dsl::InterruptBuilder.new(name, self, resume: resume)
           builder.instance_eval(&block) if block_given?
 
           step_config = builder.build
@@ -148,7 +164,10 @@ module RubyReactor
         end
 
         def returns(step_name = nil)
-          @return_step = step_name if step_name
+          if step_name
+            reject_async_return_step!(step_name)
+            @return_step = step_name
+          end
           @return_step
         end
 

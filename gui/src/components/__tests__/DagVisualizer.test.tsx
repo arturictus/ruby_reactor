@@ -134,6 +134,36 @@ describe('DagVisualizer', () => {
     expect(getByTestId('node-step1').getAttribute('data-status')).toBe('cancelled');
     expect(getByTestId('node-step2').getAttribute('data-status')).toBe('cancelled');
   });
+
+  // A map with fail_fast false completes even when elements failed, so the
+  // node's own status is the only place that can flag it.
+  it('marks a map step failed when its elements failed', () => {
+    const struct = { items: { type: 'map', depends_on: [] } };
+
+    const { getByTestId, rerender } = render(
+      <DagVisualizer
+        structure={struct}
+        steps={[]}
+        results={{ items: { _type: 'map_results', total: 10, succeeded: 4, failed: 6, failures: [] } }}
+        reactorStatus="completed"
+        onStepSelect={() => { }}
+        selectedStep={null}
+      />
+    );
+    expect(getByTestId('node-items').getAttribute('data-status')).toBe('failed');
+
+    rerender(
+      <DagVisualizer
+        structure={struct}
+        steps={[]}
+        results={{ items: { _type: 'map_results', total: 10, succeeded: 10, failed: 0, failures: [] } }}
+        reactorStatus="completed"
+        onStepSelect={() => { }}
+        selectedStep={null}
+      />
+    );
+    expect(getByTestId('node-items').getAttribute('data-status')).toBe('completed');
+  });
 });
 
 

@@ -17,6 +17,12 @@ module RubyReactor
   # race) and re-enqueued while its worker is actually alive, the duplicate hits
   # the live lock -> ContextLockContention -> uncapped snooze -> no double run.
   #
+  # `async_reactor` children ARE covered: each runs as its own job, so a lost
+  # job strands one exactly like a top-level reactor, and a fire-and-forget
+  # child has no parent left waiting to notice. They are identified by the
+  # `async_dispatched` marker rather than by absence of a parent, so compose
+  # children — same parent link, but run inline — are never re-enqueued.
+  #
   # Map fan-out (element/collector jobs) is NOT covered here — those contexts
   # carry parent_context_id and scan_reactors filters them out (F6). The map
   # sweeper (Phase 5) owns them.
@@ -41,7 +47,7 @@ module RubyReactor
     def run_once(limit: DEFAULT_LIMIT)
       reenqueued = 0
 
-      @storage.scan_reactors(count: limit).each do |reactor|
+      @storage.scan_reactors(count: limit, include_dispatched_children: true).each do |reactor|
         next unless reactor[:status] == "running" # non-terminal only
         next if @storage.lock_held?("async:#{reactor[:id]}") # worker alive -> leave alone
 

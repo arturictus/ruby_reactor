@@ -54,6 +54,25 @@ module RubyReactor
       adapter.lock_release(@key, @owner)
     end
 
+    # Park support: stop refreshing the TTL but LEAVE the key held — the
+    # parked execution keeps ownership through the gap, bounded by the TTL.
+    def detach
+      stop_extender
+    end
+
+    # Resume ownership after a parked gap: verify we are still the owner and
+    # refresh the TTL — WITHOUT incrementing the reentrancy count. The count
+    # was never decremented at park, so a plain `acquire` here would bump it
+    # to 2 and the final release would leave the key behind until TTL.
+    # Returns false when ownership lapsed (TTL expired mid-park); the caller
+    # falls back to a fresh acquire.
+    def reattach # rubocop:disable Naming/PredicateMethod
+      return false unless adapter.lock_extend(@key, @owner, @ttl)
+
+      start_extender if @auto_extend
+      true
+    end
+
     def synchronize
       acquire
       yield

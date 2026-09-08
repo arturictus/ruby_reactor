@@ -13,7 +13,7 @@ RSpec.describe "Interrupt validation logic" do
 
     # Depending on how the reactor is implemented, it might return the result of the last executed step
     # or the reactor itself if it's paused.
-    # In RubyReactor, run usually returns the final Result if completed, or an AsyncResult/PausedResult?
+    # In RubyReactor, run usually returns the final Result if completed, or an DispatchResult/PausedResult?
     # Actually, run returns:
     # - Success if finished
     # - Failure if failed

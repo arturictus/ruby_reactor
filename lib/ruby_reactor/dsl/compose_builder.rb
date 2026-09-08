@@ -20,7 +20,6 @@ module RubyReactor
         end
         @reactor = reactor
         @argument_mappings = {}
-        @async = false
         @retry_config = {}
       end
 
@@ -28,8 +27,21 @@ module RubyReactor
         @argument_mappings[composed_input_name] = source
       end
 
-      def async(async = true)
-        @async = async
+      # `compose`'s `async` set the very same per-step hand-off flag the
+      # step DSL's did, so it goes with it. The exact migration is
+      # `background before: :<this compose step>` — that reproduces the old
+      # semantics precisely (this step and everything after it move to the
+      # worker) without the author having to identify a predecessor step.
+      def async(*)
+        raise RubyReactor::Error::DeprecatedDslError.new(
+          "`async` inside a `compose` block has been removed (it set the same ambiguous per-step " \
+          "hand-off flag as `step`'s). Use `background before: :#{@name}` on the reactor to move " \
+          ":#{@name} and every step after it to a worker — that reproduces the old behavior exactly. " \
+          "For a nested reactor that should run INDEPENDENTLY of this one, use " \
+          "`async_reactor :#{@name}, #{@composed_reactor_class&.name || "ChildReactor"}` instead; " \
+          "for one step's worth of work, `async_step`.",
+          step: @name
+        )
       end
 
       def retries(max_attempts: 3, backoff: :exponential, base_delay: 1)
@@ -59,7 +71,6 @@ module RubyReactor
           dependencies: dependencies,
           args_validator: nil,
           output_validator: nil,
-          async: @async,
           retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
         }
 
@@ -75,6 +86,14 @@ module RubyReactor
       def compose(name, reactor_class = nil, &block)
         ensure_composed_reactor_class!
         @composed_reactor_class.compose(name, reactor_class, &block)
+      end
+
+      # An inline compose child is a real reactor class, so it can declare its
+      # own hand-off point — delegate rather than making inline children the one
+      # place `background` is unavailable.
+      def background(**kwargs)
+        ensure_composed_reactor_class!
+        @composed_reactor_class.background(**kwargs)
       end
 
       private

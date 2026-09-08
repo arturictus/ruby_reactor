@@ -36,7 +36,7 @@ graph TD
 
 ```ruby
 class PaymentReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :charge_card do
     retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
@@ -49,7 +49,7 @@ end
 
 ```ruby
 class PaymentReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   # All steps inherit these defaults
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
@@ -169,7 +169,7 @@ An operation is idempotent if executing it multiple times produces the same resu
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
 
@@ -219,7 +219,7 @@ For more complex retry logic, you can implement custom retry handlers:
 
 ```ruby
 class CustomRetryReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :call_external_api do
     retries max_attempts: 5, backoff: :exponential, base_delay: 1.second

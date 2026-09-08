@@ -130,6 +130,56 @@ module RubyReactor
         elements[index]
       end
 
+      # The durable record for a dispatched `async_step`, or nil if the step was
+      # never dispatched (e.g. under `async: false`, where it ran inline and its
+      # value is an ordinary `step_result`). Mirrors `#composed` / `#map` in
+      # reading the reference off `composed_contexts`.
+      #
+      #   subject.async_step(:send_email)          # => the raw record hash
+      #   subject.async_step(:send_email, :status) # => "dispatched" / "completed"
+      def async_step(step_name, key = nil)
+        ensure_executed!
+
+        entry = composed_entry(step_name)
+        return nil unless entry && entry[:type] == :async_step_ref
+
+        record = RubyReactor.configuration.storage_adapter.retrieve_step_result(
+          entry[:context_id] || @reactor_instance.context.context_id,
+          step_name,
+          RubyReactor.reactor_storage_name(@reactor_instance.class)
+        )
+        key && record ? record[key.to_s] : record
+      end
+
+      # The child execution a dispatched `async_reactor` created, as its own
+      # TestSubject — the same drill-down `#composed` gives for an inline child.
+      def async_reactor(step_name)
+        ensure_executed!
+
+        entry = composed_entry(step_name)
+        return nil unless entry && entry[:type] == :async_reactor_ref
+
+        child_class = RubyReactor::Context.resolve_reactor_class(entry[:reactor_class_name])
+        return nil unless child_class
+
+        child_instance = child_class.find(entry[:execution_id])
+        self.class.new(
+          reactor_class: child_instance.class,
+          inputs: child_instance.context.inputs,
+          context: child_instance.context,
+          async: @async,
+          process_jobs: @process_jobs
+        ).tap do |s|
+          s.instance_variable_set(:@executed, true)
+          s.instance_variable_set(:@reactor_instance, child_instance)
+        end
+      end
+
+      def composed_entry(step_name)
+        contexts = @reactor_instance.context.composed_contexts
+        contexts[step_name] || contexts[step_name.to_s] || contexts[step_name.to_sym]
+      end
+
       private
 
       def traverse_composed(step_name)
@@ -441,7 +491,8 @@ module RubyReactor
       end
 
       def prepare_execution_class
-        # Even if no interceptors, we might need to subclass to override async steps
+        # Even if no interceptors, we might need to subclass to force the whole
+        # reactor to run in-process.
         return @reactor_class if @interceptors.empty? && @async != false
 
         interceptors = @interceptors
@@ -454,7 +505,7 @@ module RubyReactor
           @input_validations = superclass.input_validations.dup
           @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
-          @async = superclass.async?
+          @background_handoff = superclass.background_handoff
           @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
 
           # 2. Add Name Handling with Unique Registry Entry
@@ -464,15 +515,16 @@ module RubyReactor
           define_singleton_method(:name) { unique_name }
           RubyReactor::Registry.register(unique_name, self)
 
-          # 3. Apply Force Sync (Disable async on all steps)
+          # 3. `async: false` / `run_async(false)` means "run this reactor's full
+          # logic here, in one process". Under the new DSL that is three things:
+          # suppress the `background` hand-off, and run `async_step` /
+          # `async_reactor` units inline instead of dispatching them.
           if force_sync
+            @background_handoff = nil
             @steps.each do |name, config|
-              next unless config.async?
+              next unless config.respond_to?(:async_dispatch?) && config.async_dispatch?
 
-              # Clone and modify
-              new_config = config.clone
-              new_config.instance_variable_set(:@async, false)
-              @steps[name] = new_config
+              @steps[name] = config.clone.tap { |c| c.instance_variable_set(:@async_dispatch, nil) }
             end
           end
         end
@@ -503,7 +555,8 @@ module RubyReactor
 
           if nested_interceptors.any?
             apply_nested_interceptors(step_config, nested_interceptors)
-            step_config.instance_variable_set(:@async, false)
+            # A mocked inner step only takes effect if the child runs here.
+            step_config.instance_variable_set(:@async_dispatch, nil)
           end
 
           # Apply direct interceptors (mocks/failures on this step)
@@ -551,7 +604,7 @@ module RubyReactor
           @input_validations = superclass.input_validations.dup
           @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
-          @async = superclass.async?
+          @background_handoff = superclass.background_handoff
           @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
         end
 
@@ -606,7 +659,9 @@ module RubyReactor
         end
 
         step_config.instance_variable_set(:@run_block, wrapper_impl)
-        step_config.instance_variable_set(:@async, false)
+        # The mock replaces the step's body, so it must run where the spec can
+        # observe it rather than being dispatched to a worker.
+        step_config.instance_variable_set(:@async_dispatch, nil)
       end
     end
     # rubocop:enable Metrics/ClassLength

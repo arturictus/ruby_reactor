@@ -99,7 +99,7 @@ module RubyReactor
         #   sequence keeps executing every nonce in order regardless of prior
         #   failures. The poison state is per-key and clears on full drain. The
         #   check only applies to a fresh `execute`; an already-started run
-        #   that paused (InterruptResult/AsyncResult) completes on resume even
+        #   that paused (InterruptResult/DispatchResult) completes on resume even
         #   if the chain failed in the meantime.
         # @yield [inputs] Block that returns the ordered-lock key string.
         def with_ordered_lock(poison_pill_timeout: OrderedLock::DEFAULT_POISON_PILL_TIMEOUT,

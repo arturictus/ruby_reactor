@@ -75,7 +75,7 @@ class PreAuthorizeStep
 end
 
 class PaymentProcessingReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   # Payment processing needs careful retry configuration
   retry_defaults max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
@@ -227,7 +227,7 @@ end
 
 ```ruby
 class MultiAttemptPaymentReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 10.seconds
 
@@ -299,7 +299,7 @@ end
 
 ```ruby
 class SubscriptionPaymentReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 1.hour
 
@@ -558,10 +558,10 @@ end
 ### Async Processing
 
 ```ruby
-# Use async for non-critical steps
-step :send_receipt do
-  async true  # Don't block payment completion on email delivery
-
+# Dispatch non-critical work to its own job so it never blocks payment
+# completion. A failure here does NOT compensate the payment — nothing reads
+# `result(:send_receipt)`.
+async_step :send_receipt do
   run do
     # Email sending logic
   end

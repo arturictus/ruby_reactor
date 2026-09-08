@@ -178,7 +178,7 @@ module OrderedLockCounters
 end
 
 class OrderedReactor < RubyReactor::Reactor
-  async
+  background all: true
   with_ordered_lock(poison_pill_timeout: 60) { |inputs| "orders:#{inputs[:account_id]}" }
 
   input :account_id
@@ -229,7 +229,7 @@ class SyncOrderedReactor < RubyReactor::Reactor
 end
 
 class StrictOrderedReactor < RubyReactor::Reactor
-  async
+  background all: true
   with_ordered_lock(poison_pill_timeout: 60) { |inputs| "strict:#{inputs[:account_id]}" }
 
   input :account_id
@@ -253,7 +253,7 @@ class StrictOrderedReactor < RubyReactor::Reactor
 end
 
 class NonStrictOrderedReactor < RubyReactor::Reactor
-  async
+  background all: true
   with_ordered_lock(poison_pill_timeout: 60, strict: false) { |inputs| "lenient:#{inputs[:account_id]}" }
 
   input :account_id
@@ -275,7 +275,7 @@ class NonStrictOrderedReactor < RubyReactor::Reactor
 end
 
 class OrderedLockWithLockReactor < RubyReactor::Reactor
-  async
+  background all: true
   with_ordered_lock(poison_pill_timeout: 60) { |inputs| "combo:#{inputs[:account_id]}" }
   with_lock(ttl: 10) { |inputs| "combo:#{inputs[:account_id]}" }
 

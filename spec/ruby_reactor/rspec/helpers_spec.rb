@@ -27,7 +27,7 @@ RSpec.describe RubyReactor::RSpec::Helpers do
 
   # Async Reactors
   class HelpersAsyncReactor < RubyReactor::Reactor
-    async
+    background all: true
     input :value
     step :add_one do
       run { |inputs| RubyReactor::Success(inputs[:value] + 1) }
@@ -37,9 +37,10 @@ RSpec.describe RubyReactor::RSpec::Helpers do
   class HelpersAsyncStepReactor < RubyReactor::Reactor
     input :value
     step :add_one do
-      async true
       run { |inputs| RubyReactor::Success(inputs[:value] + 1) }
     end
+
+    background before: :add_one
   end
 
   # Map Reactor
@@ -130,8 +131,8 @@ RSpec.describe RubyReactor::RSpec::Helpers do
         # Ensure it didn't run (status is likely nil or running, result returns nil for unknown/running)
         expect(subject.result).to be_a(RubyReactor::Failure)
         expect(subject.result.error).to include("Reactor is still running")
-        # Ensure it enqueued (returned AsyncResult)
-        expect(subject.run_result).to be_a(RubyReactor::AsyncResult)
+        # Ensure it enqueued (returned DispatchResult)
+        expect(subject.run_result).to be_a(RubyReactor::DispatchResult)
       end
     end
 

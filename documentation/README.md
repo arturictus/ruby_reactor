@@ -81,8 +81,8 @@ result.value    # => payment result
 
 - **Sequential Execution**: Steps execute in dependency order
 - **Error Handling**: Automatic compensation and rollback on failures
-- **Async Support**: Full reactor async or step-level async execution
-- **Non-Blocking Retries**: Job requeuing instead of blocking workers
+- **Async Support**: `background` hand-off (whole reactor or from a declared cut point), `async_step` (one step as its own job), `async_reactor` (an independent nested reactor)
+- **Non-Blocking Retries & Waits**: Job requeuing instead of blocking workers — a worker reading a pending async result parks (locks kept held) rather than pinning its thread
 - **Pluggable Backend**: Sidekiq or ActiveJob (any ActiveJob-compatible queue) for background processing
 - **Retry Configuration**: Flexible retry policies per step
 
@@ -112,20 +112,24 @@ graph TD
 ```mermaid
 graph TD
     A[Client Request] --> B{Async<br/>Model?}
-    B -->|Full Reactor| C[Queue All Steps<br/>to Background Job]
-    B -->|Step-Level| D[Execute Sync Steps<br/>Until First Async]
+    B -->|background all: true| C[Queue Whole Reactor<br/>to Background Job]
+    B -->|background after:/before:| D[Execute Steps Locally<br/>Until the Cut Point]
+    B -->|async_step / async_reactor| L[Dispatch the Unit<br/>as Its Own Job]
     C --> E[Background Worker<br/>Executes All Steps]
     D --> F[Queue Remaining Steps<br/>to Background Job]
     F --> G[Background Worker<br/>Executes Remaining Steps]
+    L --> M[Reactor Keeps Running<br/>result:name waits when read]
     E --> H{Result?}
     G --> H
+    M --> H
     H -->|Success| I[Return Success]
     H -->|Failure| J[Compensation in Worker]
     J --> K[Return Failure]
 ```
 
-- **Full Reactor Async**: Entire reactor executes in background
-- **Step-Level Async**: Handoff to background at first async step
+- **`background all: true`**: Entire reactor executes in background
+- **`background after:` / `before:`**: One declared cut point — everything past it runs in a single background job
+- **`async_step` / `async_reactor`**: One step's work, or a whole nested reactor, dispatched as its own independent job; results are read with `result(:name)` (bounded wait — a worker-side reader parks instead of blocking; see [Async Reactors](async_reactors.md#waiting-on-dispatched-work))
 
 ## Error Handling
 

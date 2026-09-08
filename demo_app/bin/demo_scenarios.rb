@@ -24,7 +24,7 @@ begin
     ar_query: Product.all
   )
   puts "Result Class: #{result.class}"
-  if result.is_a?(RubyReactor::AsyncResult)
+  if result.is_a?(RubyReactor::DispatchResult)
     puts "Reactor Status: Async Execution Started (Job ID: #{result.job_id})"
   else
     puts "Result: #{result.success? ? 'Success' : 'Failure'}"
@@ -41,13 +41,21 @@ end
 puts "\n"
 
 puts "=== 3. Running Async Patterns ==="
-puts "-- FullAsyncReactor --"
-res = FullAsyncReactor.run(param: "test")
-puts "Result Class: #{res.class} (Expected: RubyReactor::AsyncResult)"
+puts "-- FullBackgroundReactor --"
+res = FullBackgroundReactor.run(param: "test")
+puts "Result Class: #{res.class} (Expected: RubyReactor::DispatchResult)"
 
-puts "-- PartialAsyncReactor --"
-res = PartialAsyncReactor.run(user_id: "user_123")
-puts "Result Class: #{res.class} (Expected: RubyReactor::AsyncResult)"
+puts "-- BackgroundDemoReactor --"
+res = BackgroundDemoReactor.run(user_id: "user_123")
+puts "Result Class: #{res.class} (Expected: RubyReactor::DispatchResult)"
+
+puts "-- AsyncStepDemoReactor --"
+res = AsyncStepDemoReactor.run(email: "demo@example.com")
+puts "Result Class: #{res.class} (the reactor keeps running; :send_email is out in its own job)"
+
+puts "-- AsyncReactorDemoReactor --"
+res = AsyncReactorDemoReactor.run(user_id: "user_123")
+puts "Result Class: #{res.class} (children run independently, linked by execution id)"
 puts "\n"
 
 puts "=== 4. Running Composition ==="
@@ -76,7 +84,7 @@ res = OrderProcessingReactor.run(
   quantity: 5,
   amount: 100
 )
-if res.is_a?(RubyReactor::AsyncResult)
+if res.is_a?(RubyReactor::DispatchResult)
   puts "Async execution started: #{res.job_id}"
 else
   puts "Result: #{res.success? ? 'Success' : 'Failure'} - #{res.value}"

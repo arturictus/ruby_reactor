@@ -48,7 +48,7 @@ RSpec.describe "Compose" do
     queue = []
     allow(RubyReactor.configuration.async_router).to receive(:perform_async) do |context_id, reactor_name|
       queue << { context_id: context_id, reactor: reactor_name }
-      RubyReactor::AsyncResult.new(job_id: "job_id")
+      RubyReactor::DispatchResult.new(job_id: "job_id")
     end
 
     allow(RubyReactor.configuration.async_router).to receive(:perform_in) do |delay, context_id, reactor_name|
@@ -71,7 +71,6 @@ RSpec.describe "Compose" do
       end
 
       compose :update_user_profile do
-        async true
         argument :id, result(:validate_id)
 
         step :get_linkedin do
@@ -84,13 +83,15 @@ RSpec.describe "Compose" do
           end
         end
       end
+
+      background before: :update_user_profile
     end
 
     # Execute
     result = InlineComposeReactor.run(id: "fail")
 
-    # It should return AsyncResult because compose is async
-    expect(result).to be_a(RubyReactor::AsyncResult)
+    # It should return DispatchResult because compose is async
+    expect(result).to be_a(RubyReactor::DispatchResult)
 
     # Check what was enqueued
     expect(queue.size).to eq(1)
@@ -109,7 +110,7 @@ RSpec.describe "Compose" do
     context.inline_async_execution = true
     worker_executor = RubyReactor::Executor.new(context.reactor_class, {}, context)
 
-    # We expect it to return a RetryQueuedResult or AsyncResult depending on how retry is handled
+    # We expect it to return a RetryQueuedResult or DispatchResult depending on how retry is handled
     # Since it's async retry, it should requeue and return RetryQueuedResult (or nil if handled internally)
 
     # Actually, `Executor#resume_execution` catches the retry and returns the result.

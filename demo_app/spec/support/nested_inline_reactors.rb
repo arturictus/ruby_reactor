@@ -5,9 +5,10 @@ module Support
     input :id
 
     step :async_step do
-      async true
       run { |args, _| RubyReactor::Success("async_done_#{args[:id]}") }
     end
+
+    background before: :async_step
   end
 
   class NestedInlineRootReactor < RubyReactor::Reactor
@@ -37,9 +38,10 @@ module Support
       input :id
 
       step :async_step do
-        async true
         run { |args, _| RubyReactor::Success("async_done_#{args[:id]}") }
       end
+
+      background before: :async_step
 
       argument :id, value("child2")
     end
