@@ -172,11 +172,9 @@ end
 step :process_decision do
   argument :decision, result(:wait_for_approval)
   run do |args, _ctx|
-    if args[:decision][:approved]
-      Success("Approved")
-    else
-      Failure("Rejected")
-    end
+    fail!("Rejected") unless args[:decision][:approved]
+
+    Success("Approved")
   end
 end
 ```

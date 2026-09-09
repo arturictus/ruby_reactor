@@ -112,6 +112,60 @@ Inline blocks support `compensate` and `undo` the same way class steps do — us
 - **Dependencies**: Other steps that must complete first (`argument`, `wait_for`)
 - **Compensation / undo**: Rollback logic for failures
 
+### Step outcome helpers (`success!` / `fail!` / `halt!` / `skip!`)
+
+`return Failure(...) unless ...` guard clauses work, but every one needs its own `return`. The one-line helpers drop that boilerplate — call them and the step body ends right there, with the matching signal:
+
+| Helper | Equivalent |
+|--------|------------|
+| `success!(value)` | `return Success(value)` |
+| `fail!(error, **opts)` | `return Failure(error, **opts)` |
+| `halt!(reason:, **kwargs)` | `return Halt(reason:, **kwargs)` |
+| `skip!(value)` | `return Skipped(value)` |
+
+The [validate_order example above](#inline-step-definition) written with the helper:
+
+```ruby
+run do |args, _context|
+  order = Order.find(args[:order_id])
+  fail!("Order not found") unless order
+  Success({ order: order })
+end
+```
+
+They are not limited to a single guard clause at the top of `run` — a chain of them replaces what would otherwise be a nested `if/elsif` or an accumulator variable threaded through the method:
+
+```ruby
+def self.run(arguments, _context)
+  order = Order.find_by(id: arguments[:order_id])
+  fail!("Order not found") unless order
+  fail!("Order already processed") if order.processed?
+  fail!("Order cancelled") if order.cancelled?
+
+  Success(order: order)
+end
+```
+
+**Any call depth.** A helper works from a method the step body calls, however deep — the call ends the *step*, not just the current method, so validation logic can live in a plain helper method instead of returning a signal up through every caller:
+
+```ruby
+def self.run(arguments, context)
+  check_eligibility!(arguments)   # fail! inside ends the step, not just this method
+  Success(processed: true)
+end
+
+def self.check_eligibility!(arguments)
+  fail!("underage") if arguments[:user].age < 18
+  fail!("suspended") if arguments[:user].suspended?
+end
+```
+
+**Rescue-safe.** The helpers unwind via `throw`/`catch`, not an exception, so a step's own `rescue StandardError` (or even `rescue Exception`) around risky code cannot accidentally swallow the outcome — `ensure` blocks still run.
+
+Available in `run`, `compensate`, and `undo` bodies, in both class steps and inline blocks. See [Halting a reactor cleanly](#halting-a-reactor-cleanly) and [Skipping a single step](#skipping-a-single-step) for `halt!`/`skip!`'s reactor-level semantics — the helper is just the one-line spelling of the same signal.
+
+Calling one outside a step body (no enclosing step invocation to catch it) raises `UncaughtThrowError` — that's a programming error, not a supported use.
+
 ## Context
 
 Context holds the execution state throughout the reactor lifecycle.

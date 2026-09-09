@@ -251,11 +251,10 @@ it takes one of two forms depending on where the reader runs:
 step :confirm_delivery do
   argument :delivery, result(:send_email)
   run do |args|
-    if args[:delivery].is_a?(RubyReactor::Failure)
-      Failure(args[:delivery].error)  # opt in: this fails the reactor and compensates
-    else
-      Success(args[:delivery])
-    end
+    # opt in: fail! here fails the reactor and compensates
+    fail!(args[:delivery].error) if args[:delivery].is_a?(RubyReactor::Failure)
+
+    Success(args[:delivery])
   end
 end
 ```
