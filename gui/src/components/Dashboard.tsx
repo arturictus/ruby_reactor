@@ -3,12 +3,10 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, AlertCircle, Search, ChevronRight } from 'lucide-react';
 import { apiUrl } from '../lib/utils';
-import { aggregateByClass, classRoute, type StatusGroup, type ReactorSummary } from '../lib/reactors';
-
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
+import { aggregateByClass, classRoute, fetchAllReactors, type StatusGroup, type ReactorSummary } from '../lib/reactors';
 
 export default function Dashboard() {
-  const { data: reactors, error, isLoading } = useSWR<ReactorSummary[]>(apiUrl('/api/reactors'), fetcher, { refreshInterval: 2000 });
+  const { data: reactors, error, isLoading } = useSWR<ReactorSummary[]>(apiUrl('/api/reactors'), fetchAllReactors, { refreshInterval: 2000 });
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusGroup | 'all'>('all');
 

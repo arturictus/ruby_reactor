@@ -1,5 +1,53 @@
-import { describe, it, expect } from 'vitest';
-import { aggregateByClass, classRoute, matchesStatusFilter } from '../reactors';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { aggregateByClass, classRoute, fetchAllReactors, matchesStatusFilter } from '../reactors';
+
+describe('fetchAllReactors', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stubPages(pages: { ids: string[]; nextCursor: string }[]) {
+    const calls: string[] = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      calls.push(url);
+      const page = pages[calls.length - 1];
+      return {
+        ok: true,
+        json: async () => page.ids.map((id) => ({ id, class: 'Foo', status: 'completed', created_at: '2024-01-01' })),
+        headers: { get: () => page.nextCursor },
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return calls;
+  }
+
+  it('pages until the cursor comes back "0" and concatenates every batch', async () => {
+    const calls = stubPages([
+      { ids: ['a', 'b'], nextCursor: '2' },
+      { ids: ['c', 'd'], nextCursor: '4' },
+      { ids: ['e'], nextCursor: '0' },
+    ]);
+
+    const reactors = await fetchAllReactors('/api/reactors', 2);
+
+    expect(reactors.map((r) => r.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(calls).toHaveLength(3);
+    expect(calls[0]).toBe('/api/reactors?limit=2&cursor=0');
+    expect(calls[1]).toBe('/api/reactors?limit=2&cursor=2');
+    expect(calls[2]).toBe('/api/reactors?limit=2&cursor=4');
+  });
+
+  it('stops after a single request when the first page is the only page', async () => {
+    const calls = stubPages([{ ids: ['a'], nextCursor: '0' }]);
+
+    await expect(fetchAllReactors('/api/reactors')).resolves.toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('throws when a page request fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 })));
+
+    await expect(fetchAllReactors('/api/reactors')).rejects.toThrow('Failed to load reactors: 500');
+  });
+});
 
 describe('aggregateByClass', () => {
   it('groups reactors by class and counts statuses', () => {
