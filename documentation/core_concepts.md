@@ -83,7 +83,7 @@ end
 - **Maintainability** — compensation and undo logic sit beside `run` in one place
 
 **Step class methods:**
-- **`run(arguments, context)`**: The main business logic. Returns `Success(result)`, `Failure(error)`, or `Skipped(reason:)` (see [Skipping a reactor cleanly](#skipping-a-reactor-cleanly))
+- **`run(arguments, context)`**: The main business logic. Returns `Success(result)`, `Failure(error)`, `Halt(reason:)` (see [Halting a reactor cleanly](#halting-a-reactor-cleanly)), or `Skipped(value)` (see [Skipping a single step](#skipping-a-single-step))
 - **`compensate(error, arguments, context)`**: Cleanup for the current failing step. Called when the step fails
 - **`undo(result, arguments, context)`**: Rollback for previously successful steps. Called during reactor failure rollback
 
@@ -179,11 +179,13 @@ end
 
 `Reactor.run` returns one of five result types:
 
-- **`RubyReactor::Success`** — `success?` is `true`. `value` holds the output of the step named in `returns`, or the full `intermediate_results` hash if no `returns` is declared.
+- **`RubyReactor::Success`** — `success?` is `true`. `value` holds the output of the step named in `returns`, or the full `intermediate_results` hash if no `returns` is declared. A run containing skipped steps still ends here — `Skipped` never surfaces as the run's terminal result (see below).
 - **`RubyReactor::Failure`** — `failure?` is `true`. Readers include `error`, `step_name`, `reactor_name`, `step_arguments`, `inputs`, `exception_class`, `file_path`, `line_number`, `backtrace`, `validation_errors`, and `retryable?`.
-- **`RubyReactor::Skipped`** — a "clean halt". A `Success` subclass, so `success?` is `true` **and** `skipped?` is `true`; `reason` and `step_name` say where/why. Returned when a step returns `Skipped(reason: "...")` or a `with_period` bucket is already claimed. Remaining steps don't run and completed steps are **not** compensated. See [Skipping a reactor cleanly](#skipping-a-reactor-cleanly).
+- **`RubyReactor::Halt`** — a clean stop. A `Success` subclass, so `success?` is `true` **and** `halted?` is `true`; `reason` and `step_name` say where/why. Returned when a step returns `Halt(reason: "...")` or a `with_period` bucket is already claimed. Remaining steps don't run and completed steps are **not** compensated. See [Halting a reactor cleanly](#halting-a-reactor-cleanly).
 - **`RubyReactor::DispatchResult`** — returned by an async reactor or when a step hands off to a worker. Readers: `job_id`, `execution_id`, `intermediate_results`.
 - **`RubyReactor::InterruptResult`** — returned when an `interrupt` step pauses execution. Readers: `execution_id`, `correlation_id`, `status` (`:paused`), `timeout_at`, `intermediate_results`.
+
+`RubyReactor::Skipped` is a sixth signal, but it is a *step-level* result, not a run-level one: a step's `run` can return it, and `MyStep.run(args, context)` returns it directly in a unit test, but `Reactor.run` always surfaces a plain `Success` at the top even when the `returns` step was itself skipped — the skip is visible in the execution trace, not in the run's terminal result type. See [Skipping a single step](#skipping-a-single-step).
 
 Step-by-step state lives on the context, not the result object. Reload via `Reactor.find(execution_id)` to inspect:
 
@@ -577,11 +579,11 @@ step :process_payment do
 end
 ```
 
-## Skipping a reactor cleanly
+## Halting a reactor cleanly
 
-Alongside `Success` and `Failure`, a step can return **`Skipped`** — a "clean halt". The reactor stops immediately: remaining steps don't run, and **already-completed steps are NOT compensated or undone**. Use it when a step discovers the rest of the workflow is unnecessary and the partial progress so far is correct to keep (e.g. "user already opted out", "nothing to do this round").
+Alongside `Success` and `Failure`, a step can return **`Halt`** — a clean stop. The reactor stops immediately: remaining steps don't run, and **already-completed steps are NOT compensated or undone**. Use it when a step discovers the rest of the workflow is unnecessary and the partial progress so far is correct to keep (e.g. "user already opted out", "nothing to do this round").
 
-`Skipped` is exposed exactly like `Success` and `Failure` — as a bare helper inside both class steps and inline `run` blocks:
+`Halt` is exposed exactly like `Success` and `Failure` — as a bare helper inside both class steps and inline `run` blocks (or use the one-line `halt!(reason: ...)`, which ends the step immediately from any call depth):
 
 ```ruby
 # Class step
@@ -589,7 +591,7 @@ class SyncProfileStep
   include RubyReactor::Step
 
   def self.run(arguments, _context)
-    return Skipped(reason: "user_opted_out") if arguments[:user].opted_out?
+    return Halt(reason: "user_opted_out") if arguments[:user].opted_out?
 
     Success(synced: ProfileService.sync(arguments[:user]))
   end
@@ -599,26 +601,55 @@ end
 step :sync_profile do
   argument :user, input(:user)
   run do |args, _ctx|
-    next Skipped(reason: "user_opted_out") if args[:user].opted_out?
+    next Halt(reason: "user_opted_out") if args[:user].opted_out?
 
     Success(synced: ProfileService.sync(args[:user]))
   end
 end
 ```
 
-`Skipped` is a `Success` subclass, so existing `if result.success?` branches still take the right path; check `result.skipped?` to distinguish it:
+`Halt` is a `Success` subclass, so existing `if result.success?` branches still take the right path; check `result.halted?` to distinguish it:
 
 ```ruby
 result = SyncReactor.run(user: user)
-result.success?   # => true
-result.skipped?   # => true on a clean halt, false otherwise
+result.success?  # => true
+result.halted?    # => true on a clean halt, false otherwise
 result.reason     # => "user_opted_out"
 result.step_name  # => :sync_profile (the halting step)
 ```
 
-The reactor's context status becomes `:skipped` (distinct from `:completed`/`:failed`), and a `{ type: :skipped, step:, reason: }` entry is appended to the execution trace.
+The reactor's context status becomes `:halted` (distinct from `:completed`/`:failed`), and a `{ type: :halt, step:, reason: }` entry is appended to the execution trace.
 
-**`Skipped` vs `Failure`:** use `Skipped` when the partial progress is correct and should be kept; use `Failure` when prior steps need to be rolled back. A `with_period` dedup gate also produces a `Skipped` result before any step runs. See [Locks & Semaphores — The `Skipped` result](locks_and_semaphores.md#the-skipped-result) for the full reference and the decision matrix.
+**`Halt` vs `Failure`:** use `Halt` when the partial progress is correct and should be kept; use `Failure` when prior steps need to be rolled back. A `with_period` dedup gate also produces a `Halt` result before any step runs. See [Locks & Semaphores — The `Halt` result](locks_and_semaphores.md#the-halt-result) for the full reference and the decision matrix.
+
+## Skipping a single step
+
+Where `Halt` stops the whole reactor, **`Skipped`** marks just one step as skipped while the reactor keeps going. Use it when a step discovers it has nothing to do this time, but the value dependants need is still available (e.g. "already synced, here's the cached value"):
+
+```ruby
+step :maybe_sync do
+  argument :user, result(:fetch_user)
+  run do |args, _ctx|
+    next Skipped(args[:user]) if args[:user].already_synced?
+
+    Success(sync!(args[:user]))
+  end
+end
+
+step :notify do
+  argument :user, result(:maybe_sync)  # receives the user either way
+  run { |args, _ctx| Success(mail(args[:user])) }
+end
+```
+
+- The value behaves exactly like a `Success` value: it's stored as the step's result, and dependants read it via `result(:step)` without knowing it was skipped.
+- The reactor continues; the run's overall status is `:completed`, never `:halted`.
+- The step is **not** enrolled for rollback — a later failure walks past it without compensation, because nothing happened.
+- A `{ type: :skipped, step:, reason: }` entry is appended to the execution trace so dashboards and tests can still see it happened.
+
+`Skipped` is a `Success` subclass too: `result.success?` is `true`; check `result.skipped?` to distinguish it, or use the one-line `skip!(value)` helper.
+
+**The boundary that matters:** `Skipped` means *nothing happened*. If a step's `run` produced a real side effect before deciding to bail, return `Success` and declare an `undo` instead — `Skipped` steps are never rolled back, so a side effect hidden behind one would leak on a later failure.
 
 ## Validation
 

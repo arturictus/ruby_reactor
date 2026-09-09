@@ -141,7 +141,13 @@ module RubyReactor
         index = arguments[:index]
         parent_class = arguments[:parent_reactor_class_name] # Using short name for variable
 
-        if result.success?
+        if result.halted?
+          # A Halt must not be collected as a (nil) value indistinguishable
+          # from an ordinary success — mark it so the enumerator reconstructs
+          # a real Halt for the consumer.
+          storage.store_map_result(map_id, index, { _halt: true, reason: result.reason },
+                                   parent_class, strict_ordering: arguments[:strict_ordering])
+        elsif result.success?
           storage.store_map_result(map_id, index, ContextSerializer.serialize_value(result.value),
                                    parent_class, strict_ordering: arguments[:strict_ordering])
         else

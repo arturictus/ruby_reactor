@@ -3,6 +3,8 @@
 module RubyReactor
   module Dsl
     module TemplateHelpers
+      include RubyReactor::StepSignals
+
       def input(name, path = nil)
         RubyReactor::Template::Input.new(name, path)
       end
@@ -19,7 +21,7 @@ module RubyReactor
         RubyReactor::Template::Element.new(map_name, path)
       end
 
-      # Make Success, Failure, and Skipped available in DSL contexts
+      # Make Success, Failure, Halt, and Skipped available in DSL contexts
       # rubocop:disable Naming/MethodName
       def Success(value = nil)
         # rubocop:enable Naming/MethodName
@@ -33,9 +35,15 @@ module RubyReactor
       end
 
       # rubocop:disable Naming/MethodName
-      def Skipped(reason: nil, **kwargs)
+      def Halt(reason: nil, **kwargs)
         # rubocop:enable Naming/MethodName
-        RubyReactor.Skipped(reason: reason, **kwargs)
+        RubyReactor.Halt(reason: reason, **kwargs)
+      end
+
+      # rubocop:disable Naming/MethodName
+      def Skipped(...)
+        # rubocop:enable Naming/MethodName
+        RubyReactor.Skipped(...)
       end
     end
   end

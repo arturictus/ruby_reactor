@@ -50,7 +50,7 @@ RSpec.describe RubyReactor::Sweeper do
       expect(enqueued).to be_empty
     end
 
-    %i[completed failed skipped].each do |terminal|
+    %i[completed failed halted].each do |terminal|
       it "skips a terminal (#{terminal}) context" do
         store_context(status: terminal)
 

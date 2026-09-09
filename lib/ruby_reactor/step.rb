@@ -7,6 +7,8 @@ module RubyReactor
     end
 
     module ClassMethods
+      include RubyReactor::StepSignals
+
       # rubocop:disable Naming/MethodName
       def Success(value = nil)
         RubyReactor::Success(value)
@@ -16,8 +18,12 @@ module RubyReactor
         RubyReactor::Failure(error)
       end
 
-      def Skipped(reason: nil, **kwargs)
-        RubyReactor.Skipped(reason: reason, **kwargs)
+      def Halt(reason: nil, **kwargs)
+        RubyReactor.Halt(reason: reason, **kwargs)
+      end
+
+      def Skipped(...)
+        RubyReactor.Skipped(...)
       end
       # rubocop:enable Naming/MethodName
 
@@ -26,11 +32,11 @@ module RubyReactor
       end
 
       def compensate(_reason, _arguments, _context)
-        RubyReactor.Success() # Default: accept failure and continue rollback
+        RubyReactor.Skipped() # Default: nothing defined, rollback continues
       end
 
       def undo(_result, _arguments, _context)
-        RubyReactor.Success() # Default: no-op undo
+        RubyReactor.Skipped() # Default: nothing defined, rollback continues
       end
     end
   end

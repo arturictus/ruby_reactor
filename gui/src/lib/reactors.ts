@@ -18,7 +18,7 @@ export interface ClassAggregate {
 }
 
 export const STATUS_GROUPS = {
-  success: ['completed', 'skipped'],
+  success: ['completed', 'halted', 'skipped'],
   running: ['running', 'paused'],
   errors: ['failed', 'cancelled'],
 } as const;

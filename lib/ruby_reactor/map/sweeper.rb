@@ -92,7 +92,7 @@ module RubyReactor
 
         results = data["intermediate_results"] || {}
         status = data["status"].to_s
-        results.key?(meta["step_name"].to_s) || %w[completed failed skipped].include?(status)
+        results.key?(meta["step_name"].to_s) || %w[completed failed halted skipped].include?(status)
       end
 
       def retrigger_collector(meta)

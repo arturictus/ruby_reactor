@@ -21,6 +21,17 @@ describe('aggregateByClass', () => {
   it('returns an empty array when no reactors exist', () => {
     expect(aggregateByClass([])).toEqual([]);
   });
+
+  it('counts halted runs in the clean-outcome bucket, and still does so for a legacy skipped row', () => {
+    const reactors = [
+      { id: '1', class: 'HaltingReactor', status: 'halted', created_at: '2024-01-01' },
+      { id: '2', class: 'HaltingReactor', status: 'skipped', created_at: '2024-01-02' },
+    ];
+
+    expect(aggregateByClass(reactors)).toEqual([
+      { className: 'HaltingReactor', runs: 2, success: 2, running: 0, errors: 0 },
+    ]);
+  });
 });
 
 describe('matchesStatusFilter', () => {

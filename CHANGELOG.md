@@ -120,6 +120,10 @@ was dispatched precisely so the parent would not depend on it. A later step that
 reads the result and returns `Failure` triggers compensation normally, so no
 failure is unrecoverable, just not automatic.
 
+* Reactor signal semantics: `Skipped` is renamed to `Halt` (the existing clean-stop behaviour, unchanged otherwise), and `Skipped` is reused with new meaning — marking a single step skipped while the reactor continues, with its value flowing to dependants exactly like `Success`. One-line outcome helpers `success!`, `fail!`, `skip!`, and `halt!` end a step immediately from any call depth. `Failure` (and `fail!`) accept a `retry:` spelling alongside the existing `retryable:`. `compensate`/`undo` now default to `Skipped` instead of `Success`, so the execution trace distinguishes rollback logic that ran from rollback logic that was never written.
+
+  **Migration**: `Skipped(reason: "...")` (the old halt) is now `Halt(reason: "...")`; `result.skipped?` for a clean halt is now `result.halted?`; the `be_skipped` matcher for a clean halt is now `be_halted`. The old call shape raises `ArgumentError` naming `Halt` — there is no silent compatibility path. Run status `:skipped` is renamed `:halted`; contexts persisted by a pre-upgrade version with status `"skipped"` are still read back correctly as halted.
+
 ## [0.5.4](https://github.com/arturictus/ruby_reactor/compare/v0.5.3...v0.5.4) (2026-06-18)
 
 

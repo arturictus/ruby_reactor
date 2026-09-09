@@ -164,6 +164,48 @@ describe('DagVisualizer', () => {
     );
     expect(getByTestId('node-items').getAttribute('data-status')).toBe('completed');
   });
+
+  it('renders a skipped step as skipped, not completed, even though it stores a value', () => {
+    const struct = {
+      step1: { type: 'step' },
+      step2: { type: 'step', depends_on: ['step1'] }
+    };
+
+    const { getByTestId } = render(
+      <DagVisualizer
+        structure={struct}
+        steps={[{ type: 'skipped', step: 'step1' }]}
+        results={{ step1: 'skipped_value', step2: 'done' }}
+        reactorStatus="completed"
+        onStepSelect={() => { }}
+        selectedStep={null}
+      />
+    );
+
+    expect(getByTestId('node-step1').getAttribute('data-status')).toBe('skipped');
+    expect(getByTestId('node-step2').getAttribute('data-status')).toBe('completed');
+  });
+
+  it('marks the halting step as halted and leaves unreached nodes pending, not cancelled', () => {
+    const struct = {
+      step1: { type: 'step' },
+      step2: { type: 'step', depends_on: ['step1'] }
+    };
+
+    const { getByTestId } = render(
+      <DagVisualizer
+        structure={struct}
+        steps={[{ type: 'halt', step: 'step1' }]}
+        results={{}}
+        reactorStatus="halted"
+        onStepSelect={() => { }}
+        selectedStep={null}
+      />
+    );
+
+    expect(getByTestId('node-step1').getAttribute('data-status')).toBe('halted');
+    expect(getByTestId('node-step2').getAttribute('data-status')).toBe('pending');
+  });
 });
 
 

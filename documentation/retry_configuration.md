@@ -244,6 +244,21 @@ end
 
 When a `Failure` is returned with `retryable: false`, the retry manager stops immediately and falls through to compensation. Custom error classes can also implement `retryable?` to control this from the exception side.
 
+### The `retry:` spelling
+
+`retry:` is accepted everywhere `retryable:` is, and means the same thing — it reads better next to the one-line `fail!` helper:
+
+```ruby
+Failure(error, retry: false)     # same as retryable: false
+fail!(error, retry: false)       # one-line helper form; ends the step immediately
+```
+
+When both are given, `retry:` wins. `retryable:` remains the name written into serialized failures and stays fully supported — `retry:` is an additive alias, not a replacement.
+
+**The flag is a veto only.** A step with no `retries` configuration, or one that has already spent its attempt budget, is never retried no matter what the flag says — `retry: true` cannot grant retries a step wasn't configured for; it can only refuse them. `retry: false` means: no further attempt, no backoff sleep, no re-enqueue — straight to compensation and rollback.
+
+**Only `Failure` enters the retry machinery.** `Success`, `Skipped`, and `Halt` all clear any accumulated retry state for the step and report their outcome directly — a step that fails twice and then succeeds, skips, or halts never produces a retry-exhaustion failure.
+
 ## Monitoring and Observability
 
 ### Retry Metrics

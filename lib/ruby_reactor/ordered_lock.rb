@@ -62,11 +62,11 @@ module RubyReactor
     #   via the stored context status.
     # - `:skip_chain_failed` — only in strict mode: an earlier nonce in this
     #   sequence terminated with a Failure, so this run is short-circuited
-    #   with `Skipped(reason: :ordered_lock_chain_failed)` without executing.
+    #   with `Halt(reason: :ordered_lock_chain_failed)` without executing.
     # - `:stale_batch` — this run's epoch no longer matches the key's current
     #   generation: its batch fully drained and the numbering was reused by a
     #   newer batch. The run is short-circuited with
-    #   `Skipped(reason: :ordered_lock_stale_batch)` and must not participate.
+    #   `Halt(reason: :ordered_lock_stale_batch)` and must not participate.
     # - `:poison_advance` is collapsed to `:go` from the caller's perspective.
     def check!
       raise ArgumentError, "OrderedLock#check! requires a nonce" unless @nonce
@@ -111,7 +111,7 @@ module RubyReactor
     #
     # `failed:` records this nonce as the chain-failure marker (only the FIRST
     # failure sticks). In strict mode the marker causes subsequent nonces to
-    # short-circuit with Skipped.
+    # short-circuit with Halt.
     def advance!(failed: false)
       raise ArgumentError, "OrderedLock#advance! requires a nonce" unless @nonce
 

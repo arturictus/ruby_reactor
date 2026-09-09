@@ -55,32 +55,41 @@ module RubyReactor
         @context.middlewares || RubyReactor::MiddlewareRunner.new([])
       end
 
+      # Ensure we have a value to log (if it's a Success/Failure object, get the value or error)
+      def loggable_value(result)
+        if result.respond_to?(:value)
+          result.value
+        elsif result.respond_to?(:error)
+          result.error
+        else
+          result
+        end
+      end
+
+      def skipped_result?(result)
+        result.respond_to?(:skipped?) && result.skipped?
+      end
+
       def compensate_step(step_config, error, arguments)
         middlewares.on(:start_compensation, step_config.name, error, arguments, @context)
         begin
-          compensate_result = if step_config.compensate_block
-                                step_config.compensate_block.call(error, arguments, @context)
-                              elsif step_config.has_impl?
-                                step_config.impl.compensate(error, arguments, @context)
-                              else
-                                RubyReactor.Success() # Default compensation
-                              end
-
-          # Ensure we have a value to log
-          logged_result = if compensate_result.respond_to?(:value)
-                            compensate_result.value
-                          elsif compensate_result.respond_to?(:error)
-                            compensate_result.error
-                          else
-                            compensate_result
-                          end
+          compensate_result = catch(StepSignals::TAG) do
+            if step_config.compensate_block
+              step_config.compensate_block.call(error, arguments, @context)
+            elsif step_config.has_impl?
+              step_config.impl.compensate(error, arguments, @context)
+            else
+              RubyReactor.Skipped() # Default: nothing defined, rollback continues
+            end
+          end
 
           @context.execution_trace << {
             type: :compensate,
             step: step_config.name,
             timestamp: Time.now,
-            result: logged_result,
-            arguments: arguments
+            result: loggable_value(compensate_result),
+            arguments: arguments,
+            skipped: skipped_result?(compensate_result)
           }
           @undo_trace << { type: :compensation, step: step_config.name, error: error, arguments: arguments }
 
@@ -100,25 +109,24 @@ module RubyReactor
       def undo_step(step_config, result, arguments)
         middlewares.on(:start_undo, step_config.name, result, arguments, @context)
         begin
-          undo_result = if step_config.undo_block
-                          step_config.undo_block.call(result.value, arguments, @context)
-                        elsif step_config.has_impl?
-                          step_config.impl.undo(result.value, arguments, @context)
-                        else
-                          RubyReactor.Success()
-                        end
+          undo_result = catch(StepSignals::TAG) do
+            if step_config.undo_block
+              step_config.undo_block.call(result.value, arguments, @context)
+            elsif step_config.has_impl?
+              step_config.impl.undo(result.value, arguments, @context)
+            else
+              RubyReactor.Skipped() # Default: nothing defined, rollback continues
+            end
+          end
 
-          # Ensure we have a value to log (if it's a Success/Failure object, get the value or error)
-          logged_result = if undo_result.respond_to?(:value)
-                            undo_result.value
-                          elsif undo_result.respond_to?(:error)
-                            undo_result.error
-                          else
-                            undo_result
-                          end
-
-          @context.execution_trace << { type: :undo, step: step_config.name, timestamp: Time.now, result: logged_result,
-                                        arguments: arguments }
+          @context.execution_trace << {
+            type: :undo,
+            step: step_config.name,
+            timestamp: Time.now,
+            result: loggable_value(undo_result),
+            arguments: arguments,
+            skipped: skipped_result?(undo_result)
+          }
 
           if undo_result.is_a?(RubyReactor::Failure)
             middlewares.on(:failed_undo, step_config.name, undo_result, @context)

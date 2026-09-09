@@ -149,7 +149,7 @@ class StepSkipReactor < RubyReactor::Reactor
     run do |args|
       SkippedStepCounters.second_ran += 1
       if args[:should_skip]
-        RubyReactor.Skipped(reason: "no work to do")
+        RubyReactor.Halt(reason: "no work to do")
       else
         RubyReactor.Success(:second_done)
       end

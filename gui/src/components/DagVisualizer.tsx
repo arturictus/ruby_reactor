@@ -14,7 +14,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { cn } from '../lib/utils';
 import { reactorRoute } from '../lib/reactors';
-import { Activity, CheckCircle2, AlertCircle, Clock, Ban, Send, ExternalLink, Workflow } from 'lucide-react';
+import { Activity, CheckCircle2, AlertCircle, Clock, Ban, Send, ExternalLink, Workflow, SkipForward, OctagonMinus } from 'lucide-react';
 
 interface DagVisualizerProps {
   structure: Record<string, any>;
@@ -48,6 +48,8 @@ const StepNode = ({ data }: { data: any }) => {
     pending: "border-slate-700 bg-slate-900 text-slate-500",
     running: "border-indigo-500 bg-indigo-500/10 text-indigo-400 ring-2 ring-indigo-500/20",
     completed: "border-teal-500 bg-teal-500/10 text-teal-400",
+    skipped: "border-sky-500 bg-sky-500/10 text-sky-400",
+    halted: "border-slate-400 bg-slate-500/10 text-slate-300",
     failed: "border-rose-500 bg-rose-500/10 text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.2)]",
     cancelled: "border-amber-500/50 bg-amber-500/10 text-amber-500"
   };
@@ -56,6 +58,8 @@ const StepNode = ({ data }: { data: any }) => {
     pending: Clock,
     running: Activity,
     completed: CheckCircle2,
+    skipped: SkipForward,
+    halted: OctagonMinus,
     failed: AlertCircle,
     cancelled: Ban
   }[status as keyof typeof statusColors] || Clock;
@@ -108,6 +112,8 @@ const GroupNode = ({ data }: { data: any }) => {
     pending: "border-slate-700",
     running: "border-indigo-500",
     completed: "border-teal-500",
+    skipped: "border-sky-500",
+    halted: "border-slate-400",
     failed: "border-rose-500",
     cancelled: "border-amber-500/50"
   };
@@ -349,6 +355,17 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
           if (stepStatus === 'running') {
             statusMap[fullId] = 'running';
           }
+        }
+
+        // 1b. A skipped step stores a value like any success, so the check
+        // above already paints it 'completed' — override from the trace,
+        // which is the only place a skip is distinguishable. Likewise the
+        // halting step itself: it never stores a result, but must read as
+        // 'halted' rather than falling through to 'pending'/'cancelled'.
+        if (currentTrace?.some((t) => t.type === 'skipped' && t.step === key)) {
+          statusMap[fullId] = 'skipped';
+        } else if (currentTrace?.some((t) => t.type === 'halt' && t.step === key)) {
+          statusMap[fullId] = 'halted';
         }
 
         // 2. Check for error in THIS context

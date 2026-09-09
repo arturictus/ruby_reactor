@@ -37,10 +37,10 @@ module RubyReactor
             # If a step returns RetryQueuedResult, we need to stop and return it
             return result if result.is_a?(RetryQueuedResult)
 
-            # If a step returns Skipped, halt the reactor cleanly (no
+            # If a step returns Halt, stop the reactor cleanly (no
             # compensation). Must be checked BEFORE Failure / Success because
-            # Skipped is a Success subclass.
-            return result if result.is_a?(RubyReactor::Skipped)
+            # Halt is a Success subclass.
+            return result if result.is_a?(RubyReactor::Halt)
 
             # If a step returns Failure, we need to stop execution and return it
             return result if result.is_a?(RubyReactor::Failure)
@@ -48,13 +48,17 @@ module RubyReactor
             # If a step returns InterruptResult, we need to stop execution and return it
             return result if result.is_a?(RubyReactor::InterruptResult)
 
-            # Only a continue-Success reaches here (Async/Retry/Skipped/Failure/
-            # Interrupt all returned above; nil is inline-async test mode). It is
-            # the one outcome where the loop proceeds to more steps with no other
-            # save in between — every terminal/handoff result persists via its own
-            # path. Write a durable checkpoint so a crash re-runs at most this one
-            # step. Ordering: side-effect -> record result (inside execute_step) ->
-            # checkpoint here.
+            # A Skipped step (or a plain Success) continues the loop — Skipped
+            # is a Success subclass, so this also fires the durable checkpoint
+            # for it, same as a plain success.
+            #
+            # Only a continue-Success/Skipped reaches here (Async/Retry/Halt/
+            # Failure/Interrupt all returned above; nil is inline-async test
+            # mode). It is the one outcome where the loop proceeds to more
+            # steps with no other save in between — every terminal/handoff
+            # result persists via its own path. Write a durable checkpoint so
+            # a crash re-runs at most this one step. Ordering: side-effect ->
+            # record result (inside execute_step) -> checkpoint here.
             @on_step_complete&.call if result.is_a?(RubyReactor::Success)
           end
         end
@@ -341,10 +345,10 @@ module RubyReactor
           # Execute inline block
           # If no arguments are defined for the step, pass the reactor inputs as arguments
           args_to_pass = arguments.empty? ? @context.inputs : arguments
-          step_config.run_block.call(args_to_pass, @context)
+          catch(StepSignals::TAG) { step_config.run_block.call(args_to_pass, @context) }
         elsif step_config.has_impl?
           # Execute step class
-          step_config.impl.run(arguments, @context)
+          catch(StepSignals::TAG) { step_config.impl.run(arguments, @context) }
         else
           raise Error::ValidationError.new(
             "Step '#{step_config.name}' has no implementation",

@@ -59,6 +59,10 @@ module RubyReactor
       false
     end
 
+    def halted?
+      false
+    end
+
     def to_h
       { success: true, value: @value }
     end
@@ -70,7 +74,7 @@ module RubyReactor
   #      already been claimed. The executor short-circuits before any step
   #      runs.
   #
-  #   2. Explicitly, by returning `RubyReactor.Skipped(reason: "...")` from a
+  #   2. Explicitly, by returning `RubyReactor.Halt(reason: "...")` from a
   #      step's `run` block. The reactor halts immediately — no further steps,
   #      and crucially **no compensation** of already-completed steps. Use this
   #      when a step discovers that the rest of the workflow is not needed
@@ -78,14 +82,47 @@ module RubyReactor
   #      partial progress is still correct to keep.
   #
   # Subclass of Success so callers that only check `success?` continue to work;
-  # `skipped?` distinguishes it.
-  class Skipped < Success
+  # `halted?` distinguishes it. Deliberately does NOT define `skipped?` — a
+  # migration site that still asks a halt whether it was skipped should raise
+  # NoMethodError, not silently read false.
+  class Halt < Success
     attr_reader :reason, :period_key, :step_name
 
     def initialize(reason: nil, period_key: nil, step_name: nil)
       super(nil)
       @reason = reason
       @period_key = period_key
+      @step_name = step_name
+    end
+
+    def halted?
+      true
+    end
+
+    undef_method :skipped?
+  end
+
+  # Marks a single step as skipped while the reactor continues. Behaves
+  # exactly like Success — the value flows to dependants via `result(:step)` —
+  # except `skipped?` is true and the step is not enrolled for rollback
+  # (nothing happened, so there is nothing to undo).
+  class Skipped < Success
+    # Sentinel distinguishing "no value argument given" (the old Halt call
+    # shape reused this class's name) from an explicit `Skipped(nil)`.
+    UNSET = Object.new.freeze
+    private_constant :UNSET
+
+    attr_reader :reason, :step_name
+
+    def initialize(value = UNSET, reason: nil, step_name: nil)
+      if value.equal?(UNSET) && !reason.nil?
+        raise ArgumentError,
+              "RubyReactor::Skipped now marks a single step as skipped and continues. " \
+              "The clean halt you want is RubyReactor.Halt(reason: ...) / halt!(reason: ...)."
+      end
+
+      super(value.equal?(UNSET) ? nil : value)
+      @reason = reason
       @step_name = step_name
     end
 
@@ -101,8 +138,10 @@ module RubyReactor
     # rubocop:disable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def initialize(error, retryable: nil, step_name: nil, inputs: {}, backtrace: nil, redact_inputs: [],
                    reactor_name: nil, step_arguments: {}, exception_class: nil,
-                   file_path: nil, line_number: nil, code_snippet: nil, invalid_payload: false, validation_errors: nil)
+                   file_path: nil, line_number: nil, code_snippet: nil, invalid_payload: false, validation_errors: nil,
+                   **opts)
       # rubocop:enable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+      retryable = opts[:retry] if opts.key?(:retry) # `retry:` wins over `retryable:` when both are given
       @error = error
 
       # Handle case where error is a serialized hash (e.g. from async failure propagation)
@@ -155,6 +194,10 @@ module RubyReactor
     end
 
     def skipped?
+      false
+    end
+
+    def halted?
       false
     end
 
@@ -327,10 +370,16 @@ module RubyReactor
     Failure.new(error, **kwargs)
   end
 
-  # Build a `Skipped` result. Return one from a step's `run` block to halt the
+  # Build a `Halt` result. Return one from a step's `run` block to halt the
   # reactor cleanly without triggering compensation of previous steps.
-  def self.Skipped(reason: nil, **kwargs)
-    Skipped.new(reason: reason, **kwargs)
+  def self.Halt(reason: nil, **kwargs)
+    Halt.new(reason: reason, **kwargs)
+  end
+
+  # Build a `Skipped` result. Return one from a step's `run` block to mark
+  # that single step skipped while the reactor continues.
+  def self.Skipped(...)
+    Skipped.new(...)
   end
 
   def self.configure

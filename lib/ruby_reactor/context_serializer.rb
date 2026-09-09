@@ -36,6 +36,11 @@ module RubyReactor
       # rubocop:disable Metrics/CyclomaticComplexity, Metrics/MethodLength
       def serialize_value(value)
         case value
+        when RubyReactor::Halt
+          { "_type" => "Halt", "reason" => value.reason, "period_key" => value.period_key,
+            "step_name" => value.step_name }
+        when RubyReactor::Skipped
+          { "_type" => "Skipped", "value" => serialize_value(value.value), "reason" => value.reason }
         when RubyReactor::Success
           { "_type" => "Success", "value" => serialize_value(value.value) }
         when RubyReactor::Failure
@@ -112,6 +117,14 @@ module RubyReactor
           if value.key?("_type")
             # Special serialized types (Time, BigDecimal, etc.)
             case value["_type"]
+            when "Halt"
+              RubyReactor::Halt.new(
+                reason: value["reason"],
+                period_key: value["period_key"],
+                step_name: value["step_name"]
+              )
+            when "Skipped"
+              RubyReactor::Skipped.new(deserialize_value(value["value"]), reason: value["reason"])
             when "Success"
               RubyReactor::Success(deserialize_value(value["value"]))
             when "Failure"

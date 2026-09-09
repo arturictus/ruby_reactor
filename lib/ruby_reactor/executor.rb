@@ -110,9 +110,9 @@ module RubyReactor
       # is a fast path; this one closes the race where two callers both passed
       # it and then serialized on the lock — without it the second caller would
       # re-run work the first already marked. (No-op when no lock is configured.)
-      if (skipped = check_period_gate)
+      if (halted = check_period_gate)
         completed = true
-        return finalize_skipped(skipped)
+        return finalize_halt(halted)
       end
 
       @context.status = :running
@@ -218,9 +218,9 @@ module RubyReactor
 
       # Post-lock re-check (see execute) — closes the period race for the
       # first run of a locked async reactor.
-      if first_run && (skipped = check_period_gate)
+      if first_run && (halted = check_period_gate)
         completed = true
-        return finalize_skipped(skipped)
+        return finalize_halt(halted)
       end
 
       prepare_for_resume
@@ -393,16 +393,16 @@ module RubyReactor
       @context.current_step.nil? && @context.intermediate_results.empty?
     end
 
-    # Record and persist a Skipped result, then return it. Shared by the
+    # Record and persist a Halt result, then return it. Shared by the
     # pre-lock and post-lock period gates in both execute and resume.
-    def finalize_skipped(skipped)
-      @result = skipped
+    def finalize_halt(halted)
+      @result = halted
       update_context_status(@result)
       save_context
       @result
     end
 
-    # Returns a Skipped result if the period bucket is already marked, else nil.
+    # Returns a Halt result if the period bucket is already marked, else nil.
     # Consulted before AND after lock acquisition on a first execution; genuine
     # resumes never re-check (a paused run must not skip itself when its own
     # marker eventually appears).
@@ -413,13 +413,13 @@ module RubyReactor
       key = period_key(config)
       return nil unless RubyReactor.configuration.storage_adapter.period_seen?(key)
 
-      RubyReactor::Skipped.new(reason: :period, period_key: key)
+      RubyReactor::Halt.new(reason: :period, period_key: key)
     end
 
     def mark_period_on_success(result)
       return unless @reactor_class.respond_to?(:period_config) && @reactor_class.period_config
       return unless result.is_a?(RubyReactor::Success)
-      return if result.is_a?(RubyReactor::Skipped)
+      return if result.is_a?(RubyReactor::Halt)
 
       config = @reactor_class.period_config
       ttl = RubyReactor::Period.ttl_seconds(config[:every])
@@ -662,8 +662,8 @@ module RubyReactor
       case result
       when RubyReactor::DispatchResult
         @context.status = :running
-      when RubyReactor::Skipped
-        @context.status = :skipped
+      when RubyReactor::Halt
+        @context.status = :halted
       when RubyReactor::Success
         @context.status = :completed
       when RubyReactor::Failure
@@ -696,14 +696,16 @@ module RubyReactor
         @result = @step_executor.execute_all_steps
       else
         case result
-        # Skipped must be listed before Success (Skipped < Success) so the
+        # Halt must be listed before Success (Halt < Success) so the
         # halt path wins over the "continue with remaining steps" path.
-        when RubyReactor::Skipped,
+        # Skipped is NOT listed here — it is a Success subclass and must
+        # continue with the remaining steps, same as a plain Success.
+        when RubyReactor::Halt,
              RetryQueuedResult,
              RubyReactor::Failure,
              RubyReactor::DispatchResult,
              RubyReactor::InterruptResult
-          # Terminal: step was skipped, requeued, failed, paused, or handed
+          # Terminal: step halted, requeued, failed, paused, or handed
           # off to async. Return the result as-is.
           @result = result
         when RubyReactor::Success

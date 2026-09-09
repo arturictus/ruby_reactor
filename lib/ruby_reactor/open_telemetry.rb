@@ -502,9 +502,9 @@ module RubyReactor
 
       case result
       when RubyReactor::Success
-        if result.skipped?
-          span.set_attribute("reactor.status", "skipped")
-          span.set_attribute("reactor.skipped_reason", result.reason.to_s)
+        if result.halted?
+          span.set_attribute("reactor.status", "halted")
+          span.set_attribute("reactor.halt_reason", result.reason.to_s)
           span.status = ::OpenTelemetry::Trace::Status.ok
         else
           span.set_attribute("reactor.status", "completed")
@@ -578,7 +578,10 @@ module RubyReactor
 
       case result
       when RubyReactor::Success
-        if result.skipped?
+        if result.halted?
+          span.set_attribute("step.status", "halted")
+          span.set_attribute("step.halt_reason", result.reason.to_s)
+        elsif result.skipped?
           span.set_attribute("step.status", "skipped")
           span.set_attribute("step.skipped_reason", result.reason.to_s)
         else

@@ -68,7 +68,7 @@ export default function LiveView() {
               <option value="running">Running</option>
               <option value="errors">Errors</option>
               <option value="completed">Completed</option>
-              <option value="skipped">Skipped</option>
+              <option value="halted">Halted</option>
               <option value="paused">Paused</option>
               <option value="failed">Failed</option>
               <option value="cancelled">Cancelled</option>

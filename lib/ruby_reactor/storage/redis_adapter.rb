@@ -226,8 +226,8 @@ module RubyReactor
       end
 
       def determine_status(data)
-        status = data["status"].to_s
-        return status if status && %w[failed paused completed running skipped pending].include?(status)
+        status = data["status"].to_s == "skipped" ? "halted" : data["status"].to_s # "skipped" is the legacy halt name
+        return status if %w[failed paused completed running halted pending].include?(status)
         return "cancelled" if data["cancelled"]
         # Heuristic
         return "failed" if data["retry_count"]&.positive? && !data["current_step"].nil?

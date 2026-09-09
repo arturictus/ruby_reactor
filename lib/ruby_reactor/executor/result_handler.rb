@@ -14,9 +14,13 @@ module RubyReactor
 
       def handle_step_result(step_config, result, resolved_arguments)
         case result
+        when RubyReactor::Halt
+          # Important: must come before Skipped and Success — both are Halt's
+          # siblings under Success, and Halt takes precedence over either.
+          handle_halt(step_config, result)
         when RubyReactor::Skipped
-          # Important: must come before the Success branch — Skipped < Success.
-          handle_skipped(step_config, result)
+          # Must come before the Success branch — Skipped < Success.
+          handle_skipped(step_config, result, resolved_arguments)
         when RubyReactor::Success
           handle_success(step_config, result, resolved_arguments)
         when RubyReactor::MaxRetriesExhaustedFailure
@@ -78,13 +82,30 @@ module RubyReactor
         )
       end
 
-      # A step returned `RubyReactor.Skipped(...)`. Halt cleanly: record the
+      # A step returned `RubyReactor.Halt(...)`. Halt cleanly: record the
       # event in the trace, do NOT push to the undo stack (so existing
       # completed steps stay as-is — no compensation), and stamp the step
       # name on the result so the caller can see who halted.
-      def handle_skipped(step_config, result)
+      def handle_halt(step_config, result)
         @step_results[step_config.name] = result
         result.instance_variable_set(:@step_name, step_config.name) if result.step_name.nil?
+        @context.execution_trace << {
+          type: :halt,
+          step: step_config.name,
+          timestamp: Time.now,
+          reason: result.reason
+        }
+        result
+      end
+
+      # A step returned `RubyReactor.Skipped(...)`. The reactor continues:
+      # validate and record the value exactly like a Success, but do NOT push
+      # to the undo stack (nothing happened, so there is nothing to undo).
+      def handle_skipped(step_config, result, resolved_arguments)
+        validate_step_output(step_config, result.value, resolved_arguments)
+        @step_results[step_config.name] = result
+        @context.set_result(step_config.name, result.value)
+        @dependency_graph.complete_step(step_config.name)
         @context.execution_trace << {
           type: :skipped,
           step: step_config.name,

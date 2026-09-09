@@ -92,6 +92,32 @@ describe('StepInspector', () => {
     });
   });
 
+  describe('Compensation ran vs never written', () => {
+    const props = {
+      ...defaultProps,
+      stepName: null, // Global View
+      trace: [
+        { type: 'compensate', step: 'ran_compensate', result: 'compensated_value', skipped: false },
+        { type: 'compensate', step: 'no_compensate', result: null, skipped: true }
+      ]
+    };
+
+    it('renders a skipped: false compensate entry as executed', () => {
+      render(<StepInspector {...props} />);
+
+      expect(screen.getByText('ran_compensate')).toBeInTheDocument();
+      expect(screen.getByText(/"compensated_value"/)).toBeInTheDocument();
+      expect(screen.getAllByText('executed').length).toBeGreaterThan(0);
+    });
+
+    it('renders a skipped: true compensate entry as not implemented, never executed', () => {
+      render(<StepInspector {...props} />);
+
+      expect(screen.getByText('no_compensate')).toBeInTheDocument();
+      expect(screen.getByText('not implemented')).toBeInTheDocument();
+    });
+  });
+
   describe('Nested Reactor Support', () => {
     const mockStructure = {
       sub_reactor: {

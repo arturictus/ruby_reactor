@@ -292,7 +292,7 @@ export default function StepInspector({
     interface UndoItem {
       step_name: string;
       result: any;
-      status: 'executed' | 'pending';
+      status: 'executed' | 'not_implemented' | 'pending';
       timestamp: string | null;
       type: 'undo' | 'compensate';
     }
@@ -310,7 +310,7 @@ export default function StepInspector({
         .map(e => ({
           step_name: e.step,
           result: e.result,
-          status: 'executed' as const,
+          status: e.skipped ? ('not_implemented' as const) : ('executed' as const),
           timestamp: e.timestamp?._type === 'Time' ? e.timestamp.value : null,
           type: e.type as 'undo' | 'compensate'
         }));
@@ -382,11 +382,15 @@ export default function StepInspector({
                       {group.items.map((item, idx) => (
                         <div key={idx} className={`rounded-lg p-3 border flex items-start gap-3 ${item.status === 'executed'
                           ? 'bg-slate-950/50 border-slate-800'
-                          : 'bg-slate-900/30 border-slate-800/50 border-dashed opacity-75'
+                          : item.status === 'not_implemented'
+                            ? 'bg-sky-900/10 border-sky-800/40 border-dashed opacity-75'
+                            : 'bg-slate-900/30 border-slate-800/50 border-dashed opacity-75'
                           }`}>
                           <div className={`p-1.5 rounded mt-0.5 ${item.status === 'executed'
                             ? 'bg-emerald-500/10 text-emerald-400'
-                            : 'bg-slate-700/50 text-slate-500'
+                            : item.status === 'not_implemented'
+                              ? 'bg-sky-500/10 text-sky-400'
+                              : 'bg-slate-700/50 text-slate-500'
                             }`}>
                             {item.status === 'executed' ? <CheckCircle className="w-3 h-3" /> : <Box className="w-3 h-3" />}
                           </div>
@@ -402,7 +406,7 @@ export default function StepInspector({
                                 </span>
                               )}
                               <span className="opacity-50">|</span>
-                              {item.status}
+                              {item.status === 'not_implemented' ? 'not implemented' : item.status}
                             </span>
                             {item.status === 'executed' && item.result && (
                               <div className="mt-2 bg-black/30 rounded border border-white/5 p-2 font-mono text-xs text-slate-400 overflow-x-auto">

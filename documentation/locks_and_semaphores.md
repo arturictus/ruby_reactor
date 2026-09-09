@@ -52,8 +52,8 @@ The ordered-lock primitive is different again: it assigns a nonce at **enqueue t
   - [Bucket model](#bucket-model)
   - [When the marker is written](#when-the-marker-is-written)
   - [Composing with `with_lock`](#composing-with-with_lock)
-  - [The `Skipped` result](#the-skipped-result)
-  - [Skipping mid-reactor from a step](#skipping-mid-reactor-from-a-step)
+  - [The `Halt` result](#the-halt-result)
+  - [Halting mid-reactor from a step](#halting-mid-reactor-from-a-step)
 - [Ordered Locks (strict sequencing)](#ordered-locks-strict-sequencing)
   - [How it works](#how-it-works)
   - [Drain and counter reset](#drain-and-counter-reset)
@@ -337,7 +337,7 @@ class MonthlyBillingReactor < RubyReactor::Reactor
 end
 ```
 
-After the first successful run in May 2026, every other `MonthlyBillingReactor.run(org_id: 42)` call until June 1 (UTC) returns a `RubyReactor::Skipped` result. **No steps execute.**
+After the first successful run in May 2026, every other `MonthlyBillingReactor.run(org_id: 42)` call until June 1 (UTC) returns a `RubyReactor::Halt` result. **No steps execute.**
 
 ### Bucket model
 
@@ -365,7 +365,7 @@ The marker is written **only after a terminal `Success`** (and after the reactor
 
 - A failed run does **not** consume the bucket — the next attempt can succeed.
 - A paused run (interrupted, async-handed-off) does **not** consume the bucket until the eventual resume completes successfully.
-- A `Skipped` result does **not** re-mark the bucket (no-op).
+- A `Halt` result does **not** re-mark the bucket (no-op).
 
 The gate applies to the **first execution** only — for sync reactors that's the inline call; for async reactors it's the first worker pass. Genuine resumes (interrupt continue, async step handoff, retry requeue) skip the period check entirely — a paused reactor must never skip *itself* when its eventual marker appears.
 
@@ -384,41 +384,41 @@ end
 
 Order of evaluation per call:
 
-1. **Period check (fast path).** If marker exists, return `Skipped` immediately. No lock acquired, no steps run.
+1. **Period check (fast path).** If marker exists, return `Halt` immediately. No lock acquired, no steps run.
 2. **Lock acquire.** Standard concurrency control kicks in.
-3. **Period re-check (under the lock).** Closes the race where two callers both pass step 1 and then serialize on the lock: by the time the loser acquires it, the winner has marked the bucket, so the loser returns `Skipped` instead of re-running the work. The lock is still released normally on this path.
+3. **Period re-check (under the lock).** Closes the race where two callers both pass step 1 and then serialize on the lock: by the time the loser acquires it, the winner has marked the bucket, so the loser returns `Halt` instead of re-running the work. The lock is still released normally on this path.
 4. **Run steps.**
 5. **On terminal Success: mark the period bucket.**
 6. **Release lock.**
 
 With the under-lock re-check, `with_lock` + `with_period` gives **strict at-most-one-per-bucket**: the marker dedups, the lock serializes, and the re-check seals the gap between them.
 
-### The `Skipped` result
+### The `Halt` result
 
-`RubyReactor::Skipped` is a Success-subclass result returned in two situations:
+`RubyReactor::Halt` is a Success-subclass result returned in two situations:
 
 1. **Implicit period gate**, as shown above — a `with_period` reactor reruns in an already-claimed bucket.
-2. **Explicit step return** — a step's `run` block returns `Skipped(...)` to halt the reactor cleanly without compensation. `Skipped` is a bare helper available in both class steps and inline blocks, exactly like `Success`/`Failure` (the fully-qualified `RubyReactor.Skipped(...)` works too). See [Skipping mid-reactor from a step](#skipping-mid-reactor-from-a-step) below.
+2. **Explicit step return** — a step's `run` block returns `Halt(...)` to stop the reactor cleanly without compensation. `Halt` is a bare helper available in both class steps and inline blocks, exactly like `Success`/`Failure` (the fully-qualified `RubyReactor.Halt(...)` works too, as does the one-line `halt!(reason: ...)`). See [Halting mid-reactor from a step](#halting-mid-reactor-from-a-step) below.
 
 Both shapes share the same API:
 
 ```ruby
 result = MonthlyBillingReactor.run(org_id: 42)
 
-result.success?    # => true   (Skipped is a Success subclass)
-result.skipped?    # => true
+result.success?    # => true   (Halt is a Success subclass)
+result.halted?     # => true
 result.reason      # => :period (or whatever the step passed)
 result.period_key  # => "period:monthly_billing:42:2026-05" (period gate only)
 result.step_name   # => :build_report (step return only)
 ```
 
-`Skipped` deliberately satisfies `success?` so existing `if result.success? ... else ...` branches still take the right path. Code that wants to log or count skips explicitly checks `result.skipped?`.
+`Halt` deliberately satisfies `success?` so existing `if result.success? ... else ...` branches still take the right path. Code that wants to log or count halts explicitly checks `result.halted?`.
 
-The reactor's context status becomes `:skipped` (rather than `:completed`), so dashboards can render skip events distinctly.
+The reactor's context status becomes `:halted` (rather than `:completed`), so dashboards can render halted runs distinctly.
 
-### Skipping mid-reactor from a step
+### Halting mid-reactor from a step
 
-You can also produce a `Skipped` result from inside a step's `run` block. This is useful when a step discovers that the rest of the workflow is unnecessary **and the partial progress so far is fine to keep**.
+You can also produce a `Halt` result from inside a step's `run` block. This is useful when a step discovers that the rest of the workflow is unnecessary **and the partial progress so far is fine to keep**.
 
 ```ruby
 class SyncSubscriberReactor < RubyReactor::Reactor
@@ -433,7 +433,7 @@ class SyncSubscriberReactor < RubyReactor::Reactor
     argument :user, result(:fetch_user)
     run do |args, _ctx|
       # Nothing to do — bail out, but keep the user-fetch we already did.
-      next Skipped(reason: "user_opted_out") if args[:user].opted_out?
+      next Halt(reason: "user_opted_out") if args[:user].opted_out?
 
       Success(args[:user])
     end
@@ -447,31 +447,33 @@ end
 
 result = SyncSubscriberReactor.run(user_id: 42)
 
-if result.skipped?
-  Rails.logger.info("Sync skipped (#{result.reason}) at step #{result.step_name}")
+if result.halted?
+  Rails.logger.info("Sync halted (#{result.reason}) at step #{result.step_name}")
 end
 ```
 
-What happens when a step returns `Skipped`:
+What happens when a step returns `Halt`:
 
 | Aspect                                | Behavior                                                                                                                              |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Remaining steps                       | Not executed. The reactor halts at the skipping step.                                                                                 |
+| Remaining steps                       | Not executed. The reactor halts at the halting step.                                                                                 |
 | Previously completed steps            | **Left intact — no compensation** runs. This is the critical difference vs `Failure`.                                                 |
 | Step's value                          | Not stored in `intermediate_results` (it produced no usable output). Downstream never runs, so unreachable.                           |
-| Execution trace                       | A `{ type: :skipped, step: <name>, reason: <reason> }` entry is appended.                                                             |
-| Returned `Skipped`                    | Carries `step_name` (the halting step) and `reason` (whatever the user passed).                                                       |
-| `Reactor.run` / `result.success?`     | Returns the `Skipped`. `success?` is `true`, `skipped?` is `true`, status `:skipped`.                                                 |
+| Execution trace                       | A `{ type: :halt, step: <name>, reason: <reason> }` entry is appended.                                                             |
+| Returned `Halt`                       | Carries `step_name` (the halting step) and `reason` (whatever the user passed).                                                       |
+| `Reactor.run` / `result.success?`     | Returns the `Halt`. `success?` is `true`, `halted?` is `true`, status `:halted`.                                                 |
 
-**`Skipped` vs `Failure` decision matrix:**
+**`Halt` vs `Failure` decision matrix:**
 
 | Situation                                            | Return                                            |
 | ---------------------------------------------------- | ------------------------------------------------- |
-| Step did its job; subsequent steps not needed        | `RubyReactor.Skipped(reason: "...")`              |
+| Step did its job; subsequent steps not needed        | `RubyReactor.Halt(reason: "...")`                 |
 | Step couldn't proceed because of an error            | `RubyReactor.Failure(error)` — triggers undo path |
 | Step succeeded normally                              | `RubyReactor.Success(value)`                      |
 
-A common smell to avoid: returning `Skipped` from a step that has just done **partial** work that needs cleanup. If you'd want compensation to run, use `Failure` instead — `Skipped` explicitly says "the partial progress is correct, stop here."
+A common smell to avoid: returning `Halt` from a step that has just done **partial** work that needs cleanup. If you'd want compensation to run, use `Failure` instead — `Halt` explicitly says "the partial progress is correct, stop here."
+
+If instead the step did nothing at all and the *rest of the reactor should still run*, return `Skipped(value)` — a per-step skip, not a run-level halt. See [Skipping a single step](core_concepts.md#skipping-a-single-step) in Core Concepts.
 
 ## Ordered Locks (strict sequencing)
 
@@ -518,7 +520,7 @@ Lifecycle per run:
 
 1. **Enqueue (caller process, inside `Reactor.run`)** — single Lua `INCR` on `next`, plus `HSET assigned_at`. The nonce is stamped onto `context.private_data[:ordered_lock]` and persisted in the serialized context that Sidekiq carries to the worker. Input-validation failures abort BEFORE assigning, so a bad payload never consumes a nonce.
 2. **Execute (worker)** — the executor's first gate (before rate-limit, lock, semaphore) is a Lua `can_proceed` script. It returns `go` if `my_nonce == last_completed + 1` (or if `my_nonce <= last_completed`, i.e. a Sidekiq retry of an already-advanced run — idempotent), or `wait` otherwise. On `wait`, the executor raises `RubyReactor::OrderedLock::WaitError`, no other primitive has been acquired, and the Sidekiq worker snoozes via `perform_in(lock_snooze_base_delay + jitter, ...)` — a short re-poll, since the blocker nonce usually completes in milliseconds. The `WaitError` carries a `retry_after_seconds` derived from the poison-pill window, but that is the *upper bound* before a dead blocker is force-advanced, not the expected wait, so it is deliberately **not** used as the re-poll interval (doing so would make every out-of-order nonce sleep up to `poison_pill_timeout`). A genuinely dead blocker is cleared by poison auto-advance on a later gate, at most one `poison_pill_timeout` after it went stale.
-3. **Terminal completion (`ensure` block in the executor)** — on `Success` / `Skipped` / `Failure` (with all retries exhausted), a Lua `advance` script moves `last_completed` forward to `my_nonce`. Idempotent: a duplicate / out-of-order advance is a no-op.
+3. **Terminal completion (`ensure` block in the executor)** — on `Success` / `Halt` / `Failure` (with all retries exhausted), a Lua `advance` script moves `last_completed` forward to `my_nonce`. Idempotent: a duplicate / out-of-order advance is a no-op.
 
 ### Drain and counter reset
 
@@ -580,7 +582,7 @@ A reactor can freely combine `with_ordered_lock` with any of `with_lock`, `with_
 
 The cursor moves forward only on results the executor considers **terminal** for this run:
 
-- `RubyReactor::Success` (including `RubyReactor::Skipped`)
+- `RubyReactor::Success` (including `RubyReactor::Halt`)
 - `RubyReactor::Failure` (when in-reactor step retries are exhausted)
 
 The cursor does **not** move on:
@@ -594,7 +596,7 @@ Sidekiq retries of a job whose nonce is already past `last_completed` are also s
 
 ### Strict mode — stop the line on failure
 
-By default `with_ordered_lock(strict: true)` treats the sequence as a pipeline: **if any nonce terminates with a `Failure`, every subsequent nonce in the same batch is short-circuited with `Skipped(reason: :ordered_lock_chain_failed)` and never executes its steps.** This models "don't apply transaction N+1 if transaction N broke the ledger" — useful when later work depends on the success of earlier work and reordering is not safe.
+By default `with_ordered_lock(strict: true)` treats the sequence as a pipeline: **if any nonce terminates with a `Failure`, every subsequent nonce in the same batch is short-circuited with `Halt(reason: :ordered_lock_chain_failed)` and never executes its steps.** This models "don't apply transaction N+1 if transaction N broke the ledger" — useful when later work depends on the success of earlier work and reordering is not safe.
 
 ```ruby
 class ApplyTransactionReactor < RubyReactor::Reactor
@@ -617,7 +619,7 @@ Notes on strict mode:
 
 - The poison marker is per **key**, not per reactor class. Different reactors that share a key share the marker.
 - Only the **first** failure sticks. A second failure does not move the marker; cleanup is automatic on full drain.
-- Skipped runs from this mechanism are real `Skipped` results (`status: :skipped`, `result.success?` true, `result.skipped?` true, `result.reason == :ordered_lock_chain_failed`). They **do** advance the cursor — the chain keeps draining, it just produces Skipped for each subsequent member.
+- Halted runs from this mechanism are real `Halt` results (`status: :halted`, `result.success?` true, `result.halted?` true, `result.reason == :ordered_lock_chain_failed`). They **do** advance the cursor — the chain keeps draining, it just produces Halt for each subsequent member.
 - The chain-skip check applies only on the **initial** `execute`. A run that already started and then paused (InterruptResult / DispatchResult) **completes on resume** even if the chain failed while it was parked — once a nonce is past the gate it owns its slot until terminal.
 - The marker auto-clears on full drain (`last_completed == next`). The very next batch starts un-poisoned.
 - Operators can read the marker via `RubyReactor::OrderedLock.peek(key)[:first_failed]` (0 if no failure).
@@ -651,9 +653,9 @@ RubyReactor::OrderedLock.reset!("txs:42")
 - **Synchronous (non-async) ordered-lock reactors raise `WaitError` to the caller.** The snooze-and-retry machinery lives in the Sidekiq worker. A *synchronous* `Reactor.run` on an ordered-lock reactor (a reactor without `async`) has no worker to park it: if its nonce isn't yet at the front of the line, `Reactor.run` raises `OrderedLock::WaitError` straight to the caller, and the nonce has **already been consumed** at enqueue. If the caller swallows the error and never retries, that nonce never advances and every successor stalls until `poison_pill_timeout` sweeps it. Synchronous ordered locks therefore only make sense when callers submit in already-correct order (so each gate passes first try) or when the caller explicitly retries on `WaitError`. For fan-out across concurrent producers, use an `async` reactor so contention is handled by the durable snooze path. (A single-producer synchronous sequence — one caller submitting strictly in order — drains cleanly; this is the case the `SyncOrderedReactor` integration tests cover.)
 - **Stale redeliveries never downgrade a terminal record.** A Sidekiq at-least-once redelivery of a job whose batch already drained is fenced two ways, depending on timing:
   - **After the next batch starts** — the redelivery carries an epoch from the drained generation, so the epoch check resolves it to `:stale_batch`: it runs no steps and mutates no counters.
-  - **In the drain gap** (after GC, before the next batch's first assign bumps the epoch) — the epoch still matches, so the gate instead returns `:drained_go`. Here the executor consults the **stored context status**: a genuine late straggler (non-terminal) still runs (poison semantics), but a redelivery of an already-terminal context is short-circuited with `Skipped(reason: :ordered_lock_drained_replay)` and does **not** re-execute its steps.
+  - **In the drain gap** (after GC, before the next batch's first assign bumps the epoch) — the epoch still matches, so the gate instead returns `:drained_go`. Here the executor consults the **stored context status**: a genuine late straggler (non-terminal) still runs (poison semantics), but a redelivery of an already-terminal context is short-circuited with `Halt(reason: :ordered_lock_drained_replay)` and does **not** re-execute its steps.
 
-  In both cases, if the original run had already reached a terminal status (`:completed` / `:failed` / `:skipped`), the short-circuit deliberately skips persistence so the stored outcome is never overwritten with `:skipped`.
+  In both cases, if the original run had already reached a terminal status (`:completed` / `:failed` / `:halted`), the short-circuit deliberately skips persistence so the stored outcome is never overwritten with `:halted`.
 
 ### Composed children
 
@@ -710,7 +712,7 @@ A subclass can call `with_lock` / `with_semaphore` / `with_rate_limit` / `with_p
 - The current owner of a lock is in the Redis hash `lock:<key>` under field `owner`.
 - The held-tokens set for a semaphore is `semaphore:<key>:held`. Its cardinality plus `LLEN semaphore:<key>` should always equal `limit` at rest.
 - The period marker is the plain key `period:<base>:<bucket_id>`. `TTL` on that key tells you when the bucket frees up.
-- A `Skipped` result sets context status to `:skipped` (separate from `:completed`/`:failed`).
+- A `Halt` result sets context status to `:halted` (separate from `:completed`/`:failed`).
 - Rate-limit counters are at `rate:<base>:<period_name>:<bucket_id>`. `GET` gives the current count for the window; `TTL` gives time until the bucket rolls.
 - Ordered-lock state lives at `ordered_lock:{<key>}:next`, `:last_completed`, and `:assigned_at`. Use `RubyReactor::OrderedLock.peek(key)` to inspect all three in one call.
 
