@@ -206,6 +206,61 @@ describe('DagVisualizer', () => {
     expect(getByTestId('node-step1').getAttribute('data-status')).toBe('halted');
     expect(getByTestId('node-step2').getAttribute('data-status')).toBe('pending');
   });
+
+  it('marks a failed async_step from its dispatch record, not as cancelled', () => {
+    const struct = {
+      send_email: { type: 'async_step', depends_on: [] },
+      later: { type: 'step', depends_on: ['send_email'] }
+    };
+
+    const { getByTestId } = render(
+      <DagVisualizer
+        structure={struct}
+        steps={[]}
+        results={{}}
+        reactorStatus="failed"
+        composedContexts={{
+          send_email: {
+            type: 'async_step_ref',
+            name: 'send_email',
+            record: {
+              status: 'completed',
+              success: false,
+              result: { success: false, error: 'SMTP provider rejected the message' }
+            }
+          }
+        }}
+        onStepSelect={() => { }}
+        selectedStep={null}
+      />
+    );
+
+    expect(getByTestId('node-send_email').getAttribute('data-status')).toBe('failed');
+    expect(getByTestId('node-later').getAttribute('data-status')).toBe('cancelled');
+  });
+
+  it('marks a successful async_step completed even when the parent failed', () => {
+    const struct = { send_email: { type: 'async_step', depends_on: [] } };
+
+    const { getByTestId } = render(
+      <DagVisualizer
+        structure={struct}
+        steps={[]}
+        results={{}}
+        reactorStatus="failed"
+        composedContexts={{
+          send_email: {
+            type: 'async_step_ref',
+            record: { status: 'completed', success: true, result: { delivered: true } }
+          }
+        }}
+        onStepSelect={() => { }}
+        selectedStep={null}
+      />
+    );
+
+    expect(getByTestId('node-send_email').getAttribute('data-status')).toBe('completed');
+  });
 });
 
 

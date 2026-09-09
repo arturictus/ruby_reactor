@@ -381,6 +381,22 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
           statusMap[fullId] = 'failed';
         }
 
+        // Async units do not write into intermediate_results, so without the
+        // hydrated dispatch record they look unreached and get cancelled when
+        // the parent fails. Their own record/child context is the source of truth.
+        const asyncRef = contextObj?.composed_contexts?.[key];
+        const asyncRecord = asyncRef?.record;
+        const asyncChildContext = asyncRef?.context?.value || asyncRef?.context;
+        if (ASYNC_STEP_TYPES.includes(struct[key]?.type) || asyncRef?.type === 'async_step_ref' || asyncRef?.type === 'async_reactor_ref') {
+          if (asyncRecord?.success === false || asyncRecord?.result?.success === false || asyncChildContext?.status === 'failed') {
+            statusMap[fullId] = 'failed';
+          } else if (asyncRecord?.success === true || asyncChildContext?.status === 'completed') {
+            statusMap[fullId] = 'completed';
+          } else if (asyncRecord?.status === 'dispatched' || asyncChildContext?.status === 'running') {
+            statusMap[fullId] = 'running';
+          }
+        }
+
         // 3. Handle global cancellation/failure states for unreached steps at this level
         if (statusMap[fullId] === 'pending' && (stepStatus === 'failed' || stepStatus === 'cancelled')) {
           statusMap[fullId] = 'cancelled';
