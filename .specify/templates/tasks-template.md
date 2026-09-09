@@ -158,6 +158,13 @@ Examples of foundational tasks (adjust based on your project):
 - [ ] TXXX Security hardening
 - [ ] TXXX Run quickstart.md validation
 
+**Constitution Principle VI — Demo-App Proof of Feature (required for any public API change):**
+
+- [ ] TXXX [P] Example reactor in `demo_app/app/reactors/<name>_reactor.rb`
+- [ ] TXXX Register `demo:<name>` task in `demo_app/lib/tasks/demo_reactors.rake` (desc + `[:environment, :flush_redis]`)
+- [ ] TXXX Spec in `demo_app/spec/reactors/<name>_reactor_spec.rb` (`type: :reactor`), using only built-in matchers/helpers from `lib/ruby_reactor/rspec.rb`
+- [ ] TXXX If an assertion needs a matcher that does not exist, add it to `lib/ruby_reactor/rspec/` — never bypass the shared test API
+
 ---
 
 ## Dependencies & Execution Order

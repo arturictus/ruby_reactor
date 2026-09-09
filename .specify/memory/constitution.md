@@ -1,20 +1,23 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: [unset] → 1.0.0 (MINOR: initial constitution, all principles defined from scratch)
+Version change: 1.0.0 → 1.1.0 (MINOR: new principle added — Demo-App Proof of Feature)
 
-Modified principles: N/A (first ratification)
+Modified principles:
+  - Principle V: Simplicity and Semantic Versioning (unchanged)
+  - Added Principle VI: Demo-App Proof of Feature (NON-NEGOTIABLE)
 
 Added sections:
-  - Core Principles (5 principles)
-  - Technical Constraints
-  - Development Workflow
-  - Governance
+  - Core Principles → VI. Demo-App Proof of Feature
+
+Removed sections: none
 
 Templates checked:
-  - .specify/templates/plan-template.md   ✅ Constitution Check gate present, no update needed
-  - .specify/templates/spec-template.md   ✅ Aligned with Saga/library constraints
-  - .specify/templates/tasks-template.md  ✅ Task phases align with Red-Green workflow
+  - .specify/templates/plan-template.md   ✅ Constitution Check gate is generic ("Gates determined
+                                             based on constitution file") — no edit required
+  - .specify/templates/spec-template.md   ✅ No principle-specific content — no edit required
+  - .specify/templates/tasks-template.md  ✅ Polish phase updated with demo-app example tasks
+  - .specify/templates/checklist-template.md ✅ Generic — no edit required
 
 Deferred TODOs: none
 -->
@@ -89,6 +92,48 @@ surprise breaking change in a MINOR bump costs downstream teams debugging time
 they did not budget for. Simplicity keeps the library auditable and the
 upgrade path predictable.
 
+### VI. Demo-App Proof of Feature (NON-NEGOTIABLE)
+
+Every user-facing feature or public API change MUST ship with a runnable example
+in `demo_app/`. Three artifacts are required together — a change is incomplete if
+any one is missing:
+
+1. **Example reactor**: a reactor (or step) demonstrating the feature MUST live in
+   `demo_app/app/reactors/`, one file per reactor, named `<snake_case>_reactor.rb`
+   matching its class name. The example MUST exercise the feature end to end —
+   including its failure and compensation path where the feature has one — and MUST
+   use class-based step definitions per the Development Workflow rule.
+2. **Rake entry**: the example MUST be registered as a task in
+   `demo_app/lib/tasks/demo_reactors.rake` under the `demo:` namespace, with a `desc`
+   line describing what it demonstrates, and depending on `[:environment, :flush_redis]`
+   so each run starts from clean Redis state. The task MUST print observable outcomes
+   (success, failure, background dispatch, pause) so an operator can verify behavior
+   without a debugger.
+3. **Spec**: a matching spec MUST live at
+   `demo_app/spec/reactors/<reactor>_spec.rb`, declared `type: :reactor`, and MUST use
+   **only** the built-in test surface exported by `lib/ruby_reactor/rspec.rb` — the
+   helpers (`test_reactor`, `drain_async_jobs`), the `TestSubject` API
+   (`mock_step`, `failing_at`, `map`, `composed`, `async_step`, `resume`,
+   `step_result`, `ensure_executed!`), and the matchers (`be_success`, `be_failure`,
+   `have_run_step(...).after(...)`, `have_retried_step`, `have_validation_error`,
+   `be_paused`, `be_paused_at`, `have_ready_interrupts`, `be_halted`, `be_skipped`,
+   `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`,
+   `be_period_marked`, and the ordered-lock matchers).
+
+Hand-rolled test scaffolding is forbidden in `demo_app/spec/reactors/`: no direct
+`RubyReactor::Executor`/`Storage` calls, no bespoke Sidekiq draining, no manual Redis
+assertions, no stubbing of reactor internals. If an assertion cannot be expressed with
+the built-in surface, the missing matcher or helper MUST be added to
+`lib/ruby_reactor/rspec/` in the same change — extending the shared test API, not
+bypassing it.
+
+**Rationale**: `demo_app/` is the only place the gem is consumed the way users consume
+it. An example that is written but never listed is never run; a spec written with
+private internals passes while the public API is broken. Forcing every feature through
+the public reactor DSL, a runnable rake task, and the shipped matchers means the
+documented API, the demo, and the test surface are validated by the same change — and
+gaps in the matcher library surface as work instead of as workarounds.
+
 ## Technical Constraints
 
 - **Ruby**: >= 3.0.0 required. No polyfills for older Rubies.
@@ -113,7 +158,13 @@ upgrade path predictable.
 - Class-based step definitions are the preferred authoring style (not inline
   lambdas). Documentation and examples MUST reflect this.
 - The `demo_app/` directory serves as a living integration example. Changes to
-  public API surface MUST be reflected there.
+  public API surface MUST be reflected there per Principle VI — example reactor in
+  `demo_app/app/reactors/`, rake task in `demo_app/lib/tasks/demo_reactors.rake`,
+  and a spec in `demo_app/spec/reactors/` using only the built-in RSpec matchers
+  and helpers from `lib/ruby_reactor/rspec.rb`.
+- PR reviews MUST reject any feature change whose demo example is missing, unlisted
+  in the rake file, or tested with hand-rolled scaffolding instead of the shipped
+  matcher library.
 
 ## Governance
 
@@ -131,4 +182,4 @@ justified in the `Complexity Tracking` table of the plan.
 Compliance review: at each MINOR or MAJOR gem release, confirm this constitution
 still accurately reflects the codebase and update as needed.
 
-**Version**: 1.0.0 | **Ratified**: 2025-10-02 | **Last Amended**: 2026-06-24
+**Version**: 1.1.0 | **Ratified**: 2025-10-02 | **Last Amended**: 2026-09-09
