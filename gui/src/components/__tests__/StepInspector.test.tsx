@@ -524,4 +524,79 @@ describe('StepInspector', () => {
       expect(screen.getByText('Failed elements')).toBeInTheDocument();
     });
   });
+
+  describe('async step outcome', () => {
+    const asyncFailureResult = {
+      success: false,
+      error: 'SMTP provider rejected the message',
+      step_name: null,
+      inputs: {},
+      reactor_name: null,
+      step_arguments: { to: 'user@example.com' },
+      exception_class: null,
+      file_path: '/workspace/demo_app/app/reactors/async_step_demo_reactor.rb',
+      line_number: 22,
+      code_snippet: [
+        { line_number: 21, content: '        Rails.logger.warn "email delivery failed"', target: false },
+        { line_number: 22, content: '        Failure("SMTP provider rejected the message")', target: true },
+        { line_number: 23, content: '      else', target: false }
+      ],
+      validation_errors: null,
+      backtrace: [
+        "/workspace/lib/ruby_reactor.rb:370:in 'Class#new'",
+        "/workspace/demo_app/app/reactors/async_step_demo_reactor.rb:22:in 'block'"
+      ]
+    };
+
+    const asyncProps = {
+      ...defaultProps,
+      stepName: 'send_email',
+      structure: { send_email: { type: 'async_step', depends_on: [] } },
+      stepAttempts: {},
+      composedContexts: {
+        send_email: {
+          type: 'async_step_ref',
+          name: 'send_email',
+          record: {
+            status: 'completed',
+            success: false,
+            result: asyncFailureResult
+          }
+        }
+      }
+    };
+
+    it('renders failure details instead of dumping the result JSON', () => {
+      render(<StepInspector {...asyncProps} />);
+
+      expect(screen.getByText('Failure Details')).toBeInTheDocument();
+      expect(screen.getByText('SMTP provider rejected the message')).toBeInTheDocument();
+      expect(screen.getByText('Source Code')).toBeInTheDocument();
+      expect(screen.getByText('Stack Trace')).toBeInTheDocument();
+      expect(screen.getByText(/user@example.com/)).toBeInTheDocument();
+      expect(screen.queryByText(/"success": false/)).not.toBeInTheDocument();
+    });
+
+    it('still dumps a successful async result as JSON', () => {
+      render(
+        <StepInspector
+          {...asyncProps}
+          composedContexts={{
+            send_email: {
+              type: 'async_step_ref',
+              name: 'send_email',
+              record: {
+                status: 'completed',
+                success: true,
+                result: { delivered: true }
+              }
+            }
+          }}
+        />
+      );
+
+      expect(screen.queryByText('Failure Details')).not.toBeInTheDocument();
+      expect(screen.getByText(/"delivered": true/)).toBeInTheDocument();
+    });
+  });
 });

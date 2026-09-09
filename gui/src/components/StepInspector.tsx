@@ -4,6 +4,7 @@ import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, Hi
 import { apiUrl } from '../lib/utils';
 import { reactorRoute } from '../lib/reactors';
 import FailureCodeSnippet from './FailureCodeSnippet';
+import FailureDetails from './FailureDetails';
 import { normalizeFailureReason } from '../lib/failures';
 
 
@@ -158,7 +159,6 @@ export default function StepInspector({
   reactorStatus,
   onAction
 }: StepInspectorProps) {
-  const [showFullBacktrace, setShowFullBacktrace] = useState(false);
   const [resumePayload, setResumePayload] = useState('');
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [isResuming, setIsResuming] = useState(false);
@@ -267,7 +267,6 @@ export default function StepInspector({
 
   const stepConfig = resolvedData?.stepConfig;
   const result = resolvedData?.result;
-  const isFailedStep = (resolvedData?.context?.failure_reason?.step_name === stepName?.split('.').pop());
   const attempts = resolvedData?.attempts || 0;
   const retries = attempts > 1 ? attempts - 1 : 0;
 
@@ -278,14 +277,21 @@ export default function StepInspector({
   const asyncRecord = asyncRef?.record;
   const asyncChildContext = asyncRef?.context?.value || asyncRef?.context;
   const asyncStatus = asyncRecord?.status || asyncChildContext?.status || 'dispatched';
+  const asyncFailure = (asyncRecord?.success === false || asyncRecord?.result?.success === false)
+    ? normalizeFailureReason(asyncRecord.result)
+    : undefined;
+  const asyncSuccessValue = asyncRecord?.success === true ? asyncRecord.result : undefined;
 
   // Find relevant trace events
   const stepEvents = resolvedData?.trace || [];
 
   const lastEvent = stepEvents[stepEvents.length - 1];
-  const stepArgs = lastEvent?.arguments || (isFailedStep ? resolvedData?.context?.failure_reason?.step_arguments : {});
   const failureReason = normalizeFailureReason(resolvedData?.context?.failure_reason);
-  const codeSnippet = failureReason?.code_snippet;
+  const isFailedStep = resolvedData?.context?.failure_reason?.step_name === stepName?.split('.').pop();
+  const stepArgs = lastEvent?.arguments
+    || (isFailedStep ? failureReason?.step_arguments : undefined)
+    || asyncFailure?.step_arguments
+    || {};
 
   // Calculate combined undo history (executed + pending) recursively
   const groupedUndoHistory = useMemo(() => {
@@ -512,11 +518,15 @@ export default function StepInspector({
               )}
             </dl>
 
-            {asyncRecord?.result !== undefined && (
+            {asyncFailure ? (
+              <div className="mt-4">
+                <FailureDetails failure={asyncFailure} />
+              </div>
+            ) : asyncSuccessValue !== undefined ? (
               <pre className="mt-3 bg-slate-950 rounded p-3 text-xs text-slate-300 overflow-x-auto">
-                {JSON.stringify(asyncRecord.result, null, 2)}
+                {JSON.stringify(asyncSuccessValue, null, 2)}
               </pre>
-            )}
+            ) : null}
 
             {asyncRef?.execution_id && (
               <Link
@@ -572,81 +582,7 @@ export default function StepInspector({
         {/* Error Section — a map's failure is whichever element tripped fail_fast,
             one arbitrary sample of many; MapResultsPanel lists them all. */}
         {isFailedStep && failureReason && !isMapResults(result) && (
-          <div className="space-y-4">
-            <h3 className="text-sm font-medium text-red-500 mb-3 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4" />
-              Failure Details
-            </h3>
-            <div className="bg-red-500/10 rounded-lg p-4 font-mono text-xs border border-red-500/20 text-red-300 overflow-x-auto space-y-2">
-              <div className="flex flex-col gap-1">
-                {failureReason.exception_class && (
-                  <span className="text-[10px] uppercase font-bold tracking-wider text-red-400 opacity-70">
-                    {failureReason.exception_class}
-                  </span>
-                )}
-                <div className="font-bold text-sm leading-relaxed">
-                  {failureReason.message || failureReason.error}
-                </div>
-              </div>
-
-              {failureReason.validation_errors && (
-                <div className="pt-3 mt-3 border-t border-red-500/10">
-                  <span className="text-[10px] uppercase font-bold tracking-widest text-red-400/50 mb-2 block">Validation Errors</span>
-                  <div className="space-y-2 bg-red-950/20 rounded p-2">
-                    {Object.entries(failureReason.validation_errors).map(([field, messages]: [string, any]) => (
-                      <div key={field} className="flex flex-col">
-                        <span className="font-bold text-red-400 text-xs">{field}:</span>
-                        <div className="pl-2">
-                          {Array.isArray(messages) ? (
-                            messages.map((msg: string, i: number) => (
-                              <div key={i} className="text-red-300/90">- {msg}</div>
-                            ))
-                          ) : (
-                            <div className="text-red-300/90">- {String(messages)}</div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {codeSnippet && codeSnippet.length > 0 && (
-              <FailureCodeSnippet
-                snippet={codeSnippet}
-                filePath={failureReason.file_path}
-                lineNumber={failureReason.line_number}
-              />
-            )}
-
-            {failureReason.backtrace && (
-              <div className="bg-red-500/10 rounded-lg p-4 font-mono text-xs border border-red-500/20 text-red-300 overflow-x-auto">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] uppercase font-bold tracking-widest text-red-400/50">Stack Trace</span>
-                  <button
-                    onClick={() => setShowFullBacktrace(!showFullBacktrace)}
-                    className="flex items-center gap-1 text-[10px] font-bold text-red-400/70 hover:text-red-400 transition-colors uppercase tracking-wider"
-                  >
-                    {showFullBacktrace ? (
-                      <><ChevronUp className="w-3 h-3" /> Show Less</>
-                    ) : (
-                      <><ChevronDown className="w-3 h-3" /> Show More ({failureReason.backtrace.length} lines)</>
-                    )}
-                  </button>
-                </div>
-                <div className="text-red-400/70 whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto custom-scrollbar">
-                  {showFullBacktrace
-                    ? failureReason.backtrace.join('\n')
-                    : failureReason.backtrace.slice(0, 5).join('\n')
-                  }
-                  {!showFullBacktrace && failureReason.backtrace.length > 5 && (
-                    <div className="mt-1 text-red-400/30 italic">... and {failureReason.backtrace.length - 5} more lines</div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+          <FailureDetails failure={failureReason} />
         )}
 
         {/* Dependencies */}
