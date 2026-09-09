@@ -1,14 +1,15 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.0 → 1.1.0 (MINOR: new principle added — Demo-App Proof of Feature)
+Version change: 1.1.0 → 1.2.0 (MINOR: Principle VI expanded with a 4th requirement —
+  docker-compose.yml currency + docker-run acceptance tests)
 
 Modified principles:
-  - Principle V: Simplicity and Semantic Versioning (unchanged)
-  - Added Principle VI: Demo-App Proof of Feature (NON-NEGOTIABLE)
+  - Principle VI: Demo-App Proof of Feature — added requirement 4, "Docker acceptance
+    run" (docker-compose.yml MUST track demo_app's services; demo: rake tasks are the
+    project's acceptance suite, runnable via `docker compose run`)
 
-Added sections:
-  - Core Principles → VI. Demo-App Proof of Feature
+Added sections: none (existing Principle VI section extended)
 
 Removed sections: none
 
@@ -16,8 +17,9 @@ Templates checked:
   - .specify/templates/plan-template.md   ✅ Constitution Check gate is generic ("Gates determined
                                              based on constitution file") — no edit required
   - .specify/templates/spec-template.md   ✅ No principle-specific content — no edit required
-  - .specify/templates/tasks-template.md  ✅ Polish phase updated with demo-app example tasks
+  - .specify/templates/tasks-template.md  ✅ Already covers demo-app polish tasks — no edit required
   - .specify/templates/checklist-template.md ✅ Generic — no edit required
+  - .specify/extensions.yml               ✅ No before/after_constitution hooks registered
 
 Deferred TODOs: none
 -->
@@ -127,6 +129,16 @@ the built-in surface, the missing matcher or helper MUST be added to
 `lib/ruby_reactor/rspec/` in the same change — extending the shared test API, not
 bypassing it.
 
+4. **Docker acceptance run**: `docker-compose.yml` MUST stay current with `demo_app`'s
+   runtime dependencies (Redis, Sidekiq, the Rails service itself) so that
+   `docker compose run --rm demo-app bin/rails demo:<task>` runs the new rake task
+   end to end against real Redis, with no manual setup beyond `docker compose up`.
+   A new demo service or environment variable required by a feature MUST be added to
+   `docker-compose.yml` in the same change. The `demo:` rake tasks in
+   `demo_app/lib/tasks/demo_reactors.rake` constitute the project's acceptance test
+   suite for user-facing behavior — CI or a release checklist MAY invoke them via
+   `docker compose run` to confirm the demo still passes before a MINOR/MAJOR release.
+
 **Rationale**: `demo_app/` is the only place the gem is consumed the way users consume
 it. An example that is written but never listed is never run; a spec written with
 private internals passes while the public API is broken. Forcing every feature through
@@ -165,6 +177,10 @@ gaps in the matcher library surface as work instead of as workarounds.
 - PR reviews MUST reject any feature change whose demo example is missing, unlisted
   in the rake file, or tested with hand-rolled scaffolding instead of the shipped
   matcher library.
+- `docker-compose.yml` MUST be kept current with `demo_app`'s services (Redis,
+  Sidekiq, Rails) so `docker compose up` and `docker compose run --rm demo-app
+  bin/rails demo:<task>` are the supported way to run the `demo:` rake tasks as
+  acceptance tests, with no host-side Ruby/Redis setup required.
 
 ## Governance
 
@@ -182,4 +198,4 @@ justified in the `Complexity Tracking` table of the plan.
 Compliance review: at each MINOR or MAJOR gem release, confirm this constitution
 still accurately reflects the codebase and update as needed.
 
-**Version**: 1.1.0 | **Ratified**: 2025-10-02 | **Last Amended**: 2026-09-09
+**Version**: 1.2.0 | **Ratified**: 2025-10-02 | **Last Amended**: 2026-09-09
