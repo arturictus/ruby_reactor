@@ -83,14 +83,16 @@ module RubyReactor
             end
           end
 
-          @context.execution_trace << {
-            type: :compensate,
-            step: step_config.name,
-            timestamp: Time.now,
-            result: loggable_value(compensate_result),
-            arguments: arguments,
-            skipped: skipped_result?(compensate_result)
-          }
+          @context.append_execution_trace(
+            {
+              type: :compensate,
+              step: step_config.name,
+              timestamp: Time.now,
+              result: loggable_value(compensate_result),
+              arguments: arguments,
+              skipped: skipped_result?(compensate_result)
+            }
+          )
           @undo_trace << { type: :compensation, step: step_config.name, error: error, arguments: arguments }
 
           if compensate_result.is_a?(RubyReactor::Failure)
@@ -119,14 +121,16 @@ module RubyReactor
             end
           end
 
-          @context.execution_trace << {
-            type: :undo,
-            step: step_config.name,
-            timestamp: Time.now,
-            result: loggable_value(undo_result),
-            arguments: arguments,
-            skipped: skipped_result?(undo_result)
-          }
+          @context.append_execution_trace(
+            {
+              type: :undo,
+              step: step_config.name,
+              timestamp: Time.now,
+              result: loggable_value(undo_result),
+              arguments: arguments,
+              skipped: skipped_result?(undo_result)
+            }
+          )
 
           if undo_result.is_a?(RubyReactor::Failure)
             middlewares.on(:failed_undo, step_config.name, undo_result, @context)
@@ -138,8 +142,9 @@ module RubyReactor
         rescue StandardError => e
           middlewares.on(:failed_undo, step_config.name, e, @context)
           # Log undo failure but don't halt the rollback process
-          @context.execution_trace << { type: :undo_failure, step: step_config.name, timestamp: Time.now,
-                                        error: e.message }
+          @context.append_execution_trace(
+            { type: :undo_failure, step: step_config.name, timestamp: Time.now, error: e.message }
+          )
           RubyReactor.Failure(e)
         end
       end

@@ -340,7 +340,9 @@ module RubyReactor
       end
 
       def run_step_implementation(step_config, arguments)
-        @context.execution_trace << { type: :run, step: step_config.name, timestamp: Time.now, arguments: arguments }
+        @context.append_execution_trace(
+          { type: :run, step: step_config.name, timestamp: Time.now, arguments: arguments }
+        )
         if step_config.has_run_block?
           # Execute inline block
           # If no arguments are defined for the step, pass the reactor inputs as arguments

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, History, ChevronLeft, CheckCircle, ChevronDown, ChevronUp, Play, Send, Workflow, ExternalLink } from 'lucide-react';
 import { apiUrl } from '../lib/utils';
 import { reactorRoute } from '../lib/reactors';
+import { stepRanInBackground } from '../lib/stepBackground';
 import FailureCodeSnippet from './FailureCodeSnippet';
 import FailureDetails from './FailureDetails';
 import { normalizeFailureReason } from '../lib/failures';
@@ -286,6 +287,7 @@ export default function StepInspector({
   const stepEvents = resolvedData?.trace || [];
 
   const lastEvent = stepEvents[stepEvents.length - 1];
+  const ranInBackground = stepRanInBackground(stepEvents, stepName || '');
   const failureReason = normalizeFailureReason(resolvedData?.context?.failure_reason);
   const isFailedStep = resolvedData?.context?.failure_reason?.step_name === stepName?.split('.').pop();
   const stepArgs = lastEvent?.arguments
@@ -459,6 +461,12 @@ export default function StepInspector({
               <h2 className="font-bold text-white text-lg">{stepName?.split('.').pop()}</h2>
               <div className="flex items-center gap-2 text-xs text-slate-500 font-mono mt-0.5">
                 <span className="uppercase tracking-wider text-indigo-400">{stepConfig?.type || 'UNKNOWN'}</span>
+                {ranInBackground === true && (
+                  <span className="bg-violet-500/15 px-1.5 py-0.5 rounded text-violet-300">BACKGROUND</span>
+                )}
+                {ranInBackground === false && (
+                  <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">FOREGROUND</span>
+                )}
                 {isAsyncUnit && (
                   <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 flex items-center gap-1">
                     {stepConfig?.type === 'async_reactor' ? <Workflow className="w-3 h-3" /> : <Send className="w-3 h-3" />}

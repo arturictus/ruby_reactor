@@ -10,7 +10,13 @@ vi.mock('@xyflow/react', async () => {
     ReactFlow: vi.fn(({ nodes }) => (
       <div data-testid="react-flow-mock">
         {nodes.map((n: any) => (
-          <div key={n.id} data-testid={`node-${n.id}`} data-status={n.data.status} data-label={n.data.label}>
+          <div
+            key={n.id}
+            data-testid={`node-${n.id}`}
+            data-status={n.data.status}
+            data-label={n.data.label}
+            data-background={String(n.data.background)}
+          >
             {n.id}
           </div>
         ))}
@@ -184,6 +190,33 @@ describe('DagVisualizer', () => {
 
     expect(getByTestId('node-step1').getAttribute('data-status')).toBe('skipped');
     expect(getByTestId('node-step2').getAttribute('data-status')).toBe('completed');
+  });
+
+  it('marks worker-run steps from the stored background stamp', () => {
+    const struct = {
+      first: { type: 'step' },
+      second: { type: 'step', depends_on: ['first'] },
+      third: { type: 'step', depends_on: ['second'] }
+    };
+
+    const { getByTestId } = render(
+      <DagVisualizer
+        structure={struct}
+        steps={[
+          { type: 'run', step: 'first', background: false },
+          { type: 'run', step: 'second', background: false },
+          { type: 'run', step: 'third', background: true }
+        ]}
+        results={{ first: 'a', second: 'b', third: 'c' }}
+        reactorStatus="completed"
+        onStepSelect={() => { }}
+        selectedStep={null}
+      />
+    );
+
+    expect(getByTestId('node-first').getAttribute('data-background')).toBe('false');
+    expect(getByTestId('node-second').getAttribute('data-background')).toBe('false');
+    expect(getByTestId('node-third').getAttribute('data-background')).toBe('true');
   });
 
   it('marks the halting step as halted and leaves unreached nodes pending, not cancelled', () => {

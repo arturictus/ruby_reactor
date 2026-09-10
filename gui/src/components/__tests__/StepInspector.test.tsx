@@ -52,6 +52,26 @@ describe('StepInspector', () => {
     expect(screen.queryByText(/Retries:/)).not.toBeInTheDocument();
   });
 
+  it('shows BACKGROUND when the step ran in the worker', () => {
+    render(
+      <StepInspector
+        {...defaultProps}
+        trace={[{ type: 'run', step: 'test_step', background: true }]}
+      />
+    );
+    expect(screen.getByText('BACKGROUND')).toBeInTheDocument();
+  });
+
+  it('shows FOREGROUND when the step ran in the calling process', () => {
+    render(
+      <StepInspector
+        {...defaultProps}
+        trace={[{ type: 'run', step: 'test_step', background: false }]}
+      />
+    );
+    expect(screen.getByText('FOREGROUND')).toBeInTheDocument();
+  });
+
   describe('Compensation History', () => {
     const propsWithUndo = {
       ...defaultProps,

@@ -264,6 +264,19 @@ RSpec.describe RubyReactor::Web::API, type: :request do
       expect(structure.values.map(&:keys).flatten.uniq).not_to include(:async)
     end
 
+    it "returns each step execution's background stamp in GET /reactors/:id" do
+      result = BackgroundAfterReactor.run
+      RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs
+
+      get "/reactors/#{result.execution_id}"
+      json = JSON.parse(last_response.body)
+
+      expect(last_response.status).to eq(200)
+      runs = json["steps"].select { |entry| entry["type"].to_s == "run" }
+                          .to_h { |entry| [entry["step"].to_s, entry["background"]] }
+      expect(runs).to eq("first" => false, "second" => false, "third" => true)
+    end
+
     it "recurses into an async_reactor child's own step graph" do
       structure = described_class.build_structure(AsyncReactorAwaitedReactor)
 

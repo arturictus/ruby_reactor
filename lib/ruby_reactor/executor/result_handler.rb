@@ -89,12 +89,14 @@ module RubyReactor
       def handle_halt(step_config, result)
         @step_results[step_config.name] = result
         result.instance_variable_set(:@step_name, step_config.name) if result.step_name.nil?
-        @context.execution_trace << {
-          type: :halt,
-          step: step_config.name,
-          timestamp: Time.now,
-          reason: result.reason
-        }
+        @context.append_execution_trace(
+          {
+            type: :halt,
+            step: step_config.name,
+            timestamp: Time.now,
+            reason: result.reason
+          }
+        )
         result
       end
 
@@ -106,12 +108,14 @@ module RubyReactor
         @step_results[step_config.name] = result
         @context.set_result(step_config.name, result.value)
         @dependency_graph.complete_step(step_config.name)
-        @context.execution_trace << {
-          type: :skipped,
-          step: step_config.name,
-          timestamp: Time.now,
-          reason: result.reason
-        }
+        @context.append_execution_trace(
+          {
+            type: :skipped,
+            step: step_config.name,
+            timestamp: Time.now,
+            reason: result.reason
+          }
+        )
         result
       end
 

@@ -14,6 +14,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { cn } from '../lib/utils';
 import { reactorRoute } from '../lib/reactors';
+import { backgroundFlagsByStep } from '../lib/stepBackground';
 import { Activity, CheckCircle2, AlertCircle, Clock, Ban, Send, ExternalLink, Workflow, SkipForward, OctagonMinus } from 'lucide-react';
 
 interface DagVisualizerProps {
@@ -84,8 +85,13 @@ const StepNode = ({ data }: { data: any }) => {
             {data.label}
             {AsyncIcon && <AsyncIcon className="w-3 h-3 opacity-70" />}
           </div>
-          <div className="text-[10px] opacity-70 uppercase tracking-wider">
-            {status === 'cancelled' ? 'CANCELLED' : data.type}
+          <div className="text-[10px] opacity-70 uppercase tracking-wider flex items-center gap-1.5">
+            <span>{status === 'cancelled' ? 'CANCELLED' : data.type}</span>
+            {data.background === true && (
+              <span className="rounded bg-violet-500/20 px-1 py-px text-[9px] font-semibold tracking-wider text-violet-300">
+                BACKGROUND
+              </span>
+            )}
           </div>
           {data.childExecutionId && (
             <a
@@ -163,7 +169,8 @@ const performLayout = (
   nodeStatus: Record<string, string>,
   path: string = "",
   // Step name -> child execution id, for async_reactor drill-down.
-  childLinks: Record<string, string> = {}
+  childLinks: Record<string, string> = {},
+  backgroundFlags: Record<string, boolean> = {}
 ): LayoutResult => {
   if (!nodes || Object.keys(nodes).length === 0) {
     return { nodes: [], edges: [], width: 0, height: 0 };
@@ -184,7 +191,7 @@ const performLayout = (
 
     if (config.nested_structure) {
       // Recurse
-      childLayout = performLayout(config.nested_structure, fullId, nodeStatus, fullId, childLinks);
+      childLayout = performLayout(config.nested_structure, fullId, nodeStatus, fullId, childLinks, backgroundFlags);
       width = childLayout.width + GROUP_PADDING * 2;
       height = childLayout.height + GROUP_PADDING * 2 + 30; // 30 for label header
 
@@ -267,6 +274,7 @@ const performLayout = (
         data: {
           label: N.key,
           type: N.config.type,
+          background: backgroundFlags[N.key] ?? backgroundFlags[N.fullId],
           status: nodeStatus[N.fullId] || 'pending',
           childExecutionId: childLinks[N.fullId],
           selected: false // handled by parent check
@@ -462,7 +470,7 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
   const { nodes, edges } = useMemo(() => {
     if (!structure) return { nodes: [], edges: [] };
 
-    const layout = performLayout(structure, null, nodeStatus, "", childLinks);
+    const layout = performLayout(structure, null, nodeStatus, "", childLinks, backgroundFlagsByStep(steps));
 
     // Post-process to set selection state which changes dynamically
     const finalNodes = layout.nodes.map(n => ({
@@ -474,7 +482,7 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
     }));
 
     return { nodes: finalNodes, edges: layout.edges };
-  }, [structure, nodeStatus, childLinks, selectedStep]);
+  }, [structure, nodeStatus, childLinks, selectedStep, steps]);
 
   const [nodesState, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edgesState, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
