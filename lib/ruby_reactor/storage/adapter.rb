@@ -88,6 +88,10 @@ module RubyReactor
         raise NotImplementedError
       end
 
+      def scan_reactors_page(pattern: "*", cursor: "0", count: 50, include_dispatched_children: false)
+        raise NotImplementedError
+      end
+
       def find_context_by_id(context_id)
         raise NotImplementedError
       end

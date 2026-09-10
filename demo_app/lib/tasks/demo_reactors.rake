@@ -239,7 +239,7 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo] do
     puts "excuting all reactors"
   end
 
@@ -475,6 +475,53 @@ namespace :demo do
     ArMapReactorNotFail.run(filter: {stock: 1})
   end
 
+  desc "SignalDemoReactor — Halt/Skipped outcomes and the success!/fail!/skip!/halt! helpers"
+  task signal_demo: [:environment, :flush_redis] do
+    def run_signal_demo(name, params)
+      puts "\n>>> Running SignalDemoReactor [#{name}] (#{params.inspect})"
+      result = SignalDemoReactor.call({ order_id: "order_#{SecureRandom.hex(4)}" }.merge(params))
+
+      if result.respond_to?(:halted?) && result.halted?
+        puts "🛑 HALTED: reason=#{result.reason.inspect} at_step=#{result.step_name.inspect}"
+      elsif result.success?
+        puts "✅ SUCCESS: #{result.value.inspect}"
+      else
+        err_msg = result.respond_to?(:error) ? result.error : result.inspect
+        puts "❌ FAILED: #{err_msg}"
+      end
+    end
+
+    # 1. Happy path — every step succeeds normally.
+    run_signal_demo("happy path", {})
+
+    # 2. halt! at :gate — clean stop, no steps after :gate run, no rollback.
+    run_signal_demo("halt! at gate", { halt_at: :gate })
+
+    # 3. skip! at :notify — workflow continues, :finalize reads :notify's
+    #    skipped value exactly like a success value.
+    run_signal_demo("skip! at notify", { skip_notify: true })
+
+    # 4. skip! at the result-returning step — the caller receives the
+    #    skipped value as the workflow result.
+    run_signal_demo("skip! at finalize (result step)", { skip_finalize: true })
+
+    # 5. fail! with retry: false — terminal on first attempt, no backoff,
+    #    straight to rollback. :charge's explicit compensate runs;
+    #    :notify never ran so nothing to compensate there.
+    run_signal_demo("fail! with retry: false", { fail_at: :charge, retry_veto: :veto })
+
+    # 6. fail! with the retry veto left alone — retries under :charge's own
+    #    budget (max_attempts: 3) and succeeds on the 2nd attempt.
+    run_signal_demo("fail! retries then succeeds", { fail_at: :charge, success_at_retry: 2 })
+
+    # 7. fail! at :finalize after :notify was skipped — rollback reaches
+    #    :charge (compensate runs) and :notify (default Skipped — it had no
+    #    compensate/undo block, so its rollback entry is Skipped, not a
+    #    fabricated success).
+    run_signal_demo("fail! at finalize, rollback through skipped notify",
+                     { skip_notify: true, fail_at: :finalize })
+  end
+
   desc "Run coordination demo reactors (locks, semaphores, rate limits, periods)"
   task coordination: [:environment, :flush_redis] do
     def run_coordination_reactor(name, reactor_class, params)
@@ -486,6 +533,13 @@ namespace :demo do
           puts "⏳ BACKGROUND: Reactor started in background."
           puts "   Execution ID: #{result.execution_id}"
           puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}"
+        elsif result.respond_to?(:halted?) && result.halted?
+          # Halt is a Success subclass (so naive success?-only callers keep
+          # working), so this check MUST come before the success? branch below
+          # or a period-dedup halt prints as a misleading "✅ SUCCESS: nil".
+          puts "🛑 HALTED: #{result.reason.inspect}"
+          puts "   Execution ID: #{result.execution_id}" if result.respond_to?(:execution_id)
+          puts "   Dashboard: http://localhost:3000/ruby_reactor/#{result.execution_id}" if result.respond_to?(:execution_id)
         elsif result.respond_to?(:skipped?) && result.skipped?
           puts "⏭️  SKIPPED: #{result.reason.inspect}"
           puts "   Execution ID: #{result.execution_id}" if result.respond_to?(:execution_id)

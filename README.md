@@ -230,11 +230,14 @@ RubyReactor supports two ways to define step logic:
 | **Class steps** (preferred) | Real business logic, compensation/undo, shared steps, testability |
 | **Inline blocks** | Quick prototypes, trivial one-liners, documentation examples |
 
-Whichever style you use, a step's `run` returns one of three signals — all exposed as bare helpers in both class steps and inline blocks:
+Whichever style you use, a step's `run` returns one of four signals — all exposed as bare helpers in both class steps and inline blocks:
 
 - **`Success(value)`** — step succeeded; `value` flows to dependent steps.
 - **`Failure(error)`** — step failed; the reactor rolls back completed steps (compensate/undo).
-- **`Skipped(reason:)`** — clean halt: stop the reactor, keep partial progress, **no rollback**. See [Skipping a reactor cleanly](documentation/core_concepts.md#skipping-a-reactor-cleanly).
+- **`Halt(reason:)`** — clean halt: stop the reactor, keep partial progress, **no rollback**. See [Halting a reactor cleanly](documentation/core_concepts.md#halting-a-reactor-cleanly).
+- **`Skipped(value)`** — mark this one step skipped; the reactor continues and `value` flows to dependants exactly like `Success`. See [Skipping a single step](documentation/core_concepts.md#skipping-a-single-step).
+
+One-line helpers end a step immediately from any call depth: `success!(value)`, `fail!(error, retry: true)`, `halt!(reason:)`, `skip!(value)` — equivalent to `return`ing the matching signal, usable in `run`, `compensate`, and `undo` bodies.
 
 **Class steps** are plain Ruby classes that include `RubyReactor::Step` and implement `run`, and optionally `compensate` and `undo`:
 
@@ -726,7 +729,7 @@ class MonthlyBillingReactor < RubyReactor::Reactor
   input :org_id
 
   # Run at most once per UTC month per org. Subsequent calls in the same month
-  # return RubyReactor::Skipped without executing any step. Pair with
+  # return RubyReactor::Halt without executing any step. Pair with
   # with_lock for strict at-most-one even under concurrent racers.
   with_period(every: :month) { |inputs| "monthly_billing:#{inputs[:org_id]}" }
 
@@ -801,22 +804,34 @@ On contention:
 - **Inline** (`Reactor.run`) raises `RubyReactor::Lock::AcquisitionError` / `RubyReactor::Semaphore::AcquisitionError` / `RubyReactor::RateLimit::ExceededError` / `RubyReactor::OrderedLock::WaitError`.
 - **Async** (Sidekiq or ActiveJob) snoozes the job via `perform_in(delay, ...)`. For rate limits the delay uses the error's `retry_after_seconds` hint (precise wakeup — the bucket roll time is known exactly); for locks, semaphores, and ordered-lock waits it's `lock_snooze_base_delay + jitter` (a short re-poll, since a held lock or a live blocker nonce typically clears in milliseconds). Snoozes do not count against the backend's retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed (ordered-lock waits bypass the cap — see the ordered-lock docs).
 
-On dedup hits (period gate already marked), the reactor returns a `RubyReactor::Skipped` result instead — no steps run, no exception:
+On dedup hits (period gate already marked), the reactor returns a `RubyReactor::Halt` result instead — no steps run, no exception:
 
 ```ruby
 result = MonthlyBillingReactor.run(org_id: 42)
-result.success?  # true (Skipped is a Success subclass)
-result.skipped?  # true on dedup hit, false otherwise
+result.success?  # true (Halt is a Success subclass)
+result.halted?   # true on dedup hit, false otherwise
 ```
 
-A step's `run` block can also return `Skipped(reason: "...")` to halt the reactor cleanly — remaining steps don't execute, **and already-completed steps are NOT compensated**. Use it when the rest of the workflow is unnecessary and partial progress should be kept (`Failure` is for "stop and roll back"). `Skipped` is a bare helper just like `Success`/`Failure` (or use the fully-qualified `RubyReactor.Skipped(...)`).
+A step's `run` block can also return `Halt(reason: "...")` to stop the reactor cleanly — remaining steps don't execute, **and already-completed steps are NOT compensated**. Use it when the rest of the workflow is unnecessary and partial progress should be kept (`Failure` is for "stop and roll back"). `Halt` is a bare helper just like `Success`/`Failure` (or use the fully-qualified `RubyReactor.Halt(...)`).
 
 ```ruby
 step :ensure_active do
   argument :user, result(:fetch_user)
   run do |args, _ctx|
-    next Skipped(reason: "user_opted_out") if args[:user].opted_out?
+    next Halt(reason: "user_opted_out") if args[:user].opted_out?
     Success(args[:user])
+  end
+end
+```
+
+To skip a *single* step while the reactor continues — the step did nothing, but the rest of the workflow should still run — return `Skipped(value)` instead. The value flows to dependants exactly like a `Success` value, and the step is not enrolled for rollback:
+
+```ruby
+step :maybe_sync do
+  argument :user, result(:fetch_user)
+  run do |args, _ctx|
+    next Skipped(args[:user]) if args[:user].already_synced?
+    Success(sync!(args[:user]))
   end
 end
 ```
@@ -1337,7 +1352,7 @@ Comprehensive guide to testing reactors with RubyReactor's testing utilities. Le
 
 ### [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md)
 
-Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Skipped` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
+Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
 
 ### [Middlewares & OpenTelemetry](documentation/middlewares.md)
 

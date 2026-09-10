@@ -32,6 +32,17 @@ RSpec.describe "reactor-level `background` hand-off" do
         expect(BackgroundAfterReactor.find(result.execution_id).context.status.to_s).to eq("completed")
       end
 
+      it "stamps each execution_trace event with whether it ran in the worker" do
+        result = BackgroundAfterReactor.run
+        RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs
+
+        runs = BackgroundAfterReactor.find(result.execution_id).context.execution_trace
+                                     .select { |entry| entry[:type].to_s == "run" }
+                                     .to_h { |entry| [entry[:step].to_sym, entry[:background]] }
+
+        expect(runs).to eq(first: false, second: false, third: true)
+      end
+
       it "compensates a worker-side failure exactly as a same-process failure" do
         result = BackgroundCompensationReactor.run
         RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs

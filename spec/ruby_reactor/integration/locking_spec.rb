@@ -114,19 +114,19 @@ RSpec.describe "Locking Integration" do
       result = PeriodicReactor.run(org_id: 7)
 
       expect(result).to be_success
-      expect(result.skipped?).to be false
+      expect(result.halted?).to be false
       expect(PeriodicCounters.runs).to eq(1)
 
       bucket_key = RubyReactor::Period.key("daily_report:7", :day)
       expect(redis.exists?(bucket_key)).to be true
     end
 
-    it "skips subsequent runs in the same bucket without executing steps" do
+    it "halts subsequent runs in the same bucket without executing steps" do
       PeriodicReactor.run(org_id: 7)
       result = PeriodicReactor.run(org_id: 7)
 
-      expect(result).to be_a(RubyReactor::Skipped)
-      expect(result.skipped?).to be true
+      expect(result).to be_a(RubyReactor::Halt)
+      expect(result.halted?).to be true
       expect(result.success?).to be true
       expect(result.period_key).to end_with(":#{RubyReactor::Period.bucket_id(:day)}")
       expect(PeriodicCounters.runs).to eq(1)
@@ -137,7 +137,7 @@ RSpec.describe "Locking Integration" do
       result = PeriodicReactor.run(org_id: 8)
 
       expect(result).to be_success
-      expect(result.skipped?).to be false
+      expect(result.halted?).to be false
       expect(PeriodicCounters.runs).to eq(2)
     end
 
@@ -156,7 +156,7 @@ RSpec.describe "Locking Integration" do
       LockedPeriodicReactor.run(id: 99)
       result = LockedPeriodicReactor.run(id: 99)
 
-      expect(result.skipped?).to be true
+      expect(result.halted?).to be true
       expect(PeriodicCounters.locked_runs).to eq(1)
     end
 
@@ -176,7 +176,7 @@ RSpec.describe "Locking Integration" do
 
       result = LockedPeriodicReactor.run(id: 9)
 
-      expect(result).to be_a(RubyReactor::Skipped)
+      expect(result).to be_a(RubyReactor::Halt)
       expect(result.reason).to eq(:period)
       expect(PeriodicCounters.locked_runs).to eq(0)
       # The lock must still be released on the skip path.
@@ -197,25 +197,25 @@ RSpec.describe "Locking Integration" do
   # literal subjects, but here the literal IS the key under test.
   # rubocop:disable RSpec/ExpectActual
   describe "RSpec matchers" do
-    describe "be_skipped" do
-      it "matches a Skipped result returned by a step" do
+    describe "be_halted" do
+      it "matches a Halt result returned by a step" do
         result = StepSkipReactor.run(should_skip: true)
 
-        expect(result).to be_skipped
-        expect(result).to be_skipped.because("no work to do")
-        expect(result).to be_skipped.at_step(:second)
+        expect(result).to be_halted
+        expect(result).to be_halted.because("no work to do")
+        expect(result).to be_halted.at_step(:second)
       end
 
-      it "matches a Skipped result from the period gate" do
+      it "matches a Halt result from the period gate" do
         PeriodicReactor.run(org_id: 7)
         result = PeriodicReactor.run(org_id: 7)
 
-        expect(result).to be_skipped.because(:period)
+        expect(result).to be_halted.because(:period)
       end
 
       it "does not match a plain Success" do
         result = StepSkipReactor.run(should_skip: false)
-        expect(result).not_to be_skipped
+        expect(result).not_to be_halted
       end
     end
 
@@ -280,14 +280,14 @@ RSpec.describe "Locking Integration" do
   end
   # rubocop:enable RSpec/ExpectActual
 
-  describe "Skipped step result" do
+  describe "Halted step result" do
     before { SkippedStepCounters.reset }
 
-    it "halts the reactor when a step returns Skipped" do
+    it "halts the reactor when a step returns Halt" do
       result = StepSkipReactor.run(should_skip: true)
 
-      expect(result).to be_a(RubyReactor::Skipped)
-      expect(result.skipped?).to be true
+      expect(result).to be_a(RubyReactor::Halt)
+      expect(result.halted?).to be true
       expect(result.reason).to eq("no work to do")
       expect(result.step_name).to eq(:second)
     end
@@ -310,32 +310,32 @@ RSpec.describe "Locking Integration" do
       result = StepSkipReactor.run(should_skip: false)
 
       expect(result).to be_success
-      expect(result.skipped?).to be false
+      expect(result.halted?).to be false
       expect(SkippedStepCounters.first_ran).to eq(1)
       expect(SkippedStepCounters.second_ran).to eq(1)
       expect(SkippedStepCounters.third_ran).to eq(1)
       expect(SkippedStepCounters.undo_count).to eq(0)
     end
 
-    it "still satisfies result.success? (Skipped is a Success subclass)" do
+    it "still satisfies result.success? (Halt is a Success subclass)" do
       result = StepSkipReactor.run(should_skip: true)
       expect(result.success?).to be true
     end
 
-    it "is constructible via RubyReactor.Skipped(...)" do
-      skipped = RubyReactor.Skipped(reason: "manual")
-      expect(skipped).to be_a(RubyReactor::Skipped)
-      expect(skipped.reason).to eq("manual")
+    it "is constructible via RubyReactor.Halt(...)" do
+      halt = RubyReactor.Halt(reason: "manual")
+      expect(halt).to be_a(RubyReactor::Halt)
+      expect(halt.reason).to eq("manual")
     end
 
-    it "records the skip in the execution trace" do
+    it "records the halt in the execution trace" do
       reactor = StepSkipReactor.new
       reactor.run(should_skip: true)
 
-      skipped_entries = reactor.execution_trace.select { |e| e[:type] == :skipped }
-      expect(skipped_entries.size).to eq(1)
-      expect(skipped_entries.first[:step]).to eq(:second)
-      expect(skipped_entries.first[:reason]).to eq("no work to do")
+      halt_entries = reactor.execution_trace.select { |e| e[:type] == :halt }
+      expect(halt_entries.size).to eq(1)
+      expect(halt_entries.first[:step]).to eq(:second)
+      expect(halt_entries.first[:reason]).to eq("no work to do")
     end
   end
 
@@ -570,7 +570,7 @@ RSpec.describe "Locking Integration" do
 
         executor = worker.perform(store_fresh_context(PeriodicReactor, { org_id: 71 }), "PeriodicReactor")
 
-        expect(executor.result).to be_a(RubyReactor::Skipped)
+        expect(executor.result).to be_a(RubyReactor::Halt)
         expect(PeriodicCounters.runs).to eq(0)
         expect(RubyReactor::Adapters::Sidekiq::Worker).not_to have_received(:perform_in)
       end

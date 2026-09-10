@@ -14,7 +14,8 @@ import {
 import '@xyflow/react/dist/style.css';
 import { cn } from '../lib/utils';
 import { reactorRoute } from '../lib/reactors';
-import { Activity, CheckCircle2, AlertCircle, Clock, Ban, Send, ExternalLink, Workflow } from 'lucide-react';
+import { backgroundFlagsByStep } from '../lib/stepBackground';
+import { Activity, CheckCircle2, AlertCircle, Clock, Ban, Send, ExternalLink, Workflow, SkipForward, OctagonMinus } from 'lucide-react';
 
 interface DagVisualizerProps {
   structure: Record<string, any>;
@@ -48,6 +49,8 @@ const StepNode = ({ data }: { data: any }) => {
     pending: "border-slate-700 bg-slate-900 text-slate-500",
     running: "border-indigo-500 bg-indigo-500/10 text-indigo-400 ring-2 ring-indigo-500/20",
     completed: "border-teal-500 bg-teal-500/10 text-teal-400",
+    skipped: "border-sky-500 bg-sky-500/10 text-sky-400",
+    halted: "border-slate-400 bg-slate-500/10 text-slate-300",
     failed: "border-rose-500 bg-rose-500/10 text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.2)]",
     cancelled: "border-amber-500/50 bg-amber-500/10 text-amber-500"
   };
@@ -56,6 +59,8 @@ const StepNode = ({ data }: { data: any }) => {
     pending: Clock,
     running: Activity,
     completed: CheckCircle2,
+    skipped: SkipForward,
+    halted: OctagonMinus,
     failed: AlertCircle,
     cancelled: Ban
   }[status as keyof typeof statusColors] || Clock;
@@ -80,8 +85,13 @@ const StepNode = ({ data }: { data: any }) => {
             {data.label}
             {AsyncIcon && <AsyncIcon className="w-3 h-3 opacity-70" />}
           </div>
-          <div className="text-[10px] opacity-70 uppercase tracking-wider">
-            {status === 'cancelled' ? 'CANCELLED' : data.type}
+          <div className="text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+            <span className="opacity-70">{status === 'cancelled' ? 'CANCELLED' : data.type}</span>
+            {data.background === true && (
+              <span className="rounded bg-slate-800 px-1 py-px text-[9px] font-semibold tracking-wider text-slate-200">
+                BACKGROUND
+              </span>
+            )}
           </div>
           {data.childExecutionId && (
             <a
@@ -108,6 +118,8 @@ const GroupNode = ({ data }: { data: any }) => {
     pending: "border-slate-700",
     running: "border-indigo-500",
     completed: "border-teal-500",
+    skipped: "border-sky-500",
+    halted: "border-slate-400",
     failed: "border-rose-500",
     cancelled: "border-amber-500/50"
   };
@@ -157,7 +169,8 @@ const performLayout = (
   nodeStatus: Record<string, string>,
   path: string = "",
   // Step name -> child execution id, for async_reactor drill-down.
-  childLinks: Record<string, string> = {}
+  childLinks: Record<string, string> = {},
+  backgroundFlags: Record<string, boolean> = {}
 ): LayoutResult => {
   if (!nodes || Object.keys(nodes).length === 0) {
     return { nodes: [], edges: [], width: 0, height: 0 };
@@ -178,7 +191,7 @@ const performLayout = (
 
     if (config.nested_structure) {
       // Recurse
-      childLayout = performLayout(config.nested_structure, fullId, nodeStatus, fullId, childLinks);
+      childLayout = performLayout(config.nested_structure, fullId, nodeStatus, fullId, childLinks, backgroundFlags);
       width = childLayout.width + GROUP_PADDING * 2;
       height = childLayout.height + GROUP_PADDING * 2 + 30; // 30 for label header
 
@@ -261,6 +274,7 @@ const performLayout = (
         data: {
           label: N.key,
           type: N.config.type,
+          background: backgroundFlags[N.key] ?? backgroundFlags[N.fullId],
           status: nodeStatus[N.fullId] || 'pending',
           childExecutionId: childLinks[N.fullId],
           selected: false // handled by parent check
@@ -351,6 +365,17 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
           }
         }
 
+        // 1b. A skipped step stores a value like any success, so the check
+        // above already paints it 'completed' — override from the trace,
+        // which is the only place a skip is distinguishable. Likewise the
+        // halting step itself: it never stores a result, but must read as
+        // 'halted' rather than falling through to 'pending'/'cancelled'.
+        if (currentTrace?.some((t) => t.type === 'skipped' && t.step === key)) {
+          statusMap[fullId] = 'skipped';
+        } else if (currentTrace?.some((t) => t.type === 'halt' && t.step === key)) {
+          statusMap[fullId] = 'halted';
+        }
+
         // 2. Check for error in THIS context
         if (contextObj?.failure_reason?.step_name === key) {
           statusMap[fullId] = 'failed';
@@ -362,6 +387,22 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
         const mapResult = currentResults?.[key];
         if (mapResult?._type === 'map_results' && mapResult.failed > 0) {
           statusMap[fullId] = 'failed';
+        }
+
+        // Async units do not write into intermediate_results, so without the
+        // hydrated dispatch record they look unreached and get cancelled when
+        // the parent fails. Their own record/child context is the source of truth.
+        const asyncRef = contextObj?.composed_contexts?.[key];
+        const asyncRecord = asyncRef?.record;
+        const asyncChildContext = asyncRef?.context?.value || asyncRef?.context;
+        if (ASYNC_STEP_TYPES.includes(struct[key]?.type) || asyncRef?.type === 'async_step_ref' || asyncRef?.type === 'async_reactor_ref') {
+          if (asyncRecord?.success === false || asyncRecord?.result?.success === false || asyncChildContext?.status === 'failed') {
+            statusMap[fullId] = 'failed';
+          } else if (asyncRecord?.success === true || asyncChildContext?.status === 'completed') {
+            statusMap[fullId] = 'completed';
+          } else if (asyncRecord?.status === 'dispatched' || asyncChildContext?.status === 'running') {
+            statusMap[fullId] = 'running';
+          }
         }
 
         // 3. Handle global cancellation/failure states for unreached steps at this level
@@ -429,7 +470,7 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
   const { nodes, edges } = useMemo(() => {
     if (!structure) return { nodes: [], edges: [] };
 
-    const layout = performLayout(structure, null, nodeStatus, "", childLinks);
+    const layout = performLayout(structure, null, nodeStatus, "", childLinks, backgroundFlagsByStep(steps));
 
     // Post-process to set selection state which changes dynamically
     const finalNodes = layout.nodes.map(n => ({
@@ -441,7 +482,7 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
     }));
 
     return { nodes: finalNodes, edges: layout.edges };
-  }, [structure, nodeStatus, childLinks, selectedStep]);
+  }, [structure, nodeStatus, childLinks, selectedStep, steps]);
 
   const [nodesState, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edgesState, setEdges, onEdgesChange] = useEdgesState<Edge>([]);

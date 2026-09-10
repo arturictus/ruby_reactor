@@ -300,8 +300,8 @@ module RubyReactor
                   end
                 end
           RubyReactor::Success.new(val)
-        when "skipped"
-          skipped_result(ctx)
+        when "halted", "skipped" # "skipped" is the legacy name for a halt
+          halted_result(ctx)
         when "running"
           # Try to determine if it is truly running or if we just missed the completion
           if @process_jobs && AsyncTestHelpers.active?
@@ -326,14 +326,14 @@ module RubyReactor
       end
 
       # A clean halt: either a `with_period` gate or a step returning
-      # `RubyReactor.Skipped(...)`. The sync run already produced the exact
-      # Skipped (reason/step intact) — surface it. For async runs the worker
+      # `RubyReactor.Halt(...)`. The sync run already produced the exact
+      # Halt (reason/step intact) — surface it. For async runs the worker
       # swallows the return value, so rebuild from the trace.
-      def skipped_result(ctx)
-        return @run_result if @run_result.is_a?(RubyReactor::Skipped)
+      def halted_result(ctx)
+        return @run_result if @run_result.is_a?(RubyReactor::Halt)
 
-        entry = ctx.execution_trace.reverse.find { |t| t[:type].to_s == "skipped" }
-        RubyReactor::Skipped.new(reason: entry&.dig(:reason), step_name: entry&.dig(:step))
+        entry = ctx.execution_trace.reverse.find { |t| t[:type].to_s == "halt" }
+        RubyReactor::Halt.new(reason: entry&.dig(:reason), step_name: entry&.dig(:step))
       end
 
       def success?

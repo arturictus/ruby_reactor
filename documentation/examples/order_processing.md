@@ -47,9 +47,9 @@ class ValidateOrderStep
 
   def self.run(arguments, _context)
     order = Order.find_by(id: arguments[:order_id])
-    return Failure("Order not found") unless order
-    return Failure("Order already processed") if order.processed?
-    return Failure("Order cancelled") if order.cancelled?
+    fail!("Order not found") unless order
+    fail!("Order already processed") if order.processed?
+    fail!("Order cancelled") if order.cancelled?
 
     Success(order: order)
   end
@@ -60,7 +60,7 @@ class ReserveInventoryStep
 
   def self.run(arguments, _context)
     reservation_id = InventoryService.reserve_items(arguments[:order].items)
-    return Failure("Inventory reservation failed") unless reservation_id
+    fail!("Inventory reservation failed") unless reservation_id
 
     Success(reservation_id: reservation_id)
   end
@@ -83,7 +83,7 @@ class ProcessPaymentStep
       description: "Order ##{order.id}"
     )
 
-    return Failure("Payment failed: #{payment_result.error}") unless payment_result.success?
+    fail!("Payment failed: #{payment_result.error}") unless payment_result.success?
 
     Success(payment_id: payment_result.id, payment_amount: order.total)
   end
@@ -125,7 +125,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
         end
       end
 
-      return Failure("Insufficient inventory: #{unavailable_items}") unless unavailable_items.empty?
+      fail!("Insufficient inventory: #{unavailable_items}") unless unavailable_items.empty?
 
       Success(inventory_checked: true)
     end
@@ -148,7 +148,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
     run do |args, _ctx|
       success = InventoryService.confirm_reservation(args[:reservation_id])
-      return Failure("Inventory update failed") unless success
+      fail!("Inventory update failed") unless success
 
       Success({ inventory_updated: true })
     end
@@ -187,7 +187,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
         payment_id: args[:payment_id]
       )
 
-      return Failure("Confirmation email failed") unless email_result.success?
+      fail!("Confirmation email failed") unless email_result.success?
 
       Success({ confirmation_sent: true })
     end
@@ -369,7 +369,7 @@ class OrderCancellationReactor < RubyReactor::Reactor
 
     run do |args, _ctx|
       order = Order.find_by(id: args[:order_id])
-      return Failure("Order not found") unless order
+      fail!("Order not found") unless order
       Success({ order: order })
     end
   end

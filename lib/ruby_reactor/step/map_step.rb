@@ -64,7 +64,7 @@ module RubyReactor
 
         def run_inline(arguments, context)
           results = execute_inline_map(arguments, context)
-          return results if results.is_a?(RubyReactor::Failure)
+          return results if results.is_a?(RubyReactor::Failure) || results.is_a?(RubyReactor::Halt)
 
           process_results(results, arguments[:collect_block], arguments[:fail_fast])
         end
@@ -75,6 +75,10 @@ module RubyReactor
 
           arguments[:source].each do |element|
             result = execute_single_element(element, arguments, context)
+
+            # An element-level Halt propagates as a run halt: stop immediately
+            # rather than being collected as a (nil) value.
+            return result if result.is_a?(RubyReactor::Halt)
 
             if fail_fast && result.failure?
               return result # Stop immediately on first failure

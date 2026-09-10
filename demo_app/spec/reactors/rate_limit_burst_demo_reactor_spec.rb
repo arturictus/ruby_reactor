@@ -3,7 +3,11 @@
 require "rails_helper"
 
 RSpec.describe RateLimitBurstDemoReactor, type: :reactor do
+  include ActiveSupport::Testing::TimeHelpers
+
   subject(:reactor) { test_reactor(described_class, { account_id: "acct_1" }) }
+
+  around { |example| freeze_time { example.run } }
 
   it "allows three calls and reports the fourth as exceeded" do
     expect(reactor).to be_success

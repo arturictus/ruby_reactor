@@ -5,7 +5,7 @@ require_relative "coordination_serializer"
 
 module RubyReactor
   module Web
-    # rubocop:disable Metrics/BlockLength
+    # rubocop:disable Metrics/BlockLength, Metrics/ClassLength
     class API < Roda
       plugin :json
       plugin :all_verbs
@@ -13,9 +13,19 @@ module RubyReactor
       route do |r|
         r.on "reactors" do
           r.is do
-            # GET /api/reactors
+            # GET /api/reactors?limit=N&cursor=C (default limit 50, capped at 500).
+            # Body stays a bare array (existing clients keep working unchanged);
+            # the next page's cursor rides in the X-Next-Cursor header ("0" means
+            # there is no next page). A client that wants every reactor pages
+            # through by re-requesting with ?cursor=<X-Next-Cursor> until it gets "0".
             r.get do
-              RubyReactor::Configuration.instance.storage_adapter.scan_reactors
+              limit = self.class.scan_limit(r.params["limit"])
+              cursor = r.params["cursor"] || "0"
+
+              adapter = RubyReactor::Configuration.instance.storage_adapter
+              page = adapter.scan_reactors_page(cursor: cursor, count: limit)
+              response.headers["X-Next-Cursor"] = page[:cursor]
+              page[:reactors]
             rescue StandardError => e
               response.status = 500
               { error: e.message, backtrace: e.backtrace.first(5) }
@@ -150,9 +160,16 @@ module RubyReactor
         end
       end
 
+      def self.scan_limit(raw)
+        limit = raw.to_i
+        return 50 unless limit.positive?
+
+        [limit, 500].min
+      end
+
       def self.reactor_status(data)
-        status = data[:status].to_s
-        return status if %w[failed paused completed running skipped pending].include?(status)
+        status = data[:status].to_s == "skipped" ? "halted" : data[:status].to_s
+        return status if %w[failed paused completed running halted pending].include?(status)
         return "cancelled" if data[:cancelled]
         return "running" if data[:current_step]
         return "completed" if execution_evidence?(data)
@@ -347,6 +364,6 @@ module RubyReactor
         }
       end
     end
-    # rubocop:enable Metrics/BlockLength
+    # rubocop:enable Metrics/BlockLength, Metrics/ClassLength
   end
 end

@@ -94,7 +94,10 @@ module RubyReactor
 
       def handle_retry_result(step_config, reactor_class, result)
         case result
-        when RubyReactor::Success
+        when RubyReactor::Halt, RubyReactor::Skipped, RubyReactor::Success
+          # Halt and Skipped are Success subclasses, so they already take this
+          # path via inheritance; the explicit arms are readability plus a
+          # guard against a future hierarchy change (R5).
           clear_retry_state
           result
         when RubyReactor::Failure

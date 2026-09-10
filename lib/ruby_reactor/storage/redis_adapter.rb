@@ -10,6 +10,7 @@ module RubyReactor
       include RedisOrderedLocking
       include RedisStepResults
       include RedisPubSub
+      include RedisReactorScan
 
       def initialize(redis_config)
         super()
@@ -181,33 +182,6 @@ module RubyReactor
         @redis.expire(key, seconds)
       end
 
-      # New methods for API
-      def scan_reactors(pattern: "reactor:*:context:*", count: 50, include_dispatched_children: false)
-        # Use SCAN to find keys matching the pattern
-        results = []
-        batch_keys = []
-
-        # scan_each yields keys. We buffer them to use MGET efficiently.
-        # We request a batch size from Redis (count: 100) to reduce roundtrips.
-        @redis.scan_each(match: pattern, count: 100) do |key|
-          batch_keys << key
-
-          # specific batch size for MGET processing
-          if batch_keys.size >= 50
-            results.concat(fetch_and_filter_reactors(batch_keys, include_dispatched_children))
-            batch_keys = []
-
-            # Stop if we have enough results
-            return results.take(count) if results.size >= count
-          end
-        end
-
-        # Process remaining keys
-        results.concat(fetch_and_filter_reactors(batch_keys, include_dispatched_children)) if batch_keys.any?
-
-        results.take(count)
-      end
-
       def find_context_by_id(context_id)
         # We don't know the reactor class, so we search for the ID
         pattern = "reactor:*:context:#{context_id}"
@@ -223,23 +197,6 @@ module RubyReactor
         return nil unless json
 
         JSON.parse(json)
-      end
-
-      def determine_status(data)
-        status = data["status"].to_s
-        return status if status && %w[failed paused completed running skipped pending].include?(status)
-        return "cancelled" if data["cancelled"]
-        # Heuristic
-        return "failed" if data["retry_count"]&.positive? && !data["current_step"].nil?
-        return "running" if data["current_step"]
-        return "completed" if execution_evidence?(data)
-
-        "pending"
-      end
-
-      def execution_evidence?(data)
-        (data["execution_trace"] || []).any? ||
-          (data["intermediate_results"] || {}).any?
       end
 
       def store_map_element_context_id(map_id, context_id, reactor_class_name)
@@ -314,34 +271,6 @@ module RubyReactor
       def durability_ttl
         RubyReactor.configuration.context_ttl
       end
-
-      def fetch_and_filter_reactors(keys, include_dispatched_children = false)
-        return [] if keys.empty?
-
-        json_results = @redis.mget(*keys)
-
-        json_results.compact.map do |json|
-          data = JSON.parse(json)
-          next if data["parent_context_id"] && !(include_dispatched_children && dispatched_child?(data))
-          # Skip non-context records (e.g. async_step Step Result Records) whose
-          # keys are a "reactor:*:context:*" substring match on the SCAN glob
-          # (context:#{id}:step_result:#{name}) but aren't a reactor context.
-          next unless data["reactor_class"]
-
-          {
-            id: data["context_id"],
-            class: data["reactor_class"],
-            status: determine_status(data),
-            created_at: data["started_at"],
-            failure: data["failure_reason"]
-          }
-        end.compact
-      end
-
-      # An `async_reactor` child owns its own job, so a lost job strands it like
-      # a top-level reactor. Compose children (inline) and map elements
-      # (Map::Sweeper's) carry no marker, so neither is swept.
-      def dispatched_child?(data) = data.dig("private_data", "async_dispatched")
 
       def context_key(context_id, reactor_class_name)
         "reactor:#{reactor_class_name}:context:#{context_id}"

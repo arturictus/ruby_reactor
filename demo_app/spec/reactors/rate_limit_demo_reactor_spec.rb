@@ -3,9 +3,16 @@
 require "rails_helper"
 
 RSpec.describe RateLimitDemoReactor, type: :reactor do
+  include ActiveSupport::Testing::TimeHelpers
+
   let(:inputs) { { account_id: "acct_1", hold_seconds: 0 } }
 
   subject(:reactor) { test_reactor(described_class, inputs) }
+
+  # Fixed-window counters key off wall-clock seconds. Sequential runs on a
+  # loaded CI box can straddle a second boundary, so freeze time so every
+  # increment (and the matcher) land in the same bucket.
+  around { |example| freeze_time { example.run } }
 
   def run_sync(**overrides)
     test_reactor(described_class, inputs.merge(overrides), async: false).result

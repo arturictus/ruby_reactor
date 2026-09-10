@@ -53,7 +53,7 @@ module RubyReactor
 
         # Configure a calendar-aligned dedup window for this reactor. The
         # reactor will run at most once per bucket per key; subsequent calls
-        # in the same bucket return `RubyReactor::Skipped` without executing
+        # in the same bucket return `RubyReactor::Halt` without executing
         # any steps.
         #
         # Note: `with_period` is *dedup*, not *concurrency*. Two concurrent
@@ -93,7 +93,7 @@ module RubyReactor
         #   assign. Only fully-drained sequences GC themselves.
         # @param strict [Boolean] When true (default), if any nonce in the
         #   sequence terminates with a `Failure`, all subsequent nonces are
-        #   short-circuited with `Skipped(reason: :ordered_lock_chain_failed)`
+        #   short-circuited with `Halt(reason: :ordered_lock_chain_failed)`
         #   instead of executing. This models "stop the line on the first
         #   problem" pipelines (e.g. ledger transactions). When false, the
         #   sequence keeps executing every nonce in order regardless of prior

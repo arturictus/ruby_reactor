@@ -23,12 +23,22 @@ RSpec.describe PeriodDemoReactor, type: :reactor do
   context "second run in the same bucket" do
     before { described_class.run(org_id: "org_7") }
 
-    it "returns a Skipped result without re-running steps" do
+    it "returns a Halt result without re-running steps" do
       result = described_class.run(org_id: "org_7")
 
-      expect(result).to be_skipped.because(:period)
-      expect(result.skipped?).to be true
+      expect(result).to be_halted.because(:period)
+      expect(result.halted?).to be true
       expect(result.success?).to be true
+    end
+  end
+
+  context "notify: \"skip\"" do
+    let(:inputs) { { org_id: "org_8", notify: "skip" } }
+
+    it "skips notify_subscribers but still returns the published report" do
+      expect(reactor).to be_success
+      expect(reactor).to be_skipped.at_step(:notify_subscribers)
+      expect(reactor.result.value).to eq(published: true, report: { built: true, org_id: "org_8" })
     end
   end
 end

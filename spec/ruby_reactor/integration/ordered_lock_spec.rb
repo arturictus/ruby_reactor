@@ -137,7 +137,7 @@ RSpec.describe "OrderedLock Integration" do
       RubyReactor.configuration.lock_snooze_jitter = 0
     end
 
-    it "skips subsequent nonces with Skipped after a Failure" do
+    it "skips subsequent nonces with Halt after a Failure" do
       StrictOrderedReactor.run(account_id: 1, thing: :one, fail: true)
       StrictOrderedReactor.run(account_id: 1, thing: :two)
       StrictOrderedReactor.run(account_id: 1, thing: :three)
@@ -315,7 +315,7 @@ RSpec.describe "OrderedLock Integration" do
       OrderedReactor.run(account_id: 88, thing: :b)
 
       # Redeliver the completed job. Its stale-batch short-circuit must NOT
-      # overwrite the stored :completed record with :skipped.
+      # overwrite the stored :completed record with :halted.
       RubyReactor::Adapters::Sidekiq::Worker.new.perform(*duplicate["args"])
 
       expect(adapter.retrieve_context(ctx_id, "OrderedReactor")["status"]).to eq("completed")

@@ -117,14 +117,14 @@ module RubyReactor
         @ordered_lock_drained_replay == true
       end
 
-      # Terminal Skipped result when the ordered-lock gate short-circuits this
+      # Terminal Halt result when the ordered-lock gate short-circuits this
       # run (stale batch, strict chain failure, or a drained-batch redelivery of
       # an already-terminal context), or nil to continue. Shared by `execute`
       # and `resume_execution`.
       def ordered_lock_short_circuit
-        return RubyReactor::Skipped.new(reason: :ordered_lock_stale_batch) if ordered_lock_stale_batch?
-        return RubyReactor::Skipped.new(reason: :ordered_lock_drained_replay) if ordered_lock_drained_replay?
-        return RubyReactor::Skipped.new(reason: :ordered_lock_chain_failed) if ordered_lock_chain_skip?
+        return RubyReactor::Halt.new(reason: :ordered_lock_stale_batch) if ordered_lock_stale_batch?
+        return RubyReactor::Halt.new(reason: :ordered_lock_drained_replay) if ordered_lock_drained_replay?
+        return RubyReactor::Halt.new(reason: :ordered_lock_chain_failed) if ordered_lock_chain_skip?
 
         nil
       end
@@ -138,12 +138,12 @@ module RubyReactor
       def short_circuit!(result)
         @result = result
 
-        # A stale-batch or drained-batch-redelivery skip means this run's epoch
+        # A stale-batch or drained-batch-redelivery halt means this run's epoch
         # belongs to a drained generation — typically a slow straggler or a
         # Sidekiq at-least-once redelivery. If the redelivery is of a job that
         # ALREADY reached a terminal status, its stored context is the source of
-        # truth; writing :skipped over a :completed/:failed record would silently
-        # corrupt the outcome. Return the skip to the worker (so it stops)
+        # truth; writing :halted over a :completed/:failed record would silently
+        # corrupt the outcome. Return the halt to the worker (so it stops)
         # without saving. The `@skip_context_persist` flag also suppresses the
         # ensure-block save in execute / resume_execution, which would otherwise
         # clobber the stored terminal record with this run's stale in-memory
@@ -169,14 +169,14 @@ module RubyReactor
       # set when the status was terminal, but re-checking keeps both paths
       # uniform and self-guarding.
       def redelivery_of_terminal?(result)
-        return false unless result.is_a?(RubyReactor::Skipped)
+        return false unless result.is_a?(RubyReactor::Halt)
         return false unless %i[ordered_lock_stale_batch ordered_lock_drained_replay].include?(result.reason)
 
         stored_status_terminal?
       end
 
       def stored_status_terminal?
-        %w[completed failed skipped].include?(stored_context_status)
+        %w[completed failed halted skipped].include?(stored_context_status)
       end
 
       def stored_context_status

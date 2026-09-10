@@ -101,6 +101,8 @@ module RubyReactor
           # whoever happened to materialize the enumerator (the JSON encoder, in
           # the dashboard's case) instead of the stack of the step that failed.
           RubyReactor::Failure.new(result["_error"], backtrace: [])
+        elsif result.is_a?(Hash) && result.key?("_halt")
+          RubyReactor::Halt.new(reason: result["reason"])
         else
           RubyReactor::Success.new(ContextSerializer.deserialize_value(result))
         end

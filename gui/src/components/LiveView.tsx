@@ -3,13 +3,11 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Activity, AlertCircle, Search, Filter } from 'lucide-react';
 import { apiUrl } from '../lib/utils';
-import { matchesStatusFilter, reactorRoute } from '../lib/reactors';
+import { fetchAllReactors, matchesStatusFilter, reactorRoute } from '../lib/reactors';
 import StatusBadge from './StatusBadge';
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 export default function LiveView() {
-  const { data: reactors, error, isLoading } = useSWR(apiUrl('/api/reactors'), fetcher, { refreshInterval: 2000 });
+  const { data: reactors, error, isLoading } = useSWR(apiUrl('/api/reactors'), fetchAllReactors, { refreshInterval: 2000 });
   const [search, setSearch] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const statusFilter = searchParams.get('status') || 'all';
@@ -68,7 +66,7 @@ export default function LiveView() {
               <option value="running">Running</option>
               <option value="errors">Errors</option>
               <option value="completed">Completed</option>
-              <option value="skipped">Skipped</option>
+              <option value="halted">Halted</option>
               <option value="paused">Paused</option>
               <option value="failed">Failed</option>
               <option value="cancelled">Cancelled</option>

@@ -103,6 +103,13 @@ module RubyReactor
       @current_step = old_step
     end
 
+    # Appends an execution-trace event stamped with whether this process is the
+    # worker (`inline_async_execution`). Traces written before this field
+    # existed stay unlabeled on deserialize.
+    def append_execution_trace(entry)
+      @execution_trace << entry.merge(background: !!@inline_async_execution)
+    end
+
     def to_h
       {
         inputs: @inputs,

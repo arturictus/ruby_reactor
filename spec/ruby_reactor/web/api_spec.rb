@@ -124,6 +124,47 @@ RSpec.describe RubyReactor::Web::API, type: :request do
       expect(failed_item["status"]).to eq("failed")
       expect(success_item["status"]).to eq("completed")
     end
+
+    it "defaults to at most 50 reactors when no limit is given" do
+      53.times { reactor_class.new.run(should_fail: false) }
+
+      get "/reactors"
+
+      json = JSON.parse(last_response.body)
+      expect(json.size).to eq(50)
+    end
+
+    it "honors a ?limit= query param beyond the default of 50" do
+      53.times { reactor_class.new.run(should_fail: false) }
+
+      get "/reactors?limit=53"
+
+      json = JSON.parse(last_response.body)
+      expect(json.size).to eq(53)
+    end
+
+    it "caps ?limit= at 500 and ignores non-positive values" do
+      expect(described_class.scan_limit("100000")).to eq(500)
+      expect(described_class.scan_limit("0")).to eq(50)
+      expect(described_class.scan_limit("-5")).to eq(50)
+      expect(described_class.scan_limit(nil)).to eq(50)
+      expect(described_class.scan_limit("30")).to eq(30)
+    end
+
+    it "pages through all reactors via X-Next-Cursor until it reads back '0'" do
+      ids = Array.new(53) { reactor_class.new.tap { |r| r.run(should_fail: false) }.context.context_id }
+
+      seen = []
+      cursor = "0"
+      loop do
+        get "/reactors", { limit: 20, cursor: cursor }
+        seen.concat(JSON.parse(last_response.body).map { |r| r["id"] })
+        cursor = last_response.headers["X-Next-Cursor"]
+        break if cursor == "0"
+      end
+
+      expect(seen.uniq).to match_array(ids)
+    end
   end
 
   describe "POST /reactors/:id/retry" do
@@ -221,6 +262,19 @@ RSpec.describe RubyReactor::Web::API, type: :request do
       expect(described_class.background_handoff_for(BackgroundAfterReactor))
         .to eq({ mode: :after, step: :second })
       expect(structure.values.map(&:keys).flatten.uniq).not_to include(:async)
+    end
+
+    it "returns each step execution's background stamp in GET /reactors/:id" do
+      result = BackgroundAfterReactor.run
+      RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs
+
+      get "/reactors/#{result.execution_id}"
+      json = JSON.parse(last_response.body)
+
+      expect(last_response.status).to eq(200)
+      runs = json["steps"].select { |entry| entry["type"].to_s == "run" }
+                          .to_h { |entry| [entry["step"].to_s, entry["background"]] }
+      expect(runs).to eq("first" => false, "second" => false, "third" => true)
     end
 
     it "recurses into an async_reactor child's own step graph" do

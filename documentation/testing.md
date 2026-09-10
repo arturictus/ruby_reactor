@@ -16,7 +16,7 @@ end
 
 This will give you access to the `test_reactor` helper method and all custom matchers.
 
-> For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, or `with_ordered_lock`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, `be_period_marked`, `have_ordered_lock_next`, `have_ordered_lock_last_completed`, `have_ordered_lock_in_flight`, and `be_ordered_lock_drained` matchers, plus patterns for testing async snooze and escalation.
+> For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, or `with_ordered_lock`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_halted`, `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, `be_period_marked`, `have_ordered_lock_next`, `have_ordered_lock_last_completed`, `have_ordered_lock_in_flight`, and `be_ordered_lock_drained` matchers, plus patterns for testing async snooze and escalation.
 
 > Examples elsewhere in the documentation mix class steps with inline blocks — class steps where the logic matters, inline blocks where a step is trivial. For production code, prefer [class-based steps](core_concepts.md#step-classes-preferred) and unit-test them directly — see [Testing Step Classes](#testing-step-classes) below.
 
@@ -594,17 +594,28 @@ end
 
 All execution in these examples goes through the `test_reactor` helper — never reach into `RubyReactor::Adapters::Sidekiq::Worker` (or `RubyReactor::Adapters::ActiveJob::Worker`) directly. For async reactors, `test_reactor` processes the queued jobs for you by default; pass `process_jobs: false` when you need to inspect or drive the queue yourself.
 
-### The `Skipped` result
+### The `Halt` result
 
-`RubyReactor::Skipped` is a `Success` subclass returned in two cases: a `with_period` bucket has already been claimed, or a step explicitly returns `RubyReactor.Skipped(reason: "...")` to halt cleanly (no compensation runs). Use `be_skipped` to distinguish it from a plain `Success`:
+`RubyReactor::Halt` is a `Success` subclass returned in two cases: a `with_period` bucket has already been claimed, or a step explicitly returns `RubyReactor.Halt(reason: "...")` to stop cleanly (no compensation runs). Use `be_halted` to distinguish it from a plain `Success`:
 
 ```ruby
-expect(test_reactor(MonthlyReportReactor, org_id: 7)).to be_skipped                  # any Skipped
-expect(test_reactor(MonthlyReportReactor, org_id: 7)).to be_skipped.because(:period) # gate hit
-expect(test_reactor(SyncReactor, foo: 1)).to be_skipped.at_step(:second)             # step return
+expect(test_reactor(MonthlyReportReactor, org_id: 7)).to be_halted                  # any Halt
+expect(test_reactor(MonthlyReportReactor, org_id: 7)).to be_halted.because(:period) # gate hit
+expect(test_reactor(SyncReactor, foo: 1)).to be_halted.at_step(:second)             # step return
 ```
 
-`Skipped` still satisfies `success?`, so legacy `if result.success?` callers continue to work; the matcher reads `subject.result` and discriminates on `skipped?`.
+`Halt` still satisfies `success?`, so legacy `if result.success?` callers continue to work; the matcher reads `subject.result` and discriminates on `halted?`.
+
+### The `Skipped` result
+
+`RubyReactor::Skipped` marks one step skipped while the reactor continues; its value flows to dependants exactly like a `Success` value. Use `be_skipped` to assert that a specific step was skipped — it reads the execution trace, not the run's terminal result, since a run containing skipped steps still completes as a plain `Success`:
+
+```ruby
+expect(test_reactor(SyncReactor, foo: 1)).to be_skipped.at_step(:maybe_sync)
+expect(test_reactor(SyncReactor, foo: 1)).to be_success  # the run itself still completes
+```
+
+A halted run never satisfies `be_skipped` — halting and skipping are distinct outcomes.
 
 ### Asserting lock state
 
@@ -714,10 +725,10 @@ it "does not mark the bucket when the run fails" do
   expect("monthly_report:7").not_to be_period_marked.for(:month)
 end
 
-it "skips a second call in the same bucket" do
+it "halts a second call in the same bucket" do
   test_reactor(MonthlyReportReactor, org_id: 7).run
 
-  expect(test_reactor(MonthlyReportReactor, org_id: 7)).to be_skipped.because(:period)
+  expect(test_reactor(MonthlyReportReactor, org_id: 7)).to be_halted.because(:period)
 end
 ```
 
@@ -1109,9 +1120,11 @@ end
 | `have_retried_step(name)` | Assert step was retried |
 | `.times(count)` | Chain: assert retry count |
 | `have_validation_error(field)` | Assert input validation error on field |
-| `be_skipped` | Assert result is a `RubyReactor::Skipped` (period gate or step return) |
-| `.because(reason)` | Chain: assert the skip reason matches |
-| `.at_step(name)` | Chain: assert the halting step (step-returned Skipped only) |
+| `be_halted` | Assert result is a `RubyReactor::Halt` (period gate or step return) |
+| `.because(reason)` | Chain: assert the halt reason matches |
+| `.at_step(name)` | Chain: assert the halting step (step-returned Halt only) |
+| `be_skipped` | Assert a step was skipped (reads the result or the execution trace) |
+| `.at_step(name)` | Chain: assert which step was skipped |
 | `be_locked` | Assert an exclusive lock is currently held for the given key |
 | `.by(owner)` | Chain: assert the lock owner (typically a `context_id`) |
 | `have_available_tokens(n)` | Assert `n` semaphore tokens are still in the pool |

@@ -264,18 +264,18 @@ module RubyReactor
         RubyReactor.configuration.storage_adapter
       end
 
-      # Distinguishes `RubyReactor::Skipped` from a plain `Success`. Works on
-      # any object with a `skipped?` predicate.
+      # Distinguishes `RubyReactor::Halt` (a clean halt) from a plain
+      # `Success`. Works on any object with a `halted?` predicate.
       #
       # Examples:
-      #   expect(result).to be_skipped
-      #   expect(result).to be_skipped.because(:period)
-      #   expect(result).to be_skipped.at_step(:second)
-      ::RSpec::Matchers.define :be_skipped do
+      #   expect(result).to be_halted
+      #   expect(result).to be_halted.because(:period)
+      #   expect(result).to be_halted.at_step(:second)
+      ::RSpec::Matchers.define :be_halted do
         match do |subject|
           subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
           actual = subject.respond_to?(:result) ? subject.result : subject
-          next false unless actual.respond_to?(:skipped?) && actual.skipped?
+          next false unless actual.respond_to?(:halted?) && actual.halted?
           next false if @expected_reason && actual.reason != @expected_reason
           next false if @expected_step && actual.step_name != @expected_step
 
@@ -292,12 +292,62 @@ module RubyReactor
 
         failure_message do |subject|
           actual = subject.respond_to?(:result) ? subject.result : subject
-          if !actual.respond_to?(:skipped?) || !actual.skipped?
-            "expected result to be Skipped, got #{actual.class}"
+          if !actual.respond_to?(:halted?) || !actual.halted?
+            "expected result to be Halt, got #{actual.class}"
           elsif @expected_reason && actual.reason != @expected_reason
-            "expected Skipped reason #{@expected_reason.inspect}, got #{actual.reason.inspect}"
+            "expected Halt reason #{@expected_reason.inspect}, got #{actual.reason.inspect}"
           else
-            "expected Skipped at_step #{@expected_step.inspect}, got #{actual.step_name.inspect}"
+            "expected Halt at_step #{@expected_step.inspect}, got #{actual.step_name.inspect}"
+          end
+        end
+
+        failure_message_when_negated do
+          "expected result not to be Halt"
+        end
+      end
+
+      # Asserts that a STEP was skipped — either the subject itself is a
+      # `RubyReactor::Skipped` result, or the execution trace records a
+      # `:skipped` entry (optionally for a specific step via `.at_step`). A
+      # halted run never satisfies this — halting and skipping are distinct.
+      #
+      # Examples:
+      #   expect(result).to be_skipped
+      #   expect(subject).to be_skipped.at_step(:maybe_sync)
+      ::RSpec::Matchers.define :be_skipped do
+        match do |subject|
+          subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
+          actual = subject.respond_to?(:result) ? subject.result : subject
+          next false if actual.respond_to?(:halted?) && actual.halted?
+
+          entries = skipped_trace_entries(subject)
+          next entries.any? { |e| e[:step].to_s == @expected_step.to_s } if @expected_step
+          next true if entries.any?
+
+          actual.respond_to?(:skipped?) && actual.skipped?
+        end
+
+        chain :at_step do |step|
+          @expected_step = step
+        end
+
+        def skipped_trace_entries(subject)
+          trace = if subject.respond_to?(:reactor_instance)
+                    subject.reactor_instance.context.execution_trace
+                  elsif subject.respond_to?(:execution_trace)
+                    subject.execution_trace
+                  else
+                    []
+                  end
+          trace.select { |e| e[:type].to_s == "skipped" }
+        end
+
+        failure_message do |subject|
+          actual = subject.respond_to?(:result) ? subject.result : subject
+          if @expected_step
+            "expected a skipped step named #{@expected_step.inspect}, found none in the execution trace"
+          else
+            "expected result to be Skipped, got #{actual.class}"
           end
         end
 

@@ -53,8 +53,8 @@ class ValidateOrderStep
 
   def self.run(arguments, _context)
     order = Order.find_by(id: arguments[:order_id])
-    return Failure("Order not found") unless order
-    return Failure("Order already processed") if order.processed?
+    fail!("Order not found") unless order
+    fail!("Order already processed") if order.processed?
 
     Success(order: order)
   end
@@ -66,7 +66,9 @@ class ProcessPaymentStep
   def self.run(arguments, _context)
     order = arguments[:order]
     payment = PaymentService.charge(order.total, order.customer.card_token)
-    payment.success? ? Success(payment_id: payment.id) : Failure("Payment failed")
+    fail!("Payment failed") unless payment.success?
+
+    Success(payment_id: payment.id)
   end
 end
 
