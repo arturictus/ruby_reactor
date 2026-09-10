@@ -462,7 +462,7 @@ export default function StepInspector({
               <div className="flex items-center gap-2 text-xs text-slate-500 font-mono mt-0.5">
                 <span className="uppercase tracking-wider text-indigo-400">{stepConfig?.type || 'UNKNOWN'}</span>
                 {ranInBackground === true && (
-                  <span className="bg-violet-500/15 px-1.5 py-0.5 rounded text-violet-300">BACKGROUND</span>
+                  <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-200">BACKGROUND</span>
                 )}
                 {ranInBackground === false && (
                   <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">FOREGROUND</span>

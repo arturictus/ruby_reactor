@@ -85,10 +85,10 @@ const StepNode = ({ data }: { data: any }) => {
             {data.label}
             {AsyncIcon && <AsyncIcon className="w-3 h-3 opacity-70" />}
           </div>
-          <div className="text-[10px] opacity-70 uppercase tracking-wider flex items-center gap-1.5">
-            <span>{status === 'cancelled' ? 'CANCELLED' : data.type}</span>
+          <div className="text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+            <span className="opacity-70">{status === 'cancelled' ? 'CANCELLED' : data.type}</span>
             {data.background === true && (
-              <span className="rounded bg-violet-500/20 px-1 py-px text-[9px] font-semibold tracking-wider text-violet-300">
+              <span className="rounded bg-slate-800 px-1 py-px text-[9px] font-semibold tracking-wider text-slate-200">
                 BACKGROUND
               </span>
             )}
