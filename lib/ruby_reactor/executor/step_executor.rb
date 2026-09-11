@@ -183,9 +183,13 @@ module RubyReactor
       def safe_execute_step_sync(step_config, resolved_arguments = nil)
         resolved_arguments ||= resolve_arguments(step_config)
         execute_step_sync_without_result_handling(step_config, resolved_arguments)
-      rescue Error::InputValidationError
+      rescue Error::InputValidationError => e
         # Validation failures are not retryable and must surface as a structured
         # InputValidationError (with field_errors), so let them propagate.
+        # A step class stamps its own class name; inside a reactor the step's
+        # name there is the useful attribution, so it overwrites.
+        e.step_name = step_config.name
+        e.step_arguments ||= resolved_arguments
         raise
       rescue StandardError => e
         # Identify redacted inputs
@@ -340,13 +344,16 @@ module RubyReactor
       end
 
       def run_step_implementation(step_config, arguments)
+        contract = step_config.input_contract
         @context.append_execution_trace(
-          { type: :run, step: step_config.name, timestamp: Time.now, arguments: arguments }
+          { type: :run, step: step_config.name, timestamp: Time.now,
+            arguments: contract ? contract.redact(arguments) : arguments }
         )
         if step_config.has_run_block?
           # Execute inline block
           # If no arguments are defined for the step, pass the reactor inputs as arguments
           args_to_pass = arguments.empty? ? @context.inputs : arguments
+          args_to_pass = step_config.inline_contract.enforce!(args_to_pass) if step_config.inline_contract
           catch(StepSignals::TAG) { step_config.run_block.call(args_to_pass, @context) }
         elsif step_config.has_impl?
           # Execute step class

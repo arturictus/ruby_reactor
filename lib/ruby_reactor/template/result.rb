@@ -175,7 +175,7 @@ module RubyReactor
 
       # Records round-trip through JSON, so a key may come back as a string.
       def fetch(hash, key)
-        hash[key] || hash[key.to_s]
+        Utils::FetchIndifferent.call(hash, key)
       end
 
       def extract_path(value, path)

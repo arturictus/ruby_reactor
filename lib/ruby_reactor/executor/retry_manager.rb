@@ -185,7 +185,8 @@ module RubyReactor
                            []
                          end,
           reactor_name: reactor_class.name,
-          step_arguments: result.respond_to?(:step_arguments) ? result.step_arguments : {}
+          step_arguments: result.respond_to?(:step_arguments) ? result.step_arguments : {},
+          validation_errors: result.validation_errors
         )
       end
 

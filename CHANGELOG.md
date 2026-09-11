@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* **Step input contracts.** A step class declares its own inputs with `input :name, :type, **predicates`
+  (plus `optional:`, `default:`, `redact:`, the `do |i| ... end` macro block and `validate:`) and
+  cross-field rules with `validate_inputs`. The contract is enforced before `run` on every path
+  (inline, retries, `async_step` and `background` workers, resume, `map`, and a direct
+  `Step.run(args, context)` call), and a violation fails with `validation_errors` and the step's
+  name after completed steps are rolled back. Subclasses inherit and extend the contract.
+  Introspection: `input_contract`, `declared_inputs`, `required_input_names`, `declares_inputs?`.
+* **Inline step contracts.** `inputs do ... end` inside a `step` block takes the same `input` /
+  `validate_inputs` lines as a step class and is enforced the same way.
+* **Wiring by name.** A declared input with no `argument` resolves from the reactor input of the
+  same name (never from a step result). A required input that is neither wired nor a reactor input
+  raises `Error::ValidationError` before any step runs. `Reactor.validate_definition!` runs that
+  check on demand, e.g. from an initializer or CI.
+* For a step that owns a contract, a type or predicate on `argument`, `validate_args`, or an
+  `argument` for an undeclared input raises `Error::ValidationError` when the `step` line is
+  evaluated.
+* `have_validation_error` now also matches validation failures raised at a step, not only
+  reactor-input failures.
+* `Failure#to_h` includes `retryable`, so a non-retryable failure stays non-retryable after it
+  crosses a worker boundary.
+* A step that returns another unit's validation failure (e.g. an `async_step` reader propagating
+  the worker's `Failure`) keeps its `validation_errors` on the reactor's final failure.
+
+### Deprecations
+
+* Rules on `argument` (`argument :x, src, :type, **predicates`) and `validate_args` keep working
+  for steps without a contract, and print one deprecation notice per declaration site. Move them
+  to `input` / `validate_inputs` on the step class, or into an `inputs do ... end` block for an
+  inline step, and keep `argument :x, src` for wiring. Removal is no earlier than the next major
+  version. See "Step Input Contracts" in the README for the migration.
+
+### Bug Fixes
+
+* A supplied `false` reactor input or step result no longer resolves to `nil`.
+  `Context#get_input`, `Context#get_result` and `Template::Result#fetch` now check whether the key
+  exists instead of whether the value is truthy. Code that relied on `false` arriving as `nil`
+  will now see `false`.
+
 ## [0.7.0](https://github.com/arturictus/ruby_reactor/compare/v0.6.0...v0.7.0) (2026-09-08)
 
 
