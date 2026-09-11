@@ -225,6 +225,7 @@ module RubyReactor
       {
         success: false,
         error: error_message,
+        retryable: @retryable,
         step_name: @step_name,
         inputs: @inputs,
         redact_inputs: @redact_inputs,

@@ -245,6 +245,9 @@ One-line helpers end a step immediately from any call depth: `success!(value)`, 
 class ReserveInventoryStep
   include RubyReactor::Step
 
+  # The step's input contract: enforced before `run` on every execution path.
+  input :order, :hash
+
   def self.run(arguments, context)
     reservation_id = InventoryService.reserve(arguments[:order][:items])
     Success(reservation_id: reservation_id)
@@ -1018,25 +1021,126 @@ result.error                       # => RubyReactor::Error::InputValidationError
 result.error.field_errors[:name]   # => "size cannot be less than 2"
 ```
 
-### Step Argument & Output Validation
+### Step Input Contracts
 
-Arguments can be validated inline using the same forms as `input`. Inline rules
-compose with a `validate_args` block (used for cross-field rules):
+A step declares the inputs it accepts; the reactor only says where each value
+comes from. Rules live with the unit of work, so a step reused by three
+reactors is validated the same way in all three.
+
+```ruby
+class ChargeStep
+  include RubyReactor::Step
+
+  input :amount,   :integer, gteq?: 1
+  input :currency, :string,  included_in?: %w[USD EUR GBP]
+  input :user,     User                                   # type? instance check
+  input :note,     :string,  optional: true, default: "", max_size?: 100
+  input :token,    :string,  redact: true                 # "[REDACTED]" in failures and traces
+
+  # Cross-field rules over the whole argument hash, applied last
+  validate_inputs do
+    required(:amount).filled(:integer, lt?: 10_000)
+  end
+
+  def self.run(args, _context)
+    Success(charge!(args))
+  end
+end
+```
+
+`input` takes the same forms as a reactor `input` (inline type and predicates,
+`do |i| ... end` macro block, `validate: Schema`). The contract is enforced before
+`run` on every path: inline execution, each retry attempt, `async_step` and
+`background` workers, resume, every `map` element, and a direct
+`ChargeStep.run(args, context)` call. A violation raises
+`RubyReactor::Error::InputValidationError`; inside a reactor that becomes a
+`Failure` with `validation_errors` and the step's name, after completed steps are
+rolled back, and `have_validation_error(:amount)` matches it.
+
+**Wiring.** `argument` only maps values:
+
+```ruby
+class ChargeReactor < RubyReactor::Reactor
+  input :amount
+  input :currency
+  input :user
+
+  step :charge, ChargeStep do
+    argument :user, result(:load_user)   # explicit wiring always wins
+  end                                    # :amount and :currency resolve by name
+end
+```
+
+A declared input with no `argument` resolves from the reactor input of the same
+name. Step results are never used for this. A required input that is neither
+wired nor a reactor input raises `RubyReactor::Error::ValidationError` before any
+step runs, naming the reactor, the step, the input, and both fixes.
+`ChargeReactor.validate_definition!` runs the same check without running the
+reactor, e.g. in an initializer or a CI task.
+
+For a step that owns a contract, these raise `RubyReactor::Error::ValidationError`
+when the `step` line is evaluated:
+
+- a type or predicate on `argument` (`argument :amount, input(:amount), :integer`)
+- `validate_args`
+- an `argument` naming an input the step does not declare
+
+There are no per-reactor overrides. If two reactors need different bounds for the
+same value, write two steps (or a parameterized step), or relax the contract.
+
+**Inline steps** declare the same lines inside `inputs do ... end`. Inside the
+block `input` declares; outside it, `input(:x)` is still the template reference:
 
 ```ruby
 step :charge do
-  argument :amount,   input(:amount),   :decimal, gt?: 0
-  argument :currency, input(:currency), :string,  included_in?: %w[USD EUR GBP]
-  argument :user,     input(:user),     User              # type? instance check
-
-  # Optional cross-field block (composes with the inline rules above)
-  validate_args do
-    required(:amount).filled(:decimal, lt?: 10_000)
+  inputs do
+    input :amount,   :integer, gteq?: 1
+    input :currency, :string,  included_in?: %w[USD EUR GBP]
   end
+
+  argument :amount,   input(:amount)
+  argument :currency, input(:currency)
 
   run { |args, _| charge!(args) }
 end
 ```
+
+Moving an inline step into a class is deleting the `inputs do` wrapper.
+
+**Presence.** A value is provided when its key exists, not when it is truthy:
+
+| Supplied | Required input | Optional input with `default:` |
+|---|---|---|
+| `false`, `0`, `""`, `[]` | passes, value kept | value kept |
+| `nil` | fails ("must be filled") | default applied |
+| key absent | fails ("is missing") | default applied |
+
+**Migrating from rules on `argument`.** Rules on `argument` and `validate_args`
+still work for steps with no contract, and print a one-time deprecation notice per
+declaration site. Removal is no earlier than the next major version.
+
+```ruby
+# Before
+step :charge, ChargeStep do
+  argument :amount, input(:amount), :integer, gteq?: 1
+  validate_args { required(:amount).filled(:integer, lt?: 10_000) }
+end
+
+# After: the rules move into the step
+class ChargeStep
+  include RubyReactor::Step
+
+  input :amount, :integer, gteq?: 1
+  validate_inputs { required(:amount).filled(:integer, lt?: 10_000) }
+end
+
+step :charge, ChargeStep   # or keep `argument :amount, input(:amount)` for wiring
+```
+
+For an inline step, put the same `input` / `validate_inputs` lines inside
+`inputs do ... end`.
+
+### Step Output Validation
 
 Output validation is scalar-aware — pass a type/predicates for a single value,
 or a block for a hash output:

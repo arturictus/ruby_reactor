@@ -86,6 +86,9 @@ module RubyReactor
 
     # rubocop:disable Metrics/MethodLength
     def run(inputs = {})
+      # Before the context exists, so an incomplete definition never saves one.
+      self.class.validate_definition!
+
       # For all reactors, initialize context first to capture execution ID
       @context = @context.is_a?(Context) ? @context : Context.new(inputs, self.class)
 
