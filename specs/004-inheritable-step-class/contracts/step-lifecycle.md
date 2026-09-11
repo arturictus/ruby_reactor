@@ -31,7 +31,8 @@ end
 ```
 
 Instance readers: `inputs`, `context`, `result` (undo only), `reason` (compensate only).
-All set once in the constructor; see data-model.md.
+All set once in the constructor; see data-model.md. `inputs` holds the same values in every
+action: the arguments with the contract's defaults applied.
 
 - **MUST** subclass `RubyReactor::Step`. `include RubyReactor::Step` on a plain class is
   no longer supported (FR-012) — it is not a compatibility path, it is simply gone.
@@ -44,7 +45,7 @@ All set once in the constructor; see data-model.md.
   omitting either defaults to `Skipped()` (FR-009).
 - Inside `run`/`undo`/`compensate`, `Success`, `Failure`, `Halt`, `Skipped`, and the
   signal helpers `success!`/`skip!`/`fail!`/`halt!` are available as bare instance calls
-  (FR-008).
+  (FR-008). `Failure` takes exactly the arguments `RubyReactor.Failure` takes.
 
 ## Invocation contract (what every caller in the library gets)
 
@@ -68,6 +69,9 @@ RubyReactor::Step.compensate(reason, arguments, context) # => Success/Failure/Ha
 - That error's `retryable?` **MUST** be `false` (FR-017, research.md D10), so any `Failure`
   built from it — on the synchronous path, the async worker, or surfaced through a
   composed reactor — is non-retryable without its caller having to say so.
+- `.undo`/`.compensate` **MUST NOT** enforce the contract, so rollback cannot fail on the
+  inputs that caused the failure. They **MUST** still apply its defaults, so `inputs` matches
+  what `.run` saw.
 - An ordinary (non-signal) exception raised inside `run`/`undo`/`compensate` **MUST**
   propagate unchanged — this contract governs signals and validation only.
 

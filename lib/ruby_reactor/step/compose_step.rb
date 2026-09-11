@@ -20,6 +20,8 @@ module RubyReactor
         handle_execution_result(result)
       end
 
+      # Compensating a failed compose and undoing a completed one are the same
+      # work: roll back whatever the child reactor completed.
       def compensate
         step_name = context.current_step
         composed_data = context.composed_contexts[step_name]
@@ -33,18 +35,7 @@ module RubyReactor
         RubyReactor.Success()
       end
 
-      def undo
-        step_name = context.current_step
-        composed_data = context.composed_contexts[step_name]
-        return RubyReactor.Success() unless composed_data && composed_data[:context]
-
-        child_context = composed_data[:context]
-        executor = RubyReactor::Executor.new(inputs[:composed_reactor_class], {}, child_context)
-        executor.undo_all
-        executor.save_context
-
-        RubyReactor.Success()
-      end
+      alias undo compensate
 
       private
 

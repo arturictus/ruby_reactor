@@ -29,9 +29,9 @@ module RubyReactor
       end
 
       # rubocop:disable Naming/MethodName
-      def Failure(error)
+      def Failure(...)
         # rubocop:enable Naming/MethodName
-        RubyReactor.Failure(error)
+        RubyReactor.Failure(...)
       end
 
       # rubocop:disable Naming/MethodName

@@ -26,6 +26,8 @@ RSpec.describe InheritableStepDemoReactor, type: :reactor do
     let(:inputs) { { user_id: 0 } }
 
     it "rejects before the legacy service is ever instantiated, non-retryably" do
+      expect(LegacyChargeService).not_to receive(:new)
+
       expect(reactor).to be_failure
       expect(reactor).to have_validation_error(:user_id)
       expect(reactor.result.retryable?).to be(false)

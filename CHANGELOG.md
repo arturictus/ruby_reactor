@@ -12,7 +12,9 @@
   its one action (`run`, `undo`, or `compensate`) from the stored arguments/result/reason alone —
   nothing an author sets in `run` is visible in a later `undo`/`compensate`, which is exactly what
   makes rollback behave identically whether it lands in the same process as `run` or, as with an
-  `async_step`, in a separate later one.
+  `async_step`, in a separate later one. `inputs` holds the same values in all three actions: the
+  arguments with the contract's defaults applied. Only `run` enforces the contract; `undo` and
+  `compensate` never do, so rollback cannot fail on the inputs that caused the failure.
 
   ```ruby
   # Before
@@ -68,6 +70,13 @@
   `async_step`/`background` worker, or inside a `compose`d child's own step — previously only the
   async worker path got this right; the synchronous path and a validation failure surfacing
   through `compose` both defaulted to `retryable? == true`.
+
+* **`Failure(...)` takes the same arguments everywhere.** Inside a class step and inside an inline
+  `run`/`compensate`/`undo` block, `Failure` now forwards every argument to `RubyReactor.Failure`,
+  so options such as `Failure("declined", retryable: false)` work instead of raising
+  `ArgumentError`. A bare `Failure()` with no error is no longer accepted, matching
+  `RubyReactor.Failure`, and a hash error needs braces, `Failure({ code: 1 })`, because a braceless
+  `Failure(code: 1)` is now read as options.
 
 ### Features
 

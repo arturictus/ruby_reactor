@@ -35,7 +35,7 @@ RubyReactor supports two definition styles:
 
 Define steps as separate classes that subclass `RubyReactor::Step`. This is the recommended approach for real business logic: it keeps reactors readable, makes steps easy to unit test, and lets you reuse the same step across multiple reactors.
 
-Every action (`run`, `compensate`, `undo`) runs on a **fresh instance built just for that action** — an instance built for `run` is discarded once it returns, and `undo`/`compensate` each get their own new instance from the stored arguments/result/reason. Nothing set inside `run` (an ivar, a memoized value) is visible inside a later `undo` or `compensate`, even when they happen to run in the same process — this is what makes behavior identical whether a step's rollback lands in the same worker or, as with an `async_step`, a separate one later. Instance readers: `inputs`, `context` (available in all three), `result` (`undo` only), `reason` (`compensate` only).
+Every action (`run`, `compensate`, `undo`) runs on a **fresh instance built just for that action** — an instance built for `run` is discarded once it returns, and `undo`/`compensate` each get their own new instance from the stored arguments/result/reason. Nothing set inside `run` (an ivar, a memoized value) is visible inside a later `undo` or `compensate`, even when they happen to run in the same process — this is what makes behavior identical whether a step's rollback lands in the same worker or, as with an `async_step`, a separate one later. Instance readers: `inputs`, `context` (available in all three), `result` (`undo` only), `reason` (`compensate` only). `inputs` holds the same values in all three: the arguments with the contract's defaults applied.
 
 ```ruby
 class ReserveInventoryStep < RubyReactor::Step
@@ -87,7 +87,7 @@ end
 - **`compensate`**: Cleanup for the current failing step, reading `reason`/`inputs`/`context`. Called when the step fails. Defaults to `Skipped()` if omitted
 - **`undo`**: Rollback for previously successful steps, reading `result`/`inputs`/`context`. Called during reactor failure rollback. Defaults to `Skipped()` if omitted
 
-**Class-level entry points** (what the executor, the async worker, and a direct unit-test call all use): `MyStep.run(arguments, context)` (aliased `.call`), `MyStep.undo(result, arguments, context)`, `MyStep.compensate(reason, arguments, context)` — each builds the fresh instance described above, enforces the input contract first, and translates any `success!`/`fail!`/`skip!`/`halt!` signal into its result wrapper.
+**Class-level entry points** (what the executor, the async worker, and a direct unit-test call all use): `MyStep.run(arguments, context)` (aliased `.call`), `MyStep.undo(result, arguments, context)`, `MyStep.compensate(reason, arguments, context)` — each builds the fresh instance described above and translates any `success!`/`fail!`/`skip!`/`halt!` signal into its result wrapper. Only `.run` enforces the input contract, before the instance exists. `.undo` and `.compensate` never do, so rollback cannot fail on the inputs that caused the failure.
 
 > A step's own input-validation failure is always non-retryable — `result.retryable?` is `false` whether the violation happened synchronously, inside an `async_step` worker, or inside a `compose`d child (see [Step Input Contracts](../README.md#step-input-contracts) in the README).
 

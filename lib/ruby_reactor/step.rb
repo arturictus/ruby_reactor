@@ -8,16 +8,23 @@ module RubyReactor
   #     def run = Success(charged: inputs[:amount])
   #   end
   #
-  # Lifecycle: a class-level call (`.run`/`.call`, `.undo`, `.compensate`)
-  # enforces the declared input contract (raising `Error::InputValidationError`
-  # before any instance exists), builds a FRESH instance from the given
-  # arguments/context (never reused across actions — an ivar set in `run` is
-  # gone by the time `undo` runs on a separate instance, so async execution
-  # running `run` and `undo` in different processes behaves identically to
-  # running both in one), invokes the matching instance method, and translates
-  # any `StepSignals` throw (`success!`/`skip!`/`fail!`/`halt!`) into its
-  # result wrapper. No `prepend`/`extend`/`define_method`/`method_missing` —
-  # every step in the class reads top to bottom as ordinary method calls.
+  # Lifecycle of every class-level call (`.run`/`.call`, `.undo`, `.compensate`):
+  #
+  # 1. Resolve `inputs`: the given arguments with the contract's defaults
+  #    applied. `run`, `undo`, and `compensate` all see the same values.
+  # 2. `.run` ONLY: enforce the declared input contract, raising
+  #    `Error::InputValidationError` before any instance exists. `.undo` and
+  #    `.compensate` NEVER enforce it: rollback must not fail on the very
+  #    inputs that may have caused the failure.
+  # 3. Build a FRESH instance, never reused across actions. An ivar set in
+  #    `run` is gone by the time `undo` runs on its own instance, so async
+  #    execution running `run` and `undo` in different processes behaves
+  #    identically to running both in one.
+  # 4. Invoke the matching instance method, translating any `StepSignals`
+  #    throw (`success!`/`skip!`/`fail!`/`halt!`) into its result wrapper.
+  #
+  # No `prepend`/`extend`/`define_method`/`method_missing` — every step in the
+  # class reads top to bottom as ordinary method calls.
   class Step
     include RubyReactor::StepSignals
 
@@ -47,8 +54,8 @@ module RubyReactor
       RubyReactor.Success(value)
     end
 
-    def Failure(error = nil)
-      RubyReactor.Failure(error)
+    def Failure(...)
+      RubyReactor.Failure(...)
     end
 
     def Halt(reason: nil, **kwargs)
@@ -67,12 +74,14 @@ module RubyReactor
       end
       alias call run
 
+      # Same `inputs` as `.run` (defaults applied), but NEVER enforces the contract.
       def undo(result, arguments, context)
-        catch(StepSignals::TAG) { new(arguments, context, result: result).undo }
+        catch(StepSignals::TAG) { new(with_defaults(arguments), context, result: result).undo }
       end
 
+      # Same `inputs` as `.run` (defaults applied), but NEVER enforces the contract.
       def compensate(reason, arguments, context)
-        catch(StepSignals::TAG) { new(arguments, context, reason: reason).compensate }
+        catch(StepSignals::TAG) { new(with_defaults(arguments), context, reason: reason).compensate }
       end
 
       def input(...)
@@ -110,6 +119,10 @@ module RubyReactor
 
       def own_input_contract
         @own_input_contract ||= Step::InputContract.new(owner: self)
+      end
+
+      def with_defaults(arguments)
+        input_contract.apply_defaults(arguments)
       end
 
       def enforce_contract!(arguments)

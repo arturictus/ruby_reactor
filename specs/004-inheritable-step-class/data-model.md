@@ -55,7 +55,7 @@ Constructor: `initialize(inputs, context, result: nil, reason: nil)` (research.m
 
 | Reader | Holds | Set by | Read by |
 |---|---|---|---|
-| `inputs` | the validated (or raw, if no contract) argument hash | `self.run` after enforcement; `self.undo`/`self.compensate` pass the stored arguments as-is | `run`, `undo`, `compensate` |
+| `inputs` | the argument hash with the contract's defaults applied (raw if no contract), identical in every action | `self.run` after enforcement; `self.undo`/`self.compensate` apply defaults only, never enforce | `run`, `undo`, `compensate` |
 | `context` | the workflow `RubyReactor::Context` | constructor | `run`, `undo`, `compensate` |
 | `result` | the step's own stored result value | `self.undo`'s `result` parameter; nil otherwise | `undo` |
 | `reason` | the failure that triggered rollback | `self.compensate`'s `reason` parameter; nil otherwise | `compensate` |

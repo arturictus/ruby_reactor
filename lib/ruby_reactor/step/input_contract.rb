@@ -108,15 +108,17 @@ module RubyReactor
         raise error
       end
 
-      private
-
       # Applied when the key is absent or the value is nil — never for `false`.
+      # Public so a step's undo/compensate resolve the same `inputs` as `run`
+      # without validating them.
       def apply_defaults(args)
         defaults = self.defaults
         return args if defaults.empty?
 
         args.merge(defaults) { |_name, supplied, default| supplied.nil? ? default : supplied }
       end
+
+      private
 
       def collect_errors(errors, result)
         errors.merge!(result.error.field_errors) if result.failure?

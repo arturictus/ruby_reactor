@@ -67,30 +67,41 @@ RSpec.describe RubyReactor::Step do
   end
 
   describe "signal translation (scenario e)" do
+    def invoke(step, action)
+      case action
+      when :run then step.run({}, context)
+      when :undo then step.undo(nil, {}, context)
+      when :compensate then step.compensate("reason", {}, context)
+      end
+    end
+
     %i[run undo compensate].each do |action|
       it "translates fail! inside ##{action} into a Failure from the class-level call, not UncaughtThrowError" do
         step = Class.new(described_class)
         step.define_method(action) { fail!("nope") }
 
-        result = case action
-                 when :run then step.run({}, context)
-                 when :undo then step.undo(nil, {}, context)
-                 when :compensate then step.compensate("reason", {}, context)
-                 end
+        result = invoke(step, action)
 
-        expect(result).to be_a(RubyReactor::Failure)
+        expect(result).to be_an_instance_of(RubyReactor::Failure)
         expect(result.error).to eq("nope")
       end
     end
 
-    it "translates success!/skip!/halt! from #run" do
-      success_step = Class.new(described_class) { def run = success!(:ok) }
-      skip_step = Class.new(described_class) { def run = skip!(:skipped_value) }
-      halt_step = Class.new(described_class) { def run = halt!(reason: "stop") }
+    # Exact classes: Skipped < Success, so `be_a(Success)` would let a
+    # success!/skip! mix-up through.
+    {
+      success!: [-> { success!(:ok) }, RubyReactor::Success],
+      skip!: [-> { skip!(:skipped_value) }, RubyReactor::Skipped],
+      halt!: [-> { halt!(reason: "stop") }, RubyReactor::Halt]
+    }.each do |signal, (body, wrapper)|
+      %i[run undo compensate].each do |action|
+        it "translates #{signal} inside ##{action} into exactly #{wrapper}" do
+          step = Class.new(described_class)
+          step.define_method(action, &body)
 
-      expect(success_step.run({}, context)).to be_a(RubyReactor::Success)
-      expect(skip_step.run({}, context)).to be_a(RubyReactor::Skipped)
-      expect(halt_step.run({}, context)).to be_a(RubyReactor::Halt)
+          expect(invoke(step, action)).to be_an_instance_of(wrapper)
+        end
+      end
     end
   end
 
@@ -143,6 +154,32 @@ RSpec.describe RubyReactor::Step do
 
       expect(step.undo("stored result", {}, context).value).to eq(seen_result: "stored result")
       expect(step.compensate("boom", {}, context).value).to eq(seen_reason: "boom")
+    end
+  end
+
+  describe "undo/compensate inputs" do
+    let(:step) do
+      Class.new(described_class) do
+        input :amount, :integer
+        input :currency, :string, optional: true, default: "USD"
+
+        def run = Success(inputs)
+        def undo = Success(inputs)
+        def compensate = Success(inputs)
+      end
+    end
+
+    it "are exactly the inputs #run saw, contract defaults included" do
+      seen_by_run = step.run({ amount: 5 }, context).value
+
+      expect(seen_by_run).to eq(amount: 5, currency: "USD")
+      expect(step.undo(:stored, { amount: 5 }, context).value).to eq(seen_by_run)
+      expect(step.compensate("boom", { amount: 5 }, context).value).to eq(seen_by_run)
+    end
+
+    it "are never checked against the contract, so rollback cannot raise on them" do
+      expect(step.undo(:stored, { amount: "bad" }, context).value).to eq(amount: "bad", currency: "USD")
+      expect(step.compensate("boom", { amount: "bad" }, context).value).to eq(amount: "bad", currency: "USD")
     end
   end
 end
