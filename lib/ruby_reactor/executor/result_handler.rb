@@ -227,7 +227,8 @@ module RubyReactor
           file_path: file_path,
           line_number: line_number,
           code_snippet: code_snippet,
-          validation_errors: error.validation_errors
+          validation_errors: error.validation_errors,
+          retryable: error.retryable?
         )
       end
 

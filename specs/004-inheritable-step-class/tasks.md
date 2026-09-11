@@ -24,8 +24,8 @@ Single Ruby gem: `lib/ruby_reactor/`, `spec/`, plus the `demo_app/` Rails exampl
 
 **Purpose**: Capture the pre-refactor green state so SC-003 ("identical outcomes") is provable, not asserted.
 
-- [ ] T001 Run `bundle exec rspec` and `bundle exec rubocop` on the untouched branch; record pass counts and any pre-existing failures in `specs/004-inheritable-step-class/baseline.md` (this file is the comparison target for T047 and is deleted before merge)
-- [ ] T002 [P] Run the demo acceptance suite via `docker compose run --rm demo-app bin/rails demo:all` and `docker compose run --rm demo-app bundle exec rspec spec/reactors`; append printed outcomes and spec counts to `specs/004-inheritable-step-class/baseline.md`
+- [X] T001 Run `bundle exec rspec` and `bundle exec rubocop` on the untouched branch; record pass counts and any pre-existing failures in `specs/004-inheritable-step-class/baseline.md` (this file is the comparison target for T047 and is deleted before merge)
+- [X] T002 [P] Run the demo acceptance suite via `docker compose run --rm demo-app bin/rails demo:all` and `docker compose run --rm demo-app bundle exec rspec spec/reactors`; append printed outcomes and spec counts to `specs/004-inheritable-step-class/baseline.md`
 
 ---
 
@@ -35,14 +35,14 @@ Single Ruby gem: `lib/ruby_reactor/`, `spec/`, plus the `demo_app/` Rails exampl
 
 **⚠️ CRITICAL**: T004–T009 must land in one commit. A `module Step` reopening loaded after `class Step` raises `TypeError` (D9), and `include RubyReactor::Step` on a class raises `TypeError: wrong argument type Class` once `Step` is a class.
 
-- [ ] T003 Write the red lifecycle spec `spec/ruby_reactor/step_spec.rb` per data-model.md and contracts/step-lifecycle.md: (a) a subclass with `input :n, :integer` and instance `run` reading `inputs[:n]` and `context` returns the body's `Success`; (b) `.call` is an alias of `.run`; (c) violating inputs raise `Error::InputValidationError` with `step_name` set and the body never runs; (d) a subclass declaring no inputs receives arbitrary arguments unchanged; (e) `fail!`/`success!`/`skip!`/`halt!` inside `run`, `undo`, and `compensate` each return the matching wrapper from the class-level call, never `UncaughtThrowError`; (f) omitted `undo`/`compensate` return `Skipped`; (g) omitted `run` raises `NotImplementedError` naming the subclass; (h) fresh instance per action: an ivar set inside `run` is `nil` inside a subsequent `undo` on the same class (D2); (i) `undo` sees `result`, `compensate` sees `reason`. Confirm the file fails (it cannot load: `RubyReactor::Step` is a module today)
-- [ ] T004 Rewrite `lib/ruby_reactor/step.rb` as `class RubyReactor::Step`: delete `InputEnforcement`, `ClassMethods`, `self.included`, and `inherited`; keep the class-level DSL (`input`, `validate_inputs`, `input_contract` with parent-first merge, `declared_inputs`, `required_input_names`, `declares_inputs?`, private `own_input_contract`) verbatim as `class << self` methods; add `initialize(inputs, context, result: nil, reason: nil)` with `attr_reader :inputs, :context, :result, :reason`; add instance `run` (raises `NotImplementedError, "#{self.class} must implement #run"`), instance `undo`/`compensate` (return `RubyReactor.Skipped()`); `include RubyReactor::StepSignals` at instance level and define instance `Success`/`Failure`/`Halt`/`Skipped` delegating to `RubyReactor.*`; add class-level `run(arguments, context)` = enforce contract (raise with `step_name = name` on `InputValidationError`, outside the catch) → `new(validated, context)` → `catch(StepSignals::TAG) { instance.run }`; `undo(result, arguments, context)` and `compensate(reason, arguments, context)` = `new(arguments, context, result:/reason:)` → `catch(StepSignals::TAG) { instance.undo/compensate }`; `class << self; alias_method :call, :run; end`. Header comment states the lifecycle order and the fresh-instance rule (FR-009, FR-011)
-- [ ] T005 [P] Change `module Step` to `class Step` in `lib/ruby_reactor/step/input_contract.rb` (namespace line only; no logic change)
-- [ ] T006 [P] Migrate `lib/ruby_reactor/step/compose_step.rb`: `class Step` namespace, `class ComposeStep < RubyReactor::Step`, delete the dead `initialize(composed_reactor_class, argument_mappings)` and its `attr_reader`s (D6), move `self.run`/`self.compensate`/`self.undo` bodies to instance methods reading `inputs`/`context`/`reason`/`result`, move the `class << self; private` helpers to private instance methods
-- [ ] T007 [P] Migrate `lib/ruby_reactor/step/map_step.rb`: `class Step` namespace, `class MapStep < RubyReactor::Step`, instance `run`/`compensate` reading `inputs`/`context`, private helpers to private instance methods — EXCEPT `build_mapped_inputs` and `resolve_element`, which stay public class methods because `lib/ruby_reactor/map/helpers.rb:32` calls them (D6)
-- [ ] T008 [P] Migrate `lib/ruby_reactor/step/async_reactor_step.rb`: `class Step` namespace, `class AsyncReactorStep < RubyReactor::Step`, instance `run` reading `inputs`/`context`, private `class << self` helpers to private instance methods
-- [ ] T009 Update the catch-site comment in `lib/ruby_reactor/step_signals.rb` (lines 10–13) to say class steps are caught at `RubyReactor::Step`'s class-level `run`/`undo`/`compensate` and inline blocks at `step_executor.rb`/`compensation_manager.rb` (D4)
-- [ ] T010 Run `bundle exec rspec spec/ruby_reactor/step_spec.rb spec/ruby_reactor/step/map_step_spec.rb spec/compose_spec.rb spec/map spec/ruby_reactor/dsl/async_step_spec.rb` and `bundle exec rubocop lib/ruby_reactor/step.rb lib/ruby_reactor/step/`; all green before any story phase starts
+- [X] T003 Write the red lifecycle spec `spec/ruby_reactor/step_spec.rb` per data-model.md and contracts/step-lifecycle.md: (a) a subclass with `input :n, :integer` and instance `run` reading `inputs[:n]` and `context` returns the body's `Success`; (b) `.call` is an alias of `.run`; (c) violating inputs raise `Error::InputValidationError` with `step_name` set and the body never runs; (d) a subclass declaring no inputs receives arbitrary arguments unchanged; (e) `fail!`/`success!`/`skip!`/`halt!` inside `run`, `undo`, and `compensate` each return the matching wrapper from the class-level call, never `UncaughtThrowError`; (f) omitted `undo`/`compensate` return `Skipped`; (g) omitted `run` raises `NotImplementedError` naming the subclass; (h) fresh instance per action: an ivar set inside `run` is `nil` inside a subsequent `undo` on the same class (D2); (i) `undo` sees `result`, `compensate` sees `reason`. Confirm the file fails (it cannot load: `RubyReactor::Step` is a module today)
+- [X] T004 Rewrite `lib/ruby_reactor/step.rb` as `class RubyReactor::Step`: delete `InputEnforcement`, `ClassMethods`, `self.included`, and `inherited`; keep the class-level DSL (`input`, `validate_inputs`, `input_contract` with parent-first merge, `declared_inputs`, `required_input_names`, `declares_inputs?`, private `own_input_contract`) verbatim as `class << self` methods; add `initialize(inputs, context, result: nil, reason: nil)` with `attr_reader :inputs, :context, :result, :reason`; add instance `run` (raises `NotImplementedError, "#{self.class} must implement #run"`), instance `undo`/`compensate` (return `RubyReactor.Skipped()`); `include RubyReactor::StepSignals` at instance level and define instance `Success`/`Failure`/`Halt`/`Skipped` delegating to `RubyReactor.*`; add class-level `run(arguments, context)` = enforce contract (raise with `step_name = name` on `InputValidationError`, outside the catch) → `new(validated, context)` → `catch(StepSignals::TAG) { instance.run }`; `undo(result, arguments, context)` and `compensate(reason, arguments, context)` = `new(arguments, context, result:/reason:)` → `catch(StepSignals::TAG) { instance.undo/compensate }`; `class << self; alias_method :call, :run; end`. Header comment states the lifecycle order and the fresh-instance rule (FR-009, FR-011)
+- [X] T005 [P] Change `module Step` to `class Step` in `lib/ruby_reactor/step/input_contract.rb` (namespace line only; no logic change)
+- [X] T006 [P] Migrate `lib/ruby_reactor/step/compose_step.rb`: `class Step` namespace, `class ComposeStep < RubyReactor::Step`, delete the dead `initialize(composed_reactor_class, argument_mappings)` and its `attr_reader`s (D6), move `self.run`/`self.compensate`/`self.undo` bodies to instance methods reading `inputs`/`context`/`reason`/`result`, move the `class << self; private` helpers to private instance methods
+- [X] T007 [P] Migrate `lib/ruby_reactor/step/map_step.rb`: `class Step` namespace, `class MapStep < RubyReactor::Step`, instance `run`/`compensate` reading `inputs`/`context`, private helpers to private instance methods — EXCEPT `build_mapped_inputs` and `resolve_element`, which stay public class methods because `lib/ruby_reactor/map/helpers.rb:32` calls them (D6)
+- [X] T008 [P] Migrate `lib/ruby_reactor/step/async_reactor_step.rb`: `class Step` namespace, `class AsyncReactorStep < RubyReactor::Step`, instance `run` reading `inputs`/`context`, private `class << self` helpers to private instance methods
+- [X] T009 Update the catch-site comment in `lib/ruby_reactor/step_signals.rb` (lines 10–13) to say class steps are caught at `RubyReactor::Step`'s class-level `run`/`undo`/`compensate` and inline blocks at `step_executor.rb`/`compensation_manager.rb` (D4)
+- [X] T010 Run `bundle exec rspec spec/ruby_reactor/step_spec.rb spec/ruby_reactor/step/map_step_spec.rb spec/compose_spec.rb spec/map spec/ruby_reactor/dsl/async_step_spec.rb` and `bundle exec rubocop lib/ruby_reactor/step.rb lib/ruby_reactor/step/`; all green before any story phase starts
 
 **Checkpoint**: Library loads, base class contract proven, built-ins behave as before. Old-form steps in `spec/` and `demo_app/` still fail to load — expected until Phases 3–7.
 
@@ -58,17 +58,17 @@ Single Ruby gem: `lib/ruby_reactor/`, `spec/`, plus the `demo_app/` Rails exampl
 
 Each migration below means: replace `include RubyReactor::Step` with `< RubyReactor::Step`, turn `def self.run(args, ctx)` into `def run` reading `inputs`/`context`, `def self.undo(result, args, ctx)` into `def undo` reading `result`/`inputs`/`context`, `def self.compensate(reason, args, ctx)` into `def compensate` reading `reason`/`inputs`/`context`; keep every assertion unchanged.
 
-- [ ] T011 [P] [US1] Migrate step classes in `spec/ruby_reactor/step_signals_spec.rb` (includes `compensate and undo bodies` examples at line ~190)
-- [ ] T012 [P] [US1] Migrate step classes in `spec/ruby_reactor/step_contract_enforcement_spec.rb`
-- [ ] T013 [P] [US1] Migrate step classes in `spec/ruby_reactor/dsl/step_input_contract_spec.rb`
-- [ ] T014 [P] [US1] Migrate step classes in `spec/ruby_reactor/dsl/inline_step_contract_spec.rb` (inline `inputs do ... end` blocks stay as they are; only class steps change)
-- [ ] T015 [P] [US1] Migrate step classes in `spec/ruby_reactor/dsl/step_contract_conflict_spec.rb`
-- [ ] T016 [P] [US1] Migrate step classes in `spec/ruby_reactor/dsl/step_contract_wiring_spec.rb`
-- [ ] T017 [P] [US1] Migrate step classes in `spec/ruby_reactor/step_contract_deprecation_spec.rb`
-- [ ] T018 [P] [US1] Migrate step classes in `spec/ruby_reactor/halt_helper_spec.rb`
-- [ ] T019 [P] [US1] Migrate step classes in `spec/ruby_reactor/falsey_input_resolution_spec.rb`
-- [ ] T020 [P] [US1] Migrate shared step classes in `spec/support/reactors/step_contract_reactors.rb`
-- [ ] T021 [US1] Run the Independent Test command above plus every file touched in T011–T020; all green
+- [X] T011 [P] [US1] Migrate step classes in `spec/ruby_reactor/step_signals_spec.rb` (includes `compensate and undo bodies` examples at line ~190)
+- [X] T012 [P] [US1] Migrate step classes in `spec/ruby_reactor/step_contract_enforcement_spec.rb`
+- [X] T013 [P] [US1] Migrate step classes in `spec/ruby_reactor/dsl/step_input_contract_spec.rb`
+- [X] T014 [P] [US1] Migrate step classes in `spec/ruby_reactor/dsl/inline_step_contract_spec.rb` (inline `inputs do ... end` blocks stay as they are; only class steps change)
+- [X] T015 [P] [US1] Migrate step classes in `spec/ruby_reactor/dsl/step_contract_conflict_spec.rb`
+- [X] T016 [P] [US1] Migrate step classes in `spec/ruby_reactor/dsl/step_contract_wiring_spec.rb`
+- [X] T017 [P] [US1] Migrate step classes in `spec/ruby_reactor/step_contract_deprecation_spec.rb`
+- [X] T018 [P] [US1] Migrate step classes in `spec/ruby_reactor/halt_helper_spec.rb`
+- [X] T019 [P] [US1] Migrate step classes in `spec/ruby_reactor/falsey_input_resolution_spec.rb`
+- [X] T020 [P] [US1] Migrate shared step classes in `spec/support/reactors/step_contract_reactors.rb`
+- [X] T021 [US1] Run the Independent Test command above plus every file touched in T011–T020; all green
 
 **Checkpoint**: US1 delivered — a developer can author, validate, and signal from an inheriting step, and the existing contract/signal suites prove it.
 
@@ -82,18 +82,18 @@ Each migration below means: replace `include RubyReactor::Step` with `< RubyReac
 
 ### Tests for User Story 2
 
-- [ ] T022 [US2] Write the red spec `spec/ruby_reactor/step_signals_worker_spec.rb`: a `class WorkerFailStep < RubyReactor::Step` whose `run` calls `fail!("nope")`, wired via `async_step :boom, WorkerFailStep` in a reactor; run with `test_reactor` + `drain_async_jobs`; assert `be_failure` and `result.error == "nope"`. Before T004 this failed with an `UncaughtThrowError` error value — with the base class in place it should already pass; keep it as the regression guard for the worker path (D4, US2 scenario 2). If it still fails, `StepWorker#execute_step_body` is bypassing `impl.run` somewhere — fix there, never by adding a `catch` to the worker
-- [ ] T023 [US2] Write the red spec `spec/ruby_reactor/step_contract_retryable_spec.rb` (FR-017, research.md D10): (a) a reactor whose only step declares `input :n, :integer` and is run synchronously with a violating value — assert `result.retryable?` is `false`; (b) the same violating step wired as the child of a `compose` — assert the **parent** reactor's `Failure.retryable?` is also `false` (proves `ComposeStep#handle_execution_result` does not silently reset it). Confirm both are red today: neither `Executor::ResultHandler#build_validation_failure` nor `Step::ComposeStep#handle_execution_result` passes `retryable:` explicitly, so `RubyReactor::Failure`'s default (`error.respond_to?(:retryable?) ? error.retryable? : true`) currently resolves to `true` in both cases — `Error::InputValidationError` has no `retryable?` method yet
-- [ ] T024 [US2] Add `def retryable? = false` to `lib/ruby_reactor/error/input_validation_error.rb`, mirroring `Error::StepFailureError#retryable?` (`lib/ruby_reactor/error/step_failure_error.rb`). Run T023's spec plus `spec/ruby_reactor/step_contract_async_spec.rb` (the existing worker-path regression guard, lines 24–33 and 54–59); all green with no other file touched — this one method is the entire fix (D10)
+- [X] T022 [US2] Write the red spec `spec/ruby_reactor/step_signals_worker_spec.rb`: a `class WorkerFailStep < RubyReactor::Step` whose `run` calls `fail!("nope")`, wired via `async_step :boom, WorkerFailStep` in a reactor; run with `test_reactor` + `drain_async_jobs`; assert `be_failure` and `result.error == "nope"`. Before T004 this failed with an `UncaughtThrowError` error value — with the base class in place it should already pass; keep it as the regression guard for the worker path (D4, US2 scenario 2). If it still fails, `StepWorker#execute_step_body` is bypassing `impl.run` somewhere — fix there, never by adding a `catch` to the worker
+- [X] T023 [US2] Write the red spec `spec/ruby_reactor/step_contract_retryable_spec.rb` (FR-017, research.md D10): (a) a reactor whose only step declares `input :n, :integer` and is run synchronously with a violating value — assert `result.retryable?` is `false`; (b) the same violating step wired as the child of a `compose` — assert the **parent** reactor's `Failure.retryable?` is also `false` (proves `ComposeStep#handle_execution_result` does not silently reset it). Confirm both are red today: neither `Executor::ResultHandler#build_validation_failure` nor `Step::ComposeStep#handle_execution_result` passes `retryable:` explicitly, so `RubyReactor::Failure`'s default (`error.respond_to?(:retryable?) ? error.retryable? : true`) currently resolves to `true` in both cases — `Error::InputValidationError` has no `retryable?` method yet
+- [X] T024 [US2] Add `def retryable? = false` to `lib/ruby_reactor/error/input_validation_error.rb`, mirroring `Error::StepFailureError#retryable?` (`lib/ruby_reactor/error/step_failure_error.rb`). Run T023's spec plus `spec/ruby_reactor/step_contract_async_spec.rb` (the existing worker-path regression guard, lines 24–33 and 54–59); all green with no other file touched — this one method is the entire fix (D10)
 
 ### Implementation for User Story 2
 
-- [ ] T025 [P] [US2] Migrate step classes in `spec/ruby_reactor/rspec/test_subject_mock_step_spec.rb` (exercises `TestSubject#apply_mock_interceptor`'s `impl.run` path)
-- [ ] T026 [P] [US2] Migrate the duck-typed `MiddlewareTestStep` in `spec/ruby_reactor/middleware_spec.rb` (plain class with `def self.run`, no mixin — still a class step, must inherit per SC-002)
-- [ ] T027 [P] [US2] Migrate the duck-typed `TelemetrySimpleStep` and `TelemetrySensitiveStep` in `spec/ruby_reactor/telemetry_spec.rb`
-- [ ] T028 [P] [US2] Migrate step classes in `spec/support/payment_workflow.rb` (compensation/undo bodies; used by integration and compose suites)
-- [ ] T029 [P] [US2] Migrate step classes in `spec/support/examples/data_pipeline.rb`
-- [ ] T030 [US2] Run `bundle exec rspec` (full suite) and `bundle exec rubocop`; compare against `specs/004-inheritable-step-class/baseline.md` — same pass count, no new failures, no new offenses. Grep confirms zero `include RubyReactor::Step\b` and zero mixin-free `def self.run(args, ctx)` step classes under `spec/`
+- [X] T025 [P] [US2] Migrate step classes in `spec/ruby_reactor/rspec/test_subject_mock_step_spec.rb` (exercises `TestSubject#apply_mock_interceptor`'s `impl.run` path)
+- [X] T026 [P] [US2] Migrate the duck-typed `MiddlewareTestStep` in `spec/ruby_reactor/middleware_spec.rb` (plain class with `def self.run`, no mixin — still a class step, must inherit per SC-002)
+- [X] T027 [P] [US2] Migrate the duck-typed `TelemetrySimpleStep` and `TelemetrySensitiveStep` in `spec/ruby_reactor/telemetry_spec.rb`
+- [X] T028 [P] [US2] Migrate step classes in `spec/support/payment_workflow.rb` (compensation/undo bodies; used by integration and compose suites)
+- [X] T029 [P] [US2] Migrate step classes in `spec/support/examples/data_pipeline.rb`
+- [X] T030 [US2] Run `bundle exec rspec` (full suite) and `bundle exec rubocop`; compare against `specs/004-inheritable-step-class/baseline.md` — same pass count, no new failures, no new offenses. Grep confirms zero `include RubyReactor::Step\b` and zero mixin-free `def self.run(args, ctx)` step classes under `spec/`
 
 **Checkpoint**: Every library execution path proven against the new class, including the non-retryable guarantee on validation failures; US1 + US2 together are the gem-level MVP.
 
@@ -107,10 +107,10 @@ Each migration below means: replace `include RubyReactor::Step` with `< RubyReac
 
 ### Implementation for User Story 3 (Constitution Principle VI artifacts)
 
-- [ ] T031 [P] [US3] Create `demo_app/app/reactors/inheritable_step_demo_reactor.rb` containing: a plain `LegacyChargeService` (own `initialize(user_id)` + `call` returning an object with `success?`/`id`/`error`, no RubyReactor reference); `ChargeStep < RubyReactor::Step` with `input :user_id, :integer, gt?: 0` and a `run` delegating to the service (≤10 lines, SC-004) plus an `undo` that records the refund; a second inheriting step that `fail!`s when `inputs[:fail]` is true to force rollback; and `InheritableStepDemoReactor < RubyReactor::Reactor` wiring them with `input :user_id`, `input :fail`
-- [ ] T032 [US3] Register `demo:inheritable_step` in `demo_app/lib/tasks/demo_reactors.rake` with a `desc` and `[:environment, :flush_redis]`, printing three runs: valid inputs (success), `fail: true` (failure + `ChargeStep` undo printed), `user_id: 0` (validation failure, service never instantiated, and the printed result shows it is non-retryable per FR-017); add `:inheritable_step` to the `demo:all` dependency list at line ~242
-- [ ] T033 [P] [US3] Create `demo_app/spec/reactors/inheritable_step_demo_reactor_spec.rb` (`type: :reactor`) asserting `be_success`, `be_failure` + `have_run_step(:charge)` + rollback, and `have_validation_error` for `user_id: 0` — using only `test_reactor`, `drain_async_jobs`, and the shipped matchers from `lib/ruby_reactor/rspec.rb`; if an assertion needs a matcher that does not exist, add it to `lib/ruby_reactor/rspec/` in the same commit
-- [ ] T034 [US3] Run the Independent Test commands above; both green
+- [X] T031 [P] [US3] Create `demo_app/app/reactors/inheritable_step_demo_reactor.rb` containing: a plain `LegacyChargeService` (own `initialize(user_id)` + `call` returning an object with `success?`/`id`/`error`, no RubyReactor reference); `ChargeStep < RubyReactor::Step` with `input :user_id, :integer, gt?: 0` and a `run` delegating to the service (≤10 lines, SC-004) plus an `undo` that records the refund; a second inheriting step that `fail!`s when `inputs[:fail]` is true to force rollback; and `InheritableStepDemoReactor < RubyReactor::Reactor` wiring them with `input :user_id`, `input :fail`
+- [X] T032 [US3] Register `demo:inheritable_step` in `demo_app/lib/tasks/demo_reactors.rake` with a `desc` and `[:environment, :flush_redis]`, printing three runs: valid inputs (success), `fail: true` (failure + `ChargeStep` undo printed), `user_id: 0` (validation failure, service never instantiated, and the printed result shows it is non-retryable per FR-017); add `:inheritable_step` to the `demo:all` dependency list at line ~242
+- [X] T033 [P] [US3] Create `demo_app/spec/reactors/inheritable_step_demo_reactor_spec.rb` (`type: :reactor`) asserting `be_success`, `be_failure` + `have_run_step(:charge)` + rollback, and `have_validation_error` for `user_id: 0` — using only `test_reactor`, `drain_async_jobs`, and the shipped matchers from `lib/ruby_reactor/rspec.rb`; if an assertion needs a matcher that does not exist, add it to `lib/ruby_reactor/rspec/` in the same commit
+- [X] T034 [US3] Run the Independent Test commands above; both green
 
 **Checkpoint**: Brownfield use case proven the way users consume the gem.
 
@@ -124,11 +124,11 @@ Each migration below means: replace `include RubyReactor::Step` with `< RubyReac
 
 ### Tests for User Story 4
 
-- [ ] T035 [US4] Write `spec/ruby_reactor/step_inheritance_spec.rb`: `BaseStep < RubyReactor::Step` declares `input :a, :integer`; `ChildStep < BaseStep` declares `input :b, :integer` and defines `run` returning `Success(sum: inputs[:a] + inputs[:b])`; assert (1) invoking `ChildStep` without `:a` raises `InputValidationError` naming `:a`; (2) with both, the child's body runs and sees both; (3) a `GrandchildStep < ChildStep` overriding `run` still has validation run first (invalid `:b` never reaches the override); (4) `ChildStep.input_contract.declarations.keys == [:a, :b]` and `BaseStep.input_contract.declarations.keys == [:a]` (parent not mutated). Confirm red if T004 left any `inherited`-dependent memoization bug; otherwise it passes immediately and stays as the regression guard
+- [X] T035 [US4] Write `spec/ruby_reactor/step_inheritance_spec.rb`: `BaseStep < RubyReactor::Step` declares `input :a, :integer`; `ChildStep < BaseStep` declares `input :b, :integer` and defines `run` returning `Success(sum: inputs[:a] + inputs[:b])`; assert (1) invoking `ChildStep` without `:a` raises `InputValidationError` naming `:a`; (2) with both, the child's body runs and sees both; (3) a `GrandchildStep < ChildStep` overriding `run` still has validation run first (invalid `:b` never reaches the override); (4) `ChildStep.input_contract.declarations.keys == [:a, :b]` and `BaseStep.input_contract.declarations.keys == [:a]` (parent not mutated). Confirm red if T004 left any `inherited`-dependent memoization bug; otherwise it passes immediately and stays as the regression guard
 
 ### Implementation for User Story 4
 
-- [ ] T036 [US4] Run T035's spec plus `spec/ruby_reactor/step_contract_enforcement_spec.rb` and `spec/ruby_reactor/dsl/step_input_contract_spec.rb`; fix only if red — there should be nothing to implement (data-model.md: `inherited` deleted, contract ivars are already per-class)
+- [X] T036 [US4] Run T035's spec plus `spec/ruby_reactor/step_contract_enforcement_spec.rb` and `spec/ruby_reactor/dsl/step_input_contract_spec.rb`; fix only if red — there should be nothing to implement (data-model.md: `inherited` deleted, contract ivars are already per-class)
 
 **Checkpoint**: Hierarchies of user steps behave exactly as the input-contracts feature promised.
 
@@ -142,21 +142,21 @@ Each migration below means: replace `include RubyReactor::Step` with `< RubyReac
 
 ### Implementation for User Story 5 — demo app migration
 
-- [ ] T037 [P] [US5] Migrate `demo_app/app/reactors/validated_user_step.rb` (1 step)
-- [ ] T038 [P] [US5] Migrate `demo_app/app/reactors/user_etl_reactor.rb` (5 steps, includes compensate/undo bodies)
-- [ ] T039 [P] [US5] Migrate `demo_app/app/reactors/reserve_inventory.rb` (1 step with undo)
-- [ ] T040 [P] [US5] Migrate `demo_app/spec/support/payment_workflow.rb` and `demo_app/spec/support/examples/data_pipeline.rb` (demo-side copies of the spec support files)
+- [X] T037 [P] [US5] Migrate `demo_app/app/reactors/validated_user_step.rb` (1 step)
+- [X] T038 [P] [US5] Migrate `demo_app/app/reactors/user_etl_reactor.rb` (5 steps, includes compensate/undo bodies)
+- [X] T039 [P] [US5] Migrate `demo_app/app/reactors/reserve_inventory.rb` (1 step with undo)
+- [X] T040 [P] [US5] Migrate `demo_app/spec/support/payment_workflow.rb` and `demo_app/spec/support/examples/data_pipeline.rb` (demo-side copies of the spec support files)
 
 ### Implementation for User Story 5 — documentation (REQUIRED — Constitution Development Workflow)
 
 Convert every `include RubyReactor::Step` + `def self.run(arguments, context)` example to `class X < RubyReactor::Step` + `def run` reading `inputs`/`context`; same for `undo`/`compensate` examples. Do not change surrounding prose beyond what the new form requires.
 
 - [ ] T041 [P] [US5] Update `README.md` (5 occurrences: Quick Start and core-usage examples)
-- [ ] T042 [P] [US5] Update `documentation/getting_started.md` and `documentation/core_concepts.md` (the primary step-authoring guides — also add a short "Instance readers: `inputs`, `context`, `result`, `reason`" note, the fresh-instance-per-action rule, and a one-line note that validation failures are always non-retryable, to `core_concepts.md`)
-- [ ] T043 [P] [US5] Update `documentation/composition.md`, `documentation/async_reactors.md`, `documentation/README.md`
-- [ ] T044 [P] [US5] Update `documentation/examples/order_processing.md`, `documentation/examples/payment_processing.md`, and `demo_app/documentation/core_concepts.md`
-- [ ] T045 [US5] Add a `### ⚠ BREAKING CHANGES` entry under `## Unreleased` in `CHANGELOG.md`: mixin form removed, `RubyReactor::Step` is now a base class, before/after conversion example (class-level `run` → instance `run` with `inputs`/`context`; `undo`/`compensate` likewise); note that class steps now translate signals correctly on the `async_step`/`background` worker path (D4); note that a step's input-validation failure is now guaranteed non-retryable on every path, including through `compose` (D10, FR-017 — previously only the async worker path was correct); and a one-line known-issue that inline block steps on the worker path still do not catch signals (pre-existing, out of scope)
-- [ ] T046 [US5] Run the Independent Test commands above; grep empty, demo `all` outcomes match `baseline.md`, demo specs green
+- [X] T042 [P] [US5] Update `documentation/getting_started.md` and `documentation/core_concepts.md` (the primary step-authoring guides — also add a short "Instance readers: `inputs`, `context`, `result`, `reason`" note, the fresh-instance-per-action rule, and a one-line note that validation failures are always non-retryable, to `core_concepts.md`)
+- [X] T043 [P] [US5] Update `documentation/composition.md`, `documentation/async_reactors.md`, `documentation/README.md`
+- [X] T044 [P] [US5] Update `documentation/examples/order_processing.md`, `documentation/examples/payment_processing.md`, and `demo_app/documentation/core_concepts.md`
+- [X] T045 [US5] Add a `### ⚠ BREAKING CHANGES` entry under `## Unreleased` in `CHANGELOG.md`: mixin form removed, `RubyReactor::Step` is now a base class, before/after conversion example (class-level `run` → instance `run` with `inputs`/`context`; `undo`/`compensate` likewise); note that class steps now translate signals correctly on the `async_step`/`background` worker path (D4); note that a step's input-validation failure is now guaranteed non-retryable on every path, including through `compose` (D10, FR-017 — previously only the async worker path was correct); and a one-line known-issue that inline block steps on the worker path still do not catch signals (pre-existing, out of scope)
+- [X] T046 [US5] Run the Independent Test commands above; grep empty, demo `all` outcomes match `baseline.md`, demo specs green
 
 **Checkpoint**: A newcomer finds exactly one way to write a step everywhere they look.
 
@@ -164,9 +164,9 @@ Convert every `include RubyReactor::Step` + `def self.run(arguments, context)` e
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T047 Run `bundle exec rspec` and `bundle exec rubocop` one final time; compare with `specs/004-inheritable-step-class/baseline.md` (SC-003); then delete `baseline.md`
-- [ ] T048 [P] Walk `specs/004-inheritable-step-class/quickstart.md` sections 1, 1b, 3, 4, 5 verbatim and confirm each expected outcome, including the `result.retryable? # => false` check
-- [ ] T049 [P] Read `lib/ruby_reactor/step.rb` top to bottom and confirm SC-001: the lifecycle (instantiate → validate → run → translate signal) is readable as plain method calls with no `prepend`, `extend`, `define_method`, or `method_missing` anywhere in the file
+- [X] T047 Run `bundle exec rspec` and `bundle exec rubocop` one final time; compare with `specs/004-inheritable-step-class/baseline.md` (SC-003); then delete `baseline.md`
+- [X] T048 [P] Walk `specs/004-inheritable-step-class/quickstart.md` sections 1, 1b, 3, 4, 5 verbatim and confirm each expected outcome, including the `result.retryable? # => false` check
+- [X] T049 [P] Read `lib/ruby_reactor/step.rb` top to bottom and confirm SC-001: the lifecycle (instantiate → validate → run → translate signal) is readable as plain method calls with no `prepend`, `extend`, `define_method`, or `method_missing` anywhere in the file
 - [ ] T050 Commit with a `feat!:` subject so release-please bumps 0.7.0 → 0.8.0 (`bump-minor-pre-major: true`); body carries the CHANGELOG conversion example
 
 ---

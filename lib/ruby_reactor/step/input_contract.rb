@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module RubyReactor
-  module Step
+  class Step
     # The inputs one unit of work accepts: declared with `input` on a step
     # class, or inside an inline step's `inputs do ... end` block. Both forms
     # are enforced by the same `#enforce!`, so they cannot drift apart.

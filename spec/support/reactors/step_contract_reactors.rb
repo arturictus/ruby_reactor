@@ -15,14 +15,12 @@ module StepContractFixtures
   end
 end
 
-class ContractChargeStep
-  include RubyReactor::Step
-
+class ContractChargeStep < RubyReactor::Step
   input :amount, :integer, gteq?: 1
   input :currency, :string, included_in?: %w[USD EUR]
 
-  def self.run(args, _context)
-    RubyReactor.Success(args)
+  def run
+    Success(inputs)
   end
 end
 

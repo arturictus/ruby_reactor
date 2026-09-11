@@ -2,6 +2,73 @@
 
 ## Unreleased
 
+### ⚠ BREAKING CHANGES
+
+* **`RubyReactor::Step` is now a base class, not a mixin.** `include RubyReactor::Step` on a
+  plain class with `def self.run(arguments, context)` is gone — no compatibility shim, no dual
+  authoring style. A step subclasses `RubyReactor::Step` and writes `run` (and optionally
+  `compensate`/`undo`) as **instance** methods reading the validated arguments and the context
+  through `inputs`/`context` accessors instead of parameters. Every instance is built fresh for
+  its one action (`run`, `undo`, or `compensate`) from the stored arguments/result/reason alone —
+  nothing an author sets in `run` is visible in a later `undo`/`compensate`, which is exactly what
+  makes rollback behave identically whether it lands in the same process as `run` or, as with an
+  `async_step`, in a separate later one.
+
+  ```ruby
+  # Before
+  class ChargeStep
+    include RubyReactor::Step
+
+    input :amount, :integer, gteq?: 1
+
+    def self.run(arguments, context)
+      Success(charge!(arguments[:amount]))
+    end
+
+    def self.undo(result, arguments, context)
+      refund!(result[:charge_id])
+      Success()
+    end
+  end
+
+  # After
+  class ChargeStep < RubyReactor::Step
+    input :amount, :integer, gteq?: 1
+
+    def run
+      Success(charge!(inputs[:amount]))
+    end
+
+    def undo
+      refund!(result[:charge_id])
+      Success()
+    end
+  end
+  ```
+
+  **Migration:** for every class step, replace `include RubyReactor::Step` with
+  `< RubyReactor::Step`, turn `def self.run(args, ctx)` into `def run` reading `inputs`/`context`,
+  and likewise for `def self.undo(result, args, ctx)` / `def self.compensate(reason, args, ctx)` →
+  `def undo` / `def compensate` reading `result`/`reason`/`inputs`/`context`. The class-level
+  `MyStep.run(arguments, context)` / `.call` / `.undo(result, arguments, context)` /
+  `.compensate(reason, arguments, context)` entry points every caller (executor, worker, a direct
+  unit-test call) already used are unchanged. Inline `step { run { |args, ctx| ... } }` blocks are
+  untouched by this change.
+
+* **A class step's signal helpers (`success!`/`fail!`/`skip!`/`halt!`) now translate correctly on
+  every execution path, including the `async_step`/`background` worker.** Previously the worker had
+  no `catch` of its own, so a signal thrown from a class step running there escaped as an
+  `UncaughtThrowError` instead of the intended `Success`/`Failure`/`Skipped`/`Halt` — the base
+  class's class-level `run`/`undo`/`compensate` now own that translation, so every caller gets it
+  for free with no worker change. Known remaining gap, unchanged by this release: an **inline**
+  `run`/`compensate`/`undo` block's signals are still uncaught on the worker path.
+
+* **A step's own input-validation failure is now guaranteed non-retryable on every path.**
+  `result.retryable?` is `false` whether the violation happened synchronously, inside an
+  `async_step`/`background` worker, or inside a `compose`d child's own step — previously only the
+  async worker path got this right; the synchronous path and a validation failure surfacing
+  through `compose` both defaulted to `retryable? == true`.
+
 ### Features
 
 * **Step input contracts.** A step class declares its own inputs with `input :name, :type, **predicates`

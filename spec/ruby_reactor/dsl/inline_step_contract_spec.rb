@@ -27,14 +27,12 @@ RSpec.describe "Inline step input contracts" do
   end
 
   let(:class_reactor) do
-    stub_const("InlineEquivalentStep", Class.new do
-      include RubyReactor::Step
-
+    stub_const("InlineEquivalentStep", Class.new(RubyReactor::Step) do
       input :amount, :integer, gteq?: 1
       input :currency, :string, included_in?: %w[USD EUR]
       validate_inputs { required(:amount).filled(:integer, lt?: 10_000) }
 
-      def self.run(args, _) = RubyReactor.Success(args)
+      def run = Success(inputs)
     end)
 
     Class.new(RubyReactor::Reactor) do
@@ -131,10 +129,8 @@ RSpec.describe "Inline step input contracts" do
 
   describe "conflicts" do
     before do
-      stub_const("OwnedStep", Class.new do
-        include RubyReactor::Step
-
-        def self.run(args, _) = RubyReactor.Success(args)
+      stub_const("OwnedStep", Class.new(RubyReactor::Step) do
+        def run = Success(inputs)
       end)
     end
 

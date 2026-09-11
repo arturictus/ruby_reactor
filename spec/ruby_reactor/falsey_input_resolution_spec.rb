@@ -35,12 +35,10 @@ RSpec.describe "Falsey input resolution" do
   describe "reactor input -> class step" do
     it "delivers false unchanged" do
       sink = received
-      step_class = Class.new do
-        include RubyReactor::Step
-
-        define_singleton_method(:run) do |args, _ctx|
-          sink << args[:flag]
-          RubyReactor.Success(args[:flag])
+      step_class = Class.new(RubyReactor::Step) do
+        define_method(:run) do
+          sink << inputs[:flag]
+          Success(inputs[:flag])
         end
       end
       stub_const("ReceivesFlag", step_class)

@@ -42,11 +42,9 @@ graph TD
 ## Implementation
 
 ```ruby
-class ValidateOrderStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    order = Order.find_by(id: arguments[:order_id])
+class ValidateOrderStep < RubyReactor::Step
+  def run
+    order = Order.find_by(id: inputs[:order_id])
     fail!("Order not found") unless order
     fail!("Order already processed") if order.processed?
     fail!("Order cancelled") if order.cancelled?
@@ -55,27 +53,23 @@ class ValidateOrderStep
   end
 end
 
-class ReserveInventoryStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    reservation_id = InventoryService.reserve_items(arguments[:order].items)
+class ReserveInventoryStep < RubyReactor::Step
+  def run
+    reservation_id = InventoryService.reserve_items(inputs[:order].items)
     fail!("Inventory reservation failed") unless reservation_id
 
     Success(reservation_id: reservation_id)
   end
 
-  def self.undo(result, _arguments, _context)
+  def undo
     InventoryService.release_reservation(result[:reservation_id]) if result[:reservation_id]
     Success()
   end
 end
 
-class ProcessPaymentStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    order = arguments[:order]
+class ProcessPaymentStep < RubyReactor::Step
+  def run
+    order = inputs[:order]
     payment_result = PaymentService.charge(
       amount: order.total,
       currency: order.currency,
@@ -88,7 +82,7 @@ class ProcessPaymentStep
     Success(payment_id: payment_result.id, payment_amount: order.total)
   end
 
-  def self.undo(result, _arguments, _context)
+  def undo
     PaymentService.refund(result[:payment_id]) if result[:payment_id]
     Success()
   end

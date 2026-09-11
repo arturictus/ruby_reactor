@@ -23,15 +23,13 @@ RSpec.describe "Step input contract enforcement" do
 
   before do
     sink = calls
-    step = Class.new do
-      include RubyReactor::Step
-
+    step = Class.new(RubyReactor::Step) do
       input :amount, :integer, gteq?: 1
       input :currency, :string, included_in?: %w[USD EUR]
 
-      define_singleton_method(:run) do |args, _context|
-        sink << args
-        RubyReactor.Success(args)
+      define_method(:run) do
+        sink << inputs
+        Success(inputs)
       end
     end
     stub_const("ChargeStep", step)
@@ -57,14 +55,12 @@ RSpec.describe "Step input contract enforcement" do
 
     it "lets an optional input be absent (AS3)" do
       sink = calls
-      stub_const("NoteStep", Class.new do
-        include RubyReactor::Step
-
+      stub_const("NoteStep", Class.new(RubyReactor::Step) do
         input :note, :string, optional: true
 
-        define_singleton_method(:run) do |args, _|
-          sink << args
-          RubyReactor.Success(args)
+        define_method(:run) do
+          sink << inputs
+          Success(inputs)
         end
       end)
       note_reactor = Class.new(RubyReactor::Reactor) do
@@ -78,12 +74,10 @@ RSpec.describe "Step input contract enforcement" do
 
     it "rejects an instance of an unrelated class (AS4)" do
       stub_const("Account", Class.new)
-      stub_const("AccountStep", Class.new do
-        include RubyReactor::Step
-
+      stub_const("AccountStep", Class.new(RubyReactor::Step) do
         input :account, Account
 
-        def self.run(args, _) = RubyReactor.Success(args)
+        def run = Success(inputs)
       end)
       account_reactor = Class.new(RubyReactor::Reactor) do
         input :account
@@ -103,14 +97,12 @@ RSpec.describe "Step input contract enforcement" do
 
         rule(:max, :min) { key.failure("must be greater than min") if values[:max] <= values[:min] }
       end.new
-      stub_const("RangeStep", Class.new do
-        include RubyReactor::Step
-
+      stub_const("RangeStep", Class.new(RubyReactor::Step) do
         input :min, :integer
         input :max, :integer
         validate_inputs range_contract
 
-        def self.run(args, _) = RubyReactor.Success(args)
+        def run = Success(inputs)
       end)
       range_reactor = Class.new(RubyReactor::Reactor) do
         input :min
@@ -127,14 +119,12 @@ RSpec.describe "Step input contract enforcement" do
 
     it "treats false as provided for a required boolean (AS6)" do
       sink = calls
-      stub_const("NotifyStep", Class.new do
-        include RubyReactor::Step
-
+      stub_const("NotifyStep", Class.new(RubyReactor::Step) do
         input :notify, :bool
 
-        define_singleton_method(:run) do |args, _|
-          sink << args
-          RubyReactor.Success(args[:notify])
+        define_method(:run) do
+          sink << inputs
+          Success(inputs[:notify])
         end
       end)
       notify_reactor = Class.new(RubyReactor::Reactor) do
@@ -218,14 +208,12 @@ RSpec.describe "Step input contract enforcement" do
   describe "defaults" do
     before do
       sink = calls
-      stub_const("GreetStep", Class.new do
-        include RubyReactor::Step
-
+      stub_const("GreetStep", Class.new(RubyReactor::Step) do
         input :greeting, optional: true, default: "x"
 
-        define_singleton_method(:run) do |args, _|
-          sink << args[:greeting]
-          RubyReactor.Success(args)
+        define_method(:run) do
+          sink << inputs[:greeting]
+          Success(inputs)
         end
       end)
     end
@@ -249,13 +237,11 @@ RSpec.describe "Step input contract enforcement" do
 
   describe "redact: true" do
     before do
-      stub_const("TokenStep", Class.new do
-        include RubyReactor::Step
-
+      stub_const("TokenStep", Class.new(RubyReactor::Step) do
         input :token, :string, redact: true, min_size?: 10
         input :amount, :integer
 
-        def self.run(args, _) = RubyReactor.Success(args)
+        def run = Success(inputs)
       end)
       stub_const("TokenReactor", Class.new(RubyReactor::Reactor) do
         input :token, redact: true

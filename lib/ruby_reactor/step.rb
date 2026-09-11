@@ -1,37 +1,78 @@
 # frozen_string_literal: true
 
 module RubyReactor
-  module Step
-    def self.included(base)
-      base.extend(ClassMethods)
-      base.singleton_class.prepend(InputEnforcement)
+  # The single inheritable base every class-based step derives from:
+  #
+  #   class MyStep < RubyReactor::Step
+  #     input :amount, :integer
+  #     def run = Success(charged: inputs[:amount])
+  #   end
+  #
+  # Lifecycle: a class-level call (`.run`/`.call`, `.undo`, `.compensate`)
+  # enforces the declared input contract (raising `Error::InputValidationError`
+  # before any instance exists), builds a FRESH instance from the given
+  # arguments/context (never reused across actions — an ivar set in `run` is
+  # gone by the time `undo` runs on a separate instance, so async execution
+  # running `run` and `undo` in different processes behaves identically to
+  # running both in one), invokes the matching instance method, and translates
+  # any `StepSignals` throw (`success!`/`skip!`/`fail!`/`halt!`) into its
+  # result wrapper. No `prepend`/`extend`/`define_method`/`method_missing` —
+  # every step in the class reads top to bottom as ordinary method calls.
+  class Step
+    include RubyReactor::StepSignals
+
+    attr_reader :inputs, :context, :result, :reason
+
+    def initialize(inputs, context, result: nil, reason: nil)
+      @inputs = inputs
+      @context = context
+      @result = result
+      @reason = reason
     end
 
-    # Validates the declared contract before the step's own `run`, on every
-    # path that calls it: the executor, the async worker, and a direct call.
-    # A step that declares no inputs goes straight to `super`.
-    module InputEnforcement
+    def run
+      raise NotImplementedError, "#{self.class} must implement #run"
+    end
+
+    def undo
+      RubyReactor.Skipped()
+    end
+
+    def compensate
+      RubyReactor.Skipped()
+    end
+
+    # rubocop:disable Naming/MethodName
+    def Success(value = nil)
+      RubyReactor.Success(value)
+    end
+
+    def Failure(error = nil)
+      RubyReactor.Failure(error)
+    end
+
+    def Halt(reason: nil, **kwargs)
+      RubyReactor.Halt(reason: reason, **kwargs)
+    end
+
+    def Skipped(...)
+      RubyReactor.Skipped(...)
+    end
+    # rubocop:enable Naming/MethodName
+
+    class << self
       def run(arguments, context)
-        return super unless declares_inputs?
-
-        validated = begin
-          input_contract.enforce!(arguments)
-        rescue Error::InputValidationError => e
-          e.step_name = name
-          raise
-        end
-        super(validated, context)
+        validated = enforce_contract!(arguments)
+        catch(StepSignals::TAG) { new(validated, context).run }
       end
-    end
+      alias call run
 
-    module ClassMethods
-      include RubyReactor::StepSignals
+      def undo(result, arguments, context)
+        catch(StepSignals::TAG) { new(arguments, context, result: result).undo }
+      end
 
-      # A subclass's own `def self.run` would sit in front of the wrapper
-      # prepended onto its parent, so every subclass gets its own.
-      def inherited(subclass)
-        super
-        subclass.singleton_class.prepend(InputEnforcement)
+      def compensate(reason, arguments, context)
+        catch(StepSignals::TAG) { new(arguments, context, reason: reason).compensate }
       end
 
       def input(...)
@@ -65,40 +106,19 @@ module RubyReactor
         !input_contract.empty?
       end
 
-      # rubocop:disable Naming/MethodName
-      def Success(value = nil)
-        RubyReactor::Success(value)
-      end
-
-      def Failure(error = nil)
-        RubyReactor::Failure(error)
-      end
-
-      def Halt(reason: nil, **kwargs)
-        RubyReactor.Halt(reason: reason, **kwargs)
-      end
-
-      def Skipped(...)
-        RubyReactor.Skipped(...)
-      end
-      # rubocop:enable Naming/MethodName
-
-      def run(arguments, context)
-        raise NotImplementedError, "#{self} must implement .run method"
-      end
-
-      def compensate(_reason, _arguments, _context)
-        RubyReactor.Skipped() # Default: nothing defined, rollback continues
-      end
-
-      def undo(_result, _arguments, _context)
-        RubyReactor.Skipped() # Default: nothing defined, rollback continues
-      end
-
       private
 
       def own_input_contract
-        @own_input_contract ||= InputContract.new(owner: self)
+        @own_input_contract ||= Step::InputContract.new(owner: self)
+      end
+
+      def enforce_contract!(arguments)
+        return arguments unless declares_inputs?
+
+        input_contract.enforce!(arguments)
+      rescue Error::InputValidationError => e
+        e.step_name = name
+        raise
       end
     end
   end

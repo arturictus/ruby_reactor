@@ -239,26 +239,24 @@ Whichever style you use, a step's `run` returns one of four signals — all expo
 
 One-line helpers end a step immediately from any call depth: `success!(value)`, `fail!(error, retry: true)`, `halt!(reason:)`, `skip!(value)` — equivalent to `return`ing the matching signal, usable in `run`, `compensate`, and `undo` bodies.
 
-**Class steps** are plain Ruby classes that include `RubyReactor::Step` and implement `run`, and optionally `compensate` and `undo`:
+**Class steps** subclass `RubyReactor::Step` and implement `run`, and optionally `compensate` and `undo`, as instance methods reading `inputs` and `context`:
 
 ```ruby
-class ReserveInventoryStep
-  include RubyReactor::Step
-
+class ReserveInventoryStep < RubyReactor::Step
   # The step's input contract: enforced before `run` on every execution path.
   input :order, :hash
 
-  def self.run(arguments, context)
-    reservation_id = InventoryService.reserve(arguments[:order][:items])
+  def run
+    reservation_id = InventoryService.reserve(inputs[:order][:items])
     Success(reservation_id: reservation_id)
   end
 
-  def self.compensate(error, arguments, context)
-    InventoryService.release_partial(arguments[:order][:items])
+  def compensate
+    InventoryService.release_partial(inputs[:order][:items])
     Success()
   end
 
-  def self.undo(result, arguments, context)
+  def undo
     InventoryService.release(result[:reservation_id])
     Success()
   end
@@ -325,29 +323,25 @@ RubyReactor allows you to define complex workflows as "reactors" with steps that
 ```ruby
 require 'ruby_reactor'
 
-class ValidateEmailStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    email = arguments[:email]
+class ValidateEmailStep < RubyReactor::Step
+  def run
+    email = inputs[:email]
     email&.include?('@') ? Success(email.strip) : Failure("Email must contain @")
   end
 end
 
-class CreateUserStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
+class CreateUserStep < RubyReactor::Step
+  def run
     Success(
       id: rand(10000),
-      email: arguments[:email],
-      password_hash: arguments[:password_hash],
+      email: inputs[:email],
+      password_hash: inputs[:password_hash],
       created_at: Time.now
     )
   end
 
-  def self.compensate(_error, arguments, _context)
-    Notify.to(arguments[:email])
+  def compensate
+    Notify.to(inputs[:email])
     Success()
   end
 end
@@ -1028,9 +1022,7 @@ comes from. Rules live with the unit of work, so a step reused by three
 reactors is validated the same way in all three.
 
 ```ruby
-class ChargeStep
-  include RubyReactor::Step
-
+class ChargeStep < RubyReactor::Step
   input :amount,   :integer, gteq?: 1
   input :currency, :string,  included_in?: %w[USD EUR GBP]
   input :user,     User                                   # type? instance check
@@ -1042,8 +1034,8 @@ class ChargeStep
     required(:amount).filled(:integer, lt?: 10_000)
   end
 
-  def self.run(args, _context)
-    Success(charge!(args))
+  def run
+    Success(charge!(inputs))
   end
 end
 ```
@@ -1127,9 +1119,7 @@ step :charge, ChargeStep do
 end
 
 # After: the rules move into the step
-class ChargeStep
-  include RubyReactor::Step
-
+class ChargeStep < RubyReactor::Step
   input :amount, :integer, gteq?: 1
   validate_inputs { required(:amount).filled(:integer, lt?: 10_000) }
 end

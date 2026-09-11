@@ -239,7 +239,7 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step] do
     puts "excuting all reactors"
   end
 
@@ -557,6 +557,22 @@ namespace :demo do
     rescue RubyReactor::Error::InputValidationError => e
       puts "❌ RAISED #{e.class} step=#{e.step_name.inspect} field_errors=#{e.field_errors.inspect}"
     end
+  end
+
+  desc "InheritableStepDemoReactor — a brownfield service wrapped by an inheriting step, fail!-triggered rollback, " \
+       "and a rejected input staying non-retryable"
+  task inheritable_step: [:environment, :flush_redis] do
+    puts "\n>>> Running InheritableStepDemoReactor(user_id: 7) [success]"
+    report_demo_result(InheritableStepDemoReactor.call(user_id: 7))
+
+    puts "\n>>> Running InheritableStepDemoReactor(user_id: 7, fail: true) [forced failure, ChargeStep#undo runs]"
+    report_demo_result(InheritableStepDemoReactor.call(user_id: 7, fail: true))
+    puts "   ChargeStep.refunds: #{ChargeStep.refunds.inspect}"
+
+    puts "\n>>> Running InheritableStepDemoReactor(user_id: 0) [validation failure, LegacyChargeService never instantiated]"
+    result = InheritableStepDemoReactor.call(user_id: 0)
+    puts "❌ FAILED at step=#{result.step_name.inspect} validation_errors=#{result.validation_errors.inspect} " \
+         "retryable?=#{result.retryable?}"
   end
 
   desc "Run coordination demo reactors (locks, semaphores, rate limits, periods)"

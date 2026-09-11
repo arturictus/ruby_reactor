@@ -9,8 +9,12 @@ module RubyReactor
   # Implemented as throw/catch rather than an exception: a `throw` passes
   # straight through `rescue Exception` while `ensure` blocks still run
   # (verified in research.md R2), so a step's own broad rescue cannot swallow
-  # the author's intended outcome. The catching `catch(StepSignals::TAG)` lives
-  # at each step-body invocation site (step_executor.rb, compensation_manager.rb).
+  # the author's intended outcome. For a class-based step, the catching
+  # `catch(StepSignals::TAG)` lives on RubyReactor::Step's own class-level
+  # `run`/`undo`/`compensate` (so every caller — the executor, the async
+  # worker, a direct call — gets identical translation for free); for an
+  # inline `run_block`/`compensate_block`/`undo_block` step, it lives at the
+  # invocation site in step_executor.rb / compensation_manager.rb.
   module StepSignals
     TAG = :ruby_reactor_step_signal
 

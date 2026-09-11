@@ -70,10 +70,8 @@ RSpec.describe "Deprecation of reactor-declared step rules" do
   end
 
   it "prints for a class step with no contract, naming the class" do
-    stub_const("LegacyChargeStep", Class.new do
-      include RubyReactor::Step
-
-      def self.run(args, _) = RubyReactor.Success(args)
+    stub_const("LegacyChargeStep", Class.new(RubyReactor::Step) do
+      def run = Success(inputs)
     end)
     reactor = nil
 

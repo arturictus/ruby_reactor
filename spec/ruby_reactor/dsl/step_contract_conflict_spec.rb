@@ -7,12 +7,10 @@ require "spec_helper"
 # `step` macro runs.
 RSpec.describe "Reactor-side rules on a contract-owning step" do
   before do
-    stub_const("ChargeStep", Class.new do
-      include RubyReactor::Step
-
+    stub_const("ChargeStep", Class.new(RubyReactor::Step) do
       input :amount, :integer, gteq?: 1
 
-      def self.run(args, _) = RubyReactor.Success(args)
+      def run = Success(inputs)
     end)
   end
 
@@ -95,10 +93,8 @@ RSpec.describe "Reactor-side rules on a contract-owning step" do
   end
 
   it "keeps reactor rules for a step class with no contract (AS4)" do
-    stub_const("PlainStep", Class.new do
-      include RubyReactor::Step
-
-      def self.run(args, _) = RubyReactor.Success(args)
+    stub_const("PlainStep", Class.new(RubyReactor::Step) do
+      def run = Success(inputs)
     end)
 
     reactor = nil

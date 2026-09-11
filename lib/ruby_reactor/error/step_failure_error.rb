@@ -15,8 +15,13 @@ module RubyReactor
         @validation_errors = validation_errors
       end
 
+      # Defers to the original error when it has an opinion (e.g. a step's own
+      # `Error::InputValidationError`, always non-retryable) so that opinion
+      # survives being wrapped into a StepFailureError — the same
+      # `respond_to?(:retryable?)` protocol `RubyReactor::Failure` itself uses.
+      # Defaults to `true` for an ordinary step failure, unchanged from before.
       def retryable?
-        true
+        original_error.respond_to?(:retryable?) ? original_error.retryable? : true
       end
     end
   end

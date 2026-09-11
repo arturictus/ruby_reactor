@@ -28,6 +28,10 @@ module RubyReactor
       def to_s
         @message || build_message
       end
+
+      def retryable?
+        false
+      end
     end
   end
 end

@@ -37,14 +37,12 @@ end
 
 ### Step Classes
 
-For complex steps with compensation and undo logic, or for better testability and reusability, you can define steps as separate classes that include the `RubyReactor::Step` module. This is the preferred approach for steps that require sophisticated error handling or have significant business logic.
+For complex steps with compensation and undo logic, or for better testability and reusability, you can define steps as separate classes that subclass `RubyReactor::Step`. This is the preferred approach for steps that require sophisticated error handling or have significant business logic.
 
 ```ruby
-class ReserveInventoryStep
-  include RubyReactor::Step
-
-  def self.run(arguments, context)
-    order = arguments[:order]
+class ReserveInventoryStep < RubyReactor::Step
+  def run
+    order = inputs[:order]
     # Business logic for inventory reservation
     reservation_id = InventoryService.reserve(order[:items])
     Success({
@@ -53,14 +51,14 @@ class ReserveInventoryStep
     })
   end
 
-  def self.compensate(error, arguments, context)
+  def compensate
     # Cleanup logic for failed reservations
-    puts "Cleaning up inventory reservation due to: #{error.message}"
+    puts "Cleaning up inventory reservation due to: #{reason.message}"
     # Release any partial reservations
     Success("Inventory reservation cleaned up")
   end
 
-  def self.undo(result, arguments, context)
+  def undo
     # Rollback logic for successful reservations during reactor failure
     reservation_id = result[:reservation_id]
     InventoryService.release(reservation_id)

@@ -6,11 +6,9 @@ RSpec.describe "Step input contract declaration" do
   let(:payload_schema) { Dry::Schema.Params { required(:payload).filled(:hash) } }
 
   def step_class(&body)
-    Class.new do
-      include RubyReactor::Step
-
-      def self.run(args, _context)
-        RubyReactor.Success(args)
+    Class.new(RubyReactor::Step) do
+      def run
+        Success(inputs)
       end
 
       class_eval(&body) if body
@@ -132,25 +130,23 @@ RSpec.describe "Step input contract declaration" do
   end
 
   describe "enforcement wrapping" do
-    it "survives `def self.run` written after include" do
-      klass = Class.new do
-        include RubyReactor::Step
-
+    it "still enforces the contract when `def run` is written after the input declarations" do
+      klass = Class.new(RubyReactor::Step) do
         input :amount, :integer, gteq?: 1
 
-        def self.run(args, _context)
-          RubyReactor.Success(args)
+        def run
+          Success(inputs)
         end
       end
 
       expect { klass.run({ amount: 0 }, nil) }.to raise_error(RubyReactor::Error::InputValidationError)
     end
 
-    it "survives a subclass defining its own `def self.run`" do
+    it "still enforces the parent's contract when a subclass defines its own `run`" do
       parent = step_class { input :amount, :integer, gteq?: 1 }
       child = Class.new(parent) do
-        def self.run(_args, _context)
-          RubyReactor.Success(:child_body_ran)
+        def run
+          Success(:child_body_ran)
         end
       end
 

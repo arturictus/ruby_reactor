@@ -33,14 +33,14 @@ RubyReactor supports two definition styles:
 
 ### Step Classes (preferred)
 
-Define steps as separate classes that include `RubyReactor::Step`. This is the recommended approach for real business logic: it keeps reactors readable, makes steps easy to unit test, and lets you reuse the same step across multiple reactors.
+Define steps as separate classes that subclass `RubyReactor::Step`. This is the recommended approach for real business logic: it keeps reactors readable, makes steps easy to unit test, and lets you reuse the same step across multiple reactors.
+
+Every action (`run`, `compensate`, `undo`) runs on a **fresh instance built just for that action** — an instance built for `run` is discarded once it returns, and `undo`/`compensate` each get their own new instance from the stored arguments/result/reason. Nothing set inside `run` (an ivar, a memoized value) is visible inside a later `undo` or `compensate`, even when they happen to run in the same process — this is what makes behavior identical whether a step's rollback lands in the same worker or, as with an `async_step`, a separate one later. Instance readers: `inputs`, `context` (available in all three), `result` (`undo` only), `reason` (`compensate` only).
 
 ```ruby
-class ReserveInventoryStep
-  include RubyReactor::Step
-
-  def self.run(arguments, context)
-    order = arguments[:order]
+class ReserveInventoryStep < RubyReactor::Step
+  def run
+    order = inputs[:order]
     # Business logic for inventory reservation
     reservation_id = InventoryService.reserve(order[:items])
     Success({
@@ -49,14 +49,14 @@ class ReserveInventoryStep
     })
   end
 
-  def self.compensate(error, arguments, context)
+  def compensate
     # Cleanup logic for failed reservations
-    puts "Cleaning up inventory reservation due to: #{error.message}"
+    puts "Cleaning up inventory reservation due to: #{reason}"
     # Release any partial reservations
     Success("Inventory reservation cleaned up")
   end
 
-  def self.undo(result, arguments, context)
+  def undo
     # Rollback logic for successful reservations during reactor failure
     reservation_id = result[:reservation_id]
     InventoryService.release(reservation_id)
@@ -82,14 +82,18 @@ end
 - **Readability** — reactor definitions stay orchestration-only; business logic lives in named classes instead of growing inline blocks
 - **Maintainability** — compensation and undo logic sit beside `run` in one place
 
-**Step class methods:**
-- **`run(arguments, context)`**: The main business logic. Returns `Success(result)`, `Failure(error)`, `Halt(reason:)` (see [Halting a reactor cleanly](#halting-a-reactor-cleanly)), or `Skipped(value)` (see [Skipping a single step](#skipping-a-single-step))
-- **`compensate(error, arguments, context)`**: Cleanup for the current failing step. Called when the step fails
-- **`undo(result, arguments, context)`**: Rollback for previously successful steps. Called during reactor failure rollback
+**Step instance methods:**
+- **`run`**: The main business logic, reading `inputs`/`context`. Returns `Success(result)`, `Failure(error)`, `Halt(reason:)` (see [Halting a reactor cleanly](#halting-a-reactor-cleanly)), or `Skipped(value)` (see [Skipping a single step](#skipping-a-single-step)). Omitting it raises `NotImplementedError` naming the class
+- **`compensate`**: Cleanup for the current failing step, reading `reason`/`inputs`/`context`. Called when the step fails. Defaults to `Skipped()` if omitted
+- **`undo`**: Rollback for previously successful steps, reading `result`/`inputs`/`context`. Called during reactor failure rollback. Defaults to `Skipped()` if omitted
+
+**Class-level entry points** (what the executor, the async worker, and a direct unit-test call all use): `MyStep.run(arguments, context)` (aliased `.call`), `MyStep.undo(result, arguments, context)`, `MyStep.compensate(reason, arguments, context)` — each builds the fresh instance described above, enforces the input contract first, and translates any `success!`/`fail!`/`skip!`/`halt!` signal into its result wrapper.
+
+> A step's own input-validation failure is always non-retryable — `result.retryable?` is `false` whether the violation happened synchronously, inside an `async_step` worker, or inside a `compose`d child (see [Step Input Contracts](../README.md#step-input-contracts) in the README).
 
 ### Inline step definition
 
-For quick prototypes or trivial steps, define logic inline inside the reactor. `run` blocks always receive two positional arguments: the resolved arguments hash and the execution context. Declare inputs with `argument :name, source`:
+For quick prototypes or trivial steps, define logic inline inside the reactor. Unlike a class step's zero-arg instance methods, an inline `run` block always receives two positional arguments: the resolved arguments hash and the execution context. Declare inputs with `argument :name, source`:
 
 ```ruby
 step :validate_order do
@@ -136,8 +140,8 @@ end
 They are not limited to a single guard clause at the top of `run` — a chain of them replaces what would otherwise be a nested `if/elsif` or an accumulator variable threaded through the method:
 
 ```ruby
-def self.run(arguments, _context)
-  order = Order.find_by(id: arguments[:order_id])
+def run
+  order = Order.find_by(id: inputs[:order_id])
   fail!("Order not found") unless order
   fail!("Order already processed") if order.processed?
   fail!("Order cancelled") if order.cancelled?
@@ -149,14 +153,14 @@ end
 **Any call depth.** A helper works from a method the step body calls, however deep — the call ends the *step*, not just the current method, so validation logic can live in a plain helper method instead of returning a signal up through every caller:
 
 ```ruby
-def self.run(arguments, context)
-  check_eligibility!(arguments)   # fail! inside ends the step, not just this method
+def run
+  check_eligibility!   # fail! inside ends the step, not just this method
   Success(processed: true)
 end
 
-def self.check_eligibility!(arguments)
-  fail!("underage") if arguments[:user].age < 18
-  fail!("suspended") if arguments[:user].suspended?
+def check_eligibility!
+  fail!("underage") if inputs[:user].age < 18
+  fail!("suspended") if inputs[:user].suspended?
 end
 ```
 
@@ -186,27 +190,21 @@ context = RubyReactor::Context.new(order_id: 123, customer_id: 456)
 Steps can depend on other steps, creating a directed acyclic graph (DAG) of execution.
 
 ```ruby
-class ValidateOrderStep
-  include RubyReactor::Step
-
-  def self.run(_arguments, _context)
+class ValidateOrderStep < RubyReactor::Step
+  def run
     validate_order_logic
   end
 end
 
-class ProcessPaymentStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    process_payment_for_order(arguments[:order])
+class ProcessPaymentStep < RubyReactor::Step
+  def run
+    process_payment_for_order(inputs[:order])
   end
 end
 
-class SendConfirmationStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    payment_result = arguments[:payment_result]
+class SendConfirmationStep < RubyReactor::Step
+  def run
+    payment_result = inputs[:payment_result]
     send_confirmation_email(payment_result[:order], payment_result[:payment_id])
   end
 end
@@ -260,16 +258,14 @@ RubyReactor provides sophisticated error handling with automatic compensation.
 When a step fails, execution stops and compensation begins:
 
 ```ruby
-class ProcessPaymentStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    PaymentService.charge(arguments[:amount], arguments[:token])
+class ProcessPaymentStep < RubyReactor::Step
+  def run
+    PaymentService.charge(inputs[:amount], inputs[:token])
   end
 
-  def self.compensate(error, arguments, _context)
+  def compensate
     # Best-effort cleanup specific to this step's failure
-    AuditService.log_payment_failure(arguments[:token], error.message)
+    AuditService.log_payment_failure(inputs[:token], reason.message)
   end
 end
 
@@ -511,15 +507,13 @@ Unlike compensation which only runs for the failing step, undo is triggered duri
 ### Basic Undo
 
 ```ruby
-class ReserveInventoryStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    reservation_id = InventoryService.reserve(arguments[:items])
+class ReserveInventoryStep < RubyReactor::Step
+  def run
+    reservation_id = InventoryService.reserve(inputs[:items])
     Success(reservation_id: reservation_id)
   end
 
-  def self.undo(result, _arguments, _context)
+  def undo
     InventoryService.release(result[:reservation_id])
     Success("Inventory reservation released")
   end
@@ -534,10 +528,12 @@ end
 
 ### Undo Context
 
-Undo blocks receive three parameters:
-- **Result**: The successful result from the step's `run` block
-- **Arguments**: The resolved arguments passed to the step
-- **Context**: The full execution context with all intermediate results
+A class step's `undo` is a zero-arg instance method reading three things:
+- **`result`**: The successful result from the step's `run`
+- **`inputs`**: The resolved arguments passed to the step
+- **`context`**: The full execution context with all intermediate results
+
+An inline `undo do |result, arguments, context| ... end` block still receives the same three as positional parameters instead:
 
 ```ruby
 step :complex_operation do
@@ -581,16 +577,14 @@ Compensation runs immediately when a step fails, before the broader rollback pro
 ### Basic Compensation
 
 ```ruby
-class ReserveInventoryStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    reservation_id = InventoryService.reserve(arguments[:items])
+class ReserveInventoryStep < RubyReactor::Step
+  def run
+    reservation_id = InventoryService.reserve(inputs[:items])
     Success(reservation_id: reservation_id)
   end
 
-  def self.compensate(error, _arguments, _context)
-    puts "Cleaning up after reservation failure: #{error.message}"
+  def compensate
+    puts "Cleaning up after reservation failure: #{reason.message}"
     Success()
   end
 end
@@ -604,10 +598,12 @@ end
 
 ### Compensation Context
 
-Compensation blocks receive three parameters:
-- **Error**: The exception that caused the step to fail
-- **Arguments**: The resolved arguments that were passed to the step
-- **Context**: The full execution context
+A class step's `compensate` is a zero-arg instance method reading three things:
+- **`reason`**: The exception that caused the step to fail
+- **`inputs`**: The resolved arguments that were passed to the step
+- **`context`**: The full execution context
+
+An inline `compensate do |error, arguments, context| ... end` block still receives the same three as positional parameters instead:
 
 ```ruby
 step :process_payment do
@@ -641,13 +637,11 @@ Alongside `Success` and `Failure`, a step can return **`Halt`** — a clean stop
 
 ```ruby
 # Class step
-class SyncProfileStep
-  include RubyReactor::Step
+class SyncProfileStep < RubyReactor::Step
+  def run
+    return Halt(reason: "user_opted_out") if inputs[:user].opted_out?
 
-  def self.run(arguments, _context)
-    return Halt(reason: "user_opted_out") if arguments[:user].opted_out?
-
-    Success(synced: ProfileService.sync(arguments[:user]))
+    Success(synced: ProfileService.sync(inputs[:user]))
   end
 end
 

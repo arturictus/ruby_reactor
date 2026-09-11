@@ -9,16 +9,14 @@ RSpec.describe "Step contract wiring" do
 
   before do
     sink = received
-    stub_const("ProfileStep", Class.new do
-      include RubyReactor::Step
-
+    stub_const("ProfileStep", Class.new(RubyReactor::Step) do
       input :name, :string
       input :email, :string
       input :bio, :string, optional: true
 
-      define_singleton_method(:run) do |args, _|
-        sink << args
-        RubyReactor.Success(args)
+      define_method(:run) do
+        sink << inputs
+        Success(inputs)
       end
     end)
   end
