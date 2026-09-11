@@ -239,7 +239,7 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step] do
     puts "excuting all reactors"
   end
 
@@ -520,6 +520,59 @@ namespace :demo do
     #    fabricated success).
     run_signal_demo("fail! at finalize, rollback through skipped notify",
                      { skip_notify: true, fail_at: :finalize })
+  end
+
+  desc "ValidatedSignupReactor — a step class owns its input contract; the reactor only wires (sync + async_step)"
+  task validated_signup: [:environment, :flush_redis] do
+    valid = { name: "Ada", email: "ada@example.com", age: 36, marketing_opt_in: true }
+
+    def run_validated_signup(name, reactor_class, params)
+      puts "\n>>> Running #{reactor_class.name} [#{name}] (#{params.inspect})"
+      result = reactor_class.call(params)
+
+      if result.success?
+        puts "✅ SUCCESS: #{result.value.inspect}"
+      else
+        puts "❌ FAILED at step=#{result.step_name.inspect} validation_errors=#{result.validation_errors.inspect}"
+      end
+    end
+
+    # 1. Conforming values — :bio is not a reactor input, so the step's default applies.
+    run_validated_signup("valid, bio defaulted", ValidatedSignupReactor, valid)
+
+    # 2. Two contract violations — the step body never runs.
+    run_validated_signup("name too short, under age", ValidatedSignupReactor, valid.merge(name: "A", age: 17))
+
+    # 3. `false` is a provided value, not a missing one.
+    run_validated_signup("marketing_opt_in: false", ValidatedSignupReactor, valid.merge(marketing_opt_in: false))
+
+    # 4. Same step, dispatched with async_step — the contract is enforced in the worker.
+    run_validated_signup("async_step, under age", ValidatedSignupAsyncReactor, valid.merge(age: 17))
+
+    # 5. A direct call enforces the same contract, outside any reactor.
+    puts "\n>>> Calling ValidatedUserStep.run({ age: 17 }, nil) directly"
+    begin
+      ValidatedUserStep.run({ age: 17 }, nil)
+      puts "✅ SUCCESS (unexpected)"
+    rescue RubyReactor::Error::InputValidationError => e
+      puts "❌ RAISED #{e.class} step=#{e.step_name.inspect} field_errors=#{e.field_errors.inspect}"
+    end
+  end
+
+  desc "InheritableStepDemoReactor — a brownfield service wrapped by an inheriting step, fail!-triggered rollback, " \
+       "and a rejected input staying non-retryable"
+  task inheritable_step: [:environment, :flush_redis] do
+    puts "\n>>> Running InheritableStepDemoReactor(user_id: 7) [success]"
+    report_demo_result(InheritableStepDemoReactor.call(user_id: 7))
+
+    puts "\n>>> Running InheritableStepDemoReactor(user_id: 7, fail: true) [forced failure, ChargeStep#undo runs]"
+    report_demo_result(InheritableStepDemoReactor.call(user_id: 7, fail: true))
+    puts "   ChargeStep.refunds: #{ChargeStep.refunds.inspect}"
+
+    puts "\n>>> Running InheritableStepDemoReactor(user_id: 0) [validation failure, LegacyChargeService never instantiated]"
+    result = InheritableStepDemoReactor.call(user_id: 0)
+    puts "❌ FAILED at step=#{result.step_name.inspect} validation_errors=#{result.validation_errors.inspect} " \
+         "retryable?=#{result.retryable?}"
   end
 
   desc "Run coordination demo reactors (locks, semaphores, rate limits, periods)"

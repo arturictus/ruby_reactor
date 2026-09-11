@@ -48,11 +48,9 @@ Reactors are subclasses of `RubyReactor::Reactor`. Declare `input`s, wire up `st
 ```ruby
 require 'ruby_reactor'
 
-class ValidateOrderStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    order = Order.find_by(id: arguments[:order_id])
+class ValidateOrderStep < RubyReactor::Step
+  def run
+    order = Order.find_by(id: inputs[:order_id])
     fail!("Order not found") unless order
     fail!("Order already processed") if order.processed?
 
@@ -60,11 +58,9 @@ class ValidateOrderStep
   end
 end
 
-class ProcessPaymentStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    order = arguments[:order]
+class ProcessPaymentStep < RubyReactor::Step
+  def run
+    order = inputs[:order]
     payment = PaymentService.charge(order.total, order.customer.card_token)
     fail!("Payment failed") unless payment.success?
 
@@ -72,11 +68,9 @@ class ProcessPaymentStep
   end
 end
 
-class UpdateInventoryStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    arguments[:order].items.each do |item|
+class UpdateInventoryStep < RubyReactor::Step
+  def run
+    inputs[:order].items.each do |item|
       InventoryService.decrement(item.product_id, item.quantity)
     end
     Success(inventory_updated: true)
@@ -117,9 +111,9 @@ end
 
 Class steps are the recommended default because they improve **testability** (test `run`/`compensate`/`undo` without the full reactor), **composability** (reuse steps across reactors), and **readability** (reactor files stay orchestration-only as workflows grow). See [Core Concepts — Step Classes](core_concepts.md#step-classes-preferred) for compensation, undo, and the full API.
 
-### Run blocks always receive `(arguments, context)`
+### Two ways to read a step's arguments
 
-Every step's `run` block receives two positional arguments: the resolved arguments hash and the execution context. Use `argument :name, source` to declare which value goes into `args[:name]`.
+A class step's instance `run` takes no parameters — it reads the resolved arguments and the execution context through the `inputs` and `context` readers. An inline `run do |args, context| ... end` block still receives them as two positional arguments instead (unchanged, see [Core Concepts](core_concepts.md#step-classes-preferred)). Either way, `argument :name, source` declares which value shows up under `:name`.
 
 ## Executing a Reactor
 
@@ -190,27 +184,21 @@ For black-box assertions in tests, use the `test_reactor` helper described in [T
 Steps depend on each other through `argument :name, result(:other_step)`. The dependency graph topologically sorts steps; circular dependencies raise `RubyReactor::Error::DependencyError`:
 
 ```ruby
-class ValidateOrderStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    Success(order: validate_order_logic(arguments))
+class ValidateOrderStep < RubyReactor::Step
+  def run
+    Success(order: validate_order_logic(inputs))
   end
 end
 
-class CheckInventoryStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    check_inventory_for_order(arguments[:order])
+class CheckInventoryStep < RubyReactor::Step
+  def run
+    check_inventory_for_order(inputs[:order])
   end
 end
 
-class ProcessPaymentStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    process_payment_for_order(arguments[:order])
+class ProcessPaymentStep < RubyReactor::Step
+  def run
+    process_payment_for_order(inputs[:order])
   end
 end
 
@@ -235,35 +223,31 @@ You can also declare order without data flow using `wait_for :step_name`.
 
 When a step fails (returns `Failure(...)` or raises), the reactor:
 
-1. Runs the **`compensate`** block of the failing step (signature: `|error, arguments, context|`).
-2. Walks back through previously successful steps and runs each one's **`undo`** block in reverse order (signature: `|result, arguments, context|`).
+1. Runs the **`compensate`** of the failing step (a class step's zero-arg instance method reading `reason`/`inputs`/`context`; an inline block's signature stays `|error, arguments, context|`).
+2. Walks back through previously successful steps and runs each one's **`undo`** in reverse order (a class step's zero-arg instance method reading `result`/`inputs`/`context`; an inline block's signature stays `|result, arguments, context|`).
 3. Returns a `Failure`.
 
 ```ruby
-class ProcessPaymentStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    PaymentService.charge(arguments[:order])
+class ProcessPaymentStep < RubyReactor::Step
+  def run
+    PaymentService.charge(inputs[:order])
   end
 
-  def self.undo(result, _arguments, _context)
+  def undo
     # Runs if a later step fails
     PaymentService.refund(result[:payment_id])
     Success()
   end
 end
 
-class UpdateInventoryStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    InventoryService.decrement_all(arguments[:order].items)
+class UpdateInventoryStep < RubyReactor::Step
+  def run
+    InventoryService.decrement_all(inputs[:order].items)
   end
 
-  def self.compensate(_error, arguments, _context)
+  def compensate
     # Runs only if THIS step fails
-    arguments[:order].items.each { |i| InventoryService.increment(i.product_id, i.quantity) }
+    inputs[:order].items.each { |i| InventoryService.increment(i.product_id, i.quantity) }
     Success()
   end
 end

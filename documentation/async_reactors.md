@@ -18,10 +18,8 @@ When a reactor declares `background all: true`, the entire execution happens in 
 ### Configuration
 
 ```ruby
-class ValidateOrderStep
-  include RubyReactor::Step
-
-  def self.run(_arguments, _context)
+class ValidateOrderStep < RubyReactor::Step
+  def run
     validate_order_logic
   end
 end

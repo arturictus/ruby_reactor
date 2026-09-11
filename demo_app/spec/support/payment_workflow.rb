@@ -1,12 +1,10 @@
 # frozen_string_literal: true
 
 module RubyReactor
-  class ReserveInventory
-    include RubyReactor::Step
-
-    def self.run(arguments, _context)
-      order = arguments[:order]
-      fail_at = arguments[:fail_at]
+  class ReserveInventory < RubyReactor::Step
+    def run
+      order = inputs[:order]
+      fail_at = inputs[:fail_at]
 
       if fail_at == :reserve_inventory
         Failure({
@@ -26,13 +24,13 @@ module RubyReactor
     end
 
     # Optional: Implement compensate for rollback on failure
-    def self.compensate(_reason, _arguments, _context)
+    def compensate
       # Add compensation logic here (e.g., release reserved inventory)
       Success("Inventory reservation released")
     end
 
     # Optional: Implement undo for backwalk scenarios
-    def self.undo(_result, _arguments, _context)
+    def undo
       # Add undo logic here if needed
       Success("Inventory reservation undone")
     end

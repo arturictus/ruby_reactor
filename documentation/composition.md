@@ -7,11 +7,9 @@ RubyReactor allows you to compose reactors within other reactors using the `comp
 You can define a composed reactor inline using a block. This is useful for grouping related steps or defining a sub-workflow that doesn't need to be reused elsewhere.
 
 ```ruby
-class ValidateUserStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    User.find(arguments[:user_id])
+class ValidateUserStep < RubyReactor::Step
+  def run
+    User.find(inputs[:user_id])
   end
 end
 
@@ -60,19 +58,15 @@ end
 You can also compose an existing reactor class. This is ideal for reusable workflows.
 
 ```ruby
-class UpdateBioStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    User.update_bio(arguments[:user_id], arguments[:bio])
+class UpdateBioStep < RubyReactor::Step
+  def run
+    User.update_bio(inputs[:user_id], inputs[:bio])
   end
 end
 
-class UpdateAvatarStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    User.update_avatar(arguments[:user_id], arguments[:avatar])
+class UpdateAvatarStep < RubyReactor::Step
+  def run
+    User.update_avatar(inputs[:user_id], inputs[:avatar])
   end
 end
 

@@ -36,6 +36,12 @@ module RubyReactor
           end
       end
 
+      def inputs(*)
+        raise RubyReactor::Error::ValidationError,
+              "interrupt :#{@name} does not take an `inputs` contract; validate the resume payload with " \
+              "`validate_payload`."
+      end
+
       # Deprecated alias for {#validate_payload}.
       def validate(schema = nil, &block)
         unless @warned_validate

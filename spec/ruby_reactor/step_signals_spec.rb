@@ -7,10 +7,8 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
 
   describe "success!" do
     it "ends a class step immediately with Success, ignoring code after the call" do
-      step_class = Class.new do
-        include RubyReactor::Step
-
-        def self.run(_args, _ctx)
+      step_class = Class.new(RubyReactor::Step) do
+        def run
           success!(:v)
           UNREACHABLE.call
         end
@@ -40,10 +38,8 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
 
   describe "skip!" do
     it "ends a class step immediately with Skipped, ignoring code after the call" do
-      step_class = Class.new do
-        include RubyReactor::Step
-
-        def self.run(_args, _ctx)
+      step_class = Class.new(RubyReactor::Step) do
+        def run
           skip!(:v)
           UNREACHABLE.call
         end
@@ -81,10 +77,8 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
 
   describe "fail!" do
     it "ends a class step immediately with Failure, ignoring code after the call" do
-      step_class = Class.new do
-        include RubyReactor::Step
-
-        def self.run(_args, _ctx)
+      step_class = Class.new(RubyReactor::Step) do
+        def run
           fail!(StandardError.new("boom"))
           UNREACHABLE.call
         end
@@ -112,10 +106,8 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
 
   describe "halt!" do
     it "ends a class step immediately with Halt, ignoring code after the call" do
-      step_class = Class.new do
-        include RubyReactor::Step
-
-        def self.run(_args, _ctx)
+      step_class = Class.new(RubyReactor::Step) do
+        def run
           halt!(reason: "done")
           UNREACHABLE.call
         end
@@ -145,15 +137,13 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
 
   describe "any call depth" do
     it "ends the step when called from a nested method" do
-      step_class = Class.new do
-        include RubyReactor::Step
-
-        def self.run(args, _context)
-          check!(args)
+      step_class = Class.new(RubyReactor::Step) do
+        def run
+          check!(inputs)
           UNREACHABLE.call
         end
 
-        def self.check!(args)
+        def check!(args)
           fail!("nope") unless args[:ok]
         end
       end
@@ -189,14 +179,12 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
 
   describe "compensate and undo bodies" do
     it "is usable inside a class step's compensate" do
-      step_class = Class.new do
-        include RubyReactor::Step
-
-        def self.run(_args, _ctx)
+      step_class = Class.new(RubyReactor::Step) do
+        def run
           Failure("boom")
         end
 
-        def self.compensate(_reason, _args, _ctx)
+        def compensate
           success!(:compensated)
         end
       end
@@ -207,14 +195,12 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
     end
 
     it "is usable inside a class step's undo" do
-      step_class = Class.new do
-        include RubyReactor::Step
-
-        def self.run(_args, _ctx)
+      step_class = Class.new(RubyReactor::Step) do
+        def run
           Success(:done)
         end
 
-        def self.undo(_result, _args, _ctx)
+        def undo
           success!(:undone)
         end
       end
@@ -227,10 +213,8 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
 
   describe "the Skipped migration guard applies to skip! too" do
     it "raises ArgumentError when called with only reason:" do
-      step_class = Class.new do
-        include RubyReactor::Step
-
-        def self.run(_args, _ctx)
+      step_class = Class.new(RubyReactor::Step) do
+        def run
           skip!(reason: "x")
         end
       end
@@ -239,10 +223,8 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
     end
 
     it "passes an explicit hash through as the skipped value" do
-      step_class = Class.new do
-        include RubyReactor::Step
-
-        def self.run(_args, _ctx)
+      step_class = Class.new(RubyReactor::Step) do
+        def run
           skip!({ reason: "x" })
         end
       end

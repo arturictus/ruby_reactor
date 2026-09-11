@@ -54,7 +54,7 @@ RSpec.describe RubyReactor::Step::MapStep do
     )
   end
 
-  describe ".run_async" do
+  describe "#run_async (private, dispatch path)" do
     let(:source) { [1, 2, 3] }
     let(:arguments) do
       {
@@ -68,10 +68,10 @@ RSpec.describe RubyReactor::Step::MapStep do
 
     context "when source is an array" do
       it "uses size to count elements" do
-        allow(described_class).to receive(:queue_map_element).and_return("job_id")
-        allow(described_class).to receive(:queue_collector)
+        step = described_class.new(arguments, context)
+        allow(step).to receive(:queue_collector)
 
-        described_class.send(:run_async, arguments, context, :test_step)
+        step.send(:run_async, :test_step)
 
         # Verify side effects in Redis
         map_id = "test-context-id:test_step"
@@ -97,10 +97,10 @@ RSpec.describe RubyReactor::Step::MapStep do
       end
 
       it "uses size successfully" do
-        allow(described_class).to receive(:queue_map_element).and_return("job_id")
-        allow(described_class).to receive(:queue_collector)
+        step = described_class.new(arguments, context)
+        allow(step).to receive(:queue_collector)
 
-        described_class.send(:run_async, arguments, context, :test_step)
+        step.send(:run_async, :test_step)
 
         map_id = "test-context-id:test_step"
         metadata = storage_adapter.retrieve_map_metadata(map_id, "TestReactor")
@@ -125,10 +125,10 @@ RSpec.describe RubyReactor::Step::MapStep do
         # Setup expectations as allowances for spies
         allow(source).to receive(:size).and_return(10)
 
-        allow(described_class).to receive(:queue_map_element).and_return("job_id")
-        allow(described_class).to receive(:queue_collector)
+        step = described_class.new(arguments, context)
+        allow(step).to receive(:queue_collector)
 
-        described_class.send(:run_async, arguments, context, :test_step)
+        step.send(:run_async, :test_step)
 
         expect(source).to have_received(:size).at_least(:once)
         expect(source).not_to have_received(:count)

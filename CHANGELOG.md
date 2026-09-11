@@ -1,5 +1,123 @@
 # Changelog
 
+## Unreleased
+
+### ⚠ BREAKING CHANGES
+
+* **`RubyReactor::Step` is now a base class, not a mixin.** `include RubyReactor::Step` on a
+  plain class with `def self.run(arguments, context)` is gone — no compatibility shim, no dual
+  authoring style. A step subclasses `RubyReactor::Step` and writes `run` (and optionally
+  `compensate`/`undo`) as **instance** methods reading the validated arguments and the context
+  through `inputs`/`context` accessors instead of parameters. Every instance is built fresh for
+  its one action (`run`, `undo`, or `compensate`) from the stored arguments/result/reason alone —
+  nothing an author sets in `run` is visible in a later `undo`/`compensate`, which is exactly what
+  makes rollback behave identically whether it lands in the same process as `run` or, as with an
+  `async_step`, in a separate later one. `inputs` holds the same values in all three actions: the
+  arguments with the contract's defaults applied. Only `run` enforces the contract; `undo` and
+  `compensate` never do, so rollback cannot fail on the inputs that caused the failure.
+
+  ```ruby
+  # Before
+  class ChargeStep
+    include RubyReactor::Step
+
+    input :amount, :integer, gteq?: 1
+
+    def self.run(arguments, context)
+      Success(charge!(arguments[:amount]))
+    end
+
+    def self.undo(result, arguments, context)
+      refund!(result[:charge_id])
+      Success()
+    end
+  end
+
+  # After
+  class ChargeStep < RubyReactor::Step
+    input :amount, :integer, gteq?: 1
+
+    def run
+      Success(charge!(inputs[:amount]))
+    end
+
+    def undo
+      refund!(result[:charge_id])
+      Success()
+    end
+  end
+  ```
+
+  **Migration:** for every class step, replace `include RubyReactor::Step` with
+  `< RubyReactor::Step`, turn `def self.run(args, ctx)` into `def run` reading `inputs`/`context`,
+  and likewise for `def self.undo(result, args, ctx)` / `def self.compensate(reason, args, ctx)` →
+  `def undo` / `def compensate` reading `result`/`reason`/`inputs`/`context`. The class-level
+  `MyStep.run(arguments, context)` / `.call` / `.undo(result, arguments, context)` /
+  `.compensate(reason, arguments, context)` entry points every caller (executor, worker, a direct
+  unit-test call) already used are unchanged. Inline `step { run { |args, ctx| ... } }` blocks are
+  untouched by this change.
+
+* **A class step's signal helpers (`success!`/`fail!`/`skip!`/`halt!`) now translate correctly on
+  every execution path, including the `async_step`/`background` worker.** Previously the worker had
+  no `catch` of its own, so a signal thrown from a class step running there escaped as an
+  `UncaughtThrowError` instead of the intended `Success`/`Failure`/`Skipped`/`Halt` — the base
+  class's class-level `run`/`undo`/`compensate` now own that translation, so every caller gets it
+  for free with no worker change. Known remaining gap, unchanged by this release: an **inline**
+  `run`/`compensate`/`undo` block's signals are still uncaught on the worker path.
+
+* **A step's own input-validation failure is now guaranteed non-retryable on every path.**
+  `result.retryable?` is `false` whether the violation happened synchronously, inside an
+  `async_step`/`background` worker, or inside a `compose`d child's own step — previously only the
+  async worker path got this right; the synchronous path and a validation failure surfacing
+  through `compose` both defaulted to `retryable? == true`.
+
+* **`Failure(...)` takes the same arguments everywhere.** Inside a class step and inside an inline
+  `run`/`compensate`/`undo` block, `Failure` now forwards every argument to `RubyReactor.Failure`,
+  so options such as `Failure("declined", retryable: false)` work instead of raising
+  `ArgumentError`. A bare `Failure()` with no error is no longer accepted, matching
+  `RubyReactor.Failure`, and a hash error needs braces, `Failure({ code: 1 })`, because a braceless
+  `Failure(code: 1)` is now read as options.
+
+### Features
+
+* **Step input contracts.** A step class declares its own inputs with `input :name, :type, **predicates`
+  (plus `optional:`, `default:`, `redact:`, the `do |i| ... end` macro block and `validate:`) and
+  cross-field rules with `validate_inputs`. The contract is enforced before `run` on every path
+  (inline, retries, `async_step` and `background` workers, resume, `map`, and a direct
+  `Step.run(args, context)` call), and a violation fails with `validation_errors` and the step's
+  name after completed steps are rolled back. Subclasses inherit and extend the contract.
+  Introspection: `input_contract`, `declared_inputs`, `required_input_names`, `declares_inputs?`.
+* **Inline step contracts.** `inputs do ... end` inside a `step` block takes the same `input` /
+  `validate_inputs` lines as a step class and is enforced the same way.
+* **Wiring by name.** A declared input with no `argument` resolves from the reactor input of the
+  same name (never from a step result). A required input that is neither wired nor a reactor input
+  raises `Error::ValidationError` before any step runs. `Reactor.validate_definition!` runs that
+  check on demand, e.g. from an initializer or CI.
+* For a step that owns a contract, a type or predicate on `argument`, `validate_args`, or an
+  `argument` for an undeclared input raises `Error::ValidationError` when the `step` line is
+  evaluated.
+* `have_validation_error` now also matches validation failures raised at a step, not only
+  reactor-input failures.
+* `Failure#to_h` includes `retryable`, so a non-retryable failure stays non-retryable after it
+  crosses a worker boundary.
+* A step that returns another unit's validation failure (e.g. an `async_step` reader propagating
+  the worker's `Failure`) keeps its `validation_errors` on the reactor's final failure.
+
+### Deprecations
+
+* Rules on `argument` (`argument :x, src, :type, **predicates`) and `validate_args` keep working
+  for steps without a contract, and print one deprecation notice per declaration site. Move them
+  to `input` / `validate_inputs` on the step class, or into an `inputs do ... end` block for an
+  inline step, and keep `argument :x, src` for wiring. Removal is no earlier than the next major
+  version. See "Step Input Contracts" in the README for the migration.
+
+### Bug Fixes
+
+* A supplied `false` reactor input or step result no longer resolves to `nil`.
+  `Context#get_input`, `Context#get_result` and `Template::Result#fetch` now check whether the key
+  exists instead of whether the value is truthy. Code that relied on `false` arriving as `nil`
+  will now see `false`.
+
 ## [0.7.0](https://github.com/arturictus/ruby_reactor/compare/v0.6.0...v0.7.0) (2026-09-08)
 
 

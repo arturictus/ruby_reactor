@@ -36,6 +36,23 @@ module RubyReactor
         RubyReactor::Validation::InputValidator.new(schema)
       end
 
+      # Dispatch across the layered `input` forms, shared by reactor inputs and
+      # step input contracts:
+      #   Form 3 — pre-built schema / contract (`validate:`)
+      #   Form 2 — block bound to the value macro (`do |i| ... end`)
+      #   legacy — single-key schema block (`do required(:name)... end`)
+      #   Form 1 / 1b — inline scalar or class type
+      #   Form 0 — declaration only (no validator)
+      def build_declaration_validator(name, type, optional, validate, predicates, &block)
+        if validate
+          create_input_validator(validate)
+        elsif block
+          block.arity.nonzero? ? build_macro_validator(name, optional, &block) : create_input_validator(block)
+        elsif type || predicates.any?
+          build_inline_validator(name, type, optional, predicates)
+        end
+      end
+
       # Compose per-argument inline rules with an optional `validate_args`
       # block / pre-built schema. Returns nil when there is nothing to validate.
       def build_args_validator(inline_rules, validate_input)

@@ -9,11 +9,9 @@ require "spec_helper"
 RSpec.describe "Halt helper parity" do
   describe "inside a class step" do
     let(:step_class) do
-      Class.new do
-        include RubyReactor::Step
-
-        def self.run(arguments, _context)
-          arguments[:skip] ? Halt(reason: "class_step") : Success(:done)
+      Class.new(RubyReactor::Step) do
+        def run
+          inputs[:skip] ? Halt(reason: "class_step") : Success(:done)
         end
       end
     end

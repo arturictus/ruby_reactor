@@ -64,7 +64,7 @@ module RubyReactor
     end
 
     def get_input(name, path = nil)
-      value = @inputs[name.to_sym] || @inputs[name.to_s]
+      value = Utils::FetchIndifferent.call(@inputs, name)
       return nil if value.nil?
 
       if path
@@ -76,7 +76,7 @@ module RubyReactor
     alias input get_input
 
     def get_result(step_name, path = nil)
-      value = @intermediate_results[step_name.to_sym] || @intermediate_results[step_name.to_s]
+      value = Utils::FetchIndifferent.call(@intermediate_results, step_name)
       return nil if value.nil?
 
       if path

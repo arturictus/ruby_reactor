@@ -82,25 +82,11 @@ module RubyReactor
           input_validations[name] = validator if validator
         end
 
-        # Dispatch across the layered `input` forms:
-        #   Form 3 — pre-built schema / contract (`validate:`)
-        #   Form 2 — block bound to the value macro (`do |i| ... end`)
-        #   legacy — single-key schema block (`do required(:name)... end`)
-        #   Form 1 / 1b — inline scalar or class type
-        #   Form 0 — declaration only (no validator)
+        # The legacy single-key schema block is deprecated on reactor inputs
+        # only; the form dispatch itself is shared with step input contracts.
         def build_input_validator_for(name, type, optional, validate, predicates, &block)
-          if validate
-            create_input_validator(validate)
-          elsif block
-            if block.arity.nonzero?
-              build_macro_validator(name, optional, &block)
-            else
-              warn_deprecated_input_block
-              create_input_validator(block)
-            end
-          elsif type || predicates.any?
-            build_inline_validator(name, type, optional, predicates)
-          end
+          warn_deprecated_input_block if !validate && block&.arity&.zero?
+          build_declaration_validator(name, type, optional, validate, predicates, &block)
         end
         private :build_input_validator_for
 
@@ -162,6 +148,42 @@ module RubyReactor
           steps[name] = step_config
           step_config
         end
+
+        # Checks that every required input of every contract-owning step is
+        # satisfied, and wires the unwired ones from same-named reactor inputs
+        # (never from step results). Runs before the first execution because
+        # the reactor's full input list is only known once its body has run;
+        # public so an app can call it at boot or in CI.
+        # ponytail: a reactor reopened after its first run is not re-checked
+        def validate_definition!
+          return if @definition_validated
+
+          steps.each do |step_name, step_config|
+            contract = step_config.input_contract if step_config.respond_to?(:input_contract)
+            next unless contract
+
+            contract.declarations.each_value do |declaration|
+              wire_by_name!(step_name, step_config, declaration)
+            end
+          end
+          @definition_validated = true
+        end
+
+        def wire_by_name!(step_name, step_config, declaration)
+          input_name = declaration.name
+          return if step_config.arguments.key?(input_name)
+
+          if inputs.key?(input_name)
+            step_config.arguments[input_name] =
+              { source: RubyReactor::Template::Input.new(input_name), transform: nil, origin: :inferred }
+          elsif !declaration.optional
+            raise RubyReactor::Error::ValidationError,
+                  "#{name || inspect} step :#{step_name} requires input :#{input_name}, which is neither wired " \
+                  "nor a reactor input. Wire it (`argument :#{input_name}, input(:x)` / `result(:step)`) or " \
+                  "declare `input :#{input_name}` on the reactor."
+          end
+        end
+        private :wire_by_name!
 
         def returns(step_name = nil)
           if step_name
