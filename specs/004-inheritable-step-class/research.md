@@ -249,6 +249,60 @@ concern.
   for this change: seven reference edits plus rename churn for zero user-visible benefit.
   Worth revisiting only if a fourth built-in step appears (Principle V).
 
+## D10: Input-validation failures are non-retryable everywhere, enforced once
+
+**Decision**: Give `Error::InputValidationError` its own `retryable?` method returning
+`false`, mirroring the existing `Error::StepFailureError#retryable?` pattern
+(`lib/ruby_reactor/error/step_failure_error.rb`).
+
+**Rationale — a real, verified gap, not a hypothetical**: `RubyReactor::Failure.new`
+already defaults `retryable` from the wrapped error when no explicit `retryable:`/`retry:`
+kwarg is given (`lib/ruby_reactor.rb:164-168`:
+`@error.respond_to?(:retryable?) ? @error.retryable? : true`). Three places build a
+`Failure` from an `Error::InputValidationError`:
+
+| Call site | Passes `retryable:` explicitly? | Result today |
+|---|---|---|
+| `StepWorker#execute_step_body` rescue (`step_worker.rb:128-133`, the `async_step`/`background` path) | Yes — `retryable: false` | Correct, and covered by a passing spec (`spec/ruby_reactor/step_contract_async_spec.rb:24-33,59`) |
+| `Executor::ResultHandler#build_validation_failure` (`result_handler.rb:70-82`, the **synchronous** path — the default way almost every reactor runs) | No | `InputValidationError` has no `retryable?` today → defaults to `true` — **wrong**, no test catches it |
+| `Step::ComposeStep#handle_execution_result` (`compose_step.rb`, re-wraps a composed child's failure as `RubyReactor.Failure(result.error)`) | No | Same default → `true` — **wrong**, a validation failure inside a `compose`d child currently looks retryable to the parent |
+
+A single `retryable?` method on the error class fixes all three by construction: the two
+call sites that pass nothing now inherit the correct answer from the error itself, and
+the one call site that already passes `retryable: false` keeps doing so redundantly
+(explicit always wins — no behavior change there, no need to touch that file). Any future
+call site that wraps this error class in a `Failure` without thinking about retryability
+gets the right answer for free — this is the same reasoning as D1/D4: put the guarantee
+on the one object that knows it's true, not on every caller.
+
+**Verified safe**: no existing spec asserts `retryable?` true for an
+`InputValidationError`-derived `Failure`; the one comment that looks related
+(`spec/ruby_reactor/interrupt_spec.rb:62`, "`Should raise validation error (retryable)`")
+is about a raised exception on interrupt resume being retriable by resubmitting a
+corrected payload — a different mechanism, not a `Failure#retryable?` flag — and is
+unaffected (confirmed next paragraph).
+
+**Explicitly out of scope**: `Reactor#continue`'s own rescue at `reactor.rb:190-193`
+(interrupt/resume payload validation) builds `RubyReactor::Failure(e.message, ...)` from
+the error's **message string**, not the error object, so this fix does not reach it and
+`String#respond_to?(:retryable?)` stays `false` → still defaults to `true` there. That is
+a distinct, intentional mechanism (a human resubmits a corrected payload; "retryable" is
+the right word for it) unrelated to a step's own input contract, and outside what "step
+validations" in this feature's scope means. Not changed here.
+
+**Alternatives considered**:
+- *Add `retryable: false` explicitly at `build_validation_failure` and
+  `handle_execution_result`* — rejected: fixes the two known sites but not the next one
+  (Principle V: fix the property once, not the symptom twice); also a currently-passing
+  spec fixture (`spec/ruby_reactor/step_contract_enforcement_spec.rb`) constructs
+  `InputValidationError` directly in a few places without going through either helper, and
+  a class-level `retryable?` is the only fix that covers those uses too, e.g. a future
+  direct `RubyReactor::Failure(e)` written by a test helper.
+- *Check `error.is_a?(Error::InputValidationError)` inside `RubyReactor::Failure#initialize`
+  itself* — rejected: `lib/ruby_reactor.rb` already uses the `respond_to?(:retryable?)`
+  protocol precisely so it never needs to know about individual error subclasses; adding a
+  type check there would be a regression of that existing design, not a fix.
+
 ## Outcome
 
 All unknowns resolved. No `NEEDS CLARIFICATION` remains. Proceeding to Phase 1.

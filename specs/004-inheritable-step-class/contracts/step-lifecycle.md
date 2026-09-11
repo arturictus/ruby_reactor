@@ -65,6 +65,9 @@ RubyReactor::Step.compensate(reason, arguments, context) # => Success/Failure/Ha
   `step_arguments` set) when the declared contract rejects `arguments`, before the
   instance's `run` method executes (FR-006) — same error class and same attributes as
   today, only relocated internally (D-series decisions in research.md).
+- That error's `retryable?` **MUST** be `false` (FR-017, research.md D10), so any `Failure`
+  built from it — on the synchronous path, the async worker, or surfaced through a
+  composed reactor — is non-retryable without its caller having to say so.
 - An ordinary (non-signal) exception raised inside `run`/`undo`/`compensate` **MUST**
   propagate unchanged — this contract governs signals and validation only.
 

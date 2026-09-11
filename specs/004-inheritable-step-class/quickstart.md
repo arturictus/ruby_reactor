@@ -23,6 +23,12 @@ ctx = RubyReactor::Context.new({})
 QuickstartStep.run({ amount: 10 }, ctx)   # => Success(charged: 10)
 QuickstartStep.run({ amount: 200 }, ctx)  # => Failure("too much")
 QuickstartStep.run({ amount: -1 }, ctx)   # raises RubyReactor::Error::InputValidationError, step_name "QuickstartStep"
+
+# Through a reactor, that raised error becomes a Failure — confirm it is non-retryable
+# (research.md D10): the same invalid amount would fail identically on a retry.
+reactor = Class.new(RubyReactor::Reactor) { input :amount; step :charge, QuickstartStep }
+result = reactor.run(amount: -1)
+result.retryable?  # => false
 ```
 
 Expected: first call succeeds with the body's value; second call returns the `fail!`

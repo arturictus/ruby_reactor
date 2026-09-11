@@ -79,12 +79,18 @@ No structural change. Still owns `declarations`, `cross_field_validators`, `#enf
 scenario in the prior feature (002-step-input-contracts) that exercises `InputContract`
 directly is unaffected.
 
-## Result wrapper / Signal (existing, unchanged)
+## Result wrapper / Signal (existing, mostly unchanged)
 
 `Success`, `Failure`, `Halt`, `Skipped` (module-level constructors in `RubyReactor`) and
 `StepSignals::TAG` throw/catch mechanism are unchanged in shape and semantics — this
 feature only relocates *where* the `catch(StepSignals::TAG)` for a class-based step's own
 body lives (D4), not what a signal means or how it is thrown.
+
+One property is fixed, not just relocated: a `Failure` built from a validation error is
+always non-retryable (`retryable?` returns `false`), regardless of which execution path
+produced it. This is enforced once, on `Error::InputValidationError#retryable?` itself
+(research.md D10) — `RubyReactor::Failure` already asks the wrapped error object, so no
+call site (synchronous executor, async worker, compose) has to remember to say so.
 
 ## Relationships
 

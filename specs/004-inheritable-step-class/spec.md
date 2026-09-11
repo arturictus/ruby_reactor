@@ -38,7 +38,9 @@ the second — with the body never running in the failure case.
    success wrapper.
 2. **Given** the same subclass, **When** invoked with values that violate the contract,
    **Then** the invocation fails with a validation error naming the step and the offending
-   fields, and the body never runs.
+   fields, the body never runs, and the resulting failure is marked non-retryable — the
+   same invalid values would fail identically on a retry, so no automatic retry path may
+   attempt the body.
 3. **Given** a subclass whose body calls `fail!("nop")`, **When** the step is invoked,
    **Then** the invocation returns a failure wrapper carrying `"nop"` — the signal does not
    escape as an exception to the caller.
@@ -178,6 +180,11 @@ printed outcomes as before the refactor.
 - Run and rollback happen in different processes (asynchronous execution): undo and
   compensation must not rely on instance state left over from the run, only on the stored
   values, result, and context they are given.
+- A step's validation failure reaches the caller by a route other than the dispatching
+  process's own failure result — surfaced through a composed reactor, or reported by an
+  `async_step`/`background` worker: it is non-retryable through that route too, not only
+  when the validation happens to fail in the same process that will decide whether to
+  retry it.
 - A subclass defines its own class-level entry point: it replaces the lifecycle for that
   class (validation included) and this is documented as deliberately unsupported behaviour
   rather than silently patched around.
@@ -210,6 +217,10 @@ printed outcomes as before the refactor.
   result wrapper.
 - **FR-006**: Input validation failures MUST be reported as the existing structured
   validation error carrying the step name and field errors, and the body MUST NOT run.
+  The resulting failure MUST report itself as non-retryable, on every path that can
+  produce one from it — a direct synchronous run, an asynchronous worker, and a step
+  surfaced through a composed reactor — without each of those paths having to say so
+  individually.
 - **FR-007**: Signals (`success!`, `skip!`, `fail!`, `halt!`) thrown anywhere inside the
   body, undo, or compensation MUST be translated at the class-level entry point into the
   matching result wrapper. Callers MUST never observe the signal mechanism.
@@ -238,6 +249,12 @@ printed outcomes as before the refactor.
   style end-to-end, including its failure/rollback path and a brownfield service adapter,
   registered as a `demo:` rake task with a matching spec that uses only the shipped test
   surface.
+- **FR-017**: A step's input-validation failure MUST be non-retryable as a single,
+  centrally-enforced property of that failure — not a flag every caller that builds a
+  result from it has to remember to set — so that a future execution path gets the
+  guarantee automatically. This closes a gap found while implementing this feature: today
+  only the asynchronous worker path sets this explicitly; the synchronous path and a
+  validation failure surfaced through `compose` currently default to retryable, silently.
 
 ### Key Entities
 
