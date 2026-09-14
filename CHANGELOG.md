@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/arturictus/ruby_reactor/compare/v0.7.0...v0.7.1) (2026-09-14)
+
+
+### Features
+
+* reactor signal semantics ([#52](https://github.com/arturictus/ruby_reactor/issues/52)) ([9147d06](https://github.com/arturictus/ruby_reactor/commit/9147d066da603c0afc1af6536b6afac7e165a034))
+
 ## [0.7.0](https://github.com/arturictus/ruby_reactor/compare/v0.6.0...v0.7.0) (2026-09-08)
 
 
