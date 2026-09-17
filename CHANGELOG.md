@@ -117,6 +117,17 @@
   `Context#get_input`, `Context#get_result` and `Template::Result#fetch` now check whether the key
   exists instead of whether the value is truthy. Code that relied on `false` arriving as `nil`
   will now see `false`.
+* An input-validation `Failure` stays non-retryable across serialization. `Failure`'s
+  hash extractor and the reactor's stored `failure_reason` both dropped a `retryable: false`
+  (`||` swallowed the `false`, and the reactor never stored the flag at all), so a failure
+  rebuilt from JSON or reloaded with `Reactor.find` reported `retryable? == true`.
+* A step-contract violation inside `compose` now reaches the parent with its `validation_errors`
+  and retryability intact, instead of being rebuilt from the child's error message alone.
+* A reactor reopened after its first run is re-checked: `validate_definition!` no longer memoizes,
+  so a step declared later can no longer reach execution with a required input unwired.
+* A class step that calls `halt!` under `async_step` is recorded as a halt rather than an
+  ordinary `nil` success, and `result(:step)` hands the reader the `Halt` — the same way it
+  already hands over a `Failure`.
 
 ## [0.7.0](https://github.com/arturictus/ruby_reactor/compare/v0.6.0...v0.7.0) (2026-09-08)
 

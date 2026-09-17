@@ -154,10 +154,7 @@ module RubyReactor
         # (never from step results). Runs before the first execution because
         # the reactor's full input list is only known once its body has run;
         # public so an app can call it at boot or in CI.
-        # ponytail: a reactor reopened after its first run is not re-checked
         def validate_definition!
-          return if @definition_validated
-
           steps.each do |step_name, step_config|
             contract = step_config.input_contract if step_config.respond_to?(:input_contract)
             next unless contract
@@ -166,7 +163,6 @@ module RubyReactor
               wire_by_name!(step_name, step_config, declaration)
             end
           end
-          @definition_validated = true
         end
 
         def wire_by_name!(step_name, step_config, declaration)

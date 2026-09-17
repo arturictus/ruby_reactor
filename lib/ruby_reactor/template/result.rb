@@ -76,7 +76,14 @@ module RubyReactor
         end
 
         value = ContextSerializer.deserialize_value(fetch(record, :result))
-        return value if fetch(record, :success)
+        if fetch(record, :success)
+          # Same rule as Failure below: a halt has no same-process equivalent
+          # for a reader to mirror, so hand over the signal itself.
+          return RubyReactor.Halt(reason: fetch(record, :reason), step_name: @step_name) if
+            fetch(record, :signal).to_s == "halt"
+
+          return value
+        end
 
         RubyReactor::Failure.new(value)
       end

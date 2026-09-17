@@ -91,11 +91,12 @@ module RubyReactor
       def handle_execution_result(result)
         return result if result.is_a?(RubyReactor::DispatchResult) || result.is_a?(RubyReactor::RetryQueuedResult)
 
-        if result.success?
-          RubyReactor.Success(result.value)
-        else
-          RubyReactor.Failure(result.error)
-        end
+        # Hand the child's Failure through untouched: rebuilding it from
+        # `error` alone drops validation_errors, retryability and the rest of
+        # the metadata the direct and async paths do propagate.
+        return result if result.is_a?(RubyReactor::Failure)
+
+        result.success? ? RubyReactor.Success(result.value) : RubyReactor.Failure(result.error)
       end
     end
   end

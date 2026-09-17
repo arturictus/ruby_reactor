@@ -168,16 +168,21 @@ module RubyReactor
     # Write first, publish second. The record is the answer; the signal only
     # saves the reader a fallback interval.
     def complete(result, context)
-      storage.store_step_result(
-        @step_context_id, @step_name,
-        {
-          "status" => "completed",
-          "success" => result.success?,
-          "result" => ContextSerializer.serialize_value(result.success? ? result.value : result.to_h),
-          "completed_at" => Time.now.iso8601
-        },
-        @reactor_class_name
-      )
+      record = {
+        "status" => "completed",
+        "success" => result.success?,
+        "result" => ContextSerializer.serialize_value(result.success? ? result.value : result.to_h),
+        "completed_at" => Time.now.iso8601
+      }
+      # A `halt!` reports success? == true but carries no value, so without
+      # this the reader cannot tell it from an ordinary success returning nil.
+      # `skip!` needs nothing extra: Skipped keeps its value, and the reader is
+      # meant to see that value exactly as a same-process step would.
+      if result.is_a?(RubyReactor::Halt)
+        record["signal"] = "halt"
+        record["reason"] = result.reason
+      end
+      storage.store_step_result(@step_context_id, @step_name, record, @reactor_class_name)
       log(result.success? ? :info : :warn, result.success? ? "completed" : "completed_with_failure")
       storage.publish(RubyReactor.async_step_channel(@step_context_id, @step_name), "done")
       result

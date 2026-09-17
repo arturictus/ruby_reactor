@@ -12,16 +12,14 @@ the key proc receives: **the step's resolved arguments**, where the reactor form
 reactor's inputs.
 
 ```ruby
-class ChargeStep
-  include RubyReactor::Step
-
+class ChargeStep < RubyReactor::Step
   input :account_id
   input :amount
 
   with_lock(ttl: 60, wait: 0, auto_extend: true) { |args| "acct:#{args[:account_id]}" }
 
-  def self.run(args, context)
-    Success(charge!(args))
+  def run
+    Success(charge!(inputs))
   end
 end
 ```

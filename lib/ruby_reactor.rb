@@ -317,8 +317,10 @@ module RubyReactor
     end
 
     def extract_attributes_from_hash(error_hash)
-      # Ensure indifferent access
-      err = ->(k) { error_hash[k.to_s] || error_hash[k.to_sym] }
+      # Presence-aware indifferent access: a serialized `false` (notably
+      # `retryable: false` on a validation failure) must survive the round trip
+      # rather than be swallowed by an `||` fallback into nil.
+      err = ->(k) { Utils::FetchIndifferent.call(error_hash, k) }
 
       {
         error: err[:message] || err[:error] || error_hash,

@@ -20,16 +20,14 @@ docker compose up -d demo-redis sidekiq      # demo app + a real worker
 ## Scenario 1 — one step serializes, the workflow does not (US1, US2)
 
 ```ruby
-class ChargeStep
-  include RubyReactor::Step
-
+class ChargeStep < RubyReactor::Step
   input :account_id
   input :amount
 
   with_lock { |args| "acct:#{args[:account_id]}" }
 
-  def self.run(args, _ctx)
-    Success(charge!(args))
+  def run
+    Success(charge!(inputs))
   end
 end
 

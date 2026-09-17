@@ -84,7 +84,6 @@ module RubyReactor
       end
     end
 
-    # rubocop:disable Metrics/MethodLength
     def run(inputs = {})
       # Before the context exists, so an incomplete definition never saves one.
       self.class.validate_definition!
@@ -95,13 +94,7 @@ module RubyReactor
       # Validate inputs
       validation_result = self.class.validate_inputs(inputs)
       if validation_result.failure?
-        @result = validation_result
-        @context.status = "failed"
-        @context.failure_reason = {
-          message: validation_result.error.message,
-          validation_errors: validation_result.error.field_errors
-        }
-        save_context
+        handle_validation_failure(validation_result)
         return validation_result
       end
 
@@ -147,7 +140,6 @@ module RubyReactor
       end
       @result
     end
-    # rubocop:enable Metrics/MethodLength, Metrics/AbcSize
 
     def continue(payload:, step_name:, idempotency_key: nil)
       _ = idempotency_key
@@ -273,8 +265,9 @@ module RubyReactor
       reason = @context.failure_reason || {}
       return reason if reason.is_a?(RubyReactor::Failure)
 
-      # Use string keys preferred, fallback to symbol
-      r = ->(k) { reason[k.to_s] || reason[k.to_sym] }
+      # Presence-aware: a stored `retryable: false` must not be swallowed by an
+      # `||` fallback and silently default back to retryable.
+      r = ->(k) { Utils::FetchIndifferent.call(reason, k) }
 
       Failure.new(
         r[:message],
@@ -317,7 +310,8 @@ module RubyReactor
       @context.status = "failed"
       @context.failure_reason = {
         message: result.error.message,
-        validation_errors: result.error.field_errors
+        validation_errors: result.error.field_errors,
+        retryable: result.retryable?
       }
       save_context
     end
