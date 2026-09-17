@@ -156,12 +156,9 @@ module RubyReactor
           subject.ensure_executed!
           return false unless subject.failure?
 
-          # Try to get validation errors from failure reason
-          reason = subject.reactor_instance.context.failure_reason || {}
-
-          # If failure is InputValidationError, it might be serialized differently
-          # Or stored in validation_errors key
-          errors = reason["validation_errors"] || reason[:validation_errors]
+          # `result` normalizes both failure shapes — a reactor-input failure
+          # stored as a hash, and a step failure stored as a Failure.
+          errors = subject.result.validation_errors
 
           if errors
             errors.key?(field.to_s) || errors.key?(field.to_sym)

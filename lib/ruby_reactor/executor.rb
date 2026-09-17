@@ -19,6 +19,9 @@ module RubyReactor
                 :step_executor, :result, :middlewares
 
     def initialize(reactor_class, inputs = {}, context = nil)
+      # Resume, map, compose and background workers build an Executor without
+      # going through Reactor#run; the inferred wiring must exist there too.
+      reactor_class.validate_definition! if reactor_class.respond_to?(:validate_definition!)
       @reactor_class = reactor_class
       @context = context || Context.new(inputs, reactor_class)
       @middlewares = Executor.middlewares_for(reactor_class)

@@ -146,4 +146,57 @@ RSpec.describe "Compose" do
     # The child context should have the retry state
     expect(child_context.retry_context.attempts_for_step(:get_linkedin)).to eq(1)
   end
+
+  describe "rolling back a composed reactor" do
+    let(:undone) { [] }
+
+    before do
+      log = undone
+      stub_const("RollbackChildReactor", Class.new(RubyReactor::Reactor) do
+        input :fail_at
+
+        step :reserve do
+          run { RubyReactor::Success(:reserved) }
+          undo do |_result, _args, _context|
+            log << :reserve
+            RubyReactor::Success()
+          end
+        end
+
+        step :confirm do
+          argument :fail_at, input(:fail_at)
+          wait_for :reserve
+          run do |args, _context|
+            args[:fail_at] == "child" ? RubyReactor::Failure("child failed") : RubyReactor::Success()
+          end
+        end
+      end)
+
+      stub_const("RollbackParentReactor", Class.new(RubyReactor::Reactor) do
+        input :fail_at
+
+        compose :child, RollbackChildReactor do
+          argument :fail_at, input(:fail_at)
+        end
+
+        step :after_child do
+          argument :fail_at, input(:fail_at)
+          wait_for :child
+          run do |args, _context|
+            args[:fail_at] == "parent" ? RubyReactor::Failure("parent failed") : RubyReactor::Success()
+          end
+        end
+      end)
+    end
+
+    it "undoes the child's completed steps when a later parent step fails (ComposeStep#undo)" do
+      expect(RollbackParentReactor.run(fail_at: "parent")).to be_failure
+      expect(undone).to eq([:reserve])
+    end
+
+    it "undoes the child's completed steps exactly once when the child fails (ComposeStep#compensate)" do
+      expect(RollbackParentReactor.run(fail_at: "child")).to be_failure
+      expect(undone).to eq([:reserve])
+    end
+  end
 end

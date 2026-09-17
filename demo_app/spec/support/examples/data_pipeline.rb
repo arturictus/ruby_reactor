@@ -28,13 +28,11 @@ module DataPipelineHelpers
   end
 end
 
-class ExtractCSVStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
+class ExtractCSVStep < RubyReactor::Step
+  def run
     # Simulate CSV extraction (in real scenario, would read from file)
-    # file_path would be used: File.read(arguments[:file_path])
-    users = arguments[:csv_data] || []
+    # file_path would be used: File.read(inputs[:file_path])
+    users = inputs[:csv_data] || []
 
     stats = {
       total_count: users.length,
@@ -42,17 +40,15 @@ class ExtractCSVStep
       extracted_at: Time.now
     }
 
-    RubyReactor::Success({ users: users, stats: stats })
+    Success({ users: users, stats: stats })
   rescue StandardError => e
-    RubyReactor::Failure("Failed to extract CSV: #{e.message}")
+    Failure("Failed to extract CSV: #{e.message}")
   end
 end
 
-class DataQualityCheckStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    raw_data = arguments[:raw_data]
+class DataQualityCheckStep < RubyReactor::Step
+  def run
+    raw_data = inputs[:raw_data]
     users = raw_data[:users]
 
     quality_issues = analyze_quality(users)
@@ -65,21 +61,23 @@ class DataQualityCheckStep
     }
 
     if quality_issues.empty?
-      RubyReactor::Success({ rules: rules, issues: [], status: :passed })
+      Success({ rules: rules, issues: [], status: :passed })
     elsif quality_issues.length < 100
-      RubyReactor::Success({ rules: rules, issues: quality_issues, status: :warnings })
+      Success({ rules: rules, issues: quality_issues, status: :warnings })
     else
-      RubyReactor::Failure("Too many quality issues: #{quality_issues.length} problems found")
+      Failure("Too many quality issues: #{quality_issues.length} problems found")
     end
   end
 
-  def self.analyze_quality(users)
+  private
+
+  def analyze_quality(users)
     users.each_with_index.flat_map do |user, index|
       check_user_quality(user, index)
     end
   end
 
-  def self.check_user_quality(user, index)
+  def check_user_quality(user, index)
     issues = []
 
     issues << "Row #{index + 1}: Missing email" if user["email"].nil? || user["email"].empty?
@@ -90,11 +88,9 @@ class DataQualityCheckStep
   end
 end
 
-class LoadToDatabaseStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    users = arguments[:users]
+class LoadToDatabaseStep < RubyReactor::Step
+  def run
+    users = inputs[:users]
 
     # Simulate batch insertion
     batches = users.each_slice(1000).to_a
@@ -105,39 +101,35 @@ class LoadToDatabaseStep
       total_inserted += batch.length
     end
 
-    RubyReactor::Success({ inserted: total_inserted, total_batches: batches.length })
+    Success({ inserted: total_inserted, total_batches: batches.length })
   rescue StandardError => e
-    RubyReactor::Failure("Database loading failed: #{e.message}")
+    Failure("Database loading failed: #{e.message}")
   end
 
-  def self.compensate(_reason, _arguments, _context)
+  def compensate
     # Cleanup on failure - simulate removing inserted data
     # In real scenario: delete from database where email in user_emails
-    # users = arguments[:users]
-    RubyReactor::Success()
+    # users = inputs[:users]
+    Success()
   end
 end
 
-class LoadToSearchIndexStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    users = arguments[:users]
+class LoadToSearchIndexStep < RubyReactor::Step
+  def run
+    users = inputs[:users]
 
     # Simulate bulk indexing
     indexed = users.length
 
-    RubyReactor::Success({ indexed: indexed })
+    Success({ indexed: indexed })
   rescue StandardError => e
-    RubyReactor::Failure("Search indexing failed: #{e.message}")
+    Failure("Search indexing failed: #{e.message}")
   end
 end
 
-class GenerateProcessingReportStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    results = arguments[:results]
+class GenerateProcessingReportStep < RubyReactor::Step
+  def run
+    results = inputs[:results]
 
     report = {
       successful_count: results[:successful].length,
@@ -147,7 +139,7 @@ class GenerateProcessingReportStep
       generated_at: Time.now
     }
 
-    RubyReactor::Success(report)
+    Success(report)
   end
 end
 

@@ -5,11 +5,9 @@ require "spec_helper"
 RSpec.describe RubyReactor::RSpec::TestSubject, "#mock_step" do
   # Define a simple reactor for testing
   class MockingTestReactor < RubyReactor::Reactor
-    class AddOneStep
-      include RubyReactor::Step
-
-      def self.run(args, _context)
-        RubyReactor::Success(value: args[:value] + 1)
+    class AddOneStep < RubyReactor::Step
+      def run
+        Success(value: inputs[:value] + 1)
       end
     end
 

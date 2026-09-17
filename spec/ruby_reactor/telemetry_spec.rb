@@ -5,15 +5,15 @@ require "opentelemetry-sdk"
 require "sidekiq/testing"
 
 # Define inline test steps and reactors
-class TelemetrySimpleStep
-  def self.run(arguments, _context)
-    RubyReactor.Success(arguments[:value].to_i * 2)
+class TelemetrySimpleStep < RubyReactor::Step
+  def run
+    Success(inputs[:value].to_i * 2)
   end
 end
 
-class TelemetrySensitiveStep
-  def self.run(_arguments, _context)
-    RubyReactor.Success("ok")
+class TelemetrySensitiveStep < RubyReactor::Step
+  def run
+    Success("ok")
   end
 end
 
