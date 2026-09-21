@@ -129,6 +129,17 @@
   ordinary `nil` success, and `result(:step)` hands the reader the `Halt` — the same way it
   already hands over a `Failure`.
 
+## [0.8.0](https://github.com/arturictus/ruby_reactor/compare/v0.7.1...v0.8.0) (2026-09-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* Step Instance and input validations per step  ([#51](https://github.com/arturictus/ruby_reactor/issues/51))
+
+### Features
+
+* Step Instance and input validations per step  ([#51](https://github.com/arturictus/ruby_reactor/issues/51)) ([4a20583](https://github.com/arturictus/ruby_reactor/commit/4a2058399d73e9b3bf767659dd5ba080537dc291))
+
 ## [0.7.1](https://github.com/arturictus/ruby_reactor/compare/v0.7.0...v0.7.1) (2026-09-14)
 
 
