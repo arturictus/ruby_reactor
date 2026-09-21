@@ -47,7 +47,7 @@ module RubyReactor
       # element's outcome.
       def fan_out(enabled = true, batch_size: nil)
         @fan_out = enabled
-        @batch_size = batch_size if batch_size
+        self.batch_size(batch_size) unless batch_size.nil?
       end
 
       # `async` on a map named element fan-out with the word that now means
@@ -57,7 +57,9 @@ module RubyReactor
         raise RubyReactor::Error::DeprecatedDslError.new(
           "`async` inside a `map` block has been removed: it read as `async_step`/`async_reactor`, which " \
           "dispatch independent units, whereas a fan-out map hands the reactor off until every element " \
-          "finishes. Use `fan_out` instead (`fan_out batch_size: N` for back pressure) — identical behavior.",
+          "finishes. Use `fan_out` instead (`fan_out batch_size: N` for back pressure) — note this also " \
+          "changes worker dispatch: each element now runs in its own background worker rather than being " \
+          "suppressed inline by `inline_async_execution` as the old `async true` was.",
           step: @name
         )
       end
@@ -67,6 +69,13 @@ module RubyReactor
       end
 
       def batch_size(size)
+        unless size.is_a?(Integer) && size.positive?
+          raise RubyReactor::Error::ValidationError.new(
+            "`batch_size` must be a positive Integer, got #{size.inspect}",
+            step: @name
+          )
+        end
+
         @batch_size = size
       end
 

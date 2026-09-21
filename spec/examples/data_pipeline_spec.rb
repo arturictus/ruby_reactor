@@ -255,7 +255,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
         source input(:numbers)
         argument :number, element(:async_doubled)
 
-        # FEATURE: async true sends processing to Sidekiq background jobs
+        # FEATURE: fan_out sends processing to Sidekiq background jobs
         # DESIGN DIFFERENCE: Ruby uses Sidekiq vs Elixir's native async
         fan_out batch_size: 2
 

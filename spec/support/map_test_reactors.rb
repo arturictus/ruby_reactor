@@ -23,7 +23,7 @@ module MapTestReactors
     map :doubled_numbers, DoubleReactor do
       source input(:numbers)
       argument :number, element(:doubled_numbers)
-      fan_out # Default single worker strategy
+      fan_out # No batch_size: one MapElementWorker per source element
     end
   end
 

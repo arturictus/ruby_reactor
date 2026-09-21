@@ -41,4 +41,36 @@ RSpec.describe "Map Batch Size Execution" do
     indices = job_args.map { |a| a["index"] }
     expect(indices).to contain_exactly(2, 3)
   end
+
+  describe "invalid batch_size" do
+    def define_map_reactor(**fan_out_args)
+      Class.new(RubyReactor::Reactor) do
+        input :numbers
+
+        map :doubled, MapTestReactors::DoubleReactor do
+          source input(:numbers)
+          argument :number, element(:doubled)
+          fan_out(**fan_out_args)
+        end
+      end
+    end
+
+    it "rejects batch_size: 0 at definition time instead of stalling the map" do
+      expect do
+        define_map_reactor(batch_size: 0)
+      end.to raise_error(RubyReactor::Error::ValidationError, /batch_size.*positive Integer/)
+    end
+
+    it "rejects a negative batch_size" do
+      expect do
+        define_map_reactor(batch_size: -1)
+      end.to raise_error(RubyReactor::Error::ValidationError, /batch_size.*positive Integer/)
+    end
+
+    it "rejects a non-integer batch_size" do
+      expect do
+        define_map_reactor(batch_size: 1.5)
+      end.to raise_error(RubyReactor::Error::ValidationError, /batch_size.*positive Integer/)
+    end
+  end
 end
