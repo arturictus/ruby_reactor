@@ -42,9 +42,9 @@ RSpec.describe "Map Fail Fast Behavior" do
         # Configure map
         if async_val
           if batch_size_val
-            async true, batch_size: batch_size_val
+            fan_out batch_size: batch_size_val
           else
-            async true
+            fan_out
           end
         end
 

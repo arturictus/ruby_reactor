@@ -9,7 +9,7 @@ module RubyReactor
         # Initialize map state in context if not present
         context.map_operations ||= {}
 
-        if should_run_async?
+        if fan_out?
           run_async(context.current_step)
         else
           run_inline
@@ -69,10 +69,15 @@ module RubyReactor
 
       private
 
-      def should_run_async?
-        return false if context.inline_async_execution
+      # Fans out anywhere except inside a map element: an element's result and
+      # the map's completion counter are tracked by its own ElementExecutor job,
+      # so a nested hand-off there would escape that tracking. A reactor worker
+      # (`background`, collector resume, `async_reactor` child) fans out as the
+      # caller would — the collector resumes the reactor in a worker either way.
+      def fan_out?
+        return false if (context.root_context || context).map_metadata
 
-        inputs[:async]
+        inputs[:fan_out]
       end
 
       def run_inline

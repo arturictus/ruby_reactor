@@ -330,7 +330,7 @@ RSpec.describe "Map fail_fast Option" do
         argument :fail_item, input(:fail_item)
 
         # Default fail_fast is true
-        async true, batch_size: 2
+        fan_out batch_size: 2
 
         step :process do
           argument :val, input(:item)

@@ -5,7 +5,7 @@
 
 # RubyReactor
 
-A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq or ActiveJob** for asynchronous execution and **Redis** for state persistence.
+A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq or ActiveJob** for background execution and **Redis** for state persistence.
 
 ![Payment workflow reactor](documentation/images/payment_workflow.png)
 
@@ -18,13 +18,14 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 ## Features
 
 - **DAG-based Execution**: Steps are executed based on their dependencies, allowing for parallel execution of independent steps.
-- **Async Execution**: Steps can be executed asynchronously in the background using Sidekiq or ActiveJob (so any ActiveJob-compatible queue — Resque, Solid Queue, GoodJob, etc. — works too).
+- **Background Execution**: Hand a whole reactor, or everything after a declared step, to a background job via Sidekiq or ActiveJob (so any ActiveJob-compatible queue — Resque, Solid Queue, GoodJob, etc. — works too).
+- **Async Steps & Reactors**: `async_step` and `async_reactor` dispatch independent units of work while the reactor keeps running; steps that read their result wait for it.
 - **Map & Parallel Execution**: Iterate over collections in parallel with the `map` step, distributing work across multiple workers.
 - **Retries**: Configurable retry logic for failed steps, with exponential backoff.
 - **Compensation**: Automatic rollback of completed steps when a failure occurs.
 - **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
-- **Distributed Locks, Semaphores, Rate Limits, Periods & Ordered Locks**: Coordinate across processes with Redis-backed primitives — exclusive locks for at-most-one-runner, semaphores for capacity caps, fixed-window rate limits for external APIs (single or multi-window like "3/sec AND 100/min"), `with_period` to dedup reactors to once per calendar bucket, and `with_ordered_lock` for strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Async jobs snooze on contention with smart `retry_after` instead of consuming retry budget.
+- **Distributed Locks, Semaphores, Rate Limits, Periods & Ordered Locks**: Coordinate across processes with Redis-backed primitives — exclusive locks for at-most-one-runner, semaphores for capacity caps, fixed-window rate limits for external APIs (single or multi-window like "3/sec AND 100/min"), `with_period` to dedup reactors to once per calendar bucket, and `with_ordered_lock` for strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Background jobs snooze on contention with smart `retry_after` instead of consuming retry budget.
 
 ## Comparison
 
@@ -35,7 +36,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 | Interrupts (pause/resume)| Yes          | No              | No          | Manual              |
 | Locks / sem / rate / per | Yes          | No              | No          | Manual              |
 | Built-in web dashboard   | Yes          | No              | No          | No                  |
-| Async (Sidekiq/AJ)       | Yes          | No              | Limited     | Yes                 |
+| Background (Sidekiq/AJ)  | Yes          | No              | Limited     | Yes                 |
 | Durable crash recovery   | Yes          | No              | No          | Manual              |
 
 ## Real-World Use Cases
@@ -57,9 +58,10 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
   - [Rails Installation](#rails-installation)
 - [Usage](#usage)
   - [Basic Example: User Registration](#basic-example-user-registration)
-  - [Async Execution](#async-execution)
-    - [Full Reactor Async](#full-reactor-async)
+  - [Background Execution](#background-execution)
+    - [Full Background](#full-background)
     - [Background Hand-off](#background-hand-off)
+  - [Async Steps & Reactors](#async-steps--reactors)
     - [`async_step`](#async_step-one-step-dispatched-on-its-own)
     - [`async_reactor`](#async_reactor-a-whole-nested-reactor-running-independently)
   - [Durability & Recovery](#durability--recovery)
@@ -119,7 +121,7 @@ RubyReactor.configure do |config|
 
   ## === Background job backend (Sidekiq by default, or ActiveJob) ===
 
-  ## Queue used by RubyReactor's async worker. Default: :default.
+  ## Queue used by RubyReactor's background worker. Default: :default.
   # config.queue_name = :default
 
   ## Retry count for infrastructure failures only (deserialization, Redis,
@@ -180,8 +182,8 @@ RubyReactor.configure do |config|
   ## Logger. Default: Logger.new($stdout).
   # config.logger = Logger.new($stdout)
 
-  ## Async router. Default: RubyReactor::Adapters::Sidekiq::Router. Swap in the
-  ## built-in ActiveJob adapter (see "Async Execution" below), or point at any
+  ## Background job router. Default: RubyReactor::Adapters::Sidekiq::Router. Swap in the
+  ## built-in ActiveJob adapter (see "Background Execution" below), or point at any
   ## custom adapter — it only needs to respond to
   ## `perform_async(context_id, reactor_class_name, **)`.
   # config.async_router = RubyReactor::Adapters::ActiveJob::Router
@@ -398,7 +400,7 @@ else
 end
 ```
 
-### Async Execution
+### Background Execution
 
 Execute reactors in the background using Sidekiq or ActiveJob. The backend is
 chosen via `config.async_router` (defaults to the Sidekiq adapter); to run on
@@ -410,13 +412,14 @@ RubyReactor.configure do |config|
 end
 ```
 
-That's the only switch — everything below (full-reactor async, step-level
-async, durability, retries, snoozing) works identically on either backend.
+That's the only switch — everything below (background execution, `async_step`
+/ `async_reactor`, durability, retries, snoozing) works identically on either
+backend.
 
-#### Full Reactor Async
+#### Full Background
 
 ```ruby
-class AsyncReactor < RubyReactor::Reactor
+class BackgroundReactor < RubyReactor::Reactor
   background all: true # Entire reactor runs in background
 
   step :long_running_task do
@@ -425,7 +428,7 @@ class AsyncReactor < RubyReactor::Reactor
 end
 
 # Returns immediately with DispatchResult
-result = AsyncReactor.run(params)
+result = BackgroundReactor.run(params)
 ```
 
 #### Background Hand-off
@@ -492,6 +495,13 @@ changes where code runs, not the saga contract.
 > named the same idea as `background`'s cut point with a different word, right next
 > to `async_step`/`async_reactor`, whose names mean something else. It now raises
 > at class-definition time. The exact replacement is `background all: true`.
+
+### Async Steps & Reactors
+
+`async_step` and `async_reactor` dispatch an **independent** unit of work to its
+own job while the reactor keeps running. Unlike `background`, they do not move
+the reactor itself — they are separate units with their own outcome and
+compensation.
 
 #### `async_step`: one step, dispatched on its own
 
@@ -569,12 +579,12 @@ parent back.
 
 Lock ownership is never shared across the async boundary: a child declaring a key
 the parent holds fails at dispatch with an explanatory error rather than
-deadlocking. See [Async Reactors](documentation/async_reactors.md) for the full
+deadlocking. See [Background & Async Execution](documentation/background_and_async.md) for the full
 rules.
 
 ### Durability & Recovery
 
-Async reactors are durable: state lives in Redis, not in the job payload. Before
+Background reactors are durable: state lives in Redis, not in the job payload. Before
 any background job is enqueued the root context is persisted, and after every
 completed step a checkpoint advances the stored blob — so a crash re-runs at most
 one step, never the whole reactor. Each running reactor also holds a short
@@ -740,7 +750,7 @@ class ChargeReactor < RubyReactor::Reactor
   input :account_id
 
   # Respect upstream Stripe rate limits: 3/sec and 100/min.
-  # Async workers snooze for exactly retry_after seconds instead of
+  # Background workers snooze for exactly retry_after seconds instead of
   # consuming the backend's retry budget.
   with_rate_limit(
     limits: { second: 3, minute: 100 }
@@ -753,7 +763,7 @@ class ChargeReactor < RubyReactor::Reactor
 end
 
 class OrderedTransactionReactor < RubyReactor::Reactor
-  async
+  background all: true
   input :account_id
   input :transaction
 
@@ -794,12 +804,12 @@ class ChargeReactor < RubyReactor::Reactor
 end
 ```
 
-Referencing an unregistered name raises `RubyReactor::RateLimitRegistry::UnknownLimitError`. Named limits hit the same enforcement path as inline ones, so async snooze behavior is identical.
+Referencing an unregistered name raises `RubyReactor::RateLimitRegistry::UnknownLimitError`. Named limits hit the same enforcement path as inline ones, so background snooze behavior is identical.
 
 On contention:
 
 - **Inline** (`Reactor.run`) raises `RubyReactor::Lock::AcquisitionError` / `RubyReactor::Semaphore::AcquisitionError` / `RubyReactor::RateLimit::ExceededError` / `RubyReactor::OrderedLock::WaitError`.
-- **Async** (Sidekiq or ActiveJob) snoozes the job via `perform_in(delay, ...)`. For rate limits the delay uses the error's `retry_after_seconds` hint (precise wakeup — the bucket roll time is known exactly); for locks, semaphores, and ordered-lock waits it's `lock_snooze_base_delay + jitter` (a short re-poll, since a held lock or a live blocker nonce typically clears in milliseconds). Snoozes do not count against the backend's retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed (ordered-lock waits bypass the cap — see the ordered-lock docs).
+- **Background** (Sidekiq or ActiveJob) snoozes the job via `perform_in(delay, ...)`. For rate limits the delay uses the error's `retry_after_seconds` hint (precise wakeup — the bucket roll time is known exactly); for locks, semaphores, and ordered-lock waits it's `lock_snooze_base_delay + jitter` (a short re-poll, since a held lock or a live blocker nonce typically clears in milliseconds). Snoozes do not count against the backend's retry budget. After `lock_snooze_max_attempts` snoozes the context is marked failed (ordered-lock waits bypass the cap — see the ordered-lock docs).
 
 On dedup hits (period gate already marked), the reactor returns a `RubyReactor::Halt` result instead — no steps run, no exception:
 
@@ -847,8 +857,8 @@ class DataProcessingReactor < RubyReactor::Reactor
     source input(:items)
     argument :item, element(:process_items)
     
-    # Enable async execution with batching
-    async true, batch_size: 50
+    # Run elements as background jobs, in batches
+    fan_out batch_size: 50
 
     step :transform do
       argument :item, input(:item)
@@ -860,9 +870,13 @@ class DataProcessingReactor < RubyReactor::Reactor
 end
 ```
 
-By using `async true` with `batch_size`, the system applies **Back Pressure** to efficiently manage resources. [Read more about Back Pressure & Resource Management](documentation/data_pipelines.md#back-pressure--resource-management).
+A `fan_out` map is a **hand-off point**: the reactor stops at the map (the caller gets a `DispatchResult`), every element runs as its own background job, and once all outcomes are collected the reactor resumes in a worker with the steps after the map. It fans out the same way when the reactor is already running in a worker (e.g. `background all: true`).
 
-`batch_size` is optional: with `async true` alone, RubyReactor fans out one worker per element (defaulting the batch size to the full source size) and aggregates the outcomes into a `ResultEnumerator` — convenient for small collections, but with no back pressure. See [Async Without `batch_size`](documentation/data_pipelines.md#async-without-batch_size).
+By using `fan_out` with `batch_size`, the system applies **Back Pressure** to efficiently manage resources. [Read more about Back Pressure & Resource Management](documentation/data_pipelines.md#back-pressure--resource-management).
+
+`batch_size` is optional: with `fan_out` alone, RubyReactor fans out one worker per element (defaulting the batch size to the full source size) and aggregates the outcomes into a `ResultEnumerator` — convenient for small collections, but with no back pressure. See [`fan_out` Without `batch_size`](documentation/data_pipelines.md#fan_out-without-batch_size).
+
+> **Breaking change:** `async true` inside a `map` block has been **removed** — it read like `async_step`/`async_reactor`, which dispatch independent units the reactor does not stop for. It now raises at class-definition time. The exact replacement is `fan_out` (`fan_out batch_size: N`).
 
 #### Map with Dynamic Source (ActiveRecord)
 
@@ -878,7 +892,7 @@ map :archive_old_users do
   end
   
   argument :user, element(:archive_old_users)
-  async true, batch_size: 100
+  fan_out batch_size: 100
 
   step :archive do
     argument :user, input(:user)
@@ -1426,8 +1440,8 @@ Learn about the fundamental building blocks of RubyReactor: Reactors, Steps, Con
 ### [DAG (Directed Acyclic Graph)](documentation/DAG.md)
 Deep dive into how RubyReactor manages dependencies. This guide explains how the Directed Acyclic Graph is constructed to ensure steps execute in the correct topological order, enabling automatic parallelization of independent steps.
 
-### [Async Reactors](documentation/async_reactors.md)
-Explore the ways to move work off the calling process: Full Reactor Async, the `background` hand-off, `async_step`, and `async_reactor`. Learn how RubyReactor leverages Sidekiq or ActiveJob for background processing, non-blocking execution, and scalable worker management.
+### [Background & Async Execution](documentation/background_and_async.md)
+Explore the ways to move work off the calling process: background execution (`background all: true` and the `background after:`/`before:` hand-off) and async units (`async_step`, `async_reactor`). Learn how RubyReactor leverages Sidekiq or ActiveJob for background processing, non-blocking execution, and scalable worker management.
 
 ### [Composition](documentation/composition.md)
 Discover how to build complex, modular workflows by composing reactors within other reactors. This guide covers inline composition, class-based composition, and how to manage dependencies between composed workflows.
@@ -1436,7 +1450,7 @@ Discover how to build complex, modular workflows by composing reactors within ot
 Master the `map` feature for processing collections. Learn about parallel execution, batch processing for large datasets, and error handling strategies like fail-fast vs. partial result collection.
 
 ### [Retry Configuration](documentation/retry_configuration.md)
-Configure robust retry policies for your steps. This guide details the available backoff strategies (exponential, linear, fixed), how to configure retries at the reactor or step level, and how async retries work without blocking workers.
+Configure robust retry policies for your steps. This guide details the available backoff strategies (exponential, linear, fixed), how to configure retries at the reactor or step level, and how background retries work without blocking workers.
 
 ### [Interrupts](documentation/interrupts.md)
 Learn how to pause and resume reactors to handle long-running processes, manual approvals, and asynchronous callbacks. Patterns for correlation IDs, timeouts, and payload validation.
@@ -1446,11 +1460,11 @@ Comprehensive guide to testing reactors with RubyReactor's testing utilities. Le
 
 ### [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md)
 
-Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
+Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-background contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
 
 ### [Middlewares & OpenTelemetry](documentation/middlewares.md)
 
-Hook into the execution lifecycle with observer middlewares. Covers the full set of lifecycle events (reactor, step, retry, compensation/undo, async hand-off, locks/semaphores), writing and registering custom middlewares (global and per-reactor), and the built-in `RubyReactor::OpenTelemetry` tracing middleware — span structure, input/argument redaction, distributed trace propagation across async/retry boundaries, and custom exporters.
+Hook into the execution lifecycle with observer middlewares. Covers the full set of lifecycle events (reactor, step, retry, compensation/undo, background hand-off, locks/semaphores), writing and registering custom middlewares (global and per-reactor), and the built-in `RubyReactor::OpenTelemetry` tracing middleware — span structure, input/argument redaction, distributed trace propagation across background/retry boundaries, and custom exporters.
 
 ### Examples
 - [Order Processing](documentation/examples/order_processing.md) - Complete order processing workflow example
@@ -1470,7 +1484,7 @@ Hook into the execution lifecycle with observer middlewares. Covers the full set
 - [ ] Multiple storage adapters
   - [X] Redis
   - [ ] ActiveRecord
-- [X] Multiple Async adapters
+- [X] Multiple background job adapters
   - [X] Sidekiq
   - [X] ActiveJob
 - [X] OpenTelemetry support

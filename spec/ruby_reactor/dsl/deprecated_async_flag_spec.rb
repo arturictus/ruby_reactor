@@ -93,27 +93,41 @@ RSpec.describe "the removed per-step `async` flag" do
   end
 
   describe "the map-internal `async` option" do
-    it "still works untouched — it is element dispatch, not step hand-off" do
-      element = define_reactor do
+    let(:element) do
+      define_reactor do
         input :element
         step :double do
           argument :element, input(:element)
           run { |args| RubyReactor.Success(args[:element] * 2) }
         end
       end
+    end
 
-      reactor = nil
+    it "raises at class-definition time, naming `fan_out`" do
+      element_class = element
       expect do
-        reactor = define_reactor do
+        define_reactor do
           input :numbers
-          map :doubled, element do
+          map :doubled, element_class do
             source input(:numbers)
             async true, batch_size: 2
           end
         end
-      end.not_to raise_error
+      end.to raise_error(RubyReactor::Error::DeprecatedDslError, /fan_out/)
+    end
 
-      expect(reactor.steps[:doubled]).to be_a(RubyReactor::Dsl::StepConfig)
+    it "is replaced by `fan_out`" do
+      element_class = element
+      reactor = define_reactor do
+        input :numbers
+        map :doubled, element_class do
+          source input(:numbers)
+          fan_out batch_size: 2
+        end
+      end
+
+      expect(reactor.steps[:doubled].arguments[:fan_out][:source].value).to be true
+      expect(reactor.steps[:doubled].arguments[:batch_size][:source].value).to eq 2
     end
   end
 

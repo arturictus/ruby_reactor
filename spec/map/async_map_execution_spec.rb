@@ -68,4 +68,20 @@ RSpec.describe "Async Map Execution" do
       expect(child_context["parent_context_id"]).to eq(context_id)
     end
   end
+
+  it "fans out inside a background worker and resumes the reactor after the map" do
+    reactor = MapTestReactors::BackgroundFanOutReactor.new
+    expect(reactor.run(numbers: [1, 2, 3])).to be_a(RubyReactor::DispatchResult)
+    context_id = reactor.context.context_id
+
+    RubyReactor::Adapters::Sidekiq::Worker.drain
+    expect(RubyReactor::Adapters::Sidekiq::MapElementWorker.jobs.size).to eq(1)
+
+    RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
+    RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+
+    found = MapTestReactors::BackgroundFanOutReactor.find(context_id)
+    expect(found.context.status.to_s).to eq("completed")
+    expect(found.context.intermediate_results[:total]).to eq(12)
+  end
 end

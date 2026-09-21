@@ -26,7 +26,7 @@ module MapTestReactors
     map :doubled_numbers, DoubleReactor do
       source input(:numbers)
       argument :number, element(:doubled_numbers)
-      async true # Default single worker strategy
+      fan_out # Default single worker strategy
     end
   end
 
@@ -37,7 +37,7 @@ module MapTestReactors
     map :doubled_numbers, DoubleReactor do
       source input(:numbers)
       argument :number, element(:doubled_numbers)
-      async true, batch_size: 2
+      fan_out batch_size: 2
     end
   end
 
@@ -48,7 +48,7 @@ module MapTestReactors
     map :doubled_numbers, DoubleReactor do
       source input(:numbers)
       argument :number, element(:doubled_numbers)
-      async true, batch_size: 1
+      fan_out batch_size: 1
     end
   end
 end

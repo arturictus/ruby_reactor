@@ -11,7 +11,7 @@ class ArMapReactor < RubyReactor::Reactor
       q
     end
     argument :product, element(:prepare_products)
-    async true, batch_size: 2
+    fan_out batch_size: 2
     
     step :get_product do
       run do |args|

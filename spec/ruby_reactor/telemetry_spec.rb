@@ -135,7 +135,7 @@ class TelemetryAsyncMapRollbackReactor < RubyReactor::Reactor
     undo { |_result, _args, _context| RubyReactor.Success("prep undone") }
   end
   map :failing_map, TelemetryMapFailElement do
-    async true
+    fan_out
     source input(:items)
     argument :item, element(:failing_map)
   end
@@ -214,7 +214,7 @@ class TelemetryAsyncMapRetryReactor < RubyReactor::Reactor
     source input(:items)
     argument :item, element(:mapped)
     argument :fail_until, input(:fail_until_attempt)
-    async true, batch_size: 1
+    fan_out batch_size: 1
   end
 end
 

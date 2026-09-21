@@ -23,7 +23,7 @@ module MapTestReactors
     map :doubled_numbers, DoubleReactor do
       source input(:numbers)
       argument :number, element(:doubled_numbers)
-      async true # Default single worker strategy
+      fan_out # Default single worker strategy
     end
   end
 
@@ -34,7 +34,7 @@ module MapTestReactors
     map :doubled_numbers, DoubleReactor do
       source input(:numbers)
       argument :number, element(:doubled_numbers)
-      async true, batch_size: 2
+      fan_out batch_size: 2
     end
   end
 
@@ -45,7 +45,27 @@ module MapTestReactors
     map :doubled_numbers, DoubleReactor do
       source input(:numbers)
       argument :number, element(:doubled_numbers)
-      async true, batch_size: 1
+      fan_out batch_size: 1
     end
+  end
+
+  # A fan-out map inside a reactor that already runs in a worker must still fan
+  # out — not silently run its elements one by one in that worker.
+  class BackgroundFanOutReactor < RubyReactor::Reactor
+    background all: true
+    input :numbers
+
+    map :doubled_numbers, DoubleReactor do
+      source input(:numbers)
+      argument :number, element(:doubled_numbers)
+      fan_out batch_size: 1
+    end
+
+    step :total do
+      argument :doubled, result(:doubled_numbers)
+      run { |args, _| RubyReactor::Success(args[:doubled].map(&:value).sum) }
+    end
+
+    returns :total
   end
 end
