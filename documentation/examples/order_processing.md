@@ -89,7 +89,7 @@ class ProcessPaymentStep < RubyReactor::Step
 end
 
 class OrderProcessingReactor < RubyReactor::Reactor
-  background all: true  # Enable asynchronous execution
+  background all: true  # Entire reactor runs in a background worker
 
   # Reactor-level retry defaults
   retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
@@ -193,15 +193,15 @@ end
 
 ## Usage
 
-### Asynchronous Execution
+### Background Execution
 
 ```ruby
-# Start order processing asynchronously
-async_result = OrderProcessingReactor.run(order_id: 12345)
-async_result.execution_id # UUID for state lookup
+# Start order processing in the background
+dispatch = OrderProcessingReactor.run(order_id: 12345)
+dispatch.execution_id # UUID for state lookup
 
 # Reload state later (e.g. from a polling endpoint)
-reactor = OrderProcessingReactor.find(async_result.execution_id)
+reactor = OrderProcessingReactor.find(dispatch.execution_id)
 case reactor.context.status.to_s
 when "completed"
   puts "Order processed successfully!"
@@ -319,7 +319,7 @@ email_delivery_failure_rate
 
 ## Scaling Considerations
 
-- **High Volume**: Use async execution with multiple Sidekiq or ActiveJob workers
+- **High Volume**: Use background execution with multiple Sidekiq or ActiveJob workers
 - **Payment Processing**: Implement idempotency keys for payment providers
 - **Inventory**: Use optimistic locking or database transactions
 - **Email**: Queue emails separately to avoid blocking order completion

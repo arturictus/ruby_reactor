@@ -206,10 +206,10 @@ error rather than deadlocking. The most common cause is dispatching a child that
 belongs inside the parent's critical section — and if a later step reads the
 child's result anyway, the work is sequential regardless, so `compose` expresses
 it directly and correctly. See
-[Async Reactors](async_reactors.md#locks-across-the-async-boundary) for the other
+[Background & Async Execution](background_and_async.md#locks-across-the-async-boundary) for the other
 two remedies.
 
-### Async Compose Execution Flow
+### Background Compose Execution Flow
 
 When a reactor declares its hand-off point at a compose step:
 
@@ -230,14 +230,14 @@ The execution flow is:
 5. The worker continues sequentially through every remaining step
 
 A reactor has exactly one hand-off point, so this happens once per execution —
-there is no "if another async step is encountered". That ambiguity is precisely
+there is no "if another hand-off step is encountered". That ambiguity is precisely
 what `background` replaced.
 
-## Nested Async Retries
+## Nested Background Retries
 
-One of the powerful features of composition in RubyReactor is the handling of asynchronous retries within nested reactors.
+One of the powerful features of composition in RubyReactor is the handling of background retries within nested reactors.
 
-When a step inside a composed reactor fails and is configured to retry asynchronously (via Sidekiq or ActiveJob), RubyReactor ensures that the entire execution context is preserved.
+When a step inside a composed reactor fails and is configured to retry in a background job (via Sidekiq or ActiveJob), RubyReactor ensures that the entire execution context is preserved.
 
 1.  **Context Serialization**: The entire reactor tree, including the state of the parent reactor and the composed reactor, is serialized.
 2.  **Resume on Retry**: When the retry job executes, it resumes execution exactly from the failed step within the composed reactor.

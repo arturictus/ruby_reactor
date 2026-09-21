@@ -12,7 +12,7 @@ RubyReactor ships with five Redis-backed coordination primitives — each tackli
 
 They are orthogonal and composable: a reactor can declare any combination.
 
-> **A note on terminology below:** contention/snooze behavior is described in terms of "the Sidekiq worker" throughout this guide since Sidekiq is the default `config.async_router`. Everything described applies identically on the ActiveJob adapter (`RubyReactor::Adapters::ActiveJob::Router`) — read "Sidekiq worker" as "async worker" wherever it appears.
+> **A note on terminology below:** contention/snooze behavior is described in terms of "the Sidekiq worker" throughout this guide since Sidekiq is the default `config.async_router`. Everything described applies identically on the ActiveJob adapter (`RubyReactor::Adapters::ActiveJob::Router`) — read "Sidekiq worker" as "background worker" wherever it appears.
 
 A typical use case:
 
@@ -25,7 +25,7 @@ A typical use case:
 The lock/semaphore primitives:
 
 - Are acquired before any step runs and released in an `ensure` block (so a crash, failure, or interrupt does not leak a holder).
-- Snooze (re-enqueue) instead of fail when contention is encountered inside an async worker (Sidekiq or ActiveJob).
+- Snooze (re-enqueue) instead of fail when contention is encountered inside a background worker (Sidekiq or ActiveJob).
 - Carry a TTL so a crashed Ruby process cannot block the resource forever.
 
 The period primitive is different: it is **dedup**, not concurrency. It records a marker after a successful run and skips subsequent runs in the same calendar bucket.
@@ -37,7 +37,7 @@ The ordered-lock primitive is different again: it assigns a nonce at **enqueue t
 - [Exclusive Locks](#exclusive-locks)
   - [Re-entrancy](#re-entrancy)
   - [Auto-extend (TTL keepalive)](#auto-extend-ttl-keepalive)
-  - [Inline vs async behavior on contention](#inline-vs-async-behavior-on-contention)
+  - [Inline vs background behavior on contention](#inline-vs-background-behavior-on-contention)
   - [Owner identity](#owner-identity)
 - [Semaphores](#semaphores)
   - [Token model](#token-model)
@@ -47,7 +47,7 @@ The ordered-lock primitive is different again: it assigns a nonce at **enqueue t
   - [Multi-window quotas](#multi-window-quotas)
   - [Named global limits](#named-global-limits)
   - [Algorithm & atomicity](#algorithm--atomicity)
-  - [Smart snooze on async](#smart-snooze-on-async)
+  - [Smart snooze in background workers](#smart-snooze-in-background-workers)
 - [Periods (once-per-bucket dedup)](#periods-once-per-bucket-dedup)
   - [Bucket model](#bucket-model)
   - [When the marker is written](#when-the-marker-is-written)
@@ -86,7 +86,7 @@ class RefundOrderReactor < RubyReactor::Reactor
 end
 ```
 
-While the reactor is running, every other caller trying to acquire `lock:order:<id>` either snoozes (async) or raises `RubyReactor::Lock::AcquisitionError` (inline).
+While the reactor is running, every other caller trying to acquire `lock:order:<id>` either snoozes (background) or raises `RubyReactor::Lock::AcquisitionError` (inline).
 
 ### Re-entrancy
 
@@ -116,16 +116,16 @@ with_lock(ttl: 60, auto_extend: false) { |i| "k:#{i[:id]}" }
 
 If the Ruby process dies, the extender dies with it, so the TTL still kicks in and the lock becomes acquirable again.
 
-### Inline vs async behavior on contention
+### Inline vs background behavior on contention
 
 The behavior on a "lock already held" condition depends on **where** the reactor is running:
 
 | Caller                           | Behavior on contention                                                                                          |
 |----------------------------------|-----------------------------------------------------------------------------------------------------------------|
-| Inline (`Reactor.run`)           | Raises `RubyReactor::Lock::AcquisitionError`. The caller decides whether to retry, switch to async, or give up. |
-| Async worker (Sidekiq/ActiveJob) | Snoozes the job via `perform_in(delay, ...)`. **Does not** consume the backend's retry budget.                  |
+| Inline (`Reactor.run`)           | Raises `RubyReactor::Lock::AcquisitionError`. The caller decides whether to retry, switch to background, or give up. |
+| Background worker (Sidekiq/ActiveJob) | Snoozes the job via `perform_in(delay, ...)`. **Does not** consume the backend's retry budget.                  |
 
-The async path also force-disables `wait:` (no `sleep`/BLPOP inside a worker thread) — better to snooze the job than to tie up a worker.
+The background path also force-disables `wait:` (no `sleep`/BLPOP inside a worker thread) — better to snooze the job than to tie up a worker.
 
 After `lock_snooze_max_attempts` snoozes, the worker stops re-enqueuing and marks the context as failed. See [Snooze configuration](#snooze-configuration).
 
@@ -135,7 +135,7 @@ begin
   RefundOrderReactor.run(order_id: 42)
 rescue RubyReactor::Lock::AcquisitionError
   # Someone else is refunding this order; surface a 409, retry later, or hand
-  # off to async:
+  # off to a background worker:
   RubyReactor::Adapters::Sidekiq::Worker.perform_async(...)
 end
 ```
@@ -148,7 +148,7 @@ Two implications:
 
 - A user-triggered retry that creates a new top-level run has a **new** owner. If the previous run's lock has not expired yet (e.g. process crashed without auto-extend), the retry will see contention.
 - Across an interrupt's pause/resume boundary, the lock is released on pause and re-acquired on resume — a separate runner can sneak in between. Lean on `ttl` and idempotency to make this safe.
-- A **parked async wait** is the exception: when a worker-side `result(:name)` read parks on a still-pending `async_step` / `async_reactor` (see [Async Reactors](async_reactors.md#waiting-on-dispatched-work)), the lock and any semaphore slot **stay checked out** across the gap and are re-adopted on redelivery — nothing can sneak in. The parked gap is covered by the lock's `ttl` alone (the auto-extender is not running between deliveries), so keep `ttl` above the snooze delay — at defaults (60s ttl vs ~5–10s snooze) this holds comfortably.
+- A **parked async wait** is the exception: when a worker-side `result(:name)` read parks on a still-pending `async_step` / `async_reactor` (see [Background & Async Execution](background_and_async.md#waiting-on-dispatched-work)), the lock and any semaphore slot **stay checked out** across the gap and are re-adopted on redelivery — nothing can sneak in. The parked gap is covered by the lock's `ttl` alone (the auto-extender is not running between deliveries), so keep `ttl` above the snooze delay — at defaults (60s ttl vs ~5–10s snooze) this holds comfortably.
 
 ## Semaphores
 
@@ -167,7 +167,7 @@ class GeocodeReactor < RubyReactor::Reactor
 end
 ```
 
-At any time, at most five `GeocodeReactor` invocations run concurrently across your fleet. The 6th call snoozes (async) or raises `RubyReactor::Semaphore::AcquisitionError` (inline).
+At any time, at most five `GeocodeReactor` invocations run concurrently across your fleet. The 6th call snoozes (background) or raises `RubyReactor::Semaphore::AcquisitionError` (inline).
 
 ### Token model
 
@@ -287,7 +287,7 @@ Key points:
 - **Name-only.** `with_rate_limit(:stripe)` takes no `limit:`/`period:`/`limits:` and no key block — those come from the registry. Passing both raises `ArgumentError`.
 - **Lazy resolution.** The name is resolved from the registry at run time, not at class load, so `configure` and reactor definitions can load in any order.
 - **Unknown names fail loud.** Referencing a name that was never registered raises `RubyReactor::RateLimitRegistry::UnknownLimitError` (a configuration error that propagates out of `run`, not swallowed into a step failure). In a Sidekiq worker this is treated as permanent: the context is marked `:failed` immediately — no snooze, no Sidekiq retry burn.
-- **Same enforcement path.** Named and inline limits both run through the same counter check, so multi-window semantics, the `ExceededError`, and async snooze behave identically (see below).
+- **Same enforcement path.** Named and inline limits both run through the same counter check, so multi-window semantics, the `ExceededError`, and background snooze behave identically (see below).
 
 Use the inline block form instead when you need a **per-entity** key (e.g. one quota *per account*) rather than a single shared bucket.
 
@@ -301,7 +301,7 @@ Fixed-window counter (same family as the [kpumuk/throttling](https://github.com/
 
 Trade-off vs token bucket: fixed-window can allow up to 2× the limit across the very boundary (3 at `:59.99` + 3 at `:00.01` = 6 in 20ms). For typical upstream API limits this is fine; if you need strict pacing, layer a second `with_rate_limit(limit: 1, period: <interval>)`.
 
-### Smart snooze on async
+### Smart snooze in background workers
 
 When a Sidekiq worker hits a rate limit, it reads `retry_after_seconds` off the error and snoozes for **exactly** that long (plus jitter, floored at 0.1s). The next attempt fires the moment the bucket rolls — no busy waiting, no fixed cadence.
 
@@ -310,11 +310,11 @@ This shares the existing snooze cap (`lock_snooze_max_attempts`). After the cap 
 | Caller        | Behavior on rate-limit hit                                                                                                            |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | Inline        | Raises `RubyReactor::RateLimit::ExceededError`. Caller can `sleep(error.retry_after_seconds); retry` or surface 429 to its user.      |
-| Sidekiq async | Snoozes `perform_in(retry_after + jitter, ...)`. Does not burn Sidekiq retry budget. Counted against `lock_snooze_max_attempts`.      |
+| Background    | Snoozes `perform_in(retry_after + jitter, ...)`. Does not burn Sidekiq retry budget. Counted against `lock_snooze_max_attempts`.      |
 
 The rate-limit check happens **before** lock/semaphore acquisition: a job that would be rate-limited never grabs a mutex.
 
-Like the period gate, the rate limit applies to the **first execution** only — the inline call for sync reactors, the first worker pass for async reactors. Genuine resumes (interrupt continue, async step handoff, retry requeue) never re-check: a paused reactor must not throttle itself on the way back in.
+Like the period gate, the rate limit applies to the **first execution** only — the inline call for sync reactors, the first worker pass for background reactors. Genuine resumes (interrupt continue, `background` hand-off, retry requeue) never re-check: a paused reactor must not throttle itself on the way back in.
 
 ## Periods (once-per-bucket dedup)
 
@@ -364,10 +364,10 @@ TTL is always **twice the period length** so the marker reliably dedups the next
 The marker is written **only after a terminal `Success`** (and after the reactor's `mark_period_on_success` runs, which the executor handles automatically). This means:
 
 - A failed run does **not** consume the bucket — the next attempt can succeed.
-- A paused run (interrupted, async-handed-off) does **not** consume the bucket until the eventual resume completes successfully.
+- A paused run (interrupted, handed off by `background`) does **not** consume the bucket until the eventual resume completes successfully.
 - A `Halt` result does **not** re-mark the bucket (no-op).
 
-The gate applies to the **first execution** only — for sync reactors that's the inline call; for async reactors it's the first worker pass. Genuine resumes (interrupt continue, async step handoff, retry requeue) skip the period check entirely — a paused reactor must never skip *itself* when its eventual marker appears.
+The gate applies to the **first execution** only — for sync reactors that's the inline call; for background reactors it's the first worker pass. Genuine resumes (interrupt continue, `background` hand-off, retry requeue) skip the period check entirely — a paused reactor must never skip *itself* when its eventual marker appears.
 
 ### Composing with `with_lock`
 
@@ -477,13 +477,13 @@ If instead the step did nothing at all and the *rest of the reactor should still
 
 ## Ordered Locks (strict sequencing)
 
-`with_ordered_lock` enforces strict per-key transaction ordering. When you fan a stream of work out across an async worker pool, normal queues give no order guarantee — two workers can pop neighbouring jobs and run them in whichever order the scheduler picks. The ordered-lock primitive fixes that with a monotonically increasing nonce that is **assigned at enqueue time** (synchronously inside `Reactor.run`, before `perform_async` is called) and a strict `last_completed + 1` gate at execute time.
+`with_ordered_lock` enforces strict per-key transaction ordering. When you fan a stream of work out across a background worker pool, normal queues give no order guarantee — two workers can pop neighbouring jobs and run them in whichever order the scheduler picks. The ordered-lock primitive fixes that with a monotonically increasing nonce that is **assigned at enqueue time** (synchronously inside `Reactor.run`, before `perform_async` is called) and a strict `last_completed + 1` gate at execute time.
 
-> **Use only on `async` reactors.** The gate's only "wait" mechanism is the Sidekiq worker rescuing `OrderedLock::WaitError` and snoozing via `perform_in`. A **synchronous** reactor (no `async`) has no worker to snooze it: a nonce assigned out of order raises `OrderedLock::WaitError` straight to the caller of `Reactor.run`. Single-threaded sequential sync calls happen to be fine (each nonce is always `last_completed + 1` by the time it runs), but **concurrent sync `Reactor.run` calls on the same key will raise** to whichever caller is out of order. If you need ordering, mark the reactor `async`.
+> **Use only on `background all: true` reactors.** The gate's only "wait" mechanism is the Sidekiq worker rescuing `OrderedLock::WaitError` and snoozing via `perform_in`. A **synchronous** reactor (no `background all: true`) has no worker to snooze it: a nonce assigned out of order raises `OrderedLock::WaitError` straight to the caller of `Reactor.run`. Single-threaded sequential sync calls happen to be fine (each nonce is always `last_completed + 1` by the time it runs), but **concurrent sync `Reactor.run` calls on the same key will raise** to whichever caller is out of order. If you need ordering, mark the reactor `background all: true`.
 
 ```ruby
 class ApplyTransactionReactor < RubyReactor::Reactor
-  async
+  background all: true
   input :account_id
   input :transaction
 
@@ -600,7 +600,7 @@ By default `with_ordered_lock(strict: true)` treats the sequence as a pipeline: 
 
 ```ruby
 class ApplyTransactionReactor < RubyReactor::Reactor
-  async
+  background all: true
   with_ordered_lock(poison_pill_timeout: 300) { |i| "txs:#{i[:account_id]}" } # strict: true by default
   step :apply do
     argument :tx, input(:transaction)
@@ -644,13 +644,13 @@ RubyReactor::OrderedLock.reset!("txs:42")
 ### Ordered-lock caveats
 
 - **No re-entrancy.** Unlike `with_lock` (which uses the root context id as owner to allow nested reactors to share the lock), a nested reactor with its own `with_ordered_lock` is an independent sequence. This is intentional — nested sequences with their own nonces compose by being independent. See [Composed children](#composed-children) below for the specific case of `compose :foo, ChildWithOrderedLock`.
-- **Synchronous nested `Reactor.run` on the same key is silently ignored.** Calling `InnerOrderedReactor.run(...)` from inside a step of `OuterOrderedReactor` when both target the same ordered-lock key would deadlock — the outer nonce holds the slot, the inner gets a fresh nonce that can never advance until the outer completes, but the outer is blocked waiting for the inner. The framework detects this at `Reactor#run` time, **skips** the inner's nonce assignment, and logs a warning. The inner reactor runs without gate/advance — i.e. as a normal Reactor call with no ordering enforcement on this nesting level — and the outer keeps its single slot. Different keys are unaffected; async/Sidekiq paths are unaffected (they execute on a different thread/process and so do not collide).
+- **Synchronous nested `Reactor.run` on the same key is silently ignored.** Calling `InnerOrderedReactor.run(...)` from inside a step of `OuterOrderedReactor` when both target the same ordered-lock key would deadlock — the outer nonce holds the slot, the inner gets a fresh nonce that can never advance until the outer completes, but the outer is blocked waiting for the inner. The framework detects this at `Reactor#run` time, **skips** the inner's nonce assignment, and logs a warning. The inner reactor runs without gate/advance — i.e. as a normal Reactor call with no ordering enforcement on this nesting level — and the outer keeps its single slot. Different keys are unaffected; background (Sidekiq/ActiveJob) paths are unaffected (they execute on a different thread/process and so do not collide).
 - **Bypass via raw `perform_async` is unsafe.** Always go through `Reactor.run` on an ordered-lock reactor. Constructing a serialized context by hand and pushing it onto Sidekiq directly skips the enqueue-side INCR, so the worker either runs without a nonce (no gate enforcement) or fails the gate (no nonce in `private_data`).
 - **Validation failures don't consume a nonce.** Assignment happens after input validation succeeds.
 - **Pub/sub wake is intentionally not used.** The worker-snooze model uses Sidekiq's scheduled set as durable parking; pub/sub adds a fragile second path with no correctness benefit at our throughputs. See the design notes if you need sub-second wake latency at high parked-job counts.
 - **`WaitError` bypasses `lock_snooze_max_attempts`.** Unlike lock / semaphore / rate-limit contention, an ordered-lock wait does not count against the snooze cap. The cap would either fail a job prematurely (the legitimate wait window can be `poison_pill_timeout` long) or strand the nonce in `assigned_at` after escalation. Instead, a waiting nonce snoozes indefinitely until either the gate passes or `poison_pill_timeout` auto-advances the cursor past the blocker(s). Set `poison_pill_timeout` to your upper-bound wall-clock for legitimate single-nonce in-flight time.
 - **Clustered poison advances in one shot.** If multiple consecutive blockers are dead (e.g. a process crashed mid-batch), `can_proceed` drains all stale prefix blockers in a single Lua call rather than one per snooze round. Recovery time scales with `poison_pill_timeout`, not with the number of stale nonces.
-- **Synchronous (non-async) ordered-lock reactors raise `WaitError` to the caller.** The snooze-and-retry machinery lives in the Sidekiq worker. A *synchronous* `Reactor.run` on an ordered-lock reactor (a reactor without `async`) has no worker to park it: if its nonce isn't yet at the front of the line, `Reactor.run` raises `OrderedLock::WaitError` straight to the caller, and the nonce has **already been consumed** at enqueue. If the caller swallows the error and never retries, that nonce never advances and every successor stalls until `poison_pill_timeout` sweeps it. Synchronous ordered locks therefore only make sense when callers submit in already-correct order (so each gate passes first try) or when the caller explicitly retries on `WaitError`. For fan-out across concurrent producers, use an `async` reactor so contention is handled by the durable snooze path. (A single-producer synchronous sequence — one caller submitting strictly in order — drains cleanly; this is the case the `SyncOrderedReactor` integration tests cover.)
+- **Synchronous (non-background) ordered-lock reactors raise `WaitError` to the caller.** The snooze-and-retry machinery lives in the Sidekiq worker. A *synchronous* `Reactor.run` on an ordered-lock reactor (a reactor without `background all: true`) has no worker to park it: if its nonce isn't yet at the front of the line, `Reactor.run` raises `OrderedLock::WaitError` straight to the caller, and the nonce has **already been consumed** at enqueue. If the caller swallows the error and never retries, that nonce never advances and every successor stalls until `poison_pill_timeout` sweeps it. Synchronous ordered locks therefore only make sense when callers submit in already-correct order (so each gate passes first try) or when the caller explicitly retries on `WaitError`. For fan-out across concurrent producers, use a `background all: true` reactor so contention is handled by the durable snooze path. (A single-producer synchronous sequence — one caller submitting strictly in order — drains cleanly; this is the case the `SyncOrderedReactor` integration tests cover.)
 - **Stale redeliveries never downgrade a terminal record.** A Sidekiq at-least-once redelivery of a job whose batch already drained is fenced two ways, depending on timing:
   - **After the next batch starts** — the redelivery carries an epoch from the drained generation, so the epoch check resolves it to `:stale_batch`: it runs no steps and mutates no counters.
   - **In the drain gap** (after GC, before the next batch's first assign bumps the epoch) — the epoch still matches, so the gate instead returns `:drained_go`. Here the executor consults the **stored context status**: a genuine late straggler (non-terminal) still runs (poison semantics), but a redelivery of an already-terminal context is short-circuited with `Halt(reason: :ordered_lock_drained_replay)` and does **not** re-execute its steps.
@@ -667,7 +667,7 @@ ParentReactor#foo. Nested ordered-lock sequences are independent and must run
 via top-level `Reactor.run` to be enforced.
 ```
 
-If you need ordering on the child's work, invoke it as a top-level `Reactor.run` (typically from a step body, with `async`), not via `compose`.
+If you need ordering on the child's work, invoke it as a top-level `Reactor.run` (typically from a step body, on a `background all: true` reactor), not via `compose`.
 
 ## Snooze configuration
 
@@ -724,6 +724,6 @@ A subclass can call `with_lock` / `with_semaphore` / `with_rate_limit` / `with_p
 - **Wait inside a Sidekiq worker** is intentionally disabled. If you want to keep a worker thread parked on `BLPOP`, run that reactor inline instead.
 - **`with_period` alone is not a mutex.** Concurrent racers can both run before either has written the marker. Pair with `with_lock` if you need true at-most-one-per-bucket (the gate is re-checked under the lock, so the pairing is strict). The period is calendar-aligned, not "N hours since last run"; if you need sliding semantics, pass an integer `every:`.
 - **`with_rate_limit` is fixed-window.** Up to 2× the limit can run across a single window boundary. For strict pacing, use a token-bucket-style external rate limiter or stack a tighter `with_rate_limit(limit: 1, period: <interval>)` for serialized requests.
-- **Rate slots are consumed before lock/semaphore acquisition.** This ordering ensures a rate-limited job never grabs a mutex, but the inverse cost is that a run which passes the rate check and then hits lock/semaphore contention has already consumed a slot for an attempt that never ran. The same applies per snooze attempt when an async first run keeps colliding with a held lock. If your quota is tight relative to your contention, prefer keys that don't overlap a contended lock, or widen the window.
+- **Rate slots are consumed before lock/semaphore acquisition.** This ordering ensures a rate-limited job never grabs a mutex, but the inverse cost is that a run which passes the rate check and then hits lock/semaphore contention has already consumed a slot for an attempt that never ran. The same applies per snooze attempt when a background first run keeps colliding with a held lock. If your quota is tight relative to your contention, prefer keys that don't overlap a contended lock, or widen the window.
 - **Semaphores are not re-entrant.** Locks are owner-based and re-entrant across composed reactors; semaphores have no owner concept. A composed reactor acquiring the same semaphore key as its parent consumes a second token — with `limit: 1` and `wait: 0` it fails immediately, and with `wait > 0` it deadlocks until the wait expires. Don't share one semaphore key between a parent and its composed children.
 - **`with_ordered_lock` requires `Reactor.run` as the entry point.** Bypassing it (e.g. by hand-rolling a serialized context and pushing onto Sidekiq) skips the enqueue-side INCR and breaks the ordering guarantee. It is also not re-entrant — nested ordered-lock reactors are independent sequences. Both nesting paths (same-thread `Reactor.run` on the same key, and `compose` of a child that declares `with_ordered_lock`) silently skip the inner's ordering and log a warning rather than raise.

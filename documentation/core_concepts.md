@@ -87,7 +87,7 @@ end
 - **`compensate`**: Cleanup for the current failing step, reading `reason`/`inputs`/`context`. Called when the step fails. Defaults to `Skipped()` if omitted
 - **`undo`**: Rollback for previously successful steps, reading `result`/`inputs`/`context`. Called during reactor failure rollback. Defaults to `Skipped()` if omitted
 
-**Class-level entry points** (what the executor, the async worker, and a direct unit-test call all use): `MyStep.run(arguments, context)` (aliased `.call`), `MyStep.undo(result, arguments, context)`, `MyStep.compensate(reason, arguments, context)` — each builds the fresh instance described above and translates any `success!`/`fail!`/`skip!`/`halt!` signal into its result wrapper. Only `.run` enforces the input contract, before the instance exists. `.undo` and `.compensate` never do, so rollback cannot fail on the inputs that caused the failure.
+**Class-level entry points** (what the executor, the background worker, and a direct unit-test call all use): `MyStep.run(arguments, context)` (aliased `.call`), `MyStep.undo(result, arguments, context)`, `MyStep.compensate(reason, arguments, context)` — each builds the fresh instance described above and translates any `success!`/`fail!`/`skip!`/`halt!` signal into its result wrapper. Only `.run` enforces the input contract, before the instance exists. `.undo` and `.compensate` never do, so rollback cannot fail on the inputs that caused the failure.
 
 > A step's own input-validation failure is always non-retryable — `result.retryable?` is `false` whether the violation happened synchronously, inside an `async_step` worker, or inside a `compose`d child (see [Step Input Contracts](../README.md#step-input-contracts) in the README).
 
@@ -234,7 +234,7 @@ end
 - **`RubyReactor::Success`** — `success?` is `true`. `value` holds the output of the step named in `returns`, or the full `intermediate_results` hash if no `returns` is declared. A run containing skipped steps still ends here — `Skipped` never surfaces as the run's terminal result (see below).
 - **`RubyReactor::Failure`** — `failure?` is `true`. Readers include `error`, `step_name`, `reactor_name`, `step_arguments`, `inputs`, `exception_class`, `file_path`, `line_number`, `backtrace`, `validation_errors`, and `retryable?`.
 - **`RubyReactor::Halt`** — a clean stop. A `Success` subclass, so `success?` is `true` **and** `halted?` is `true`; `reason` and `step_name` say where/why. Returned when a step returns `Halt(reason: "...")` or a `with_period` bucket is already claimed. Remaining steps don't run and completed steps are **not** compensated. See [Halting a reactor cleanly](#halting-a-reactor-cleanly).
-- **`RubyReactor::DispatchResult`** — returned by an async reactor or when a step hands off to a worker. Readers: `job_id`, `execution_id`, `intermediate_results`.
+- **`RubyReactor::DispatchResult`** — returned by a `background all: true` reactor, or when a `background after:`/`before:` hand-off point is reached. Readers: `job_id`, `execution_id`, `intermediate_results`.
 - **`RubyReactor::InterruptResult`** — returned when an `interrupt` step pauses execution. Readers: `execution_id`, `correlation_id`, `status` (`:paused`), `timeout_at`, `intermediate_results`.
 
 `RubyReactor::Skipped` is a sixth signal, but it is a *step-level* result, not a run-level one: a step's `run` can return it, and `MyStep.run(args, context)` returns it directly in a unit test, but `Reactor.run` always surfaces a plain `Success` at the top even when the `returns` step was itself skipped — the skip is visible in the execution trace, not in the run's terminal result type. See [Skipping a single step](#skipping-a-single-step).
@@ -398,12 +398,12 @@ Consider a reactor where `reserve_inventory` fails has a set `retries` with max_
 
 Retries happen first, followed by compensation and undo only if all retry attempts fail.
 
-### Asynchronous Retries
+### Background Retries
 
-For asynchronous reactors, retries are queued as background jobs with calculated delays, preventing worker thread blocking:
+For reactors running in a background worker, retries are queued as background jobs with calculated delays, preventing worker thread blocking:
 
 ```ruby
-class AsyncPaymentReactor < RubyReactor::Reactor
+class BackgroundPaymentReactor < RubyReactor::Reactor
   background all: true
 
   step :charge_card do
@@ -434,15 +434,15 @@ result = Reactor.run(inputs)
 - Simple error handling
 - Limited scalability
 
-### Asynchronous Execution
+### Background Execution
 
 ```ruby
-async_result = Reactor.run(inputs)
+dispatch = Reactor.run(inputs) # reactor declares `background all: true`
 # Returns immediately
-async_result.execution_id # UUID to look up state later
+dispatch.execution_id # UUID to look up state later
 
 # Reload to inspect status / final result
-reactor = Reactor.find(async_result.execution_id)
+reactor = Reactor.find(dispatch.execution_id)
 case reactor.context.status.to_s
 when "completed" then reactor.result.value
 when "failed"    then reactor.result.error
@@ -803,7 +803,7 @@ graph TD
 - Blocking operations halt the entire process
 - Simple debugging and monitoring
 
-### Asynchronous
+### Background
 - Multi-threaded execution via Sidekiq or ActiveJob workers
 - Non-blocking retry mechanisms
 - Complex monitoring and debugging
@@ -834,6 +834,6 @@ graph TD
 ### Performance
 
 1. **Efficient Steps**: Keep individual steps fast
-2. **Async for Slow Ops**: Use async for I/O bound operations
+2. **Background for Slow Ops**: Move slow I/O bound work to a worker with `background`, or dispatch independent units with `async_step` / `async_reactor`
 3. **Resource Limits**: Set appropriate timeouts and limits
 4. **Caching**: Cache expensive operations when safe
