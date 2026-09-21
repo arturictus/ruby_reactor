@@ -151,7 +151,7 @@ Examples of foundational tasks (adjust based on your project):
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] TXXX [P] Documentation updates in docs/
+- [ ] TXXX [P] Update `README.md` and affected file(s) under `./documentation` for this feature (REQUIRED — Constitution Development Workflow)
 - [ ] TXXX Code cleanup and refactoring
 - [ ] TXXX Performance optimization across all stories
 - [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/

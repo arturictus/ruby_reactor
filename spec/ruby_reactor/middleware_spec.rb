@@ -2,11 +2,11 @@
 
 require "spec_helper"
 
-class MiddlewareTestStep
-  def self.run(arguments, _context)
-    raise "step failed" if arguments[:should_fail]
+class MiddlewareTestStep < RubyReactor::Step
+  def run
+    raise "step failed" if inputs[:should_fail]
 
-    RubyReactor.Success(arguments[:value].to_i * 2)
+    Success(inputs[:value].to_i * 2)
   end
 end
 

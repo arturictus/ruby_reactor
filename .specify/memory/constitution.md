@@ -1,25 +1,27 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.1.0 → 1.2.0 (MINOR: Principle VI expanded with a 4th requirement —
-  docker-compose.yml currency + docker-run acceptance tests)
+Version change: 1.2.1 → 1.3.0 (MINOR: Development Workflow now REQUIRES every generated
+  plan.md and tasks.md to carry an explicit documentation-update task/gate, with the
+  requirement propagated into both templates — a new enforcement mechanism, not just
+  wording)
 
-Modified principles:
-  - Principle VI: Demo-App Proof of Feature — added requirement 4, "Docker acceptance
-    run" (docker-compose.yml MUST track demo_app's services; demo: rake tasks are the
-    project's acceptance suite, runnable via `docker compose run`)
+Modified principles: none (Development Workflow section, not a Core Principle)
 
-Added sections: none (existing Principle VI section extended)
+Added sections: none
 
 Removed sections: none
 
 Templates checked:
-  - .specify/templates/plan-template.md   ✅ Constitution Check gate is generic ("Gates determined
-                                             based on constitution file") — no edit required
-  - .specify/templates/spec-template.md   ✅ No principle-specific content — no edit required
-  - .specify/templates/tasks-template.md  ✅ Already covers demo-app polish tasks — no edit required
+  - .specify/templates/plan-template.md      ✅ Added Constitution Check checklist item:
+                                                 identify README.md/./documentation impact
+  - .specify/templates/spec-template.md      ✅ No principle-specific content — no edit required
+  - .specify/templates/tasks-template.md     ✅ Polish-phase doc task now explicit and marked
+                                                 REQUIRED, citing README.md + ./documentation
   - .specify/templates/checklist-template.md ✅ Generic — no edit required
-  - .specify/extensions.yml               ✅ No before/after_constitution hooks registered
+  - .specify/extensions.yml                  ✅ No before/after_constitution hooks registered
+  - README.md                                ✅ No principle-specific claims to update
+  - documentation/*.md                       ✅ No principle-specific claims to update
 
 Deferred TODOs: none
 -->
@@ -164,9 +166,17 @@ gaps in the matcher library surface as work instead of as workarounds.
 - Feature branches target `main`. PRs MUST pass CI (RSpec + RuboCop) before merge.
 - Releases are managed by release-please. Version bump lives in
   `lib/ruby_reactor/version.rb`. Do not manually edit the version in gemspec.
-- New features MUST update `README.md` documentation and add entries to
-  `CHANGELOG.md` under the correct semantic heading (`Features`, `Bug Fixes`,
-  `documentation`).
+- Every task MUST update documentation as part of its own change, not as a
+  follow-up: `README.md` and any affected file under `./documentation` MUST be
+  kept current with the behavior the task introduces, changes, or removes. A
+  task that alters observable behavior without a matching documentation update
+  is incomplete. New features additionally MUST add entries to `CHANGELOG.md`
+  under the correct semantic heading (`Features`, `Bug Fixes`, `documentation`).
+- Every `plan.md` produced by `/speckit-plan` and every `tasks.md` produced by
+  `/speckit-tasks` MUST include at least one explicit task or checklist item to
+  update `README.md` and the relevant file(s) under `./documentation` for the
+  feature's behavior. A plan or task list that omits a documentation-update
+  task is incomplete and MUST be rejected in review.
 - Class-based step definitions are the preferred authoring style (not inline
   lambdas). Documentation and examples MUST reflect this.
 - The `demo_app/` directory serves as a living integration example. Changes to
@@ -198,4 +208,4 @@ justified in the `Complexity Tracking` table of the plan.
 Compliance review: at each MINOR or MAJOR gem release, confirm this constitution
 still accurately reflects the codebase and update as needed.
 
-**Version**: 1.2.0 | **Ratified**: 2025-10-02 | **Last Amended**: 2026-09-09
+**Version**: 1.3.0 | **Ratified**: 2025-10-02 | **Last Amended**: 2026-09-11

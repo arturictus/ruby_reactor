@@ -42,33 +42,29 @@ graph TD
 ## Implementation
 
 ```ruby
-class ValidatePaymentStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
+class ValidatePaymentStep < RubyReactor::Step
+  def run
     Success(
-      validated_amount: arguments[:amount],
-      validated_currency: arguments[:currency]
+      validated_amount: inputs[:amount],
+      validated_currency: inputs[:currency]
     )
   end
 end
 
-class PreAuthorizeStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
+class PreAuthorizeStep < RubyReactor::Step
+  def run
     auth_result = PaymentGateway.pre_authorize(
-      amount: arguments[:amount],
-      currency: arguments[:currency],
-      card_token: arguments[:card_token]
+      amount: inputs[:amount],
+      currency: inputs[:currency],
+      card_token: inputs[:card_token]
     )
 
     raise "Pre-authorization failed: #{auth_result.error}" unless auth_result.success?
 
-    Success(auth_id: auth_result.id, auth_amount: arguments[:amount])
+    Success(auth_id: auth_result.id, auth_amount: inputs[:amount])
   end
 
-  def self.undo(result, _arguments, _context)
+  def undo
     PaymentGateway.void_authorization(result[:auth_id]) if result[:auth_id]
     Success()
   end

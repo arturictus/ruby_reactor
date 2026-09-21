@@ -42,6 +42,10 @@
 
 [Gates determined based on constitution file]
 
+- [ ] Documentation impact identified: which `README.md` sections and which
+      file(s) under `./documentation` this feature will require updating
+      (Constitution Development Workflow — carried into tasks.md as a required task)
+
 ## Project Structure
 
 ### Documentation (this feature)

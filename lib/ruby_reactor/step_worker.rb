@@ -56,6 +56,9 @@ module RubyReactor
       context = load_step_context
       return record_missing_parent unless context
 
+      # A fresh worker process has never run the reactor, so the inferred
+      # wiring for name-resolved inputs does not exist here yet.
+      context.reactor_class&.validate_definition!
       step_config = context.reactor_class&.steps&.[](@step_name)
       return record_missing_step unless step_config
 
@@ -113,6 +116,7 @@ module RubyReactor
       result =
         if step_config.has_run_block?
           args = arguments.empty? ? context.inputs : arguments
+          args = step_config.inline_contract.enforce!(args) if step_config.inline_contract
           step_config.run_block.call(args, context)
         elsif step_config.has_impl?
           step_config.impl.run(arguments, context)
@@ -121,6 +125,12 @@ module RubyReactor
         end
 
       normalize(result)
+    rescue Error::InputValidationError => e
+      # Same shape the executor builds, and never retried: the same arguments
+      # fail the same contract on every attempt.
+      RubyReactor.Failure(e, validation_errors: e.field_errors, step_name: @step_name,
+                             step_arguments: e.step_arguments || {}, reactor_name: @reactor_class_name,
+                             retryable: false)
     rescue StandardError => e
       RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name)
     end
@@ -158,16 +168,21 @@ module RubyReactor
     # Write first, publish second. The record is the answer; the signal only
     # saves the reader a fallback interval.
     def complete(result, context)
-      storage.store_step_result(
-        @step_context_id, @step_name,
-        {
-          "status" => "completed",
-          "success" => result.success?,
-          "result" => ContextSerializer.serialize_value(result.success? ? result.value : result.to_h),
-          "completed_at" => Time.now.iso8601
-        },
-        @reactor_class_name
-      )
+      record = {
+        "status" => "completed",
+        "success" => result.success?,
+        "result" => ContextSerializer.serialize_value(result.success? ? result.value : result.to_h),
+        "completed_at" => Time.now.iso8601
+      }
+      # A `halt!` reports success? == true but carries no value, so without
+      # this the reader cannot tell it from an ordinary success returning nil.
+      # `skip!` needs nothing extra: Skipped keeps its value, and the reader is
+      # meant to see that value exactly as a same-process step would.
+      if result.is_a?(RubyReactor::Halt)
+        record["signal"] = "halt"
+        record["reason"] = result.reason
+      end
+      storage.store_step_result(@step_context_id, @step_name, record, @reactor_class_name)
       log(result.success? ? :info : :warn, result.success? ? "completed" : "completed_with_failure")
       storage.publish(RubyReactor.async_step_channel(@step_context_id, @step_name), "done")
       result

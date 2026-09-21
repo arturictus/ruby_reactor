@@ -6,7 +6,7 @@ RubyReactor is a powerful Ruby framework for building reliable, sequential busin
 
 RubyReactor supports two step styles:
 
-- **Class steps** (preferred) — a class that `include RubyReactor::Step` with `self.run`, and optionally `self.compensate` and `self.undo`. Reference it in the reactor with `step :name, MyStepClass do ... end`.
+- **Class steps** (preferred) — a class that subclasses `RubyReactor::Step` with an instance `run`, and optionally `compensate` and `undo`. Reference it in the reactor with `step :name, MyStepClass do ... end`.
 - **Inline blocks** — `step :name do ... run { ... } end` inside the reactor class.
 
 Use class steps for anything beyond a trivial one-liner. They improve **testability** (unit-test step logic in isolation), **composability** (reuse the same step across reactors), and **readability** (reactor files stay focused on orchestration as workflows grow).
@@ -36,19 +36,15 @@ Most examples in this documentation mix class steps with inline blocks — class
 ```ruby
 require 'ruby_reactor'
 
-class ValidateOrderStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    Success(Order.find(arguments[:order_id]))
+class ValidateOrderStep < RubyReactor::Step
+  def run
+    Success(Order.find(inputs[:order_id]))
   end
 end
 
-class ProcessPaymentStep
-  include RubyReactor::Step
-
-  def self.run(arguments, _context)
-    Success(PaymentService.charge(arguments[:order]))
+class ProcessPaymentStep < RubyReactor::Step
+  def run
+    Success(PaymentService.charge(inputs[:order]))
   end
 end
 

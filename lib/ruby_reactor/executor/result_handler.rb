@@ -143,7 +143,8 @@ module RubyReactor
         orig_err = result.original_error.is_a?(Exception) ? result.original_error : nil
         error = Error::StepFailureError.new(result.error, step: step_config.name, context: @context,
                                                           original_error: orig_err,
-                                                          step_arguments: resolved_arguments)
+                                                          step_arguments: resolved_arguments,
+                                                          validation_errors: result.validation_errors)
         if result.respond_to?(:backtrace) && result.backtrace
           error.set_backtrace(result.backtrace)
         elsif orig_err
@@ -155,9 +156,12 @@ module RubyReactor
       def handle_failure(step_config, result, resolved_arguments)
         failure_result = @compensation_manager.handle_step_failure(step_config, result.error, resolved_arguments)
         orig_err = result.error.is_a?(Exception) ? result.error : nil
+        # A step that propagates another unit's validation failure (an
+        # async_step reader) keeps its field errors on the reactor's failure.
         error = Error::StepFailureError.new(failure_result.error, step: step_config.name, context: @context,
                                                                   original_error: orig_err,
-                                                                  step_arguments: resolved_arguments)
+                                                                  step_arguments: resolved_arguments,
+                                                                  validation_errors: result.validation_errors)
         if result.respond_to?(:backtrace) && result.backtrace
           error.set_backtrace(result.backtrace)
         elsif orig_err
@@ -222,7 +226,9 @@ module RubyReactor
           exception_class: exception_class,
           file_path: file_path,
           line_number: line_number,
-          code_snippet: code_snippet
+          code_snippet: code_snippet,
+          validation_errors: error.validation_errors,
+          retryable: error.retryable?
         )
       end
 
