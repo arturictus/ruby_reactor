@@ -290,16 +290,26 @@ module RubyReactor
 
       # Heartbeats while the body runs so a merely-slow step is not
       # poison-passed by a successor (T061), then advances the cursor ONLY
-      # on a terminal result — a `Contended`/`KeyError` raised from deeper in
+      # on a terminal result. Only a `Contended` raised from deeper in
       # `around_run` (rate limit, lock, semaphore) leaves this position
       # un-advanced and its stash intact, so a redelivery resumes the SAME
-      # nonce instead of losing its place in line.
+      # nonce instead of losing its place in line; any other exception is
+      # terminal and poisons the position.
       def run_under_ordered_lock(info)
         heartbeat = Executor::OrderedLockSupport.start_heartbeat(info)
         begin
           result = yield
-        rescue StandardError
+        rescue Contended
           heartbeat.stop
+          raise
+        rescue StandardError
+          # Anything else is terminal — `StepExecutor` turns it into a
+          # `Failure`, so the position must be poisoned here or every
+          # successor waits out the poison_pill_timeout for a nonce that is
+          # never coming back.
+          heartbeat.stop
+          Executor::OrderedLockSupport.advance_with_retry(info, failed: true)
+          delete_ordered_lock_stash
           raise
         end
         heartbeat.stop
@@ -411,24 +421,63 @@ module RubyReactor
         limit = config[:limit]
         semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: wait_for(config[:wait]))
 
+        acquire_or_reattach_semaphore(semaphore, key, limit)
+
+        parked = false
         begin
-          semaphore.acquire
-        rescue RubyReactor::Semaphore::AcquisitionError => e
-          middlewares.on(:semaphore_failed, key, limit, e, context)
-          raise Contended.new(primitive: :semaphore, key: key, step_name: step_name, reactor_name: reactor_label,
-                              original: e)
+          yield
+        rescue Contended
+          parked = parking?
+          raise
+        ensure
+          if parked
+            # FR-018, same reasoning as `with_lock` above: a `Contended` from
+            # deeper in (a nested or direct step) parked this execution. Keep
+            # the slot checked out across the gap and re-adopt it on the
+            # redelivery, rather than handing it back and letting another
+            # execution into a step this one still holds.
+            step_parked_semaphores[step_name.to_s] = semaphore.token
+            pop_key(key) if limit == 1
+          else
+            release_semaphore(semaphore, key, limit)
+          end
         end
+      end
+
+      # Mirrors `acquire_or_reattach_lock`: a slot re-adopted across a park
+      # records no second `:semaphore_acquired`; a token lost in between (pool
+      # reset / expiry) falls back to competing normally.
+      def acquire_or_reattach_semaphore(semaphore, key, limit)
+        reattached = semaphore.reattach(consume_parked_semaphore_token)
+
+        unless reattached
+          begin
+            semaphore.acquire
+          rescue RubyReactor::Semaphore::AcquisitionError => e
+            middlewares.on(:semaphore_failed, key, limit, e, context)
+            raise Contended.new(primitive: :semaphore, key: key, step_name: step_name, reactor_name: reactor_label,
+                                original: e)
+          end
+        end
+
         # Only a single-slot semaphore has the circular-wait shape the async
         # deadlock guard can act on (T032/T034) — mirrors `Executor#acquire_semaphore`.
         push_key(key) if limit == 1
-        middlewares.on(:semaphore_acquired, key, limit, context)
+        middlewares.on(:semaphore_acquired, key, limit, context) unless reattached
         clear_contention_state
+      end
 
-        begin
-          yield
-        ensure
-          release_semaphore(semaphore, key, limit)
-        end
+      def step_parked_semaphores
+        return @step_parked_semaphores_local ||= {} unless context.is_a?(RubyReactor::Context)
+
+        context.private_data[:step_parked_semaphores] ||= {}
+      end
+
+      # One-shot, same reasoning as `consume_parked_lock_marker`; the per-step
+      # key survives the context's JSON round-trip as a Symbol.
+      def consume_parked_semaphore_token
+        stash = step_parked_semaphores
+        stash.delete(step_name.to_s) || stash.delete(step_name.to_sym)
       end
 
       # Dedup window, fast pre-check (contract §3 position 2): mirrors

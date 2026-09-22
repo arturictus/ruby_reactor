@@ -40,6 +40,11 @@ module RubyReactor
         # the only meaningful upper bound.
         uncapped = contended.original.is_a?(RubyReactor::OrderedLock::WaitError)
         if !uncapped && config.lock_snooze_max_attempts != :infinity && count > config.lock_snooze_max_attempts
+          # Terminal: `StepExecutor#handle_contention` stored the park marker
+          # before calling here, and nothing downstream clears it — leaving it
+          # would report a failed execution as still waiting on a key.
+          @context.private_data.delete(:step_contention)
+
           # Carry the contention through as a `Contended`, not a bare string:
           # `handle_non_retryable_failure` hands `result.error` to the
           # compensation manager as `original_error`, and `step_never_started?`

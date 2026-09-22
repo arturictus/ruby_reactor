@@ -93,13 +93,17 @@ module RubyReactor
 
       if !uncapped && config.lock_snooze_max_attempts != :infinity && attempt > config.lock_snooze_max_attempts
         log(:warn, "contention_exhausted", key: contended.key, attempt: attempt)
+        # Terminal: clear the park marker an earlier attempt saved, and pass
+        # `context` so `complete`'s `save_root` persists that — otherwise the
+        # parent stays marked waiting on a key after this unit is failed.
+        context&.private_data&.delete(:step_contention)
         complete(
           RubyReactor::Failure(
             "async_step :#{@step_name} gave up on #{contended.primitive} '#{contended.key}' after " \
             "#{attempt} contention attempts",
             step_name: @step_name, reactor_name: @reactor_class_name, retryable: false,
             exception_class: contended.original.class.name
-          ), nil
+          ), context
         )
         return
       end
@@ -311,8 +315,11 @@ module RubyReactor
       # ownership never crosses a process hand-off, so this job's coordination
       # never re-enters the dispatching execution's holds and never blocks a
       # SECOND async_step dispatch on the same key from proceeding once this
-      # one releases.
-      found&.coordination_owner = SecureRandom.uuid
+      # one releases. Derived, not random: `StepCoordination` can detach a
+      # lock across a contention park, and `perform_step_in` redelivers this
+      # same unit — a fresh uuid per redelivery would make `lock.reattach`
+      # fail against its own detached hold until the TTL expired.
+      found&.coordination_owner = "async_step:#{@step_context_id}:#{@step_name}"
       found
     rescue RubyReactor::Error::DeserializationError, RubyReactor::Error::SchemaVersionError => e
       log(:error, "parent_context_unreadable", error: "#{e.class}: #{e.message}")

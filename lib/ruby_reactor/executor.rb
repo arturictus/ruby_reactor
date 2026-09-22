@@ -4,6 +4,9 @@ require "English"
 require_relative "executor/input_validator"
 require_relative "executor/graph_manager"
 require_relative "executor/retry_manager"
+# Before compensation_manager: its NEVER_STARTED_ERROR_CLASSES names
+# StepCoordination at load time, while `class Executor` does not exist yet.
+require_relative "executor/step_coordination"
 require_relative "executor/compensation_manager"
 require_relative "executor/result_handler"
 require_relative "executor/async_step_dispatch"
