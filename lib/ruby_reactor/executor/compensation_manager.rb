@@ -111,8 +111,14 @@ module RubyReactor
       def coordinated_rollback(step_config, arguments, &block)
         return block.call if Executor::StepCoordination.none?(step_config)
 
+        # Forward coordination keys off the contract-applied inputs (`Step.run`
+        # enforces before coordinating), so rollback must apply the same
+        # defaults or it re-takes a DIFFERENT key than the one it held.
+        contract = step_config.respond_to?(:input_contract) ? step_config.input_contract : nil
+        key_arguments = contract ? contract.apply_defaults(arguments) : arguments
+
         Executor::StepCoordination.new(
-          step_config: step_config, arguments: arguments, context: @context,
+          step_config: step_config, arguments: key_arguments, context: @context,
           reactor_class: @context.reactor_class, middlewares: middlewares
         ).around_rollback(&block)
       end

@@ -230,16 +230,19 @@ module RubyReactor
       def handle_contention(step_config, contended, resolved_arguments)
         @context.current_step = step_config.name
         attempt = @context.retry_context.contention_attempts_for_step(step_config.name) + 1
-        @context.append_execution_trace(
-          { type: :contention_park, step: step_config.name, primitive: contended.primitive, key: contended.key,
-            attempt: attempt, timestamp: Time.now }
-        )
-        @context.private_data[:step_contention] = {
-          step: step_config.name, primitive: contended.primitive, key: contended.key, attempts: attempt,
-          next_attempt_at: nil
-        }
 
         if @context.inline_async_execution
+          # Park evidence belongs to the async path ONLY: synchronously there is
+          # no requeue, the step just fails, and writing these would report a
+          # terminal execution as parked and leave the dashboard "waiting".
+          @context.append_execution_trace(
+            { type: :contention_park, step: step_config.name, primitive: contended.primitive, key: contended.key,
+              attempt: attempt, timestamp: Time.now }
+          )
+          @context.private_data[:step_contention] = {
+            step: step_config.name, primitive: contended.primitive, key: contended.key, attempts: attempt,
+            next_attempt_at: nil
+          }
           log_async_event(
             "step_coordination.parked", step_config.name,
             key: contended.key, primitive: contended.primitive, attempt: attempt

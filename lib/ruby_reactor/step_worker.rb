@@ -66,7 +66,7 @@ module RubyReactor
 
       complete(run_step(context, step_config), context)
     rescue Executor::StepCoordination::Contended => e
-      handle_contention(e)
+      handle_contention(e, context)
     rescue Executor::StepCoordination::KeyError => e
       log(:error, "failed", error: "#{e.class}: #{e.message}")
       complete(RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name, retryable: false),
@@ -86,7 +86,7 @@ module RubyReactor
     # mirrors `Worker#handle_snooze`). WITHOUT calling `complete`: the Step
     # Result Record stays "dispatched" so a reader keeps waiting instead of
     # seeing a phantom terminal state.
-    def handle_contention(contended)
+    def handle_contention(contended, context = nil)
       config = RubyReactor.configuration
       attempt = @contention_attempts + 1
       uncapped = contended.original.is_a?(RubyReactor::OrderedLock::WaitError)
@@ -106,10 +106,29 @@ module RubyReactor
 
       delay = RubyReactor::Worker.snooze_delay(config, contended)
       log(:info, "parked", key: contended.key, primitive: contended.primitive, attempt: attempt, delay: delay)
+      record_contention(context, contended, attempt)
       RubyReactor.configuration.async_router.perform_step_in(
         delay, root_context_id: @root_context_id, reactor_class_name: @reactor_class_name,
                step_context_id: @step_context_id, step_name: @step_name, contention_attempts: attempt
       )
+    end
+
+    # The same park evidence `StepExecutor#handle_contention` writes, so a
+    # reader sees this unit waiting on its key instead of merely pending.
+    # Persisted here because nothing else saves the context on this path —
+    # `complete` (which would) is deliberately not called while parked.
+    def record_contention(context, contended, attempt)
+      return unless context
+
+      context.append_execution_trace(
+        { type: :contention_park, step: @step_name, primitive: contended.primitive, key: contended.key,
+          attempt: attempt, timestamp: Time.now }
+      )
+      context.private_data[:step_contention] = {
+        step: @step_name, primitive: contended.primitive, key: contended.key, attempts: attempt,
+        next_attempt_at: nil
+      }
+      save_root(context)
     end
 
     def acquire_liveness_lock
@@ -136,6 +155,13 @@ module RubyReactor
     def run_step(context, step_config)
       arguments = resolve_arguments(step_config, context)
       log(:info, "running")
+      # Mirrors `StepExecutor#run_step_implementation`: without a `:run` entry
+      # the dashboard has no arguments to resolve this step's key from.
+      contract = step_config.input_contract
+      context.append_execution_trace(
+        { type: :run, step: @step_name, timestamp: Time.now,
+          arguments: contract ? contract.redact(arguments) : arguments }
+      )
 
       attempt = 0
       result = nil

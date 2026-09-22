@@ -40,9 +40,18 @@ module RubyReactor
         # the only meaningful upper bound.
         uncapped = contended.original.is_a?(RubyReactor::OrderedLock::WaitError)
         if !uncapped && config.lock_snooze_max_attempts != :infinity && count > config.lock_snooze_max_attempts
+          # Carry the contention through as a `Contended`, not a bare string:
+          # `handle_non_retryable_failure` hands `result.error` to the
+          # compensation manager as `original_error`, and `step_never_started?`
+          # must still recognise that this step's body never ran — otherwise it
+          # compensates work that never happened.
           return RubyReactor::Failure(
-            "Step '#{step_config.name}' gave up on #{contended.primitive} '#{contended.key}' after " \
-            "#{count} contention attempts",
+            Executor::StepCoordination::Contended.new(
+              primitive: contended.primitive, key: contended.key, step_name: step_config.name,
+              reactor_name: reactor_class.name, original: contended.original,
+              message: "Step '#{step_config.name}' gave up on #{contended.primitive} '#{contended.key}' after " \
+                       "#{count} contention attempts"
+            ),
             step_name: step_config.name, reactor_name: reactor_class.name, retryable: false,
             exception_class: contended.original.class.name
           )

@@ -75,7 +75,9 @@ module RubyReactor
     # rubocop:enable Naming/MethodName
 
     class << self
-      def run(arguments, context)
+      # `context` is optional: a stand-alone `ChargeStep.run(args)` is its own
+      # execution, with no reactor context to inherit ownership from.
+      def run(arguments, context = nil)
         validated = enforce_contract!(arguments)
         coordinate(validated, context) { catch(StepSignals::TAG) { new(validated, context).run } }
       end

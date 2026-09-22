@@ -29,13 +29,17 @@ module RubyReactor
       class Contended < StandardError
         attr_reader :primitive, :key, :step_name, :reactor_name, :original
 
-        def initialize(primitive:, key:, step_name:, reactor_name:, original:)
+        # `message:` overrides the default wording for a re-wrap that needs to
+        # say something else (the contention-ceiling failure in
+        # `RetryManager#park_for_contention`) while staying a `Contended`.
+        def initialize(primitive:, key:, step_name:, reactor_name:, original:, message: nil) # rubocop:disable Metrics/ParameterLists
           @primitive = primitive
           @key = key
           @step_name = step_name
           @reactor_name = reactor_name
           @original = original
-          super("#{reactor_name} step :#{step_name} could not acquire #{primitive} '#{key}': #{original.message}")
+          default = "#{reactor_name} step :#{step_name} could not acquire #{primitive} '#{key}': #{original.message}"
+          super(message || default)
         end
 
         # RateLimit::ExceededError and OrderedLock::WaitError carry a precise
@@ -75,7 +79,7 @@ module RubyReactor
       # `ensure`s: semaphore releases before lock (FR-008), lock before the
       # ordered-lock gate (Phase 11) advances.
       def around_run(&block)
-        ordered_lock_gate do
+        result = ordered_lock_gate do
           period_fast_check do
             rate_limited do
               with_lock do
@@ -86,6 +90,13 @@ module RubyReactor
             end
           end
         end
+        # Terminal: contention raises, so reaching here means the step is done
+        # (success, failure or skip). Clear the parked markers for EVERY
+        # declaration shape — a rate-limit-only or ordered-lock-only step never
+        # passes through the lock/semaphore clears below, and a stale marker
+        # makes the API report a finished step as still waiting.
+        clear_contention_state
+        result
       end
 
       # Re-take exclusion primitives ONLY (lock, then semaphore) for
@@ -190,6 +201,10 @@ module RubyReactor
         gate = check_ordered_lock!(info)
 
         if gate == :skip_chain_failed
+          # This position is terminal (skipped, not failed) — advance it like
+          # the executor's reactor-level short-circuit does, or every later
+          # skipped step stays in flight and the sequence never drains.
+          Executor::OrderedLockSupport.advance_with_retry(info, failed: false)
           delete_ordered_lock_stash
           return RubyReactor.Skipped(nil, reason: :ordered_lock_chain_failed, step_name: step_name)
         end
@@ -288,9 +303,26 @@ module RubyReactor
           raise
         end
         heartbeat.stop
-        Executor::OrderedLockSupport.advance_with_retry(info, failed: result.is_a?(RubyReactor::Failure))
+        Executor::OrderedLockSupport.advance_with_retry(info, failed: chain_failed?(result))
         delete_ordered_lock_stash
         result
+      end
+
+      # The reactor validates a step's output AFTER `around_run` returns, so a
+      # body that succeeded with a contract-violating value would advance this
+      # position as successful and let strict successors run even though the
+      # step is about to be turned into a failure. Re-run the validator here
+      # (it is a pure check) and poison the chain instead.
+      def chain_failed?(result)
+        return true if result.is_a?(RubyReactor::Failure)
+        return false unless result.is_a?(RubyReactor::Success)
+
+        validator = step_config.respond_to?(:output_validator) && step_config.output_validator
+        return false unless validator
+
+        !validator.call(result.value).success?
+      rescue StandardError
+        false
       end
 
       def with_lock
@@ -303,24 +335,72 @@ module RubyReactor
                auto_extend: config.fetch(:auto_extend, true)
         )
 
-        begin
-          lock.acquire
-        rescue RubyReactor::Lock::AcquisitionError => e
-          middlewares.on(:lock_failed, key, e, context)
-          raise Contended.new(primitive: :lock, key: key, step_name: step_name, reactor_name: reactor_label,
-                              original: e)
-        end
-        push_key(key)
-        middlewares.on(:lock_acquired, key, context)
-        clear_contention_state
+        acquire_or_reattach_lock(lock, key)
 
+        parked = false
         begin
           yield
+        rescue Contended
+          parked = parking?
+          raise
         ensure
-          release_lock(lock)
-          pop_key(key)
-          middlewares.on(:lock_released, key, context)
+          if parked
+            # FR-018: a deeper primitive (the semaphore) parked this execution.
+            # Keep this hold checked out across the gap — bounded by the TTL,
+            # since `detach` stops the auto-extender — and re-adopt it on the
+            # redelivery instead of releasing it and re-competing, which would
+            # emit a second acquisition and leave a window for someone else.
+            lock.detach
+            step_parked_locks[step_name.to_s] = true
+            pop_key(key)
+          else
+            release_lock(lock)
+            pop_key(key)
+            middlewares.on(:lock_released, key, context)
+          end
         end
+      end
+
+      # Re-adopting a hold kept across a contention park records no second
+      # `:lock_acquired`; a lapsed hold (TTL expired mid-park) falls back to
+      # competing normally.
+      def acquire_or_reattach_lock(lock, key)
+        reattached = consume_parked_lock_marker && lock.reattach
+
+        unless reattached
+          begin
+            lock.acquire
+          rescue RubyReactor::Lock::AcquisitionError => e
+            middlewares.on(:lock_failed, key, e, context)
+            raise Contended.new(primitive: :lock, key: key, step_name: step_name, reactor_name: reactor_label,
+                                original: e)
+          end
+        end
+
+        push_key(key)
+        middlewares.on(:lock_acquired, key, context) unless reattached
+        clear_contention_state
+      end
+
+      # Only a worker-side execution has a redelivery to re-adopt a hold on;
+      # a synchronous contention is terminal, so its lock must be released.
+      def parking?
+        @park && context.is_a?(RubyReactor::Context) && context.inline_async_execution
+      end
+
+      def step_parked_locks
+        return @step_parked_locks_local ||= {} unless context.is_a?(RubyReactor::Context)
+
+        context.private_data[:step_parked_locks] ||= {}
+      end
+
+      # One-shot (same reasoning as `Executor#consume_parked_primitives!`): a
+      # crash after this read degrades to a fresh acquire, not a stale
+      # reattach on some later, unrelated resume. The per-step key survives
+      # the context's JSON round-trip as a Symbol, so both spellings are read.
+      def consume_parked_lock_marker # rubocop:disable Naming/PredicateMethod
+        stash = step_parked_locks
+        !!(stash.delete(step_name.to_s) || stash.delete(step_name.to_sym))
       end
 
       def with_semaphore

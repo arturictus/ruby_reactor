@@ -101,7 +101,11 @@ module RubyReactor
           value = cfg[:transform].call(value) if cfg[:transform]
           resolved[name] = value
         end
-        resolved
+        # The worker computes its key from the CONTRACT-applied inputs, so the
+        # guard must too — an omitted argument with a default would otherwise
+        # produce a different key here and let a self-deadlocking job through.
+        contract = step_config.input_contract
+        contract ? contract.apply_defaults(resolved) : resolved
       rescue Executor::StepCoordination::KeyError => e
         RubyReactor::Failure(e, step_name: step_config.name, reactor_name: @reactor_class&.name, retryable: false)
       end

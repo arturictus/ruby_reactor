@@ -20,7 +20,8 @@ module RubyReactor
           end
 
           if reactor_class.rate_limit_config
-            result[:rate_limit] = build_rate_limit(reactor_class.rate_limit_config, normalized_inputs, adapter)
+            result[:rate_limit] = build_rate_limit(resolve_rate_limit(reactor_class.rate_limit_config),
+                                                   normalized_inputs, adapter)
           end
 
           if reactor_class.period_config
@@ -59,7 +60,12 @@ module RubyReactor
           primitive, config = step_config.coordination_declarations.first
           return { step: name.to_s, state: "pending" } unless primitive
 
+          # The trace records PRE-contract arguments; coordination keys off the
+          # defaulted inputs, so apply the contract here or a defaulted step
+          # shows a different key than the one actually held.
           args = entry[:arguments] || entry["arguments"] || {}
+          contract = step_config.respond_to?(:input_contract) ? step_config.input_contract : nil
+          args = contract.apply_defaults(args) if contract && args.is_a?(Hash)
           built = build_step_primitive(primitive, config, args, context_id, adapter)
           { step: name.to_s, primitive: primitive.to_s }.merge(built)
         end
@@ -68,7 +74,7 @@ module RubyReactor
           case primitive
           when :lock then build_lock(config, args, context_id, adapter)
           when :semaphore then build_semaphore(config, args, adapter)
-          when :rate_limit then build_rate_limit(config, args, adapter)
+          when :rate_limit then build_rate_limit(resolve_rate_limit(config), args, adapter)
           when :period then build_period(config, args, adapter)
           else { key: resolve_key(config[:key_proc], args) }
           end
@@ -194,6 +200,20 @@ module RubyReactor
             key: nil,
             key_error: e.message
           }
+        end
+
+        # `with_rate_limit(:name)` stores only the name; the renderer needs the
+        # registered windows and the name-as-key the limiter actually uses
+        # (mirrors `StepCoordination#rate_limit_key_and_limits`).
+        def resolve_rate_limit(config)
+          return config unless config[:name]
+
+          name = config[:name]
+          { limits: RubyReactor.configuration.rate_limits.fetch(name), key_proc: ->(_args) { name.to_s } }
+        rescue StandardError => e
+          # An unregistered name is a config mistake, not a reason for the
+          # dashboard to 500 — surface it as this row's key_error.
+          { limits: [], key_proc: ->(_args) { raise e } }
         end
 
         def map_limits(limits)
