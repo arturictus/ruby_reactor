@@ -21,3 +21,13 @@ hooks:
     prompt: Execute speckit.agent-context.update?
     description: Refresh agent context after planning
     condition: null
+  after_implement:
+  - extension: project
+    command: speckit.review
+    enabled: true
+    optional: false
+    priority: 10
+    prompt: Execute speckit.review?
+    description: Review the implemented changes against RubyReactor
+      runtime invariants (saga, retries, async isolation, locks, validation, documented claims)
+    condition: null
