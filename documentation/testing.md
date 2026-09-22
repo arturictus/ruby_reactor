@@ -275,6 +275,37 @@ subject = test_reactor(ParentReactor, params)
 expect(subject).to be_success
 ```
 
+`.composed(:step_name)` returns a proxy scoped to that composed reactor. Chain
+as many `mock_step`/`failing_at` calls as you need to configure several
+things inside the *same* child — scope stays put:
+
+```ruby
+subject = test_reactor(ParentReactor, params)
+  .composed(:process_child)
+  .mock_step(:inner_step_a) { |args, _ctx| Success("a") }
+  .mock_step(:inner_step_b) { |args, _ctx| Success("b") }
+```
+
+To mock steps in **multiple composed reactors** in the same test, pass a
+block to `.composed` — it yields the scoped proxy and returns the *outer*
+subject, so each `.composed` call starts a fresh scope:
+
+```ruby
+subject = test_reactor(ParentReactor, params)
+  .composed(:process_child) do |child|
+    child.mock_step(:inner_step) { |args, _ctx| Success("mocked inner result") }
+  end
+  .composed(:another_child) do |child|
+    child.mock_step(:other_step) { |args, _ctx| Success("mocked other result") }
+  end
+
+expect(subject).to be_success
+```
+
+`.map` supports the same block form, and `.composed`/`.map` can be nested
+inside each other (e.g. a `map` step inside a `composed` reactor) to
+configure arbitrarily deep trees.
+
 ### Traversing Composed Results
 
 After execution, traverse into composed reactor results:
@@ -310,6 +341,22 @@ subject = test_reactor(BatchProcessor, items: [1, 2, 3])
   .mock_step(:transform) do |args, context|
     Success(args[:item] * 2)
   end
+```
+
+Like `.composed`, `.map` accepts a block instead: it yields a proxy scoped to
+that map step and returns the *outer* subject, so you can chain into other
+map/composed steps right after without scope leaking between them:
+
+```ruby
+subject = test_reactor(BatchProcessor, items: [1, 2, 3])
+  .map(:process_items) do |item|
+    item.mock_step(:transform) { |args, _ctx| Success(args[:item] * 2) }
+  end
+  .composed(:notify_child) do |child|
+    child.mock_step(:send_email) { |args, _ctx| Success("sent") }
+  end
+
+expect(subject).to be_success
 ```
 
 ---

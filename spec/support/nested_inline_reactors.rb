@@ -43,6 +43,10 @@ module Support
         end
       end
 
+      step :other_step do
+        run { |_, _| RubyReactor::Success("other_done") }
+      end
+
       background before: :async_step
 
       argument :id, value("child2")

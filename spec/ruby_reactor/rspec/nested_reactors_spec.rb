@@ -35,6 +35,41 @@ RSpec.describe "Nested Reactor Helpers" do
         expect(child1).to be_success
         expect(child1).to have_run_step(:async_step).returning("async_done_child1")
       end
+
+      it "mocks multiple composed reactors in the same test via block scoping" do
+        # rubocop:disable Style/MultilineBlockChain -- this chained block-scoping is the DSL under test
+        reactor
+          .composed(:child1) do |child|
+            child.mock_step(:async_step) { |args, _ctx| RubyReactor::Success("mocked1_#{args[:id]}") }
+          end
+          .composed(:child2) do |child|
+            child.mock_step(:async_step) { |args, _ctx| RubyReactor::Success("mocked2_#{args[:id]}") }
+          end
+        # rubocop:enable Style/MultilineBlockChain
+
+        expect(reactor).to be_success
+        expect(reactor.composed(:child1)).to have_run_step(:async_step).returning("mocked1_child1")
+        expect(reactor.composed(:child2)).to have_run_step(:async_step).returning("mocked2_child2")
+      end
+
+      it "stays usable directly as a subject after a non-block scoped chain" do
+        subject = reactor.composed(:child2).mock_step(:async_step) do |args, _ctx|
+          RubyReactor::Success("mocked_#{args[:id]}")
+        end
+
+        expect(subject).to be_success
+      end
+
+      it "mocks two inner steps of the same composed reactor without leaking scope to the parent" do
+        reactor.composed(:child2)
+               .mock_step(:async_step) { |args, _ctx| RubyReactor::Success("mocked_#{args[:id]}") }
+               .mock_step(:other_step) { |_args, _ctx| RubyReactor::Success("also_mocked") }
+
+        expect(reactor).to be_success
+        child2 = reactor.composed(:child2)
+        expect(child2).to have_run_step(:async_step).returning("mocked_child2")
+        expect(child2).to have_run_step(:other_step).returning("also_mocked")
+      end
     end
   end
 

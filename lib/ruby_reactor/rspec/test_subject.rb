@@ -48,44 +48,93 @@ module RubyReactor
         self
       end
 
-      # Fluent API for mocking nested map steps
-      # @example
-      #   reactor.map(:my_map).mock_step(:inner_step) { ... }
+      # Fluent/scoped API for mocking nested map steps.
+      #
+      # Without a block, returns a proxy scoped to this map step — chain
+      # `mock_step`/`failing_at`/`map`/`composed` on it to configure several
+      # things inside the same nested reactor:
+      #   reactor.map(:my_map).mock_step(:a) { ... }.mock_step(:b) { ... }
+      #
+      # With a block, the proxy is yielded and the *outer* subject is
+      # returned, so sibling nested reactors can be configured in the same
+      # chain without leaking scope between them:
+      #   test_reactor(Parent, params)
+      #     .map(:my_map) { |m| m.mock_step(:a) { ... } }
+      #     .composed(:other_child) { |c| c.mock_step(:b) { ... } }
       def map(step_name)
-        StepProxy.new(self, step_name)
+        proxy = StepProxy.new(self, [step_name])
+        return proxy unless block_given?
+
+        yield proxy
+        self
       end
 
-      # Fluent API for mocking nested compose steps
+      # Fluent/scoped API for mocking nested compose steps. See `#map` for
+      # the block vs. no-block behavior.
       # @example
-      #   reactor.compose(:my_sub_reactor).mock_step(:inner_step) { ... }
+      #   reactor.composed(:my_sub_reactor).mock_step(:inner_step) { ... }
       def composed(step_name)
         # If already executed, return the traversed subject
         return traverse_composed(step_name) if @executed
 
-        # Otherwise return a configuration proxy
-        StepProxy.new(self, step_name)
+        proxy = StepProxy.new(self, [step_name])
+        return proxy unless block_given?
+
+        yield proxy
+        self
       end
       alias compose composed
 
-      # Proxy class for fluent mocking configuration
+      # Proxy scoped to a nested step path (e.g. [:parent_compose, :child_map]).
+      # All mutating calls stay scoped to this path: `mock_step`/`failing_at`
+      # return the proxy itself (not the outer subject) so several inner
+      # steps of the *same* nested reactor can be chained without resetting
+      # scope back to the parent.
       class StepProxy
-        def initialize(subject, step_name)
+        def initialize(subject, step_path)
           @subject = subject
-          @step_name = step_name
+          @step_path = step_path
         end
 
-        def mock_step(inner_step_name, *nested_steps, &block)
-          @subject.mock_step(@step_name, inner_step_name, *nested_steps, &block)
-          @subject # Return subject to allow chaining or calling run
+        def mock_step(inner_step_name, *nested_steps, element_index: nil, &block)
+          @subject.mock_step(*@step_path, inner_step_name, *nested_steps, element_index: element_index, &block)
+          self
         end
 
-        # Support deep nesting?
+        def failing_at(inner_step_name, *nested_steps, element_index: nil, &block)
+          @subject.failing_at(*@step_path, inner_step_name, *nested_steps, element_index: element_index, &block)
+          self
+        end
+
         def map(inner_step_name)
-          StepProxy.new(@subject, [@step_name, inner_step_name].flatten)
+          proxy = self.class.new(@subject, @step_path + [inner_step_name])
+          return proxy unless block_given?
+
+          yield proxy
+          self
         end
 
         def composed(inner_step_name)
-          StepProxy.new(@subject, [@step_name, inner_step_name].flatten)
+          proxy = self.class.new(@subject, @step_path + [inner_step_name])
+          return proxy unless block_given?
+
+          yield proxy
+          self
+        end
+        alias compose composed
+
+        # Delegate everything else (run, success?, result, step_result, ...)
+        # to the outer subject, so a proxy can stand in for it wherever a
+        # `TestSubject` is expected (e.g. `expect(subject).to be_success`
+        # right after a non-block `.composed(:x).mock_step(:y)` chain).
+        def method_missing(name, ...)
+          return @subject.public_send(name, ...) if @subject.respond_to?(name)
+
+          super
+        end
+
+        def respond_to_missing?(name, include_private = false)
+          @subject.respond_to?(name, include_private) || super
         end
       end
 
