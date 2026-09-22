@@ -1,6 +1,6 @@
 # Implementation Plan: Step-Scoped Coordination
 
-**Branch**: `step_validations` | **Date**: 2026-09-10 | **Spec**: [spec.md](./spec.md)
+**Branch**: `independent_step_locks` | **Date**: 2026-09-10 | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `specs/003-step-lock-declarations/spec.md`
 
@@ -13,7 +13,10 @@ workflow can be serialized without serializing the workflow.
 The declaration surface already exists: `Dsl::Lockable`'s five macros are a self-contained
 module whose only contract is "a key proc that receives a hash". Steps host it unchanged and
 pass their arguments where the reactor passes its inputs. Enforcement is a `StepCoordination`
-object the executor wraps around the step body, in the same fixed order the reactor uses.
+object, in the same fixed order the reactor uses. For class steps it runs inside `Step.run` —
+the one entry point every caller uses — so a step invoked directly is constrained exactly like
+one run by a reactor; the executor wraps only inline step blocks, parks on contention, and
+re-takes holds for rollback.
 
 Contention parks the execution rather than failing it, reusing `requeue_job_for_step_retry` —
 which already persists the context with `current_step` set and re-enqueues — with contention
@@ -68,7 +71,7 @@ ordered-lock phase is roughly the weight of the other four primitives combined.
 | **II. Saga Pattern Integrity** | ✅ The strongest alignment in this feature. Coordination is re-taken for compensate/undo (FR-024), so rollback of a protected operation is protected too — closing a race the reactor-level lock leaves open whenever rollback outlives the reactor's own hold. Contention parks rather than fails, so routine contention never triggers spurious compensation. Nothing changes which steps run or in what order (FR-014). |
 | **III. Test-First with Real Infrastructure** | ✅ Non-negotiable here: every claim is a concurrency claim. Real Redis, real Sidekiq for the park path. `Sidekiq::Testing.inline!` is explicitly wrong for this feature — it re-enters the worker synchronously inside the holding frame (the reason `acquire_context_lock` skips itself under it, `executor.rb:470`). |
 | **IV. Observability by Default** | ✅ FR-028/FR-029. Events carry the step name; the dashboard's coordination view learns step-level state; a contention-parked execution is distinguishable from a failed one, reusing the `:snooze_reactor` precedent that already keeps snooze rounds from reading as phantom failures. |
-| **V. Simplicity and SemVer** | ⚠️ Justified. MINOR and fully additive — a step declaring nothing is unaffected. But the scope is five primitives where the request was one, and YAGNI applies to four of them; the step-level ordered lock in particular invents a guarantee (order-of-arrival) weaker than the one its name implies. Recorded in Complexity Tracking, sequenced last, and flagged as the first thing to cut. |
+| **V. Simplicity and SemVer** | ⚠️ Justified. MINOR and fully additive — a step declaring nothing is unaffected. But the scope is five primitives where the request was one, and YAGNI applies to four of them; the step-level ordered lock in particular invents a guarantee (order-of-arrival) weaker than the one its name implies. Recorded in Complexity Tracking, sequenced last as the first thing to cut if the schedule tightened — it did not; all five primitives, including the ordered lock, shipped. |
 | **VI. Demo-App Proof of Feature** | ✅ Blocking work: example reactor + `demo:` rake task + spec using only shipped matchers + `docker compose run`. `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, `be_period_marked`, and the ordered-lock matchers already exist; step-scoped assertions are expected to need at least one addition (a step-attributed hold), which goes into `lib/ruby_reactor/rspec/` in the same change rather than being worked around. |
 
 **Post-design re-check**: no new violations. No new dependency, no new storage primitive, no
@@ -101,16 +104,18 @@ lib/ruby_reactor/
 │   ├── lockable.rb                   # unchanged module, now also hosted by steps
 │   └── step_builder.rb               # + the five macros for inline steps; refuse on
 │                                     #   interrupt steps (D6); config onto StepConfig
-├── step.rb                           # + host Lockable macros; introspection (D1)
+├── step.rb                           # + `extend Lockable::ClassMethods` in `class Step` (D1);
+│                                     #   all class-step forward coordination inside `Step.run` (D2)
 ├── executor/
 │   ├── step_coordination.rb          # NEW — acquire/release in fixed order, contention
 │   │                                 #   handling, park decision (D2, D3, D4)
-│   ├── step_executor.rb              # wrap the step body in StepCoordination
+│   ├── step_executor.rb              # wrap inline run blocks; park/fail on Contended
 │   ├── retry_manager.rb              # contention requeue + separate contention counter (D4)
 │   └── compensation_manager.rb       # re-take exclusion primitives for compensate/undo (FR-024)
 ├── step/
 │   └── async_reactor_step.rb         # deadlock guard also covers async_step dispatch (D5)
-├── step_worker.rb                    # coordination around the worker-side step body
+├── step_worker.rb                    # per-job coordination_owner; wrap inline bodies
+├── context.rb                        # + transient coordination_owner (not serialized)
 ├── retry_context.rb                  # + contention attempt counter
 ├── web/coordination_serializer.rb    # + step-level coordination state (D9)
 └── rspec/matchers.rb                 # + step-attributed hold assertions as needed
@@ -164,3 +169,12 @@ Dependency-ordered. Phases 1-6 deliver US1-US4 and US6-US8 in full.
 | Five primitives at step level where the request named one (Principle V / YAGNI) | Explicit user decision after being shown the narrower option. Parity means an author never has to ask which primitives "work" on a step. | Shipping `with_lock` alone covers the stated use case and every acceptance scenario in US1-US4. It was offered and declined. The four extra primitives are sequenced after the core so the schedule can still absorb them being cut. |
 | Step-level ordered lock provides a weaker guarantee than its reactor-level namesake | Included in the user's "all five" decision. Sequencing at step arrival is still useful for a step that sits first in its reactor, where arrival order equals enqueue order. | The reactor-level guarantee cannot be reproduced: the nonce would have to be assigned at enqueue, but the key expression reads arguments that do not exist until the step is reached (research Finding 5). Mitigation is documentation on the macro plus a demo that shows arrival ordering explicitly — not a silent redefinition of the word "ordered". |
 | Contention behaves differently in a worker (park) than synchronously (wait, then fail) | Direct consequence of the chosen park-and-retry behavior; a synchronous run has no queue to park into. | Failing on both paths is simpler and was the recommended option; it was declined. `contention_wait` already encodes this exact split for reactor-level holds, so the divergence is inherited rather than invented, and it is one branch in one method. |
+
+**Status (post-implementation, T074)**: nothing above was cut. All five primitives, including
+the step-level ordered lock (Phase 11), shipped with full test coverage
+(`spec/ruby_reactor/step_coordination/primitives_spec.rb`'s ordered section) and are documented
+in `documentation/locks_and_semaphores.md#step-scoped-coordination`. The schedule never needed to
+absorb a cut. Separately: `data-model.md`'s `ContentionState` entity is superseded by
+`RetryContext#contention_attempts` plus the existing `lock_snooze_*` config (research Finding 7)
+— no dedicated `ContentionState` storage was built, since the simpler mechanism already met every
+acceptance scenario.

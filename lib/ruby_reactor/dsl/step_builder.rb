@@ -5,6 +5,7 @@ module RubyReactor
     class StepBuilder
       include RubyReactor::Dsl::TemplateHelpers
       include RubyReactor::Dsl::ValidationHelpers
+      include RubyReactor::Dsl::Lockable::ClassMethods
 
       attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
                     :dependencies, :args_validator, :output_validator, :retry_config
@@ -153,7 +154,12 @@ module RubyReactor
           args_validator: @args_validator || build_args_validator(@arg_validations, @validate_args_input),
           output_validator: @output_validator,
           inline_contract: @inline_contract,
-          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
+          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config,
+          lock_config: @lock_config,
+          semaphore_config: @semaphore_config,
+          rate_limit_config: @rate_limit_config,
+          period_config: @period_config,
+          ordered_lock_config: @ordered_lock_config
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)
@@ -240,6 +246,57 @@ module RubyReactor
         @output_validator = config[:output_validator]
         @inline_contract = config[:inline_contract]
         @retry_config = { max_attempts: 1 }.merge(config[:retry_config] || {})
+        @lock_config = config[:lock_config]
+        @semaphore_config = config[:semaphore_config]
+        @rate_limit_config = config[:rate_limit_config]
+        @period_config = config[:period_config]
+        @ordered_lock_config = config[:ordered_lock_config]
+      end
+
+      # Coordination source for a step: the step's OWN (inline) declaration if
+      # it has one, else the class step's declaration (`impl`). This fallback
+      # is the one place rollback, the dispatch guard, and the dashboard need
+      # to read — they only ever call these five readers, never `impl`
+      # directly ("Shared names" in tasks.md).
+      def lock_config
+        @lock_config || (impl.lock_config if impl.respond_to?(:lock_config))
+      end
+
+      def semaphore_config
+        @semaphore_config || (impl.semaphore_config if impl.respond_to?(:semaphore_config))
+      end
+
+      def rate_limit_config
+        @rate_limit_config || (impl.rate_limit_config if impl.respond_to?(:rate_limit_config))
+      end
+
+      def period_config
+        @period_config || (impl.period_config if impl.respond_to?(:period_config))
+      end
+
+      def ordered_lock_config
+        @ordered_lock_config || (impl.ordered_lock_config if impl.respond_to?(:ordered_lock_config))
+      end
+
+      def coordination_declarations
+        {
+          lock: lock_config,
+          semaphore: semaphore_config,
+          rate_limit: rate_limit_config,
+          period: period_config,
+          ordered_lock: ordered_lock_config
+        }.compact
+      end
+
+      def declares_coordination?
+        !coordination_declarations.empty?
+      end
+
+      # True when THIS step's own (inline) declarations carry coordination,
+      # ignoring the `impl` fallback — a class step is coordinated once,
+      # inside `Step.run`, never a second time by the executor.
+      def inline_coordination?
+        !(@lock_config || @semaphore_config || @rate_limit_config || @period_config || @ordered_lock_config).nil?
       end
 
       # True for `async_step` / `async_reactor` — the step's work leaves this

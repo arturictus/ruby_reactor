@@ -215,17 +215,49 @@ module RubyReactor
       def start_ordered_lock_heartbeat(info)
         return if @ordered_lock_heartbeat_running
 
+        @ordered_lock_heartbeat_running = true
+        @ordered_lock_heartbeat = OrderedLockSupport.start_heartbeat(info)
+      end
+
+      def stop_ordered_lock_heartbeat
+        return unless @ordered_lock_heartbeat_running
+
+        @ordered_lock_heartbeat_running = false
+        @ordered_lock_heartbeat&.stop
+        @ordered_lock_heartbeat = nil
+      end
+
+      # Value object so a caller can `heartbeat.stop` without reaching into
+      # the thread/flag it wraps. Returned by `.start_heartbeat`.
+      class Heartbeat
+        def initialize(thread, running)
+          @thread = thread
+          @running = running
+        end
+
+        def stop
+          @running[0] = false
+          @thread.wakeup if @thread.alive?
+          @thread.join(0.1)
+        rescue StandardError
+          # Best-effort shutdown; never let heartbeat teardown break the caller's ensure chain.
+        end
+      end
+
+      # Shared by the reactor-level heartbeat above (`#start_ordered_lock_heartbeat`)
+      # and the step-level gate (`StepCoordination#ordered_lock_gate`, T061) — the
+      # restamp logic and interval math are identical, only the caller's own
+      # on/off bookkeeping differs.
+      def self.start_heartbeat(info)
         pp = info[:poison_pill_timeout].to_f
         interval = [pp / 3.0, HEARTBEAT_MIN_INTERVAL].max
-        @ordered_lock_heartbeat_running = true
-        lock = OrderedLock.new(
-          info.fetch(:key), nonce: info.fetch(:nonce), epoch: info.fetch(:epoch)
-        )
+        running = [true]
+        lock = OrderedLock.new(info.fetch(:key), nonce: info.fetch(:nonce), epoch: info.fetch(:epoch))
 
-        @ordered_lock_heartbeat = Thread.new do
-          while @ordered_lock_heartbeat_running
+        thread = Thread.new do
+          while running[0]
             sleep interval
-            break unless @ordered_lock_heartbeat_running
+            break unless running[0]
 
             begin
               lock.heartbeat!
@@ -238,20 +270,8 @@ module RubyReactor
             end
           end
         end
-      end
 
-      def stop_ordered_lock_heartbeat
-        return unless @ordered_lock_heartbeat_running
-
-        @ordered_lock_heartbeat_running = false
-        thread = @ordered_lock_heartbeat
-        @ordered_lock_heartbeat = nil
-        return unless thread
-
-        thread.wakeup if thread.alive?
-        thread.join(0.1)
-      rescue StandardError
-        # Best-effort shutdown; never let heartbeat teardown break the ensure chain.
+        Heartbeat.new(thread, running)
       end
 
       # Advance the cursor when this run reached a *terminal* status.

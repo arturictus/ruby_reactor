@@ -371,25 +371,28 @@ module RubyReactor
       RubyReactor.configuration.logger.warn("Telemetry context injection failed: #{e.message}")
     end
 
-    def on_lock_acquired(key, _context)
+    def on_lock_acquired(key, context)
       span = @reactor_span
       return unless span
 
       span.set_attribute("reactor.lock.key", key.to_s)
+      set_step_attribute(span, context)
       span.add_event("lock_acquired", attributes: { "lock.key" => key.to_s })
     end
 
-    def on_lock_released(key, _context)
+    def on_lock_released(key, context)
       span = @reactor_span
       return unless span
 
+      set_step_attribute(span, context)
       span.add_event("lock_released", attributes: { "lock.key" => key.to_s })
     end
 
-    def on_lock_failed(key, error, _context)
+    def on_lock_failed(key, error, context)
       span = @reactor_span
       return unless span
 
+      set_step_attribute(span, context)
       span.add_event("lock_acquisition_failed", attributes: {
                        "lock.key" => key.to_s,
                        "error.message" => error.message,
@@ -397,27 +400,30 @@ module RubyReactor
                      })
     end
 
-    def on_semaphore_acquired(key, limit, _context)
+    def on_semaphore_acquired(key, limit, context)
       span = @reactor_span
       return unless span
 
       span.set_attribute("reactor.semaphore.key", key.to_s)
       span.set_attribute("reactor.semaphore.limit", limit.to_i)
+      set_step_attribute(span, context)
       span.add_event("semaphore_acquired",
                      attributes: { "semaphore.key" => key.to_s, "semaphore.limit" => limit.to_i })
     end
 
-    def on_semaphore_released(key, _context)
+    def on_semaphore_released(key, context)
       span = @reactor_span
       return unless span
 
+      set_step_attribute(span, context)
       span.add_event("semaphore_released", attributes: { "semaphore.key" => key.to_s })
     end
 
-    def on_semaphore_failed(key, limit, error, _context)
+    def on_semaphore_failed(key, limit, error, context)
       span = @reactor_span
       return unless span
 
+      set_step_attribute(span, context)
       span.add_event("semaphore_acquisition_failed", attributes: {
                        "semaphore.key" => key.to_s,
                        "semaphore.limit" => limit.to_i,
@@ -427,6 +433,14 @@ module RubyReactor
     end
 
     private
+
+    # US7/FR-028: attribute a step-level hold to the step that took it. Nil
+    # for reactor-level coordination, where `current_step` is unset.
+    def set_step_attribute(span, context)
+      return unless context.respond_to?(:current_step) && context.current_step
+
+      span.set_attribute("ruby_reactor.step", context.current_step.to_s)
+    end
 
     def extract_context(context)
       return nil unless defined?(::OpenTelemetry)

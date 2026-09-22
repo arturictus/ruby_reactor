@@ -1,6 +1,6 @@
 # Feature Specification: Step-Scoped Coordination
 
-**Feature Branch**: `step_validations`
+**Feature Branch**: `independent_step_locks`
 
 **Created**: 2026-09-10
 
@@ -153,6 +153,14 @@ work to another process and confirm the hand-off is refused with a message namin
 6. **Given** an execution that parks mid-flight while holding coordination, **When** it
    resumes, **Then** it re-adopts what it held without a duplicate acquisition being recorded,
    and falls back to competing normally if the hold lapsed while parked.
+7. **Given** a step class invoked on its own, outside any workflow, **When** any execution —
+   a workflow holding the key at workflow or step level, or another stand-alone invocation —
+   holds the same key, **Then** the stand-alone invocation contends like any other execution;
+   it is never treated as part of the holder.
+8. **Given** a locked step whose work invokes a step class directly, passing its own
+   execution, **When** that step class declares the key already held, **Then** it proceeds
+   (same execution); **When** it declares a different key, **Then** that key is taken and
+   contended normally — being inside a locked step never exempts other keys.
 
 ---
 
@@ -348,8 +356,11 @@ form, then move it into a class unchanged.
 - **FR-022**: Ownership MUST NOT be shared across a hand-off to another process. Handing off
   work that declares a key the dispatching execution currently holds MUST be refused before
   dispatch, with a message naming the key, the holder, and how to restructure.
-- **FR-023**: A step's declared coordination MUST be honored when the step class is invoked
-  directly, not only when a reactor executes it.
+- **FR-023**: A step's declared coordination MUST be honored on every invocation of the step
+  class — by a workflow, by a worker, or directly by application code. A direct invocation
+  outside any execution is its own execution: it contends with every other holder of the key
+  and is re-entrant with nothing. A direct invocation that passes an execution belongs to it
+  and is re-entrant with that execution's holds only.
 
 #### Rollback
 
@@ -431,7 +442,10 @@ form, then move it into a class unchanged.
   execution, counted nesting, an execution-wide registry of held keys, refusal at hand-off
   when ownership cannot be shared, and keep-ownership-across-parks with re-adoption on resume.
 - The key expression receives the step's resolved arguments — the same values the step's work
-  receives.
+  receives, including any declared input defaults.
+- Step classes are subclasses of the library's base step (0.8.0, `specs/004-inheritable-step-class/`).
+  The mixin form in the original request above no longer exists; the declaration sits in the
+  subclass body the same way.
 - Contention behavior deliberately differs by execution path: parked-and-retried in a worker,
   wait-then-fail synchronously. This is a consequence of there being no queue to step aside
   into in a synchronous run; it is called out in the documentation so authors know which they

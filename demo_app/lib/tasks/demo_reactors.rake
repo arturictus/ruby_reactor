@@ -675,4 +675,89 @@ namespace :demo do
 
     puts "\n✅ COORDINATION DEMO COMPLETE"
   end
+
+  desc "StepLockDemoReactor — with_lock declared on a STEP, not the whole reactor"
+  task step_lock: [:environment, :flush_redis] do
+    require "sidekiq/testing"
+    Sidekiq::Testing.fake!
+
+    # Zeitwerk autoloads by exact path->constant mapping: only
+    # `StepLockDemoReactor` matches `step_lock_demo_reactor.rb`. Touching it
+    # here loads the whole file, defining the step classes and
+    # `StepLockDemoLog` as a side effect, before either is referenced below.
+    StepLockDemoReactor
+
+    RubyReactor.configuration.lock_snooze_base_delay = 0.05
+    RubyReactor.configuration.lock_snooze_jitter = 0
+
+    # Every call below hands the whole reactor to the (fake) job queue —
+    # `Sidekiq::Testing::Worker.drain` processes jobs ONE AT A TIME, which
+    # would never let a second run actually contend the first's lock. Each
+    # "wave" of currently-queued jobs runs on its own real Ruby thread
+    # instead, against the same real Redis, so a step-level lock genuinely
+    # contends; a park re-queues, forming the next wave.
+    def run_concurrently!
+      loop do
+        pending = RubyReactor::Adapters::Sidekiq::Worker.jobs.shift(RubyReactor::Adapters::Sidekiq::Worker.jobs.size)
+        break if pending.empty?
+
+        pending.map { |job| Thread.new { RubyReactor::Adapters::Sidekiq::Worker.new.perform(*job["args"]) } }
+               .each(&:join)
+      end
+    end
+
+    puts "\n=== 1. Serialized: two runs on the same account share one :charge lock ==="
+    StepLockDemoLog.reset!
+    account1 = "demo_acct_#{SecureRandom.hex(3)}"
+    StepLockDemoReactor.call(account_id: account1)
+    StepLockDemoReactor.call(account_id: account1)
+    run_concurrently!
+
+    charge_entries = StepLockDemoLog.entries.select { |e| e[:step] == :charge && e[:account_id] == account1 }
+    charge_entries.each_with_index { |e, i| puts "  [#{i + 1}] :charge ran at=#{e[:at]}" }
+    serialized = charge_entries.each_cons(2).all? { |a, b| b[:at] >= a[:at] }
+    if charge_entries.size == 2 && serialized
+      puts "✅ SUCCESS: both :charge runs completed, never overlapping"
+    else
+      puts "❌ FAIL: got #{charge_entries.size} :charge entries, serialized=#{serialized}"
+    end
+
+    puts "\n=== 2. Contended: two background runs on the same account ==="
+    StepLockDemoLog.reset!
+    account2 = "demo_acct_#{SecureRandom.hex(3)}"
+    d1 = StepLockDemoReactor.call(account_id: account2)
+    d2 = StepLockDemoReactor.call(account_id: account2)
+    run_concurrently!
+
+    r1 = StepLockDemoReactor.find(d1.execution_id)
+    r2 = StepLockDemoReactor.find(d2.execution_id)
+    puts "  run 1 (#{d1.execution_id}): status=#{r1.context.status}"
+    puts "  run 2 (#{d2.execution_id}): status=#{r2.context.status}"
+    park_entries = [r1, r2].flat_map do |r|
+      r.context.execution_trace.select { |e| e[:type].to_s == "contention_park" }
+    end
+    puts "  loser's contention_park trace entry: #{park_entries.first.inspect}"
+    if [r1, r2].all? { |r| r.context.status.to_s == "completed" } && park_entries.any?
+      puts "✅ SUCCESS: both runs completed; the loser parked and retried instead of failing"
+    else
+      puts "❌ FAIL: statuses=#{[r1, r2].map { |r| r.context.status }}, park_entries=#{park_entries.size}"
+    end
+
+    puts "\n=== 3. Compensated: fail_after_charge: true rolls :charge back under its own lock ==="
+    StepLockDemoLog.reset!
+    account3 = "demo_acct_#{SecureRandom.hex(3)}"
+    d3 = StepLockDemoReactor.call(account_id: account3, fail_after_charge: true)
+    run_concurrently!
+
+    r3 = StepLockDemoReactor.find(d3.execution_id)
+    undo_entries = StepLockDemoLog.entries.select { |e| e[:step] == :charge && e[:phase] == :undo }
+    puts "  run (#{d3.execution_id}): status=#{r3.context.status}"
+    puts "  :charge undo entry: #{undo_entries.first.inspect}"
+    puts "  (undo re-acquires \"demo:acct:#{account3}\" under owner=#{d3.execution_id}, released once undo returns)"
+    if r3.context.status.to_s == "failed" && undo_entries.any?
+      puts "✅ SUCCESS: :charge's undo ran under its own lock after :notify failed"
+    else
+      puts "❌ FAIL: status=#{r3.context.status}, undo_entries=#{undo_entries.size}"
+    end
+  end
 end

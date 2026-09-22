@@ -8,7 +8,8 @@ what `documentation/locks_and_semaphores.md` must match.
 ## 1. The five macros, now available on steps
 
 Identical signatures to the reactor-level forms (`Dsl::Lockable`). The only difference is what
-the key proc receives: **the step's resolved arguments**, where the reactor form receives the
+the key proc receives: **the step's `inputs`** — resolved arguments with contract defaults
+applied, the same hash the instance's `run` reads — where the reactor form receives the
 reactor's inputs.
 
 ```ruby
@@ -61,8 +62,9 @@ Same macros, same behavior as the class form.
 
 ## 3. Where it is enforced
 
-Acquisition happens after guards and after argument validation, so a step that will be skipped
-or will fail validation never takes a hold.
+Acquisition happens after guards and after argument validation — both the reactor-side
+`argument` validators and the step class's own `input` contract — so a step that will be
+skipped or will fail validation never takes a hold.
 
 | Order | Taken | Released |
 |---|---|---|
@@ -83,7 +85,8 @@ Released in reverse in an `ensure`, on success, failure, or unexpected error.
 | `background` hand-off worker | ✅ |
 | Resume after interrupt | ✅ |
 | Each `map` iteration | ✅ |
-| `ChargeStep.run(args, ctx)` directly | ✅ wait-then-fail; no execution to park |
+| `ChargeStep.run(args)` / `.run(args, nil)` directly | ✅ its own execution: contends with every holder, including running reactors; wait-then-fail |
+| `ChargeStep.run(args, context)` from inside a step body | ✅ part of that execution: re-entrant on keys it already holds, contends on any other key |
 | `compensate` / `undo` | ✅ exclusion primitives only — see §6 |
 | Step suppressed by `where`/guard | ❌ by design |
 | Interrupt step | ❌ declaring coordination on one raises |
@@ -105,6 +108,10 @@ Identical to nested reactors — same primitives, no second rule set:
 
 - Holds are owned by the **execution** (its root context), so a step keyed the same as its own
   reactor, or nested work inside a locked step, proceeds without waiting.
+- A step class called directly is coordinated the same way (the lock is taken inside
+  `Step.run`). Without a context it is its own execution and gets no re-entrancy; pass the
+  current `context` to join the execution. Re-entrancy covers only keys the execution already
+  holds — a different key is always contended.
 - Nested holds on one key are counted; the key frees for other executions only when the
   outermost hold is released.
 - The keys an execution holds are tracked for the execution as a whole.

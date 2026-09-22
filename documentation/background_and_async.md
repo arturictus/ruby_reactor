@@ -297,9 +297,14 @@ only if the failure is surfaced into the parent's compensation path this way.
   value must come from a step that ran in the calling process.
 - Dispatch is **not** suppressed inside a worker: an `async_step` declared after
   a `background` point still gets its own job there.
-- The step's work runs **outside** the reactor's `lock` / `semaphore` /
-  `rate_limit` windows — those are held by the process running the reactor's own
-  steps. A step body needing mutual exclusion must arrange it itself.
+- The reactor's own `lock` / `semaphore` / `rate_limit` windows still do not
+  cover an `async_step`'s body — those are held by the process running the
+  reactor's own steps. But coordination the STEP ITSELF declares (see
+  [Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination))
+  IS taken — in the worker, under a per-job owner (never the dispatcher's,
+  D5), never in the dispatching process. A contended body parks via
+  `perform_step_in` (the same snooze config as a reactor-level park), bounded
+  by `lock_snooze_max_attempts`.
 - A reference is recorded on the parent's context and rendered as an
   `async_step` node in the dashboard.
 - On recovery, a dispatch that already happened is **re-attached**, never
@@ -363,16 +368,31 @@ Owner-based reentrancy remains a `compose`-only property.
 That leaves one guaranteed deadlock, and it is caught at **dispatch time**: if
 the child declares an exclusive `lock` (or a `semaphore` with `limit: 1`) whose
 resolved key matches one the dispatching execution currently holds, the dispatch
-step fails immediately with an error naming the key and both reactors. Fix it, in
-order of preference:
+step fails immediately with an error naming the key and both reactors. The same
+guard covers `async_step`: if the dispatched step's own class declares a
+`with_lock` (or limit-1 `with_semaphore`) on a key the dispatching execution
+currently holds, the dispatch is refused before the job is enqueued, naming the
+key and the dispatching step. Fix it, in order of preference:
 
-1. **Use `compose`** if the child belongs inside the parent's critical section
+1. **Run the step inline** (drop `async_step`) if the work belongs inside the
+   critical section — this is the `async_step`-specific remedy; the parent/child
+   forms below apply to `async_reactor`.
+2. **Use `compose`** if the child belongs inside the parent's critical section
    and its result is needed — waiting for it means the work is sequential anyway.
-2. **Narrow the lock keys**, if parent and child actually protect different
+3. **Narrow the lock keys**, if parent and child actually protect different
    resources.
-3. **Restructure** so the locked reactor never reads the child's result —
+4. **Restructure** so the locked reactor never reads the child's result —
    fire-and-forget, verifying in the child itself or in a successor reactor
    outside the lock window.
+
+The guard resolves the dispatched step's arguments to compute its key, which is
+usually safe since `async_step` args are otherwise resolved lazily in the
+worker (see `async_step` above). When an argument reads a still-pending
+`async_step`/`async_reactor` result,
+resolving it here would itself block or park just to run a guard check — that
+case is detected without resolving, the check is skipped, and it is logged as
+`event="ruby_reactor.step_coordination.guard_skipped"` (reactor, step,
+execution id).
 
 Transitive cycles across separate executions are out of the guard's reach.
 Acquire keys in a consistent order; the wait bounds (`async_wait_timeout` for a

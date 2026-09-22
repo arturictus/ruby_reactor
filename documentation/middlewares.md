@@ -126,6 +126,26 @@ last argument. The `context` exposes `context_id`, `reactor_class`, `inputs`,
 > this is exactly how the OpenTelemetry middleware propagates trace context
 > across the background boundary by writing into `context.private_data`.
 
+The lock/semaphore events also fire for **step-scoped** holds (see
+[Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination)),
+through the identical hooks — nothing extra to wire up. `context.current_step`
+names the coordinating step for a step-level event, and is `nil` for a
+reactor-level one, so one middleware can attribute both:
+
+```ruby
+def on_lock_acquired(key, context)
+  scope = context.current_step ? "step:#{context.current_step}" : "reactor"
+  logger.info("lock acquired key=#{key} scope=#{scope}")
+end
+```
+
+A step-level contention park (the execution requeued at that step, rather than
+failed) additionally logs a structured line —
+`event="ruby_reactor.step_coordination.parked" reactor=... step=... key=...
+primitive=... attempt=... execution_id=...` — since it has no dedicated
+middleware hook of its own; read it off `context.private_data[:step_contention]`
+or the `:contention_park` execution-trace entry if you need it programmatically.
+
 ## Registering Middlewares
 
 ### Global

@@ -4,7 +4,7 @@ module RubyReactor
   module Web
     class CoordinationSerializer
       class << self
-        def build(reactor_class, inputs:, context_id:)
+        def build(reactor_class, inputs:, context_id:, execution_trace: [], private_data: {})
           return {} unless reactor_class
 
           adapter = RubyReactor.configuration.storage_adapter
@@ -27,10 +27,72 @@ module RubyReactor
             result[:period] = build_period(reactor_class.period_config, normalized_inputs, adapter)
           end
 
+          if reactor_class.respond_to?(:steps)
+            steps = build_steps(reactor_class, context_id, execution_trace, adapter)
+            result[:steps] = steps unless steps.empty?
+          end
+
+          waiting = private_data[:step_contention] || private_data["step_contention"]
+          result[:waiting] = normalize_waiting(waiting) if waiting
+
           result
         end
 
         private
+
+        # US7/FR-029: one row per coordinating step, keyed to the step's
+        # OWN resolved arguments (from its latest `:run` trace entry), not
+        # the reactor's inputs. A step not yet reached is reported "pending"
+        # rather than omitted, so the dashboard's step list is stable.
+        def build_steps(reactor_class, context_id, execution_trace, adapter)
+          reactor_class.steps.filter_map do |name, step_config|
+            next unless step_config.respond_to?(:declares_coordination?) && step_config.declares_coordination?
+
+            build_step_entry(name, step_config, context_id, execution_trace, adapter)
+          end
+        end
+
+        def build_step_entry(name, step_config, context_id, execution_trace, adapter)
+          entry = latest_run_entry(execution_trace, name)
+          return { step: name.to_s, state: "pending" } unless entry
+
+          primitive, config = step_config.coordination_declarations.first
+          return { step: name.to_s, state: "pending" } unless primitive
+
+          args = entry[:arguments] || entry["arguments"] || {}
+          built = build_step_primitive(primitive, config, args, context_id, adapter)
+          { step: name.to_s, primitive: primitive.to_s }.merge(built)
+        end
+
+        def build_step_primitive(primitive, config, args, context_id, adapter)
+          case primitive
+          when :lock then build_lock(config, args, context_id, adapter)
+          when :semaphore then build_semaphore(config, args, adapter)
+          when :rate_limit then build_rate_limit(config, args, adapter)
+          when :period then build_period(config, args, adapter)
+          else { key: resolve_key(config[:key_proc], args) }
+          end
+        rescue StandardError => e
+          { key: nil, error: e.message }
+        end
+
+        def latest_run_entry(execution_trace, step_name)
+          Array(execution_trace).reverse_each.find do |e|
+            type = e[:type] || e["type"]
+            step = e[:step] || e["step"]
+            type.to_s == "run" && step.to_s == step_name.to_s
+          end
+        end
+
+        def normalize_waiting(waiting)
+          {
+            step: (waiting[:step] || waiting["step"]).to_s,
+            key: waiting[:key] || waiting["key"],
+            primitive: (waiting[:primitive] || waiting["primitive"]).to_s,
+            attempts: waiting[:attempts] || waiting["attempts"],
+            next_attempt_at: waiting[:next_attempt_at] || waiting["next_attempt_at"]
+          }
+        end
 
         def normalize_inputs(inputs)
           return {} unless inputs.is_a?(Hash)

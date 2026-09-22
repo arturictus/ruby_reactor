@@ -2,6 +2,7 @@
 
 module RubyReactor
   class Executor
+    # rubocop:disable Metrics/ClassLength
     class StepExecutor
       include AsyncStepDispatch
 
@@ -99,6 +100,9 @@ module RubyReactor
           # did run here, and only what remains moves to the worker.
           result = handle_background_handoff(step_config) if handoff_after?(step_config, result)
           completed = true
+          # A RetryQueuedResult from a contention park is NOT a Failure, so it
+          # falls into this branch exactly as a retry requeue already does
+          # (US7): a park must never emit :failed_step (T050).
           if result.is_a?(RubyReactor::Failure)
             @middlewares.on(:failed_step, step_config.name, result, @context)
           else
@@ -191,6 +195,17 @@ module RubyReactor
         e.step_name = step_config.name
         e.step_arguments ||= resolved_arguments
         raise
+      rescue Executor::StepCoordination::Contended => e
+        handle_contention(step_config, e, resolved_arguments)
+      # `KeyError`: the coordination key proc raised or returned nil/empty.
+      # `UnknownLimitError`: a permanent configuration error (an
+      # unregistered `with_rate_limit` name). Neither is contention — both
+      # are ordinary non-retryable failures, never a park (mirrors how the
+      # reactor-level equivalent escalates instead of snoozing in
+      # `Worker#perform`).
+      rescue Executor::StepCoordination::KeyError, RubyReactor::RateLimitRegistry::UnknownLimitError => e
+        RubyReactor::Failure(e, step_name: step_config.name, reactor_name: @reactor_class.name,
+                                step_arguments: resolved_arguments, inputs: @context.inputs, retryable: false)
       rescue StandardError => e
         # Identify redacted inputs
         redact_inputs = @reactor_class.inputs.select { |_, config| config[:redact] }.keys
@@ -203,6 +218,48 @@ module RubyReactor
           reactor_name: @reactor_class.name,
           step_arguments: resolved_arguments
         )
+      end
+
+      # Contention (US3): park the execution in a worker, bounded by
+      # `lock_snooze_max_attempts`; wait-then-fail synchronously — there is
+      # no queue to park into. `Context#with_step`'s `ensure` has already
+      # restored `current_step` to its pre-step value by the time this
+      # rescue runs (Finding 4), so it must be set again here — otherwise a
+      # redelivery looks like the reactor's first execution and re-consumes
+      # the reactor-level rate limit / period gate.
+      def handle_contention(step_config, contended, resolved_arguments)
+        @context.current_step = step_config.name
+        attempt = @context.retry_context.contention_attempts_for_step(step_config.name) + 1
+        @context.append_execution_trace(
+          { type: :contention_park, step: step_config.name, primitive: contended.primitive, key: contended.key,
+            attempt: attempt, timestamp: Time.now }
+        )
+        @context.private_data[:step_contention] = {
+          step: step_config.name, primitive: contended.primitive, key: contended.key, attempts: attempt,
+          next_attempt_at: nil
+        }
+
+        if @context.inline_async_execution
+          log_async_event(
+            "step_coordination.parked", step_config.name,
+            key: contended.key, primitive: contended.primitive, attempt: attempt
+          )
+          @retry_manager.park_for_contention(step_config, contended, @reactor_class)
+        else
+          # `@error` is the TRUE underlying error (`contended.original`), not
+          # the `Contended` wrapper: the executor's non-retryable-failure path
+          # (`RetryManager#handle_non_retryable_failure` -> `ResultHandler
+          # #handle_retries_exhausted`) re-derives `exception_class` from
+          # `original_error.class` one level down, so wrapping it here would
+          # surface "StepCoordination::Contended" instead of the real cause.
+          # `contended.message` (reactor/step/key) still reaches the reader:
+          # `Failure#build_header` prepends "Error in reactor '<name>' step
+          # '<name>'" from the `reactor_name:`/`step_name:` kwargs below,
+          # independent of the error object's own message.
+          RubyReactor::Failure(contended.original, step_name: step_config.name, reactor_name: @reactor_class.name,
+                                                   step_arguments: resolved_arguments, inputs: @context.inputs,
+                                                   retryable: false, exception_class: contended.original.class.name)
+        end
       end
 
       def execute_step_sync(step_config, resolved_arguments = nil)
@@ -354,7 +411,7 @@ module RubyReactor
           # If no arguments are defined for the step, pass the reactor inputs as arguments
           args_to_pass = arguments.empty? ? @context.inputs : arguments
           args_to_pass = step_config.inline_contract.enforce!(args_to_pass) if step_config.inline_contract
-          catch(StepSignals::TAG) { step_config.run_block.call(args_to_pass, @context) }
+          run_inline_block(step_config, args_to_pass)
         elsif step_config.has_impl?
           # Execute step class
           catch(StepSignals::TAG) { step_config.impl.run(arguments, @context) }
@@ -365,6 +422,22 @@ module RubyReactor
             context: @context
           )
         end
+      end
+
+      # Inline steps are never coordinated by `Step.run` (they have no impl),
+      # so this is the one enforcement point for them — mirroring T013's
+      # class-step wiring in `Step.run`. Only the step's OWN (inline)
+      # declarations gate here (`inline_coordination?`), never `impl`'s —
+      # that fallback exists for read-only consumers (rollback, the dispatch
+      # guard, the dashboard), not for a second acquisition site.
+      def run_inline_block(step_config, args_to_pass)
+        block = -> { catch(StepSignals::TAG) { step_config.run_block.call(args_to_pass, @context) } }
+        return block.call unless step_config.inline_coordination?
+
+        Executor::StepCoordination.new(
+          step_config: step_config, arguments: args_to_pass, context: @context, reactor_class: @reactor_class,
+          middlewares: @middlewares
+        ).around_run(&block)
       end
 
       def find_context_by_id(root_context, target_id)
@@ -382,5 +455,6 @@ module RubyReactor
         nil
       end
     end
+    # rubocop:enable Metrics/ClassLength
   end
 end

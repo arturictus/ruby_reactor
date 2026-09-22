@@ -3,6 +3,23 @@
 module RubyReactor
   class Executor
     class CompensationManager
+      # `error` passed to `handle_step_failure` may be the raw
+      # `Contended`/`KeyError` (the async-park ceiling-exceeded path, and any
+      # caller that never unwraps `Contended`) OR its `.original` cause (the
+      # synchronous path's `Failure#error` is `contended.original`, so
+      # `resolve_exception_class` reports the real cause rather than the
+      # `Contended` wrapper's own class name — see
+      # `StepExecutor#handle_contention`). Both shapes mean the same thing:
+      # the step's own coordination never let its body run.
+      NEVER_STARTED_ERROR_CLASSES = [
+        RubyReactor::Executor::StepCoordination::Contended,
+        RubyReactor::Executor::StepCoordination::KeyError,
+        RubyReactor::Lock::AcquisitionError,
+        RubyReactor::Semaphore::AcquisitionError,
+        RubyReactor::RateLimit::ExceededError,
+        RubyReactor::OrderedLock::WaitError
+      ].freeze
+
       def initialize(context)
         @context = context
         @undo_trace = []
@@ -19,6 +36,19 @@ module RubyReactor
       end
 
       def handle_step_failure(step_config, error, arguments)
+        # A step whose OWN coordination acquisition failed (contention, or a
+        # bad key proc) never ran its body — "no step compensates, the
+        # contended step's work has not been attempted" (US3-1/T018), which
+        # applies here exactly as it does to a worker park: compensating a
+        # step that never started is meaningless, and attempting one would
+        # try to re-acquire the very key that is (usually) still contended,
+        # turning a plain contention failure into a confusing
+        # CompensationError. Prior steps still roll back normally.
+        if step_never_started?(error)
+          rollback_completed_steps
+          return RubyReactor.Failure("Step '#{step_config.name}' failed: #{error}")
+        end
+
         # Try compensation
         compensation_result = compensate_step(step_config, error, arguments)
         case compensation_result
@@ -70,16 +100,35 @@ module RubyReactor
         result.respond_to?(:skipped?) && result.skipped?
       end
 
+      def step_never_started?(error)
+        NEVER_STARTED_ERROR_CLASSES.any? { |klass| error.is_a?(klass) }
+      end
+
+      # US6/T047: re-take a step's own lock/semaphore around its compensate
+      # or undo body, so a concurrent forward execution cannot enter the
+      # step's critical section while rollback is undoing what it protected.
+      # A no-op when the step declares no coordination.
+      def coordinated_rollback(step_config, arguments, &block)
+        return block.call if Executor::StepCoordination.none?(step_config)
+
+        Executor::StepCoordination.new(
+          step_config: step_config, arguments: arguments, context: @context,
+          reactor_class: @context.reactor_class, middlewares: middlewares
+        ).around_rollback(&block)
+      end
+
       def compensate_step(step_config, error, arguments)
         middlewares.on(:start_compensation, step_config.name, error, arguments, @context)
         begin
-          compensate_result = catch(StepSignals::TAG) do
-            if step_config.compensate_block
-              step_config.compensate_block.call(error, arguments, @context)
-            elsif step_config.has_impl?
-              step_config.impl.compensate(error, arguments, @context)
-            else
-              RubyReactor.Skipped() # Default: nothing defined, rollback continues
+          compensate_result = coordinated_rollback(step_config, arguments) do
+            catch(StepSignals::TAG) do
+              if step_config.compensate_block
+                step_config.compensate_block.call(error, arguments, @context)
+              elsif step_config.has_impl?
+                step_config.impl.compensate(error, arguments, @context)
+              else
+                RubyReactor.Skipped() # Default: nothing defined, rollback continues
+              end
             end
           end
 
@@ -111,13 +160,15 @@ module RubyReactor
       def undo_step(step_config, result, arguments)
         middlewares.on(:start_undo, step_config.name, result, arguments, @context)
         begin
-          undo_result = catch(StepSignals::TAG) do
-            if step_config.undo_block
-              step_config.undo_block.call(result.value, arguments, @context)
-            elsif step_config.has_impl?
-              step_config.impl.undo(result.value, arguments, @context)
-            else
-              RubyReactor.Skipped() # Default: nothing defined, rollback continues
+          undo_result = coordinated_rollback(step_config, arguments) do
+            catch(StepSignals::TAG) do
+              if step_config.undo_block
+                step_config.undo_block.call(result.value, arguments, @context)
+              elsif step_config.has_impl?
+                step_config.impl.undo(result.value, arguments, @context)
+              else
+                RubyReactor.Skipped() # Default: nothing defined, rollback continues
+              end
             end
           end
 

@@ -528,6 +528,51 @@ module RubyReactor
         end
       end
 
+      # Asserts a `:contention_park` trace entry exists for a step (US7-4,
+      # T054). Subject can be a `test_reactor` wrapper, a dispatch/find result
+      # (`.context`), or a raw `Context` (`.execution_trace`) — matching
+      # `have_run_step`'s subject flexibility. Use `.on(key)` to pin the key.
+      #
+      #   expect(result).to have_contended_at(:charge)
+      #   expect(result).to have_contended_at(:charge).on("acct:1")
+      ::RSpec::Matchers.define :have_contended_at do |step_name|
+        match do |subject|
+          trace = execution_trace_for(subject)
+          @entry = trace.find do |t|
+            t[:type].to_s == "contention_park" && t[:step].to_s == step_name.to_s &&
+              (@expected_key.nil? || t[:key].to_s == @expected_key.to_s)
+          end
+          !@entry.nil?
+        end
+
+        chain :on do |key|
+          @expected_key = key
+        end
+
+        def execution_trace_for(subject)
+          subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
+          if subject.respond_to?(:reactor_instance)
+            subject.reactor_instance.context.execution_trace
+          elsif subject.respond_to?(:context)
+            subject.context.execution_trace
+          else
+            subject.execution_trace
+          end
+        end
+
+        failure_message do |_subject|
+          msg = "expected execution trace to contain a contention_park entry for step :#{step_name}"
+          msg += " on key #{@expected_key.inspect}" if @expected_key
+          msg
+        end
+
+        failure_message_when_negated do |_subject|
+          msg = "expected execution trace not to contain a contention_park entry for step :#{step_name}"
+          msg += " on key #{@expected_key.inspect}" if @expected_key
+          msg
+        end
+      end
+
       # Add more matchers as per plan
       # rubocop:enable Metrics/BlockLength
     end

@@ -14,7 +14,7 @@ declare several.
 | Field | Type | Notes |
 |---|---|---|
 | `primitive` | `:lock` \| `:semaphore` \| `:rate_limit` \| `:period` \| `:ordered_lock` | |
-| `key_proc` | Proc | Receives the step's **resolved arguments**, returns the key. Where the reactor form receives reactor inputs. |
+| `key_proc` | Proc | Receives the step's **`inputs`** (resolved arguments, contract defaults applied), returns the key. Where the reactor form receives reactor inputs. |
 | `ttl` | Integer | `:lock`, `:ordered_lock`. Default as today. |
 | `wait` | Integer | `:lock`, `:semaphore`. Tolerance before contention handling. |
 | `auto_extend` | Boolean | `:lock`. Keeps the hold alive while the step's work runs. |
@@ -31,8 +31,9 @@ declare several.
   eagerly at class load.
 - A key proc returning nil or empty fails the step before its work runs (FR-007).
 
-**Ownership**: a step class, or an inline step's `StepConfig`. Propagates to subclasses via
-the existing `inherited` hook; a subclass redeclaring a primitive replaces the parent's.
+**Ownership**: a `RubyReactor::Step` subclass, or an inline step's `StepConfig`. Propagates to
+subclasses via Lockable's `inherited` hook; a subclass redeclaring a primitive replaces the
+parent's.
 
 **Introspection** (FR-006): `declares_coordination?`, `coordination_declarations`, and the
 existing per-primitive readers (`lock_config`, `semaphore_config`, …) available on the step.
@@ -63,6 +64,16 @@ registry is refused before dispatch (FR-022). Extended in this feature to consul
 **step class's** declarations, not only a child reactor's.
 
 ## ContentionState
+
+> **Superseded (research Finding 7 / plan.md T074).** No dedicated `ContentionState` storage was
+> built. The contention counter lives on `RetryContext#contention_attempts` instead (a plain
+> Hash, alongside the existing retry bookkeeping it deliberately mirrors), and the ceiling /
+> backoff reuse the existing `lock_snooze_max_attempts` / `lock_snooze_base_delay` /
+> `lock_snooze_jitter` config rather than a new per-feature ceiling. The table and transition
+> diagram below describe the ORIGINAL design intent; the fields map onto the shipped mechanism
+> as: `attempts_by_step` → `RetryContext#contention_attempts`, `ceiling` →
+> `config.lock_snooze_max_attempts`, `next_attempt_at` → `RetryContext#next_retry_at` (computed
+> via `RubyReactor::Worker.snooze_delay`).
 
 Per-execution bookkeeping for the park-and-retry path, in `context.private_data`.
 

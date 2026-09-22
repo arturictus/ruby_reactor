@@ -3,19 +3,30 @@
 module RubyReactor
   # Tracks retry attempts and state for steps in async execution
   class RetryContext
-    attr_accessor :step_attempts, :current_step, :failure_reason, :next_retry_at
+    attr_accessor :step_attempts, :current_step, :failure_reason, :next_retry_at, :contention_attempts
 
     def initialize
       @step_attempts = {}
       @current_step = nil
       @failure_reason = nil
       @next_retry_at = nil
+      @contention_attempts = {}
     end
 
     def increment_attempt_for_step(step_name)
       step_name = step_name.to_s
       @step_attempts[step_name] ||= 0
       @step_attempts[step_name] += 1
+    end
+
+    # Undoes one `increment_attempt_for_step` — called at the start of a
+    # contention park (Finding 2) so a busy key never eats the retry budget
+    # meant for genuine failures. Floored at 0.
+    def decrement_attempt_for_step(step_name)
+      step_name = step_name.to_s
+      return unless @step_attempts[step_name]
+
+      @step_attempts[step_name] = [@step_attempts[step_name] - 1, 0].max
     end
 
     def attempts_for_step(step_name)
@@ -28,11 +39,27 @@ module RubyReactor
       attempts < max_attempts
     end
 
+    def increment_contention_for_step(step_name)
+      step_name = step_name.to_s
+      @contention_attempts[step_name] ||= 0
+      @contention_attempts[step_name] += 1
+    end
+
+    def contention_attempts_for_step(step_name)
+      step_name = step_name.to_s
+      @contention_attempts[step_name] || 0
+    end
+
+    def clear_contention_for_step(step_name)
+      @contention_attempts.delete(step_name.to_s)
+    end
+
     def reset
       @step_attempts = {}
       @current_step = nil
       @failure_reason = nil
       @next_retry_at = nil
+      @contention_attempts = {}
     end
 
     def serialize_for_retry
@@ -40,7 +67,8 @@ module RubyReactor
         step_attempts: @step_attempts,
         current_step: @current_step,
         failure_reason: serialize_error(@failure_reason),
-        next_retry_at: @next_retry_at&.iso8601
+        next_retry_at: @next_retry_at&.iso8601,
+        contention_attempts: @contention_attempts
       }
     end
 
@@ -50,6 +78,7 @@ module RubyReactor
       context.current_step = data["current_step"]
       context.failure_reason = deserialize_error(data["failure_reason"])
       context.next_retry_at = data["next_retry_at"] ? Time.iso8601(data["next_retry_at"]) : nil
+      context.contention_attempts = data["contention_attempts"] || {}
       context
     end
 

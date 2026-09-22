@@ -67,6 +67,8 @@ class PaymentReactor < RubyReactor::Reactor
 end
 ```
 
+> Step-level coordination contention (`with_lock`, etc. — see [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](locks_and_semaphores.md#step-scoped-coordination)) is separate from retries: a contention park has its own counter and its own bound (`lock_snooze_max_attempts`), and never consumes a step's `max_attempts`.
+
 ## Retry Parameters
 
 ### max_attempts

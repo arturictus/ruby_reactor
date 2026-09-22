@@ -73,7 +73,9 @@ module RubyReactor
                 coordination: CoordinationSerializer.build(
                   reactor_class,
                   inputs: data[:inputs],
-                  context_id: data[:context_id]
+                  context_id: data[:context_id],
+                  execution_trace: data[:execution_trace] || [],
+                  private_data: data[:private_data] || {}
                 ),
                 error: data[:failure_reason]
               }

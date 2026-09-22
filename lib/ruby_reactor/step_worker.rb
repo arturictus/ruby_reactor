@@ -25,16 +25,18 @@ module RubyReactor
           root_context_id: arguments[:root_context_id],
           reactor_class_name: arguments[:reactor_class_name],
           step_context_id: arguments[:step_context_id],
-          step_name: arguments[:step_name].to_sym
+          step_name: arguments[:step_name].to_sym,
+          contention_attempts: arguments[:contention_attempts] || 0
         }
       end
     end
 
-    def initialize(root_context_id:, reactor_class_name:, step_context_id:, step_name:)
+    def initialize(root_context_id:, reactor_class_name:, step_context_id:, step_name:, contention_attempts: 0)
       @root_context_id = root_context_id
       @reactor_class_name = reactor_class_name
       @step_context_id = step_context_id || root_context_id
       @step_name = step_name
+      @contention_attempts = contention_attempts.to_i
     end
 
     # The lock is what makes a lost unit recoverable: the record alone cannot say
@@ -63,12 +65,51 @@ module RubyReactor
       return record_missing_step unless step_config
 
       complete(run_step(context, step_config), context)
+    rescue Executor::StepCoordination::Contended => e
+      handle_contention(e)
+    rescue Executor::StepCoordination::KeyError => e
+      log(:error, "failed", error: "#{e.class}: #{e.message}")
+      complete(RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name, retryable: false),
+               context)
     rescue StandardError => e
       # The unit's failure belongs in its record, where a reader can see it.
       # Raising instead would hand the job to the backend's retry machinery to
       # fail identically N more times while every reader waits out its timeout.
       log(:error, "failed", error: "#{e.class}: #{e.message}")
       complete(RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name), nil)
+    end
+
+    # Finding 6: `async_step` has no delayed re-enqueue of its own, so a
+    # contended step parks the same way a step-level contention park does
+    # elsewhere — reschedule via `perform_step_in`, bounded by
+    # `lock_snooze_max_attempts` (the `OrderedLock::WaitError` exemption
+    # mirrors `Worker#handle_snooze`). WITHOUT calling `complete`: the Step
+    # Result Record stays "dispatched" so a reader keeps waiting instead of
+    # seeing a phantom terminal state.
+    def handle_contention(contended)
+      config = RubyReactor.configuration
+      attempt = @contention_attempts + 1
+      uncapped = contended.original.is_a?(RubyReactor::OrderedLock::WaitError)
+
+      if !uncapped && config.lock_snooze_max_attempts != :infinity && attempt > config.lock_snooze_max_attempts
+        log(:warn, "contention_exhausted", key: contended.key, attempt: attempt)
+        complete(
+          RubyReactor::Failure(
+            "async_step :#{@step_name} gave up on #{contended.primitive} '#{contended.key}' after " \
+            "#{attempt} contention attempts",
+            step_name: @step_name, reactor_name: @reactor_class_name, retryable: false,
+            exception_class: contended.original.class.name
+          ), nil
+        )
+        return
+      end
+
+      delay = RubyReactor::Worker.snooze_delay(config, contended)
+      log(:info, "parked", key: contended.key, primitive: contended.primitive, attempt: attempt, delay: delay)
+      RubyReactor.configuration.async_router.perform_step_in(
+        delay, root_context_id: @root_context_id, reactor_class_name: @reactor_class_name,
+               step_context_id: @step_context_id, step_name: @step_name, contention_attempts: attempt
+      )
     end
 
     def acquire_liveness_lock
@@ -112,12 +153,17 @@ module RubyReactor
       result
     end
 
+    # Class steps are already coordinated inside `Step.run` (T013); only the
+    # inline (`has_run_block?`) branch needs its own wrap here, mirroring
+    # `StepExecutor#run_inline_block`. `Contended`/`KeyError` propagate
+    # unrescued — `perform_unit` is where they are handled (park, or a
+    # non-retryable Failure), not here.
     def execute_step_body(step_config, arguments, context)
       result =
         if step_config.has_run_block?
           args = arguments.empty? ? context.inputs : arguments
           args = step_config.inline_contract.enforce!(args) if step_config.inline_contract
-          step_config.run_block.call(args, context)
+          run_inline_block(step_config, args, context)
         elsif step_config.has_impl?
           step_config.impl.run(arguments, context)
         else
@@ -131,8 +177,20 @@ module RubyReactor
       RubyReactor.Failure(e, validation_errors: e.field_errors, step_name: @step_name,
                              step_arguments: e.step_arguments || {}, reactor_name: @reactor_class_name,
                              retryable: false)
+    rescue Executor::StepCoordination::Contended, Executor::StepCoordination::KeyError
+      raise
     rescue StandardError => e
       RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name)
+    end
+
+    def run_inline_block(step_config, args, context)
+      block = -> { step_config.run_block.call(args, context) }
+      return block.call unless step_config.inline_coordination?
+
+      Executor::StepCoordination.new(
+        step_config: step_config, arguments: args, context: context, reactor_class: context.reactor_class,
+        middlewares: context.middlewares || RubyReactor::MiddlewareRunner.new([])
+      ).around_run(&block)
     end
 
     # Mirrors `Executor::RetryManager#can_retry_step?` for the one path that
@@ -223,6 +281,12 @@ module RubyReactor
       found = find_context(root, @step_context_id)
       # The step runs in its own job; nothing it reaches should hand off again.
       found&.inline_async_execution = true
+      # Per-job owner, NEVER the root context id (US4-5, research D5):
+      # ownership never crosses a process hand-off, so this job's coordination
+      # never re-enters the dispatching execution's holds and never blocks a
+      # SECOND async_step dispatch on the same key from proceeding once this
+      # one releases.
+      found&.coordination_owner = SecureRandom.uuid
       found
     rescue RubyReactor::Error::DeserializationError, RubyReactor::Error::SchemaVersionError => e
       log(:error, "parent_context_unreadable", error: "#{e.class}: #{e.message}")

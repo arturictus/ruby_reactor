@@ -13,9 +13,13 @@ module RubyReactor
   # 1. Resolve `inputs`: the given arguments with the contract's defaults
   #    applied. `run`, `undo`, and `compensate` all see the same values.
   # 2. `.run` ONLY: enforce the declared input contract, raising
-  #    `Error::InputValidationError` before any instance exists. `.undo` and
-  #    `.compensate` NEVER enforce it: rollback must not fail on the very
-  #    inputs that may have caused the failure.
+  #    `Error::InputValidationError` before any instance exists.
+  # 2b. `.run` ONLY: step-scoped coordination (`with_lock` etc, if declared)
+  #    is acquired around the rest of `.run`, keyed on the just-validated
+  #    inputs — after contract enforcement, so a step that will fail
+  #    validation never takes a hold (research Finding 7 / Finding 8).
+  #    `.undo` and `.compensate` NEVER enforce the input contract: rollback
+  #    must not fail on the very inputs that may have caused the failure.
   # 3. Build a FRESH instance, never reused across actions. An ivar set in
   #    `run` is gone by the time `undo` runs on its own instance, so async
   #    execution running `run` and `undo` in different processes behaves
@@ -23,10 +27,13 @@ module RubyReactor
   # 4. Invoke the matching instance method, translating any `StepSignals`
   #    throw (`success!`/`skip!`/`fail!`/`halt!`) into its result wrapper.
   #
-  # No `prepend`/`extend`/`define_method`/`method_missing` — every step in the
-  # class reads top to bottom as ordinary method calls.
+  # No `prepend`/`define_method`/`method_missing` — every step in the class
+  # reads top to bottom as ordinary method calls. The one `extend` is
+  # `Dsl::Lockable::ClassMethods` (the five coordination macros), a
+  # self-contained module with no hooks of its own (Finding 9).
   class Step
     include RubyReactor::StepSignals
+    extend RubyReactor::Dsl::Lockable::ClassMethods
 
     attr_reader :inputs, :context, :result, :reason
 
@@ -70,7 +77,7 @@ module RubyReactor
     class << self
       def run(arguments, context)
         validated = enforce_contract!(arguments)
-        catch(StepSignals::TAG) { new(validated, context).run }
+        coordinate(validated, context) { catch(StepSignals::TAG) { new(validated, context).run } }
       end
       alias call run
 
@@ -116,6 +123,22 @@ module RubyReactor
       end
 
       private
+
+      # Step-scoped coordination (`with_lock` etc.), taken around the rest of
+      # `.run` — after `enforce_contract!`, so a step that will fail
+      # validation never takes a hold (Finding 8). Yields straight through
+      # when this step declares nothing, so a bare step pays one
+      # `declares_coordination?` check. `context` may be nil (a stand-alone
+      # `MyStep.run(args)`) — `StepCoordination#owner` handles that case.
+      def coordinate(validated, context, &block)
+        return block.call if Executor::StepCoordination.none?(self)
+
+        ctx = context if context.is_a?(RubyReactor::Context)
+        Executor::StepCoordination.new(
+          step_config: self, arguments: validated, context: ctx, reactor_class: ctx&.reactor_class,
+          middlewares: ctx&.middlewares || RubyReactor::MiddlewareRunner.new([])
+        ).around_run(&block)
+      end
 
       def own_input_contract
         @own_input_contract ||= Step::InputContract.new(owner: self)

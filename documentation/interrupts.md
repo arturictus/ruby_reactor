@@ -61,6 +61,8 @@ end
 *   **`validate`**: A `dry-validation` schema block to validate the payload provided when resuming.
 *   **`max_attempts`**: Limit the number of times `continue` can be called with an invalid payload before the reactor is automatically cancelled and compensated. Defaults to 1. Set to `:infinity` for unlimited retries.
 
+> An `interrupt` step refuses `with_lock`/`with_semaphore`/`with_rate_limit`/`with_period`/`with_ordered_lock` — it raises at class-definition time, since the step's body is split across the pause and a hold would span the gap. Declare coordination on the reactor instead (see [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](locks_and_semaphores.md)).
+
 ## Runtime Behavior
 
 When a reactor encounters an `interrupt`:

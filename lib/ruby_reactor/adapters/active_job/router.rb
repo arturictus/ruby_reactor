@@ -34,6 +34,25 @@ module RubyReactor
           RubyReactor::DispatchResult.new(job_id: job_id)
         end
 
+        # Delayed re-enqueue of an `async_step`'s body — the park path
+        # (Finding 6). See Sidekiq::Router#perform_step_in.
+        # rubocop:disable Metrics/ParameterLists
+        def self.perform_step_in(delay, root_context_id:, reactor_class_name:, step_context_id:, step_name:,
+                                 contention_attempts: 0)
+          # rubocop:enable Metrics/ParameterLists
+          job_id = RubyReactor::Adapters::ActiveJob::StepWorker.perform_in(
+            delay,
+            {
+              "root_context_id" => root_context_id,
+              "reactor_class_name" => reactor_class_name,
+              "step_context_id" => step_context_id,
+              "step_name" => step_name.to_s,
+              "contention_attempts" => contention_attempts
+            }
+          )
+          RubyReactor::DispatchResult.new(job_id: job_id)
+        end
+
         # rubocop:disable Metrics/ParameterLists
         def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                            strict_ordering:, parent_context_id:, parent_reactor_class_name:,

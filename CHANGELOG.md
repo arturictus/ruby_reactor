@@ -80,6 +80,18 @@
 
 ### Features
 
+* **Step-scoped coordination.** Steps can declare `with_lock`, `with_semaphore`, `with_rate_limit`,
+  `with_period`, and `with_ordered_lock` — the same macros as the reactor form, keyed on the step's
+  own resolved arguments instead of the reactor's inputs — so one step of a workflow can be
+  serialized (or rate-limited, deduped, or strictly ordered) without serializing the whole
+  workflow. Works on class steps and inline `step :x do ... end` blocks; a class step is
+  coordinated inside `Step.run` itself, so a direct `MyStep.run(args)` call is protected
+  identically to one dispatched by a reactor. Contention parks the execution in a worker
+  (bounded by `lock_snooze_max_attempts`, never consuming the step's own `retries` budget) and
+  waits-then-fails synchronously. Re-entrancy, the async dispatch deadlock guard, and rollback
+  (`compensate`/`undo` re-take lock/semaphore only) all follow the same rules as reactor-level
+  coordination. See
+  [Step-Scoped Coordination](documentation/locks_and_semaphores.md#step-scoped-coordination).
 * **Step input contracts.** A step class declares its own inputs with `input :name, :type, **predicates`
   (plus `optional:`, `default:`, `redact:`, the `do |i| ... end` macro block and `validate:`) and
   cross-field rules with `validate_inputs`. The contract is enforced before `run` on every path

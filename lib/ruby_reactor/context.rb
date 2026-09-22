@@ -29,6 +29,14 @@ module RubyReactor
                   :cancelled, :cancellation_reason, :parent_context_id, :retried_from_id, :status, :failure_reason,
                   :middlewares
 
+    # Transient, NOT serialized (absent from `to_h`, `serialize_for_retry`,
+    # and `deserialize_from_retry` below — confirmed by
+    # reentrancy_spec.rb US4-16). Overrides `StepCoordination#owner` for
+    # everything coordinated with this context (research D5): set by the
+    # `async_step` worker to a per-job id so re-entrancy never crosses a
+    # process hand-off (US4-5).
+    attr_accessor :coordination_owner
+
     def initialize(inputs = {}, reactor_class = nil)
       @context_id = SecureRandom.uuid
       @inputs = inputs

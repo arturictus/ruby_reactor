@@ -720,6 +720,20 @@ class RefundOrderReactor < RubyReactor::Reactor
   end
 end
 
+class ChargeStep < RubyReactor::Step
+  input :account_id
+
+  # All five macros also work declared on a STEP, not just the reactor —
+  # keying the critical section down to this one operation instead of the
+  # whole workflow. Surrounding steps (audit, notify, ...) keep overlapping
+  # across concurrent executions; only :charge serializes.
+  with_lock(ttl: 60) { |args| "acct:#{args[:account_id]}" }
+
+  def run
+    Success(charge!(inputs))
+  end
+end
+
 class GeocodeReactor < RubyReactor::Reactor
   input :address
 
@@ -843,7 +857,7 @@ step :maybe_sync do
 end
 ```
 
-See [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md) for re-entrancy, auto-extend, multi-window quotas, bucket semantics, owner identity, snooze tuning, ordered-lock assignment + poison-pill semantics, and operational notes.
+See [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md) for re-entrancy, auto-extend, multi-window quotas, bucket semantics, owner identity, snooze tuning, ordered-lock assignment + poison-pill semantics, step-scoped coordination, and operational notes.
 
 ### Map & Parallel Execution
 
@@ -1460,7 +1474,7 @@ Comprehensive guide to testing reactors with RubyReactor's testing utilities. Le
 
 ### [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md)
 
-Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-background contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
+Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Every primitive is also available [declared on a step](documentation/locks_and_semaphores.md#step-scoped-coordination) instead of the whole reactor, keying the critical section down to one operation. Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
 
 ### [Middlewares & OpenTelemetry](documentation/middlewares.md)
 

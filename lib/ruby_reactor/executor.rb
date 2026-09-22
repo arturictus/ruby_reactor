@@ -235,6 +235,15 @@ module RubyReactor
                   execute_remaining_steps
                 end
 
+      # A step-level contention park (US3) requeues at the step, exactly
+      # like an async retry requeue — but a reactor-level lock/semaphore this
+      # execution holds must stay held across the gap too (FR-018), the same
+      # way an AsyncResultPending park keeps them. `private_data[:step_contention]`
+      # (set by `StepExecutor#handle_contention`) is what distinguishes "this
+      # RetryQueuedResult came from a contention park" from an ordinary
+      # failure-retry requeue, which releases normally.
+      park_held_primitives! if @result.is_a?(RetryQueuedResult) && @context.private_data[:step_contention]
+
       update_context_status(@result)
       mark_period_on_success(@result)
 
@@ -612,7 +621,7 @@ module RubyReactor
       if @acquired_semaphore
         key = @acquired_semaphore.key
         release_one("semaphore", @acquired_semaphore)
-        held_lock_keys.delete(key)
+        pop_held_lock_key(key)
         middlewares.on(:semaphore_released, key, @context)
       end
       @acquired_semaphore = nil
@@ -621,9 +630,20 @@ module RubyReactor
 
       key = @acquired_lock.key
       release_one("lock", @acquired_lock)
-      held_lock_keys.delete(key)
+      pop_held_lock_key(key)
       @acquired_lock = nil
       middlewares.on(:lock_released, key, @context)
+    end
+
+    # Pop a SINGLE occurrence of `key`, not every occurrence (Finding 1).
+    # With a reactor and a step both holding K, the step's release must not
+    # erase the reactor's still-open entry — the async deadlock guard reads
+    # this registry and would stop seeing K held while the reactor's own
+    # hold is still live. `StepCoordination#pop_key` mirrors this exactly.
+    def pop_held_lock_key(key)
+      keys = held_lock_keys
+      idx = keys.index(key)
+      keys.delete_at(idx) if idx
     end
 
     # Exclusive keys this EXECUTION currently holds, recorded on the root

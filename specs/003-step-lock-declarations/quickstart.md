@@ -47,6 +47,7 @@ overlap everywhere.
 
 ```bash
 bundle exec rspec spec/ruby_reactor/step_coordination/lock_spec.rb
+bundle exec rspec spec/ruby_reactor/step_coordination/scope_spec.rb   # the :audit/:notify overlap claim (SC-002)
 ```
 
 ## Scenario 2 — contention parks instead of failing (US3)
@@ -87,6 +88,15 @@ end
 
 **Expected**: completes without waiting on itself; the key becomes available to other
 executions only after the outermost release.
+
+Calling a step class directly is still constrained:
+
+```ruby
+ChargeStep.run({ account_id: 1, amount: 5 })           # contends with any holder of "acct:1",
+                                                        # including a running PaymentReactor
+ChargeStep.run({ account_id: 1, amount: 5 }, context)  # inside a step body: re-entrant with
+                                                        # this execution's "acct:1" hold only
+```
 
 Where ownership cannot cross a process boundary, the hand-off is refused up front:
 
@@ -155,15 +165,15 @@ docker compose run --rm demo-app bin/rails demo:step_lock
 | # | Claim | Verified by |
 |---|---|---|
 | SC-001 | Same-key step bodies never overlap | Scenario 1, sustained concurrent run |
-| SC-002 | Unrelated steps still overlap | Scenario 1 |
+| SC-002 | Unrelated steps still overlap | Scenario 1 (`scope_spec.rb`) |
 | SC-003 | Released within one step boundary, all outcomes | Scenario 1 + failure/raise cases |
 | SC-004 | Contention costs zero compensations | Scenario 2 |
-| SC-005 | Worker path protected identically to in-process | Scenarios 1 and 6 |
+| SC-005 | Worker path protected identically to in-process | Scenario 3 (`reentrancy_spec.rb`, live-Sidekiq `async_step`) |
 | SC-006 | Nested holds on one key complete without self-waiting | Scenario 3 |
 | SC-007 | Deadlocking hand-offs refused at dispatch | Scenario 3 |
 | SC-008 | Killed holder frees the key without operator action | kill-process test in lock_spec |
 | SC-009 | Compensation runs under the same exclusivity | Scenario 4 |
-| SC-010 | Operator can see step, key, holder; park ≠ failure | dashboard + log assertions |
+| SC-010 | Operator can see step, key, holder; park ≠ failure | `observability_spec.rb` (dashboard + log assertions) |
 | SC-011 | Uncomputable key never runs the work | lock_spec |
 | SC-012 | Existing reactor-level coordination tests unchanged | full suite |
 | SC-013 | Demo shows serialized, contended, compensated | Scenario 6 |

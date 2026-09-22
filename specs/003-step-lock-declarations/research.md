@@ -2,8 +2,10 @@
 
 **Feature**: `specs/003-step-lock-declarations/` | **Date**: 2026-09-10
 
-Findings come from reading the current implementation. File references are to the state of
-`step_validations` at the time of writing.
+Findings come from reading the current implementation. File references were taken on
+`step_validations` and re-verified against `independent_step_locks` after the 0.8.0 release
+(`RubyReactor::Step` became an inheritable base class, `specs/004-inheritable-step-class/`).
+Line numbers drift; locate by method name.
 
 ## Current state
 
@@ -21,6 +23,8 @@ Findings come from reading the current implementation. File references are to th
 | Ordered lock | `Executor::OrderedLockSupport` — nonce assigned at enqueue in `Reactor#run`, stashed in `private_data[:ordered_lock]`, gate at execute/resume, advance on terminal reactor result, heartbeat thread |
 | Compensation | `CompensationManager#compensate_step` / `#undo_step` |
 | Dashboard | `Web::CoordinationSerializer` — reads `reactor_class.lock_config` etc. |
+| Step class | `class RubyReactor::Step` (0.8.0). Class-level `.run`/`.call`, `.undo`, `.compensate` are the only entry points: resolve `inputs` (defaults applied), enforce the contract (`.run` only), build a fresh instance, catch `StepSignals`. No `prepend`/`included` hooks. |
+| Step contract | Enforced **inside** `impl.run` (`Step.enforce_contract!`), not by the executor. The executor calls `impl.run(arguments, ctx)` with raw resolved arguments. |
 
 ### Finding 1 — the DSL needs no redesign, only a second host
 
@@ -60,6 +64,15 @@ expression reads arguments that are not resolved until the step is reached — s
 degrades to "in the order executions reached this step", which is a materially weaker promise.
 See D8; this is the one primitive whose step-scoped meaning is not a simple narrowing.
 
+### Finding 7 — since 0.8.0 the step contract runs inside `impl.run`
+
+`RubyReactor::Step.run` validates the contract and applies defaults, then instantiates. The
+executor, `StepWorker`, and `RSpec::TestSubject` all call `impl.run(arguments, ctx)` with the
+raw resolved arguments. So wrapping `impl.run` in coordination takes the hold *before* the
+contract is checked, and a key proc handed the raw arguments sees different values from the
+instance's `inputs` whenever a default applies. Both break D3 ("acquire after validation")
+and the contract that the key reads the step's own values.
+
 ### Finding 6 — a step holding coordination across a park is nearly unreachable
 
 Argument resolution (including any blocking wait on an async result) happens *before*
@@ -73,9 +86,12 @@ whose body is split across a pause. See D6.
 
 ### D1 — Steps host the existing `Lockable` macros unchanged
 
-`RubyReactor::Step::ClassMethods` gains the same five macros by reusing
-`Dsl::Lockable::ClassMethods`; `Dsl::StepBuilder` gains them for inline steps. The key proc
-receives the step's resolved arguments instead of reactor inputs.
+`class RubyReactor::Step` does `extend RubyReactor::Dsl::Lockable::ClassMethods` in its body
+(there is no `included` hook since 0.8.0). Lockable's `inherited` hook then propagates configs
+to every subclass, the same way `input_contract` already merges from `superclass`.
+`Dsl::StepBuilder` gains the macros for inline steps. The key proc receives the step's
+`inputs` — resolved arguments with contract defaults applied, the same hash the instance
+reads — instead of reactor inputs.
 
 **Rationale**: Finding 1. One declaration surface, one set of option semantics, one place to
 document. Authors already know the macros.
@@ -89,8 +105,27 @@ requirements are outside a step class's reach: parking the execution on contenti
 requeue path), skipping acquisition for a guard-suppressed step, and re-taking coordination
 during rollback.
 
-FR-023 (direct invocation) is served by the same object, entered with `park: false` — with no
-execution to park, contention waits and then fails, exactly as the synchronous path does.
+**Where each piece lives (revised after 0.8.0, Finding 7)**:
+
+| Concern | Class step | Inline step |
+|---|---|---|
+| Forward acquire/release | `Step.run`, between `enforce_contract!` and `new(...).run` | executor, around `run_block` |
+| Contention → park / fail | executor rescues `Contended` raised out of `impl.run` | same rescue |
+| Guard skip (FR-012) | executor never calls `impl.run` for a suppressed step | same |
+| Rollback re-take | executor (`CompensationManager`) | same |
+
+`Step.run` is the single entry point every caller already goes through — executor, `StepWorker`,
+`RSpec::TestSubject`, direct application calls — so putting forward acquisition there covers
+FR-023 with no second code path, validates before acquiring by construction, and hands the key
+proc the same `inputs` the instance reads. `Step.run` itself never parks: it raises
+`Contended`, and whichever caller can park (the executor inside a worker) does so. No
+`prepend`, no thread-local "already coordinated" mark: an earlier draft skipped coordination
+when the same step class was already running on the thread, which let a locked step call the
+same class for a *different* key unprotected. Re-entrancy comes only from the owner (D5).
+
+The executor coordinates forward work only for declarations made in an inline step block
+(`StepConfig`'s own configs, never the `impl` fallback), so a class step is never acquired
+twice.
 
 **Rationale**: this deliberately differs from `002`'s decision to enforce input contracts in a
 prepended `run`. Validation is a pure function of the arguments; coordination is a property of
@@ -141,8 +176,19 @@ retry; the sync fallback exists only because there is no queue to park into.
 - **Deadlock guard**: covered for `async_reactor` with no change (Finding 4); extended so
   `async_step` dispatch also checks the dispatched step class's declared keys against the
   registry (FR-022).
-- **Direct invocation** has no context, so the owner is a per-call UUID and no re-entrancy
-  applies.
+- **Owner resolution**, one rule for every entry point (`StepCoordination#owner`):
+  1. `context.coordination_owner` when set — a transient, never-serialized `Context` attribute.
+     `StepWorker` sets it to a per-job UUID on the context it runs the body with, because an
+     `async_step` body runs concurrently with its dispatcher; sharing the root id would put
+     both inside the critical section (same reasoning as `AsyncReactorStep`).
+  2. `(context.root_context || context).context_id` for any `RubyReactor::Context` — same
+     execution, re-entrant: reactor → step → composed child → a direct `Step.run(args, context)`
+     from inside a body.
+  3. A per-call UUID when there is no context — a stand-alone call is its own execution and
+     contends with everyone, including a reactor execution holding the same key.
+- Async map elements already run with their own context id (no `root_context`), so concurrent
+  elements never share ownership. Inline map elements share the root id and run sequentially,
+  so re-entrancy there is correct.
 
 ### D6 — Coordination on an interrupt step is refused at declaration
 
