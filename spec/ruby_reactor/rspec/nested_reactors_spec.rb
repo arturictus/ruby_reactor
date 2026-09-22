@@ -71,6 +71,21 @@ RSpec.describe "Nested Reactor Helpers" do
         expect(child2).to have_run_step(:other_step).returning("also_mocked")
       end
     end
+
+    context "with run_async(false)" do
+      it "forces composed children's own background steps to run inline, not just the top level" do
+        # process_jobs: false means nothing drains a background hand-off for
+        # us — if run_async(false) didn't cascade into the composed children,
+        # this would be left stuck at "running" instead of "completed".
+        synced = test_reactor(reactor_class, { id: "test" }, process_jobs: false).run_async(false)
+
+        synced.run
+
+        expect(synced.reactor_instance.context.status.to_s).to eq("completed")
+        expect(synced.composed(:child1)).to have_run_step(:async_step).returning("async_done_child1")
+        expect(synced.composed(:child2)).to have_run_step(:async_step).returning("async_done_child2")
+      end
+    end
   end
 
   describe "map mocking and traversal" do
@@ -104,6 +119,19 @@ RSpec.describe "Nested Reactor Helpers" do
 
       element = reactor.map_element(:process_list, index: 1)
       expect(element).to have_run_step(:transform).returning(4)
+    end
+
+    it "mocks only the targeted element when element_index is given" do
+      reactor.map(:process_list).mock_step(:transform, element_index: 1) do |_args, _ctx|
+        RubyReactor::Success(999)
+      end
+
+      expect(reactor).to be_success
+
+      elements = reactor.map_elements(:process_list)
+      expect(elements[0]).to have_run_step(:transform).returning(2) # untouched: 1 * 2
+      expect(elements[1]).to have_run_step(:transform).returning(999) # mocked
+      expect(elements[2]).to have_run_step(:transform).returning(6) # untouched: 3 * 2
     end
   end
 end
