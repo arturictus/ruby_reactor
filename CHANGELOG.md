@@ -198,9 +198,9 @@
   point (`:x` stays in the calling process); the two coincide in a linear chain
   but pin different steps in a DAG.
 
-  Not affected: the map-internal `async` element dispatch option
-  (`map :items do async true, batch_size: 2 end`) — a different mechanism that
-  keeps working unchanged.
+  Also affected: the map-internal element dispatch option was renamed from
+  `async true` to `fan_out`, so `map :items do async true, batch_size: 2 end`
+  now raises and should become `map :items do fan_out batch_size: 2 end`.
 
   One behavior change falls out of "exactly one hand-off point per reactor":
   resuming a reactor past its hand-off point now finishes in the resuming

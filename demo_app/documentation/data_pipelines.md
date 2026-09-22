@@ -43,19 +43,19 @@ class UserTransformationReactor < RubyReactor::Reactor
 end
 ```
 
-## Async Execution
+## Fan-Out Execution
 
 For long-running or resource-intensive tasks, you can offload processing to background jobs using Sidekiq.
 
-To enable async execution, simply add the `async true` directive to your map definition.
+To enable fan-out execution, add `fan_out` to your map definition.
 
 ```ruby
 map :process_orders do
   source input(:orders)
   argument :order, element(:process_orders)
   
-  # Enable async execution via Sidekiq
-  async true
+  # Hand each element to a background worker via Sidekiq
+  fan_out
 
   step :charge_card do
     argument :order, input(:order)
@@ -91,7 +91,7 @@ sequenceDiagram
 
 ## Batch Processing
 
-When processing large datasets asynchronously, you can control the parallelism using `batch_size`. This limits how many Sidekiq jobs are enqueued simultaneously, preventing system overload.
+When processing large datasets with fan-out, you can control the parallelism using `batch_size`. This limits how many Sidekiq jobs are enqueued simultaneously, preventing system overload.
 
 ```ruby
 map :bulk_import do
@@ -99,7 +99,7 @@ map :bulk_import do
   argument :record, element(:bulk_import)
   
   # Process only 50 records at a time
-  async true, batch_size: 50
+  fan_out batch_size: 50
 
   step :import_record do
     # ...
@@ -163,13 +163,13 @@ end
 
 ## Retry Configuration
 
-You can configure retries for individual steps within a map. This is particularly useful for transient failures (e.g., network timeouts) in async pipelines.
+You can configure retries for individual steps within a map. This is particularly useful for transient failures (e.g., network timeouts) in fan-out pipelines.
 
 ```ruby
 map :reliable_processing do
   source input(:urls)
   argument :url, element(:reliable_processing)
-  async true
+  fan_out
 
   step :fetch_data do
     argument :url, input(:url)

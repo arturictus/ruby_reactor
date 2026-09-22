@@ -75,7 +75,7 @@ module RubyReactor
       # (`background`, collector resume, `async_reactor` child) fans out as the
       # caller would — the collector resumes the reactor in a worker either way.
       def fan_out?
-        return false if (context.root_context || context).map_metadata
+        return false if context.map_metadata || context.root_context&.map_metadata
 
         inputs[:fan_out]
       end
