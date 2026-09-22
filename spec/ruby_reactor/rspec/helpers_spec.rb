@@ -54,6 +54,19 @@ RSpec.describe RubyReactor::RSpec::Helpers do
     end
   end
 
+  # Map Reactor whose mapped step always fails, for exercising failure
+  # detection through test_reactor/TestSubject rather than the map engine
+  # itself (that's covered by spec/map/fail_fast_spec.rb and friends).
+  class HelpersMapFailureReactor < RubyReactor::Reactor
+    input :items
+    map :process_items do
+      source { [1, 2, 3] }
+      step :multiply do
+        run { RubyReactor::Failure("Boom") }
+      end
+    end
+  end
+
   # Interrupt Reactor
   class HelpersInterruptReactor < RubyReactor::Reactor
     interrupt :wait
@@ -154,9 +167,11 @@ RSpec.describe RubyReactor::RSpec::Helpers do
         expect(result.size).to eq(3)
       end
 
-      it "handles map failures when simulated", skip: "Not implemented yet" do
-        # We need a failing map, or use failing_at
-        # failing_at inside map is tricky, let's use a specific failing reactor for map
+      it "handles map failures when simulated" do
+        subject = test_reactor(HelpersMapFailureReactor, { items: [1, 2, 3] }, async: false)
+
+        expect(subject).to be_failure
+        expect(subject.error).to include("Boom")
       end
     end
 

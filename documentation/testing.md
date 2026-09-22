@@ -16,7 +16,7 @@ end
 
 This will give you access to the `test_reactor` helper method and all custom matchers.
 
-> For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, or `with_ordered_lock`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_halted`, `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, `be_period_marked`, `have_ordered_lock_next`, `have_ordered_lock_last_completed`, `have_ordered_lock_in_flight`, and `be_ordered_lock_drained` matchers, plus patterns for testing async snooze and escalation.
+> For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, or `with_ordered_lock`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_halted`, `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, `be_period_marked`, `have_ordered_lock_next`, `have_ordered_lock_last_completed`, `have_ordered_lock_in_flight`, and `be_ordered_lock_drained` matchers, plus patterns for testing background snooze and escalation.
 
 > Examples elsewhere in the documentation mix class steps with inline blocks — class steps where the logic matters, inline blocks where a step is trivial. For production code, prefer [class-based steps](core_concepts.md#step-classes-preferred) and unit-test them directly — see [Testing Step Classes](#testing-step-classes) below.
 
@@ -72,8 +72,8 @@ The `test_reactor` helper accepts the following options:
 |--------|------|-------------|
 | `inputs` | Hash | The inputs to pass to the reactor |
 | `context` | Hash | Optional context data for the execution |
-| `async` | Boolean | Force async (`true`) or sync (`false`) execution |
-| `process_jobs` | Boolean | Whether to automatically process queued async jobs (default: `true`) |
+| `async` | Boolean | Force full background (`true`, as if `background all: true`) or sync (`false`) execution |
+| `process_jobs` | Boolean | Whether to automatically process queued background jobs (default: `true`) |
 
 ```ruby
 # Force synchronous execution
@@ -99,9 +99,9 @@ subject.run  # Explicit execution
 subject.run_async(false).run
 ```
 
-### Async Mode Control
+### Background Mode Control
 
-Control whether the reactor runs asynchronously:
+Control whether the reactor runs in a background job (the `async:` option / `run_async` override the reactor's `background all: true`):
 
 ```ruby
 # Force synchronous execution (useful for step-by-step debugging)
@@ -111,17 +111,17 @@ subject = test_reactor(MyReactor, params, async: false)
 subject = test_reactor(MyReactor, params).run_async(false)
 ```
 
-### Async Job Processing
+### Background Job Processing
 
-By default, `TestSubject` automatically processes queued async jobs — whichever backend is active. It detects Sidekiq fake mode (`Sidekiq::Testing.fake!`) or ActiveJob's `:test` queue adapter and drains through that; you don't configure which one, it just works with whatever `config.async_router` you've set. This ensures that async steps complete during the test:
+By default, `TestSubject` automatically processes queued background jobs — whichever backend is active. It detects Sidekiq fake mode (`Sidekiq::Testing.fake!`) or ActiveJob's `:test` queue adapter and drains through that; you don't configure which one, it just works with whatever `config.async_router` you've set. This ensures that background work (and `async_step` / `async_reactor` dispatches) completes during the test:
 
 ```ruby
 # Jobs are processed automatically
-subject = test_reactor(AsyncReactor, params)
-expect(subject).to be_success  # All async steps completed
+subject = test_reactor(BackgroundReactor, params)
+expect(subject).to be_success  # All queued jobs completed
 
 # Disable automatic job processing
-subject = test_reactor(AsyncReactor, params, process_jobs: false)
+subject = test_reactor(BackgroundReactor, params, process_jobs: false)
 ```
 
 ---
@@ -584,15 +584,15 @@ Reactors that declare `with_lock`, `with_semaphore`, `with_rate_limit`, `with_pe
 The matchers ship with the standard test setup — once `RubyReactor::RSpec.configure(config)` runs in your `spec_helper.rb`, they're available. They require:
 
 - A real Redis (the in-memory test mode does not back the primitives).
-- The `type: :reactor` tag on the example group. It enables Sidekiq fake mode (if the `sidekiq` gem is loaded) and clears any pending ActiveJob `:test`-adapter jobs, wipes the storage adapter between examples (so leftover lock owners, semaphore tokens, rate-limit counters and period markers don't leak), resets the snooze knobs, and includes the async-job helpers (`drain_async_jobs`, `pending_async_jobs`) described below — these dispatch to whichever backend `config.async_router` is set to.
+- The `type: :reactor` tag on the example group. It enables Sidekiq fake mode (if the `sidekiq` gem is loaded) and clears any pending ActiveJob `:test`-adapter jobs, wipes the storage adapter between examples (so leftover lock owners, semaphore tokens, rate-limit counters and period markers don't leak), resets the snooze knobs, and includes the background-job helpers (`drain_async_jobs`, `pending_async_jobs`) described below — these dispatch to whichever backend `config.async_router` is set to.
 
 ```ruby
 RSpec.describe RefundOrderReactor, type: :reactor do
-  # `test_reactor`, the state matchers, and the async-job helpers are all in scope here.
+  # `test_reactor`, the state matchers, and the background-job helpers are all in scope here.
 end
 ```
 
-All execution in these examples goes through the `test_reactor` helper — never reach into `RubyReactor::Adapters::Sidekiq::Worker` (or `RubyReactor::Adapters::ActiveJob::Worker`) directly. For async reactors, `test_reactor` processes the queued jobs for you by default; pass `process_jobs: false` when you need to inspect or drive the queue yourself.
+All execution in these examples goes through the `test_reactor` helper — never reach into `RubyReactor::Adapters::Sidekiq::Worker` (or `RubyReactor::Adapters::ActiveJob::Worker`) directly. For background reactors, `test_reactor` processes the queued jobs for you by default; pass `process_jobs: false` when you need to inspect or drive the queue yourself.
 
 ### The `Halt` result
 
@@ -738,7 +738,7 @@ end
 
 `with_ordered_lock` exposes its counters through four matchers, all taking the **user-provided ordered-lock key** as their subject (no prefix). They all read live Redis via `RubyReactor::OrderedLock.peek(key)` under the hood.
 
-`OrderedReactor` here is `async`, so its work runs through queued async jobs. Pass `process_jobs: false` to `test_reactor` when you want to assign nonces without running the jobs, then drive the queue with `drain_async_jobs` (run everything to completion) or `pending_async_jobs` (perform individual jobs out of order).
+`OrderedReactor` here is `background all: true`, so its work runs through queued background jobs. Pass `process_jobs: false` to `test_reactor` when you want to assign nonces without running the jobs, then drive the queue with `drain_async_jobs` (run everything to completion) or `pending_async_jobs` (perform individual jobs out of order).
 
 ```ruby
 it "assigns nonces in caller order" do
@@ -802,9 +802,9 @@ it "auto-advances past a blocker after poison_pill_timeout" do
 end
 ```
 
-### Testing async snooze behavior
+### Testing background snooze behavior
 
-When an `async` reactor hits contention (a held lock or an exhausted semaphore), its queued job reschedules itself with a snooze delay instead of failing. Drive this through `test_reactor` with `process_jobs: false`, then perform the queued job with `pending_async_jobs`:
+When a `background all: true` reactor hits contention (a held lock or an exhausted semaphore), its queued job reschedules itself with a snooze delay instead of failing. Drive this through `test_reactor` with `process_jobs: false`, then perform the queued job with `pending_async_jobs`:
 
 ```ruby
 it "reschedules with a snooze delay when the lock is held" do
@@ -815,7 +815,7 @@ it "reschedules with a snooze delay when the lock is held" do
   redis.hset("lock:order:42", "owner", "other")
   redis.hset("lock:order:42", "count", "1")
 
-  subject = test_reactor(AsyncRefundReactor, { order_id: 42 }, process_jobs: false).run
+  subject = test_reactor(BackgroundRefundReactor, { order_id: 42 }, process_jobs: false).run
   job = pending_async_jobs.first
 
   # The next snooze re-enqueues the same job with an incremented attempt count.
@@ -846,7 +846,7 @@ it "marks the context as failed after the snooze cap" do
   redis.hset("lock:order:42", "count", "1")
 
   # test_reactor drains the queued snoozes for us; after the cap the job gives up.
-  subject = test_reactor(AsyncRefundReactor, order_id: 42)
+  subject = test_reactor(BackgroundRefundReactor, order_id: 42)
 
   expect(subject).to be_failure
   expect(pending_async_jobs).to be_empty
@@ -1052,10 +1052,10 @@ expect(trace.any? { |t| t[:step] == :notify_user }).to be true
 
 ### 4. Force Synchronous Execution for Debugging
 
-When debugging async issues, force synchronous execution:
+When debugging background execution issues, force synchronous execution:
 
 ```ruby
-subject = test_reactor(AsyncReactor, params, async: false)
+subject = test_reactor(BackgroundReactor, params, async: false)
 ```
 
 ### 5. Keep Tests Focused
@@ -1087,7 +1087,7 @@ end
 | Method | Description |
 |--------|-------------|
 | `run` | Execute the reactor (auto-called by introspection methods) |
-| `run_async(bool)` | Set async execution mode |
+| `run_async(bool)` | Force full background (`true`) or sync (`false`) execution |
 | `mock_step(name, *nested, &block)` | Mock a step's implementation |
 | `failing_at(name, *nested)` | Simulate failure at a step |
 | `map(step_name)` | Get proxy for mocking map step internals |

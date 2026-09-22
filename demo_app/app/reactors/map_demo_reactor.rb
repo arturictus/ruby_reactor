@@ -56,7 +56,7 @@ class MapDemoReactor < RubyReactor::Reactor
     argument :number, element(:async_map)
     argument :fail_at_reactor, input(:fail_at_reactor)
     argument :fail_at_step, input(:fail_at_step)
-    async true
+    fan_out
 
     step :square do
       argument :number, input(:number)
@@ -103,7 +103,7 @@ class MapDemoReactor < RubyReactor::Reactor
     argument :fail_at_step, input(:fail_at_step)
     
     # Process in batches of 10 workers
-    async true, batch_size: 10
+    fan_out batch_size: 10
 
     step :heavy_math do
       argument :number, input(:number)
@@ -150,7 +150,7 @@ class MapDemoReactor < RubyReactor::Reactor
     argument :fail_at_reactor, input(:fail_at_reactor)
     argument :fail_at_step, input(:fail_at_step)
     
-    async true, batch_size: 2
+    fan_out batch_size: 2
 
     step :restock do
       argument :product, input(:product)

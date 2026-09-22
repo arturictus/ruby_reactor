@@ -1,13 +1,13 @@
 # Data Pipelines
 
-RubyReactor provides powerful data pipeline capabilities through the `map` feature, allowing you to process collections of data efficiently. This system supports both synchronous and asynchronous execution, batch processing, and robust error handling.
+RubyReactor provides powerful data pipeline capabilities through the `map` feature, allowing you to process collections of data efficiently. This system supports both synchronous and background execution, batch processing, and robust error handling.
 
 ## Overview
 
 The data pipeline system is built around the `map` step, which iterates over an input collection and processes each element through a defined sub-reactor or inline steps.
 
 Key features:
-- **Parallel Processing**: Execute steps asynchronously via Queue or ActiveJob
+- **Parallel Processing**: Run elements as background jobs via Sidekiq or ActiveJob
 - **Batch Control**: Manage system load with configurable batch sizes
 - **Error Handling**: Choose between failing fast or collecting partial results
 - **Retries**: Configure granular retry policies for individual steps
@@ -59,7 +59,7 @@ map :process_products do
   end
 
   argument :product, element(:process_products)
-  async true, batch_size: 100
+  fan_out batch_size: 100
 
   step :process do
     # ...
@@ -73,7 +73,11 @@ When an `ActiveRecord::Relation` is returned, RubyReactor efficiently batches th
 
 ## Batch Processing Mechanism
 
-When processing large datasets asynchronously, you can control the parallelism using `batch_size`. This limits how many background jobs are enqueued simultaneously, preventing system overload.
+> `fan_out` runs every element as its own **background job** (Sidekiq or ActiveJob). A fan-out map is a hand-off point: the reactor stops at the map, and once every element's outcome is collected it resumes in a worker with the steps after the map. It fans out the same way when the reactor is already running in a worker (`background all: true`, or after a `background` hand-off); only a map nested inside another map's element runs inline.
+>
+> `fan_out` replaces the removed map-level `async true`, which now raises at class-definition time.
+
+When processing large datasets in background jobs, you can control the parallelism using `batch_size`. This limits how many background jobs are enqueued simultaneously, preventing system overload.
 
 ```ruby
 map :bulk_import do
@@ -81,7 +85,7 @@ map :bulk_import do
   argument :record, element(:bulk_import)
   
   # Process only 50 records at a time
-  async true, batch_size: 50
+  fan_out batch_size: 50
 
   step :import_record do
     # ...
@@ -89,13 +93,13 @@ map :bulk_import do
 end
 ```
 
-### Async Without `batch_size`
+### `fan_out` Without `batch_size`
 
-`batch_size` is optional. When you enable `async true` without it, RubyReactor
+`batch_size` is optional. When you enable `fan_out` without it, RubyReactor
 defaults the batch size to the full source size and fans out **one background
 worker per element** immediately. Every element runs through the same
-per-element path — so elements whose sub-reactor contains async steps or async
-retries are handled correctly — and a collector aggregates the outcomes into a
+per-element path — so elements whose sub-reactor contains `background` hand-offs
+or background retries are handled correctly — and a collector aggregates the outcomes into a
 `ResultEnumerator`.
 
 ```ruby
@@ -104,7 +108,7 @@ map :process_items do
   argument :item, element(:process_items)
 
   # No batch_size: every element gets its own worker, enqueued at once
-  async true
+  fan_out
 
   step :process do
     # ...
@@ -119,7 +123,7 @@ mechanism described below.
 
 ### Back Pressure & Resource Management
 
-When `async true` is used with a `batch_size`, RubyReactor implements an intelligent **back pressure** mechanism. Instead of flooding Redis and the queue backend with millions of jobs immediately (which is the standard behavior for many background job systems), the system processes data in controlled chunks.
+When `fan_out` is used with a `batch_size`, RubyReactor implements an intelligent **back pressure** mechanism. Instead of flooding Redis and the queue backend with millions of jobs immediately (which is the standard behavior for many background job systems), the system processes data in controlled chunks.
 
 This approach provides critical benefits for stability and scalability:
 
@@ -226,13 +230,13 @@ end
 
 ## Retry Configuration
 
-You can configure retries for individual steps within a map. This is particularly useful for transient failures (e.g., network timeouts) in async pipelines.
+You can configure retries for individual steps within a map. This is particularly useful for transient failures (e.g., network timeouts) in background pipelines.
 
 ```ruby
 map :reliable_processing do
   source input(:urls)
   argument :url, element(:reliable_processing)
-  async true
+  fan_out
 
   step :fetch_data do
     argument :url, input(:url)
@@ -252,7 +256,7 @@ end
 
 ### Retry Behavior
 
-- **Async Mode**: Retries are handled by requeuing the background job with a delay. This is non-blocking and efficient.
+- **Fan-out Mode** (`fan_out`): Retries are handled by requeuing the background job with a delay. This is non-blocking and efficient.
 - **Sync Mode**: Retries happen immediately within the execution thread (blocking).
 
 

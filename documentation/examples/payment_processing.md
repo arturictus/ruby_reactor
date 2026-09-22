@@ -551,7 +551,7 @@ Rails.cache.fetch("fraud_model_#{Date.today}", expires_in: 1.day) do
 end
 ```
 
-### Async Processing
+### Async Steps
 
 ```ruby
 # Dispatch non-critical work to its own job so it never blocks payment

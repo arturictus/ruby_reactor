@@ -18,7 +18,7 @@ Most examples in this documentation mix class steps with inline blocks — class
 - [Getting Started](getting_started.md)
 - [Core Concepts](core_concepts.md)
 - [DAG Execution and Saga Patterns](DAG.md)
-- [Async Reactors](async_reactors.md)
+- [Background & Async Execution](background_and_async.md)
 - [Composition](composition.md)
 - [Data Pipelines](data_pipelines.md)
 - [Retry Configuration](retry_configuration.md)
@@ -77,7 +77,8 @@ result.value    # => payment result
 
 - **Sequential Execution**: Steps execute in dependency order
 - **Error Handling**: Automatic compensation and rollback on failures
-- **Async Support**: `background` hand-off (whole reactor or from a declared cut point), `async_step` (one step as its own job), `async_reactor` (an independent nested reactor)
+- **Background Execution**: `background` hand-off — the whole reactor, or everything past a declared cut point, runs in a worker
+- **Async Steps & Reactors**: `async_step` (one step as its own job) and `async_reactor` (an independent nested reactor)
 - **Non-Blocking Retries & Waits**: Job requeuing instead of blocking workers — a worker reading a pending async result parks (locks kept held) rather than pinning its thread
 - **Pluggable Backend**: Sidekiq or ActiveJob (any ActiveJob-compatible queue) for background processing
 - **Retry Configuration**: Flexible retry policies per step
@@ -87,7 +88,9 @@ result.value    # => payment result
 RubyReactor provides two execution models:
 
 1. **Synchronous**: All steps execute in the current thread
-2. **Asynchronous**: Steps execute in background jobs (Sidekiq or ActiveJob) with non-blocking retries
+2. **Background**: The reactor (or everything past a cut point) executes in a background job (Sidekiq or ActiveJob) with non-blocking retries
+
+Independently of either, `async_step` / `async_reactor` dispatch independent units of work as their own jobs.
 
 ### Execution Flow
 
@@ -103,11 +106,11 @@ graph TD
     F --> H[Return Failure Result]
 ```
 
-### Async Execution Models
+### Background & Async Execution Models
 
 ```mermaid
 graph TD
-    A[Client Request] --> B{Async<br/>Model?}
+    A[Client Request] --> B{Execution<br/>Model?}
     B -->|background all: true| C[Queue Whole Reactor<br/>to Background Job]
     B -->|background after:/before:| D[Execute Steps Locally<br/>Until the Cut Point]
     B -->|async_step / async_reactor| L[Dispatch the Unit<br/>as Its Own Job]
@@ -125,7 +128,7 @@ graph TD
 
 - **`background all: true`**: Entire reactor executes in background
 - **`background after:` / `before:`**: One declared cut point — everything past it runs in a single background job
-- **`async_step` / `async_reactor`**: One step's work, or a whole nested reactor, dispatched as its own independent job; results are read with `result(:name)` (bounded wait — a worker-side reader parks instead of blocking; see [Async Reactors](async_reactors.md#waiting-on-dispatched-work))
+- **`async_step` / `async_reactor`**: One step's work, or a whole nested reactor, dispatched as its own independent job; results are read with `result(:name)` (bounded wait — a worker-side reader parks instead of blocking; see [Background & Async Execution](background_and_async.md#waiting-on-dispatched-work))
 
 ## Error Handling
 
@@ -145,7 +148,7 @@ RubyReactor provides comprehensive error handling:
 ## Requirements
 
 - Ruby 3.0+
-- Redis (for async execution and state persistence)
+- Redis (for background execution and state persistence)
 - Sidekiq or ActiveJob (for background processing)
 - dry-validation (optional, for input/payload validation)
 

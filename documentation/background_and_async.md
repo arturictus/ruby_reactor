@@ -1,17 +1,26 @@
-# Async Reactors
+# Background & Async Execution
 
-RubyReactor supports four ways to move work off the calling process: **Full Reactor Async** (the whole reactor runs in a worker), **Background Hand-off** (`background after:` / `before:` — one declared cut point, after which the rest of the reactor runs in a worker), **`async_step`** (one step's work as its own job, while the reactor keeps going), and **`async_reactor`** (a whole nested reactor running independently). Both models run on a pluggable background job backend — **Sidekiq** by default, or **ActiveJob** (any ActiveJob-compatible queue: Resque, Solid Queue, GoodJob, etc.) — with non-blocking retry mechanisms. The mechanics below are described in Sidekiq terms since it's the default, but everything (queueing, snoozing, retries, durability) works identically on ActiveJob; see [Backend Configuration](#backend-configuration) to switch.
+RubyReactor supports four ways to move work off the calling process, in two families:
+
+- **Background execution** — the reactor's *own* run moves to a queued job:
+  - **Full Background** (`background all: true`) — the whole reactor runs in a worker.
+  - **Background Hand-off** (`background after:` / `before:`) — one declared cut point, after which the rest of the reactor runs in a worker.
+- **Async execution** — an *independent* unit of work is dispatched while the reactor keeps going:
+  - **`async_step`** — one step's work as its own job.
+  - **`async_reactor`** — a whole nested reactor running independently.
+
+In these docs, *background* always means queuing a reactor's run to Sidekiq/ActiveJob; *async* always means `async_step` / `async_reactor`. All four run on a pluggable background job backend — **Sidekiq** by default, or **ActiveJob** (any ActiveJob-compatible queue: Resque, Solid Queue, GoodJob, etc.) — with non-blocking retry mechanisms. The mechanics below are described in Sidekiq terms since it's the default, but everything (queueing, snoozing, retries, durability) works identically on ActiveJob; see [Backend Configuration](#backend-configuration) to switch.
 
 ## Overview
 
-Async execution provides several benefits:
+Background execution provides several benefits:
 
 - **Non-blocking**: Workers are freed during retry delays
 - **Scalable**: Better resource utilization with large worker pools
 - **Reliable**: Automatic retry with configurable backoff strategies
 - **Observable**: Full visibility into execution state and retry attempts
 
-## Full Reactor Async
+## Full Background (`background all: true`)
 
 When a reactor declares `background all: true`, the entire execution happens in a Sidekiq worker, including input validation.
 
@@ -25,7 +34,7 @@ class ValidateOrderStep < RubyReactor::Step
 end
 
 class OrderProcessingReactor < RubyReactor::Reactor
-  background all: true  # Enable full reactor async
+  background all: true  # Entire reactor runs in a background worker
 
   step :validate_order, ValidateOrderStep
 
@@ -43,13 +52,13 @@ end
 
 ```ruby
 # Synchronous call returns immediately
-async_result = OrderProcessingReactor.run(order_id: 123)
+dispatch = OrderProcessingReactor.run(order_id: 123)
 
-async_result.execution_id       # UUID for reloading state
-async_result.intermediate_results # Whatever was computed before handoff
+dispatch.execution_id       # UUID for reloading state
+dispatch.intermediate_results # Whatever was computed before handoff
 
 # Inspect status later by reloading from storage
-reactor = OrderProcessingReactor.find(async_result.execution_id)
+reactor = OrderProcessingReactor.find(dispatch.execution_id)
 case reactor.context.status.to_s
 when "running"   then puts "Execution is in progress"
 when "completed" then puts "Done: #{reactor.result.value}"
@@ -65,10 +74,9 @@ end
 ```mermaid
 graph LR
     A[Client] --> B[Reactor.run<br/>background all: true]
-    B --> C[Validate Inputs<br/>Synchronously]
-    C --> D[Queue Sidekiq Job<br/>with Context]
+    B --> D[Queue Sidekiq Job<br/>with Context]
     D --> E[Sidekiq Worker]
-    E --> F[Deserialize Context]
+    E --> F[Deserialize Context<br/>Validate Inputs]
     F --> G[Execute All Steps<br/>Sequentially]
     G --> H{Result?}
     H -->|Success| I[Return Success]
@@ -166,8 +174,8 @@ In a linear chain the two coincide. **In a DAG they do not** — if `:audit` and
 
 ```ruby
 # Runs :validate_order here, then hands off.
-async_result = OrderProcessingReactor.run(order_id: 123)
-async_result.execution_id # => reload later to inspect the outcome
+dispatch = OrderProcessingReactor.run(order_id: 123)
+dispatch.execution_id # => reload later to inspect the outcome
 ```
 
 ```mermaid
@@ -183,6 +191,15 @@ graph LR
     I -->|Success| J[Completed]
     I -->|Failure| K[Compensate in the worker] --> L[Failed]
 ```
+
+## Fan-out maps (`fan_out`)
+
+A `map` declaring `fan_out` is also a hand-off point, just not a declared one:
+the reactor stops at the map, each element runs as its own background job
+(`batch_size` caps how many are enqueued at a time), and a collector job resumes
+the reactor in a worker once every element's outcome is in. It fans out the same
+way when the reactor is already in a worker (`background all: true`, or past a
+`background` point). See [Data Pipelines](data_pipelines.md).
 
 ## `async_step` — one step, dispatched on its own
 
@@ -325,7 +342,7 @@ See [Composition](composition.md) for when to reach for `compose` instead.
 
 ### Dispatch-time safeguards
 
-Dispatch reuses the full pre-enqueue sequence of a top-level async run rather
+Dispatch reuses the full pre-enqueue sequence of a top-level background run rather
 than a raw enqueue, because three things matter before the child exists:
 
 1. **The child's inputs are validated**, in the parent's process. The worker's
@@ -435,7 +452,7 @@ out against a context stuck on `running`:
 
 ## Retry Configuration
 
-Both async models support sophisticated retry mechanisms with non-blocking job requeuing.
+All background and async modes support sophisticated retry mechanisms with non-blocking job requeuing.
 
 ### Step-Level Retry
 
@@ -492,7 +509,7 @@ end
 
 ## Error Handling and Compensation
 
-Async reactors support full compensation and rollback in the worker context:
+Background reactors support full compensation and rollback in the worker context:
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
@@ -565,7 +582,7 @@ Worker classes (`Adapters::Sidekiq::Worker` and `Adapters::ActiveJob::Worker`) a
 
 ### Worker Pool Sizing
 
-- **Full Reactor Async**: Size pool based on total reactor throughput
+- **Full Background**: Size pool based on total reactor throughput
 - **Background Hand-off / `async_step` / `async_reactor`**: size the pool for how often work is dispatched
 
 ### Context Size Limits

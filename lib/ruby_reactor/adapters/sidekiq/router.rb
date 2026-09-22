@@ -10,13 +10,13 @@ module RubyReactor
         def self.perform_async(context_id, reactor_class_name = nil, intermediate_results: {})
           job_id = RubyReactor::Adapters::Sidekiq::Worker.perform_async(context_id, reactor_class_name)
           RubyReactor::DispatchResult.new(job_id: job_id, intermediate_results: intermediate_results,
-                                       execution_id: context_id)
+                                          execution_id: context_id)
         end
 
         def self.perform_in(delay, context_id, reactor_class_name = nil, intermediate_results: {})
           job_id = RubyReactor::Adapters::Sidekiq::Worker.perform_in(delay, context_id, reactor_class_name)
           RubyReactor::DispatchResult.new(job_id: job_id, intermediate_results: intermediate_results,
-                                       execution_id: context_id)
+                                          execution_id: context_id)
         end
 
         # One `async_step`'s work, dispatched as its own independent unit. The

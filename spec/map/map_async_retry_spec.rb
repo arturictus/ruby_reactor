@@ -41,7 +41,7 @@ RSpec.describe "Map Async Retry Behavior" do
         argument :item, element(:processed)
         argument :fail_until, input(:fail_until_attempt)
 
-        async true
+        fan_out
       end
     end
 
@@ -141,7 +141,7 @@ RSpec.describe "Map Async Retry Behavior" do
         argument :item, element(:processed)
         argument :fail_until, input(:fail_until_attempt)
 
-        async true, batch_size: 2
+        fan_out batch_size: 2
       end
     end
 
@@ -236,7 +236,7 @@ RSpec.describe "Map Async Retry Behavior" do
         argument :fail_items, input(:fail_items)
         argument :fail_until, input(:fail_until_attempt)
 
-        async true, batch_size: 2
+        fan_out batch_size: 2
         fail_fast false
 
         collect do |results|

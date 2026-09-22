@@ -100,6 +100,51 @@ RSpec.describe "Map Inline Execution" do
     expect(result.value[:doubled_numbers]).to eq([])
   end
 
+  context "with a nested inline map" do
+    let(:nested_group_reactor_class) do
+      Class.new(RubyReactor::Reactor) do
+        input :numbers
+
+        map :doubled_numbers do
+          source input(:numbers)
+          argument :number, element(:doubled_numbers)
+          fan_out
+
+          step :double do
+            argument :value, input(:number)
+            run { |args, _| RubyReactor::Success(args[:value] * 2) }
+          end
+
+          returns :double
+        end
+
+        returns :doubled_numbers
+      end
+    end
+
+    let(:nested_inline_map_reactor_class) do
+      nested_group_class = nested_group_reactor_class
+
+      Class.new(RubyReactor::Reactor) do
+        input :groups
+
+        map :processed_groups, nested_group_class do
+          source input(:groups)
+          argument :numbers, element(:processed_groups)
+        end
+      end
+    end
+
+    it "keeps nested fan-out maps inline inside the current element context" do
+      result = nested_inline_map_reactor_class.run(groups: [[1, 2], [3]])
+
+      expect(result).to be_a(RubyReactor::Success)
+      expect(result.value[:processed_groups]).to eq([[2, 4], [6]])
+      expect(RubyReactor::Adapters::Sidekiq::MapElementWorker.jobs).to be_empty
+      expect(RubyReactor::Adapters::Sidekiq::MapCollectorWorker.jobs).to be_empty
+    end
+  end
+
   context "when source comes from a previous step" do
     let(:map_from_step_result_reactor) do
       Class.new(RubyReactor::Reactor) do

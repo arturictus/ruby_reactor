@@ -3,7 +3,7 @@
 RubyReactor exposes its execution lifecycle through a lightweight **middleware**
 system. A middleware is a plain object that implements one or more
 `on_<event>` hooks; RubyReactor invokes them as reactors, steps, compensations,
-rollbacks, locks, and async hand-offs happen. This is the mechanism behind the
+rollbacks, locks, and background hand-offs happen. This is the mechanism behind the
 built-in **OpenTelemetry** instrumentation, and you can use it to add your own
 logging, metrics, auditing, or tracing.
 
@@ -107,11 +107,11 @@ last argument. The `context` exposes `context_id`, `reactor_class`, `inputs`,
 | Undo completed | `on_complete_undo` | `(step_name, result, context)` |
 | Undo failed | `on_failed_undo` | `(step_name, error_or_result, context)` |
 
-### Async, Locks & Semaphores
+### Background Enqueue, Locks & Semaphores
 
 | Event | Hook | Arguments |
 | --- | --- | --- |
-| Before async enqueue | `on_before_async_enqueue` | `(context)` |
+| Before background enqueue | `on_before_async_enqueue` | `(context)` |
 | Lock acquired | `on_lock_acquired` | `(key, context)` |
 | Lock failed | `on_lock_failed` | `(key, error, context)` |
 | Lock released | `on_lock_released` | `(key, context)` |
@@ -120,10 +120,11 @@ last argument. The `context` exposes `context_id`, `reactor_class`, `inputs`,
 | Semaphore released | `on_semaphore_released` | `(key, context)` |
 
 > **`on_before_async_enqueue`** fires just before a context is serialized and
-> handed off to a background job (async step, async retry, or async map
+> handed off to a background job (`background all: true` run, `background`
+> hand-off, background interrupt resume, background retry, or background map
 > element). It is the place to inject any data that must travel with the job —
 > this is exactly how the OpenTelemetry middleware propagates trace context
-> across the async boundary by writing into `context.private_data`.
+> across the background boundary by writing into `context.private_data`.
 
 ## Registering Middlewares
 
@@ -173,7 +174,7 @@ When a reactor runs, RubyReactor builds the effective middleware list with
 
 Hooks are invoked on each middleware in that order. Because classes are
 instantiated **per reactor execution**, middleware instance state is isolated
-between concurrent reactors (including parallel async map elements).
+between concurrent reactors (including parallel background map elements).
 
 ## Error Safety
 
@@ -195,7 +196,7 @@ use a step for that.
 RubyReactor ships a built-in middleware, `RubyReactor::OpenTelemetry`, that
 emits [OpenTelemetry](https://opentelemetry.io/) spans for the full execution
 lifecycle. It turns a reactor run into a trace whose waterfall mirrors the
-reactor → step → compensation/undo hierarchy, including work that crosses async
+reactor → step → compensation/undo hierarchy, including work that crosses background
 and retry boundaries.
 
 The middleware loads the OpenTelemetry libraries lazily (`opentelemetry-api` is
@@ -213,7 +214,7 @@ and configured.
 | --- | --- | --- |
 | `<ReactorName>` | reactor start | `reactor.name`, `reactor.context_id`, `reactor.inputs.*`, `reactor.resumed` |
 | `step.<name>` | step start | `step.name`, `step.arguments.*` |
-| `step.<name>.enqueue` | async hand-off | `step.async`, `step.status=handed_off`, `step.async_job_id` |
+| `step.<name>.enqueue` | background hand-off | `step.async`, `step.status=handed_off`, `step.async_job_id` |
 | `compensate.<name>` | compensation start | `compensation.status`, `compensation.trigger_error.*` |
 | `undo.<name>` | rollback start | `undo.status`, `undo.original_result.value` |
 
@@ -223,7 +224,7 @@ spans.
 
 Reactor and step status is mapped onto the span status: success → `OK`,
 failure → `ERROR` with the error class/message, and an attempt that was requeued
-for an async retry is marked `ERROR` with `retry.will_retry=true` /
+for a background retry is marked `ERROR` with `retry.will_retry=true` /
 `step.status=failed_will_retry`. Because OpenTelemetry span status does not
 propagate to the parent, a failed-and-requeued attempt does not poison the
 overall trace if a later attempt succeeds.
@@ -279,10 +280,10 @@ end
 Values are also passed through a safe serializer so large or non-primitive
 objects do not bloat the trace.
 
-### Distributed & async traces
+### Distributed & background traces
 
-When a reactor hands work off to a background job — an async step, an async
-retry, or an async map element — the trace must continue in the worker that
+When a reactor hands work off to a background job — a `background` hand-off, a
+background retry, or a background map element — the trace must continue in the worker that
 picks it up. The middleware handles this automatically:
 
 1. On `before_async_enqueue` it injects the **currently active span context**
@@ -292,8 +293,8 @@ picks it up. The middleware handles this automatically:
 
 The result is a single, connected trace across processes, with the resumed work
 nested under the step that handed it off. Each subsequent hand-off in a chain
-(async step → async retry → …) re-injects the span that is active at that
-moment, so deep async chains stay correctly nested rather than flattened under
+(background hand-off → background retry → …) re-injects the span that is active at that
+moment, so deep background chains stay correctly nested rather than flattened under
 the first step.
 
 ### Custom exporters

@@ -19,7 +19,7 @@ gem install ruby_reactor
 ## Configuration
 
 RubyReactor uses Redis for state persistence and a background job backend for
-async execution — Sidekiq by default, or ActiveJob. Configure storage and the
+background execution — Sidekiq by default, or ActiveJob. Configure storage and the
 job queue before running any reactors:
 
 ```ruby
@@ -29,7 +29,7 @@ RubyReactor.configure do |config|
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
   config.storage.redis_options = { timeout: 1 }
 
-  # Background job configuration for async execution
+  # Background job configuration
   config.queue_name = :default
   config.job_retry_count = 3
 
@@ -133,12 +133,17 @@ end
 
 - `RubyReactor::Success` — `result.success?` is `true`, `result.value` holds the step output for `returns` (or the full `intermediate_results` hash if no `returns` is set).
 - `RubyReactor::Failure` — `result.failure?` is `true`. Useful readers: `result.error`, `result.step_name`, `result.exception_class`, `result.backtrace`, `result.step_arguments`.
-- `RubyReactor::DispatchResult` — returned when the reactor (or a step) is async. Holds `job_id`, `execution_id`, and any `intermediate_results` available at handoff.
+- `RubyReactor::DispatchResult` — returned when the reactor runs in the background (`background all: true`, or a `background after:`/`before:` hand-off is reached). Holds `job_id`, `execution_id`, and any `intermediate_results` available at handoff.
 - `RubyReactor::InterruptResult` — returned when an `interrupt` step pauses execution. Use `result.execution_id` and `result.correlation_id` to resume later.
 
-### Asynchronous Execution
+### Background & Async Execution
 
-For async execution, configure a job backend (Sidekiq or ActiveJob — see [Configuration](#configuration) above), then choose how much work leaves the calling process: mark the whole reactor `background all: true`, declare a hand-off point with `background after:`/`before:` (everything past it runs in a worker), or dispatch a single unit with `async_step` / `async_reactor`. See [Async Reactors](async_reactors.md).
+Configure a job backend (Sidekiq or ActiveJob — see [Configuration](#configuration) above), then choose how much work leaves the calling process:
+
+- **Background**: mark the whole reactor `background all: true`, or declare a hand-off point with `background after:`/`before:` (everything past it runs in a worker).
+- **Async**: dispatch an independent unit with `async_step` / `async_reactor` while the reactor keeps running.
+
+See [Background & Async Execution](background_and_async.md).
 
 > The old per-step `async true` flag has been removed — it was ambiguous, since only the first flagged step in a reactor ever took effect. Use `background before: :that_step` instead. The old whole-reactor `async true` flag has also been removed — use `background all: true`.
 
@@ -149,19 +154,19 @@ class OrderProcessingReactor < RubyReactor::Reactor
   # ... steps defined above
 end
 
-async_result = OrderProcessingReactor.run(order_id: 123)
-async_result.execution_id # => UUID for looking up state later
+dispatch = OrderProcessingReactor.run(order_id: 123)
+dispatch.execution_id # => UUID for looking up state later
 ```
 
 To inspect a running execution, reload it from storage:
 
 ```ruby
-reactor = OrderProcessingReactor.find(async_result.execution_id)
+reactor = OrderProcessingReactor.find(dispatch.execution_id)
 reactor.context.status      # => "running" | "completed" | "failed" | "paused"
 reactor.result              # Success / Failure / InterruptResult
 ```
 
-See [Async Reactors](async_reactors.md) for the full async model.
+See [Background & Async Execution](background_and_async.md) for the full model.
 
 ## Inspecting the Context
 
@@ -270,7 +275,7 @@ See [Core Concepts](core_concepts.md#compensation) for the full compensation/und
 ## Next Steps
 
 - [Core Concepts](core_concepts.md) — Reactors, class-based steps, Context, Results
-- [Async Reactors](async_reactors.md) — Full and step-level async execution
+- [Background & Async Execution](background_and_async.md) — `background` hand-offs, `async_step` and `async_reactor`
 - [Retry Configuration](retry_configuration.md) — Backoff strategies and retry policies
 - [Interrupts](interrupts.md) — Pause/resume workflows
 - [Composition](composition.md) — Build complex flows from smaller reactors

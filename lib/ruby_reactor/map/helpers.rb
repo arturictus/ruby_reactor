@@ -107,6 +107,15 @@ module RubyReactor
           )
 
           parent_context.current_step = nil
+
+          # Mark the context as a worker before resuming: resume_execution runs
+          # the collector's own worker (this call), not the reactor's normal
+          # caller. Without this, StepExecutor#handoff_at? (gated on
+          # `inline_async_execution`) re-evaluates any later `background`
+          # before:/after: cut point and enqueues a second hand-off, or runs an
+          # `after:` target here in the collector instead of the original
+          # dispatching worker.
+          parent_context.inline_async_execution = true
           executor.resume_execution
         end
 

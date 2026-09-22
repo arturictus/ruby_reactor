@@ -20,7 +20,7 @@ module RubyReactor
         end
         @reactor = reactor
         @argument_mappings = {}
-        @async = false
+        @fan_out = false
         @strict_ordering = true
         @batch_size = nil
         @source_enumerable = nil
@@ -40,9 +40,28 @@ module RubyReactor
                              end
       end
 
-      def async(async = true, batch_size: nil)
-        @async = async
-        @batch_size = batch_size if batch_size
+      # Run every element as its own background job. `batch_size` caps how many
+      # element jobs are enqueued at a time (back pressure); without it the whole
+      # source fans out at once. A fan-out map is a hand-off point: the reactor
+      # stops at the map and resumes in a worker once the collector has every
+      # element's outcome.
+      def fan_out(enabled = true, batch_size: nil)
+        @fan_out = enabled
+        self.batch_size(batch_size) unless batch_size.nil?
+      end
+
+      # `async` on a map named element fan-out with the word that now means
+      # `async_step` / `async_reactor` — independent units the reactor does not
+      # stop for. A fan-out map does stop the reactor, so it gets its own word.
+      def async(*)
+        raise RubyReactor::Error::DeprecatedDslError.new(
+          "`async` inside a `map` block has been removed: it read as `async_step`/`async_reactor`, which " \
+          "dispatch independent units, whereas a fan-out map hands the reactor off until every element " \
+          "finishes. Use `fan_out` instead (`fan_out batch_size: N` for back pressure) — note this also " \
+          "changes worker dispatch: each element now runs in its own background worker rather than being " \
+          "suppressed inline by `inline_async_execution` as the old `async true` was.",
+          step: @name
+        )
       end
 
       def strict_ordering(enabled = true)
@@ -50,6 +69,13 @@ module RubyReactor
       end
 
       def batch_size(size)
+        unless size.is_a?(Integer) && size.positive?
+          raise RubyReactor::Error::ValidationError.new(
+            "`batch_size` must be a positive Integer, got #{size.inspect}",
+            step: @name
+          )
+        end
+
         @batch_size = size
       end
 
@@ -98,7 +124,7 @@ module RubyReactor
             batch_size: { source: RubyReactor::Template::Value.new(@batch_size) },
             collect_block: { source: RubyReactor::Template::Value.new(@collect_block) },
             fail_fast: { source: RubyReactor::Template::Value.new(@fail_fast) },
-            async: { source: RubyReactor::Template::Value.new(@async) }
+            fan_out: { source: RubyReactor::Template::Value.new(@fan_out) }
           },
           run_block: nil,
           compensate_block: nil,

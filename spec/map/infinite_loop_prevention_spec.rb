@@ -10,7 +10,7 @@ RSpec.describe "Map Infinite Loop Prevention" do
       source input(:items)
       argument :item, element(:process_items)
 
-      async true, batch_size: 2
+      fan_out batch_size: 2
 
       step :record do
         argument :item, input(:item)
