@@ -73,6 +73,17 @@ RSpec.describe "Nested Reactor Helpers" do
     end
 
     context "with run_async(false)" do
+      it "forces an async_reactor child's own background steps to run inline too" do
+        synced = test_reactor(Support::AsyncReactorRootReactor, { id: "test" }, process_jobs: false)
+                 .run_async(false)
+
+        synced.run
+
+        child = synced.async_reactor(:child_job)
+        expect(child.reactor_instance.context.status.to_s).to eq("completed")
+        expect(child).to have_run_step(:async_step).returning("async_done_test")
+      end
+
       it "forces composed children's own background steps to run inline, not just the top level" do
         # process_jobs: false means nothing drains a background hand-off for
         # us — if run_async(false) didn't cascade into the composed children,
@@ -121,6 +132,16 @@ RSpec.describe "Nested Reactor Helpers" do
       expect(element).to have_run_step(:transform).returning(4)
     end
 
+    it "mocks sibling maps via block scoping without leaking scope between them" do
+      reactor
+        .map(:process_list) { |m| m.mock_step(:transform) { |_args, _ctx| RubyReactor::Success(0) } }
+        .map(:label_list) { |m| m.mock_step(:label) { |_args, _ctx| RubyReactor::Success("mocked") } }
+
+      expect(reactor).to be_success
+      expect(reactor.map_element(:process_list, index: 0)).to have_run_step(:transform).returning(0)
+      expect(reactor.map_element(:label_list, index: 0)).to have_run_step(:label).returning("mocked")
+    end
+
     it "mocks only the targeted element when element_index is given" do
       reactor.map(:process_list).mock_step(:transform, element_index: 1) do |_args, _ctx|
         RubyReactor::Success(999)
@@ -132,6 +153,39 @@ RSpec.describe "Nested Reactor Helpers" do
       expect(elements[0]).to have_run_step(:transform).returning(2) # untouched: 1 * 2
       expect(elements[1]).to have_run_step(:transform).returning(999) # mocked
       expect(elements[2]).to have_run_step(:transform).returning(6) # untouched: 3 * 2
+    end
+  end
+
+  describe "fan-out maps" do
+    subject(:reactor) { test_reactor(Support::FanOutMapMockTestReactor, { list: [1, 2, 3] }) }
+
+    it "mocks an inner step of every element, not just of an inline map" do
+      # A fan-out element job carries only the mapped reactor's NAME: if the
+      # mocked subclass has no resolvable identity of its own, the worker
+      # resolves back to the original class and the mock never runs.
+      reactor.map(:process_list).mock_step(:transform, element_index: 1) do |_args, _ctx|
+        RubyReactor::Success(999)
+      end
+
+      expect(reactor).to be_success
+
+      elements = reactor.map_elements(:process_list)
+      expect(elements.size).to eq(3)
+      expect(elements[0]).to have_run_step(:transform).returning(2)
+      expect(elements[1]).to have_run_step(:transform).returning(999)
+      expect(elements[2]).to have_run_step(:transform).returning(6)
+    end
+
+    it "runs the whole map in-process under run_async(false)" do
+      # Nothing drains element jobs here, so a still-fanned-out map would leave
+      # the reactor parked at "running" instead of completing.
+      synced = test_reactor(Support::FanOutMapMockTestReactor, { list: [1, 2, 3] }, process_jobs: false)
+               .run_async(false)
+
+      synced.run
+
+      expect(synced.reactor_instance.context.status.to_s).to eq("completed")
+      expect(synced.result.value).to eq([{ transform: 2 }, { transform: 4 }, { transform: 6 }])
     end
   end
 end

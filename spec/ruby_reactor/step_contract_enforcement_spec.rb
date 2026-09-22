@@ -4,7 +4,7 @@ require "spec_helper"
 
 # US1 on the synchronous execution paths. Inputs are wired with explicit
 # `argument` lines throughout: name-based resolution is US4.
-RSpec.describe "Step input contract enforcement" do
+RSpec.describe "Step input contract enforcement", type: :reactor do
   let(:calls) { [] }
 
   let(:reactor) do

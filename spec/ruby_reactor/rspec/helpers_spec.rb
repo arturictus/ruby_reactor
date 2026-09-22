@@ -3,7 +3,7 @@
 require "spec_helper"
 require "ruby_reactor/rspec"
 
-RSpec.describe RubyReactor::RSpec::Helpers do
+RSpec.describe RubyReactor::RSpec::Helpers, type: :reactor do
   include described_class
 
   # Define a dummy reactor for testing

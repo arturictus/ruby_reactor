@@ -607,8 +607,15 @@ module RubyReactor
           forced_child = build_forced_sync_class(source.value)
 
           new_args = step_config.arguments.dup
-          new_args[arg_key] = new_args[arg_key].dup
-          new_args[arg_key][:source] = RubyReactor::Template::Value.new(forced_child)
+          new_args[arg_key] = new_args[arg_key].merge(source: RubyReactor::Template::Value.new(forced_child))
+          # A fan-out map is NOT an `async_dispatch` step — its hand-off lives in
+          # the `fan_out` argument, so `strip_background_and_async!` never sees
+          # it. Turn it off here (on the clone, leaving the original config
+          # untouched for normal runs) or `run_async(false)` would still
+          # dispatch element jobs and leave the reactor parked at the map.
+          if arg_key == :mapped_reactor_class && new_args[:fan_out]
+            new_args[:fan_out] = new_args[:fan_out].merge(source: RubyReactor::Template::Value.new(false))
+          end
 
           new_step_config = step_config.clone
           new_step_config.instance_variable_set(:@arguments, new_args)
@@ -620,7 +627,11 @@ module RubyReactor
         return [nil, nil] unless step_config.respond_to?(:arguments)
 
         args = step_config.arguments
-        %i[mapped_reactor_class composed_reactor_class].each do |arg_key|
+        # `async_reactor` is included: clearing its dispatch marker makes the
+        # child run inline, but inline means `child_class.run(...)` on the
+        # ORIGINAL class — whose own background/async steps would dispatch
+        # again. The child has to be force-synced too.
+        %i[mapped_reactor_class composed_reactor_class async_reactor_class].each do |arg_key|
           source = args[arg_key]&.[](:source)
           return [arg_key, source] if source.is_a?(RubyReactor::Template::Value)
         end
@@ -705,9 +716,19 @@ module RubyReactor
 
         original_child_reactor = target_reactor_class_source.value
 
-        # Dynamically subclass the child reactor
+        # Dynamically subclass the child reactor.
+        #
+        # It needs a resolvable identity of its OWN: a fan-out map serializes
+        # only `mapped_reactor_class.name` into each element job, and the worker
+        # resolves that name back through `const_get` first. Keeping the
+        # original name would therefore resolve to the original, unmocked class
+        # in every element. Registering a unique name makes the fan-out payload
+        # (and the `element_reactor_class` that `#map_elements` traverses) point
+        # at THIS class.
         mocked_child_reactor = Class.new(original_child_reactor) do
-          define_singleton_method(:name) { original_child_reactor.name }
+          unique_name = "#{original_child_reactor.name || "AnonymousReactor"}Mock#{object_id}"
+          define_singleton_method(:name) { unique_name }
+          RubyReactor::Registry.register(unique_name, self)
           # Copy configuration
           @steps = superclass.steps.dup
           @inputs = superclass.inputs.dup

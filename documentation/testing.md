@@ -14,7 +14,23 @@ RSpec.configure do |config|
 end
 ```
 
-This will give you access to the `test_reactor` helper method and all custom matchers.
+The custom matchers are available everywhere. The `test_reactor` helper and the
+background-job helpers are only included in example groups tagged `type: :reactor`,
+so the rest of your suite keeps a clean namespace:
+
+```ruby
+RSpec.describe MyReactor, type: :reactor do
+  # `test_reactor` in scope here
+end
+```
+
+To use them without the tag, include the module yourself:
+
+```ruby
+RSpec.describe MyReactor do
+  include RubyReactor::RSpec::Helpers
+end
+```
 
 > For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, or `with_ordered_lock`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_halted`, `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, `be_period_marked`, `have_ordered_lock_next`, `have_ordered_lock_last_completed`, `have_ordered_lock_in_flight`, and `be_ordered_lock_drained` matchers, plus patterns for testing background snooze and escalation.
 
@@ -55,7 +71,7 @@ Use direct class-method specs for step business logic. Use `test_reactor` and `m
 The primary interface for testing reactors is the `test_reactor` helper, which returns a `TestSubject` instance:
 
 ```ruby
-RSpec.describe MyReactor do
+RSpec.describe MyReactor, type: :reactor do
   it "processes successfully" do
     subject = test_reactor(MyReactor, email: "test@example.com")
     
@@ -197,7 +213,7 @@ expect(subject.step_result(:charge_card)).to eq({ transaction_id: "test-123" })
 You can chain multiple `mock_step` calls to mock several steps in a single fluent expression. This is useful when you need to isolate multiple external service calls:
 
 ```ruby
-RSpec.describe MultipleRequestsReactor do
+RSpec.describe MultipleRequestsReactor, type: :reactor do
   subject(:reactor) do
     test_reactor(described_class, request_id: 1)
       .mock_step(:call_service_1) { |args| Success(args[:request_id]) }
@@ -553,7 +569,7 @@ expect(subject).to have_ready_interrupts(:manager_approval, :director_approval)
 ### Complete Interrupt Testing Example
 
 ```ruby
-RSpec.describe ApprovalWorkflow do
+RSpec.describe ApprovalWorkflow, type: :reactor do
   describe "single approval" do
     it "pauses at approval step and resumes" do
       subject = test_reactor(ApprovalWorkflow, request_id: 123)
@@ -631,7 +647,7 @@ Reactors that declare `with_lock`, `with_semaphore`, `with_rate_limit`, `with_pe
 The matchers ship with the standard test setup — once `RubyReactor::RSpec.configure(config)` runs in your `spec_helper.rb`, they're available. They require:
 
 - A real Redis (the in-memory test mode does not back the primitives).
-- The `type: :reactor` tag on the example group. It enables Sidekiq fake mode (if the `sidekiq` gem is loaded) and clears any pending ActiveJob `:test`-adapter jobs, wipes the storage adapter between examples (so leftover lock owners, semaphore tokens, rate-limit counters and period markers don't leak), resets the snooze knobs, and includes the background-job helpers (`drain_async_jobs`, `pending_async_jobs`) described below — these dispatch to whichever backend `config.async_router` is set to.
+- The `type: :reactor` tag on the example group. It brings in `test_reactor`, enables Sidekiq fake mode (if the `sidekiq` gem is loaded) and clears any pending ActiveJob `:test`-adapter jobs, wipes the storage adapter between examples (so leftover lock owners, semaphore tokens, rate-limit counters and period markers don't leak), resets the snooze knobs, and includes the background-job helpers (`drain_async_jobs`, `pending_async_jobs`) described below — these dispatch to whichever backend `config.async_router` is set to.
 
 ```ruby
 RSpec.describe RefundOrderReactor, type: :reactor do
@@ -905,7 +921,7 @@ end
 ### Testing a Payment Workflow
 
 ```ruby
-RSpec.describe PaymentWorkflow do
+RSpec.describe PaymentWorkflow, type: :reactor do
   describe "successful payment" do
     it "processes payment and creates invoice" do
       subject = test_reactor(PaymentWorkflow, 
@@ -963,7 +979,7 @@ end
 ### Testing Composed Reactors
 
 ```ruby
-RSpec.describe OrderProcessor do
+RSpec.describe OrderProcessor, type: :reactor do
   it "processes order through composed payment reactor" do
     subject = test_reactor(OrderProcessor, order_id: 123)
       .composed(:process_payment)
@@ -983,7 +999,7 @@ end
 ### Testing Map Operations
 
 ```ruby
-RSpec.describe BatchEmailSender do
+RSpec.describe BatchEmailSender, type: :reactor do
   it "sends emails to all recipients" do
     recipients = ["a@example.com", "b@example.com", "c@example.com"]
     
@@ -1024,7 +1040,7 @@ end
 ### Testing Input Validation
 
 ```ruby
-RSpec.describe UserRegistration do
+RSpec.describe UserRegistration, type: :reactor do
   context "with valid inputs" do
     it "creates the user" do
       subject = test_reactor(UserRegistration,

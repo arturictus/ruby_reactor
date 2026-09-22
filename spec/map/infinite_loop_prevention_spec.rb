@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe "Map Infinite Loop Prevention" do
+RSpec.describe "Map Infinite Loop Prevention", type: :reactor do
   class LoopTestReactor < RubyReactor::Reactor
     input :items
 

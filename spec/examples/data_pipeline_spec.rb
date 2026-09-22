@@ -12,7 +12,7 @@ require "spec_helper"
 # ❌ Not Yet Implemented: Telemetry integration, progress tracking
 # ❌ Not Applicable: Elixir-specific features like resumable iteration with checkpoints
 
-RSpec.describe "Data Pipeline - Feature Parity with Elixir" do
+RSpec.describe "Data Pipeline - Feature Parity with Elixir", type: :reactor do
   # ============================================================================
   # HELPER MODULE - Simulating external services
   # ============================================================================

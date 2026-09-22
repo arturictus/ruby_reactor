@@ -1411,7 +1411,7 @@ end
 RubyReactor provides testing utilities for RSpec. See the [Testing with RSpec](documentation/testing.md) guide for comprehensive documentation — including [unit-testing class-based steps](documentation/testing.md#testing-step-classes) directly.
 
 ```ruby
-RSpec.describe PaymentReactor do
+RSpec.describe PaymentReactor, type: :reactor do
   it "processes payment successfully" do
     subject = test_reactor(PaymentReactor, order_id: 123, amount: 99.99)
     

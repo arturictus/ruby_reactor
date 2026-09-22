@@ -57,3 +57,20 @@ module Support
     end
   end
 end
+
+module Support
+  # Parent whose child is dispatched, not composed. Under `run_async(false)`
+  # the child runs inline — and its OWN background hand-off has to be
+  # suppressed too, or the child is left parked at "running".
+  class AsyncReactorRootReactor < RubyReactor::Reactor
+    input :id
+
+    step :prepare do
+      run { |_, _| RubyReactor::Success("prepared") }
+    end
+
+    async_reactor :child_job, NestedInlineChildReactor do
+      argument :id, input(:id)
+    end
+  end
+end
