@@ -11,6 +11,7 @@ module RubyReactor
   # load-bearing — the record is written BEFORE the signal, so a reader that
   # misses the (at-most-once) signal still finds the answer on its next
   # fallback re-check.
+  # rubocop:disable Metrics/ClassLength
   class StepWorker
     class << self
       def perform(arguments)
@@ -93,10 +94,13 @@ module RubyReactor
 
       if !uncapped && config.lock_snooze_max_attempts != :infinity && attempt > config.lock_snooze_max_attempts
         log(:warn, "contention_exhausted", key: contended.key, attempt: attempt)
-        # Terminal: clear the park marker an earlier attempt saved, and pass
-        # `context` so `complete`'s `save_root` persists that — otherwise the
-        # parent stays marked waiting on a key after this unit is failed.
-        context&.private_data&.delete(:step_contention)
+        # Terminal: an earlier attempt parked, which deliberately KEEPS this
+        # step's state for a redelivery — the park marker (or the parent stays
+        # marked waiting on a key), a detached lock, a checked-out semaphore
+        # token, a remembered rate-limit charge and an un-advanced ordered-lock
+        # position. No redelivery is coming, so hand it all back; `context` is
+        # passed on so `complete`'s `save_root` persists the cleared state.
+        Executor::StepCoordination.discard_parked_state!(context) if context
         complete(
           RubyReactor::Failure(
             "async_step :#{@step_name} gave up on #{contended.primitive} '#{contended.key}' after " \
@@ -158,6 +162,13 @@ module RubyReactor
 
     def run_step(context, step_config)
       arguments = resolve_arguments(step_config, context)
+      # Reactor-side `argument`/`validate_args` rules gate the step BEFORE its
+      # coordination is acquired, exactly as `StepExecutor#execute_step_sync`
+      # orders them — an async_step must not take a lock (or spend a rate-limit
+      # slot) for arguments it is about to reject.
+      invalid = validate_arguments(step_config, arguments)
+      return invalid if invalid
+
       log(:info, "running")
       # Mirrors `StepExecutor#run_step_implementation`: without a `:run` entry
       # the dashboard has no arguments to resolve this step's key from.
@@ -172,6 +183,11 @@ module RubyReactor
 
       loop do
         attempt += 1
+        # Mirror the count onto the context: `StepCoordination` reads
+        # `retry_context` to decide whether an ordered-lock position should be
+        # held for a pending retry, and this worker is the one path that never
+        # goes through `RetryManager#prepare_retry_attempt`.
+        context.retry_context.increment_attempt_for_step(@step_name)
         result = execute_step_body(step_config, arguments, context)
         break unless retry?(step_config, result, attempt)
 
@@ -181,6 +197,23 @@ module RubyReactor
       end
 
       result
+    end
+
+    # Same check and same structured, non-retryable shape `StepExecutor`
+    # produces — the same arguments fail the same rules on every attempt.
+    def validate_arguments(step_config, arguments)
+      return nil unless step_config.args_validator
+
+      validation_result = step_config.args_validator.call(arguments)
+      return nil if validation_result.success?
+
+      error = validation_result.error
+      error.step_name = @step_name
+      error.step_arguments = arguments
+      log(:warn, "invalid_arguments", error: "#{error.class}: #{error.message}")
+      RubyReactor.Failure(error, validation_errors: error.field_errors, step_name: @step_name,
+                                 step_arguments: arguments, reactor_name: @reactor_class_name,
+                                 retryable: false)
     end
 
     # Class steps are already coordinated inside `Step.run` (T013); only the
@@ -369,4 +402,5 @@ module RubyReactor
       )
     end
   end
+  # rubocop:enable Metrics/ClassLength
 end
