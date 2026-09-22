@@ -129,6 +129,13 @@
   ordinary `nil` success, and `result(:step)` hands the reader the `Halt` — the same way it
   already hands over a `Failure`.
 
+## [0.8.1](https://github.com/arturictus/ruby_reactor/compare/v0.8.0...v0.8.1) (2026-09-22)
+
+
+### Miscellaneous Chores
+
+* Update documentation clarifying background and async concepts ([#55](https://github.com/arturictus/ruby_reactor/issues/55)) ([968e32b](https://github.com/arturictus/ruby_reactor/commit/968e32bbc695e45471d04b7630d8cd437ff41624))
+
 ## [0.8.0](https://github.com/arturictus/ruby_reactor/compare/v0.7.1...v0.8.0) (2026-09-21)
 
 
