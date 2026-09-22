@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "spec_helper"
-require "opentelemetry-sdk"
+require "opentelemetry/sdk"
 require "sidekiq/testing"
 
 # Define inline test steps and reactors
