@@ -1,6 +1,6 @@
 require "rails_helper"
 
-describe ArMapReactor do
+describe ArMapReactor, type: :reactor do
 
 
   describe "#process_event" do

@@ -1,6 +1,6 @@
 require "rails_helper"
 
-describe ArMapReactorNotFail do
+describe ArMapReactorNotFail, type: :reactor do
   describe "#process_event" do
     it "processes an ActiveRecord model event and maps it correctly" do
       (10..20).each do |n|
