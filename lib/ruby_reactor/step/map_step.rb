@@ -91,8 +91,8 @@ module RubyReactor
         results = []
         fail_fast = inputs[:fail_fast].nil? || inputs[:fail_fast]
 
-        inputs[:source].each do |element|
-          result = execute_single_element(element)
+        inputs[:source].each_with_index do |element, index|
+          result = execute_single_element(element, index)
 
           # An element-level Halt propagates as a run halt: stop immediately
           # rather than being collected as a (nil) value.
@@ -109,7 +109,7 @@ module RubyReactor
         results
       end
 
-      def execute_single_element(element)
+      def execute_single_element(element, index)
         mapped_inputs = self.class.build_mapped_inputs(inputs[:argument_mappings] || {}, context, element)
         child_context = RubyReactor::Context.new(mapped_inputs, inputs[:mapped_reactor_class])
 
@@ -123,7 +123,7 @@ module RubyReactor
         child_context.map_metadata = {
           map_id: map_id,
           parent_reactor_class_name: context.reactor_class.name,
-          index: nil # Inline map execution doesn't track index in metadata currently, but could
+          index: index
         }
 
         # Store reference in composed_contexts so the UI knows where to find elements

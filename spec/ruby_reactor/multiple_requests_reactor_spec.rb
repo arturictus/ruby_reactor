@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe MultipleRequestsReactor do
+RSpec.describe MultipleRequestsReactor, type: :reactor do
   subject(:reactor) do
     test_reactor(described_class, inputs)
       .mock_step(:call_service_1) { |args| RubyReactor::Success(args[:request_id]) }

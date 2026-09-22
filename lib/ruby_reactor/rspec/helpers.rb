@@ -2,9 +2,10 @@
 
 module RubyReactor
   module RSpec
-    # Globally-included helpers. Only methods whose names clearly belong to
-    # RubyReactor's test surface live here (`test_reactor`). Sidekiq-coupled
-    # helpers live in `SidekiqHelpers` and are scoped to `type: :reactor`.
+    # Entry-point helpers (`test_reactor`), auto-included into examples tagged
+    # `type: :reactor`. Specs that want them outside that tag should
+    # `include RubyReactor::RSpec::Helpers` explicitly. Sidekiq-coupled helpers
+    # live in `SidekiqHelpers`, scoped the same way.
     module Helpers
       # Build a `TestSubject` around a reactor invocation. Captures the run for
       # later introspection via matchers; runs the reactor lazily on first

@@ -5,7 +5,7 @@ require "spec_helper"
 # FR-003 on the paths that leave the calling process: an `async_step` body runs
 # in StepWorker, and `background all: true` runs the whole reactor in a worker.
 # Both against a real worker, never Sidekiq::Testing.inline!.
-RSpec.describe "Step input contracts in the worker" do
+RSpec.describe "Step input contracts in the worker", type: :reactor do
   def eventually(timeout: 15, interval: 0.2)
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
     loop do
