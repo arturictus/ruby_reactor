@@ -372,8 +372,9 @@ form, then move it into a class unchanged.
   step's compensation and undo, using the same key computed from the same values.
 - **FR-025**: Rate ceilings and deduplication windows MUST NOT gate compensation or undo —
   cleanup MUST never be suppressed by a forward-work quota.
-- **FR-026**: Compensation that cannot take its key within the configured wait MUST be reported
-  rather than silently skipped.
+- **FR-026**: Compensation or undo that cannot take its key within its rollback wait (default:
+  the declared hold's expiry) MUST be reported on the execution's failure (`rollback_failures`)
+  rather than silently skipped. See 005.
 
 #### Compatibility and delivery
 

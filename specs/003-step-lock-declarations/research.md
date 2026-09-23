@@ -181,6 +181,13 @@ a busy key exhaust the retries meant for genuine failures.
 **Alternatives rejected**: failing on both paths — the user's chosen behavior is park-and-
 retry; the sync fallback exists only because there is no queue to park into.
 
+**Amended by 005 (R-01, D-A2)**: the park is now raised as `Error::StepContentionPark` (a
+sibling of `AsyncResultPending` under `Error::ExecutionParked`) and requeued by `Worker` or
+`Map::ElementExecutor` after every executor on the stack has parked its own holds. The
+behavior above (park and retry, a separate counter, a ceiling) is unchanged; only the carrier
+moved. `RetryQueuedResult` is no longer a contention outcome. See
+[005 research](../005-step-coordination-remediation/research.md#r-01-one-park-mechanism-an-exception-review-a1).
+
 ### D5 — Re-entrancy reuses every existing primitive verbatim
 
 - **Owner** is the root context id, so a step's hold nests inside its reactor's hold on the
@@ -254,4 +261,45 @@ does not appear as a phantom failure.
 | A busy key snoozes an execution indefinitely | Bounded contention counter (D4), separate from the failure-retry budget. |
 | Step-level ordered lock's weaker guarantee is mistaken for the reactor-level one | Documented on the macro; demo shows arrival-order explicitly. |
 | Lock TTL shorter than a slow step's work | Auto-extend applies to step holds exactly as to reactor holds. |
-| Compensation stalls on a contended key | Compensation waits then reports (FR-026); it never parks, because rollback is already mid-failure. |
+| Compensation stalls on a contended key | Compensation waits up to `rollback_wait`, which defaults to the hold's `ttl` (60 s for a semaphore), then reports on `Failure#rollback_failures` (FR-026, amended by 005 D-F1). It never parks, because rollback is already mid-failure. |
+
+## Decisions recorded by 005 (step coordination review remediation)
+
+These three decisions were left open by the review of this feature. They are made and argued
+in [005 research §2](../005-step-coordination-remediation/research.md#2-decisions) and copied
+here so a review of 003 finds them (005 FR-025).
+
+### D-F1 — Rollback waits with a bounded wait of its own, and reports undos that did not run
+
+- **Decision**: `with_lock` and `with_semaphore` take a new `rollback_wait:`. It defaults to
+  the lock's `ttl:`, and to 60 seconds for a semaphore, which has no hold expiry. Rollback uses
+  it in place of the forward `wait:`. Every undo or compensation that did not complete is
+  listed on `Failure#rollback_failures`.
+- **Rationale**: the forward holder either finishes or its lock expires at `ttl`, so waiting up
+  to `ttl` outlasts a crashed holder and nearly always a live one. The Failure is the only
+  surface a synchronous caller reads.
+- **Alternatives rejected**: (b) run the undo without the lock and log a warning, which
+  reintroduces the race the rollback lock exists to close; (c) park the rollback, which needs
+  resumable rollback, and this feature decided rollback never parks.
+- **Consequence**: in a worker, a rollback can block the worker thread for up to
+  `rollback_wait`. An author with a long `ttl` can lower it.
+
+### D-F3 — A synchronous out-of-turn arrival does not poison the chain
+
+- **Decision**: a `WaitError` at the step's ordered-lock gate means the position is not at the
+  head, so it is handed back with `advance(failed: false)`. A position that passed the gate and
+  then failed still uses `failed: true`.
+- **Rationale**: the failed execution never held the turn, so it has no failed work for
+  successors to be protected from.
+- **Alternative rejected**: (b) strict purity with visible skips: every later position is
+  skipped until the batch drains, which for a steady stream is forever.
+
+### D-A2 — Every executor on the stack keeps its holds on a park
+
+- **Decision**: when a park signal passes through any `Executor#execute` or
+  `#resume_execution` in a worker, that executor parks its own reactor-level lock and
+  semaphore (`park_held_primitives!`) and re-adopts them on redelivery.
+- **Rationale**: this is FR-018 taken literally. With root only, a composed child's exclusion
+  lapses partway through an execution.
+- **Alternative rejected**: (b) root only, with narrower docs, which documents a gap in
+  exclusion as a feature.
