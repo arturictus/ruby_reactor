@@ -73,20 +73,35 @@ module RubyReactor
         return args if args.is_a?(RubyReactor::Failure) # KeyError or "skip, can't resolve without blocking"
         return nil if args.nil? # skipped — non-blocking resolution was not possible
 
-        collision = async_step_lock_keys(lock_config, semaphore_config, args).find { |key| held.include?(key) }
+        collision = async_step_lock_keys(lock_config, semaphore_config, args, step_config)
+                    .find { |key| held.include?(key) }
         return nil unless collision
 
         RubyReactor.Failure(
           Step::AsyncReactorStep.deadlock_message(collision, "#{@reactor_class&.name}##{step_config.name}",
                                                   @context, kind: "async_step")
         )
+      rescue Executor::StepCoordination::KeyError => e
+        # A guard key that cannot be computed is the same non-retryable step
+        # failure the real acquisition would raise (FR-007) — never a generic
+        # execution error, which would skip rollback of the earlier steps.
+        key_error_failure(e, step_config)
       end
 
-      def async_step_lock_keys(lock_config, semaphore_config, args)
+      # Through `StepCoordination.resolve_key`, so a nil/empty or raising key
+      # proc fails here exactly as it would at acquisition time.
+      def async_step_lock_keys(lock_config, semaphore_config, args, step_config)
         keys = []
-        keys << lock_config[:key_proc].call(args) if lock_config
-        keys << semaphore_config[:key_proc].call(args) if semaphore_config && semaphore_config[:limit] == 1
+        keys << Executor::StepCoordination.resolve_key(lock_config, args, step_config.name) if lock_config
+        if semaphore_config && semaphore_config[:limit] == 1
+          keys << Executor::StepCoordination.resolve_key(semaphore_config, args, step_config.name)
+        end
         keys.compact
+      end
+
+      def key_error_failure(error, step_config)
+        RubyReactor::Failure(error, step_name: step_config.name, reactor_name: @reactor_class&.name,
+                                    retryable: false)
       end
 
       # Finding 5: `async_step` defers argument resolution to the worker, so
@@ -112,7 +127,7 @@ module RubyReactor
         contract = step_config.input_contract
         contract ? contract.apply_defaults(resolved) : resolved
       rescue Executor::StepCoordination::KeyError => e
-        RubyReactor::Failure(e, step_name: step_config.name, reactor_name: @reactor_class&.name, retryable: false)
+        key_error_failure(e, step_config)
       end
 
       def pending_async_source?(source)

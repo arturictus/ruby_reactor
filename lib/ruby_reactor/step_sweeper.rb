@@ -79,7 +79,9 @@ module RubyReactor
     # released its liveness lock on purpose and has a redelivery already
     # scheduled. It looks exactly like a lost unit, so without this the sweep
     # would dispatch a duplicate that runs the body a second time once the
-    # redelivery fires. Past the stamped window it is fair game again.
+    # redelivery fires. Past the stamped window it is fair game again — a
+    # redelivery that eventually lands on a finished unit is dropped by
+    # `StepWorker#already_completed?`.
     def parked?(record)
       parked_until = record["parked_until"]
       return false unless parked_until

@@ -9,6 +9,11 @@ module RubyReactor
       include RubyReactor::Dsl::ValidationHelpers
       include RubyReactor::Dsl::Lockable::ClassMethods
 
+      COORDINATION_MACROS = {
+        lock_config: "with_lock", semaphore_config: "with_semaphore", rate_limit_config: "with_rate_limit",
+        period_config: "with_period", ordered_lock_config: "with_ordered_lock"
+      }.freeze
+
       attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
                     :dependencies, :args_validator, :output_validator, :retry_config
 
@@ -140,6 +145,7 @@ module RubyReactor
       # `async_reactor`. Nil for an ordinary step.
       def build(async_dispatch: nil)
         check_contract_conflicts!
+        check_coordination_conflicts!
         warn_deprecated_rules
 
         step_config = {
@@ -168,6 +174,25 @@ module RubyReactor
       end
 
       private
+
+      # The same primitive declared BOTH inline and on the step class is
+      # ambiguous: the forward path would take both holds (the inline one in
+      # the executor/worker, the class's inside `Step.run`) — double-charging a
+      # rate limit or holding two keys for one step — while rollback, the
+      # dispatch guard and the dashboard read only the inline one. Refuse it at
+      # class-definition time rather than pick a winner silently.
+      def check_coordination_conflicts!
+        return unless @impl
+
+        COORDINATION_MACROS.each do |reader, macro|
+          next unless instance_variable_get(:"@#{reader}")
+          next unless @impl.respond_to?(reader) && @impl.public_send(reader)
+
+          raise Error::ValidationError,
+                "#{reactor_label} step :#{@name} declares `#{macro}` inline, but #{@impl} declares it too. " \
+                "Keep ONE: drop the inline declaration to use #{@impl}'s, or remove it from #{@impl}."
+        end
+      end
 
       # A step that owns its input contract takes wiring only from the
       # reactor: rules here would be a second, overlapping rule set.
@@ -259,7 +284,9 @@ module RubyReactor
       # it has one, else the class step's declaration (`impl`). This fallback
       # is the one place rollback, the dispatch guard, and the dashboard need
       # to read — they only ever call these five readers, never `impl`
-      # directly ("Shared names" in tasks.md).
+      # directly ("Shared names" in tasks.md). The two sources can never both
+      # carry the SAME primitive — `check_coordination_conflicts!` rejects that
+      # at class-definition time — so this fallback is a union, not a winner.
       def lock_config
         @lock_config || (impl.lock_config if impl.respond_to?(:lock_config))
       end

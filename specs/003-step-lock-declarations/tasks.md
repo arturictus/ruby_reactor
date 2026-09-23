@@ -106,7 +106,7 @@ Read these before starting. Each was found in the current code and is not in pla
   - (d) `declares_coordination?` is false for a bare step and true once any macro is used.
   - (e) `coordination_declarations` returns `{ lock: {...}, semaphore: {...} }` with only the declared keys.
   - (f) An inline `step :x do with_lock { ... } end` exposes `lock_config` on its `StepConfig`.
-  - (g) `StepConfig#lock_config` falls back to `impl.lock_config` when the block declares nothing, and the block wins when both declare.
+  - (g) `StepConfig#lock_config` falls back to `impl.lock_config` when the block declares nothing; declaring the SAME primitive in both places raises at class-definition time (the forward path would take both holds while rollback re-takes only one).
   - (h) `with_lock` inside an `interrupt` block raises at class definition, and the message names reactor-level coordination as the alternative.
   - (i) Reactor-level `lock_config` is unchanged for an existing reactor.
 - [X] T006 Make steps host the macros in `lib/ruby_reactor/step.rb`: add `extend RubyReactor::Dsl::Lockable::ClassMethods` in the `class Step` body (Finding 9). `Lockable::ClassMethods#inherited` calls `super` and propagates configs to subclasses. Confirm the built-in `ComposeStep`/`MapStep`/`AsyncReactorStep` now answer `lock_config` with nil and change no behavior. Leave the macro definitions untouched

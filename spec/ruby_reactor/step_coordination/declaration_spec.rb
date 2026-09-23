@@ -108,18 +108,36 @@ RSpec.describe "step-scoped coordination declarations" do
       expect(step_config.lock_config[:key_proc].call(id: 1)).to eq("impl:1")
     end
 
-    it "prefers the step's own inline declaration when both declare" do
+    # The forward path would take BOTH holds (the inline one in the executor,
+    # the class's inside `Step.run`) while rollback and the dashboard read only
+    # the inline one, so the combination is refused where it is written.
+    it "refuses the same primitive declared both inline and on the step class" do
+      impl = step_impl
+      expect do
+        Class.new(RubyReactor::Reactor) do
+          input :id
+          step :x, impl do
+            argument :id, input(:id)
+            with_lock { |args| "wiring:#{args[:id]}" }
+          end
+          returns :x
+        end
+      end.to raise_error(RubyReactor::Error::ValidationError, /declares `with_lock` inline/)
+    end
+
+    it "still allows a different primitive inline alongside the class's own" do
       impl = step_impl
       reactor_class = Class.new(RubyReactor::Reactor) do
         input :id
         step :x, impl do
           argument :id, input(:id)
-          with_lock { |args| "wiring:#{args[:id]}" }
+          with_semaphore(limit: 2) { |args| "wiring:#{args[:id]}" }
         end
         returns :x
       end
       step_config = reactor_class.steps[:x]
-      expect(step_config.lock_config[:key_proc].call(id: 1)).to eq("wiring:1")
+      expect(step_config.lock_config[:key_proc].call(id: 1)).to eq("impl:1")
+      expect(step_config.semaphore_config[:key_proc].call(id: 1)).to eq("wiring:1")
     end
 
     def build_reactor_with_step(impl)

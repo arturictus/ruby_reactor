@@ -72,6 +72,26 @@ module RubyReactor
       # True when constructing a StepCoordination would be pointless — lets
       # every call site skip it with one nil check per step (plan: "a step
       # declaring nothing pays one nil check per step").
+      # FR-007, in one place: a key proc that returns nil/empty or raises fails
+      # the step before its work runs, naming the step and the cause. Shared
+      # with `AsyncStepDispatch`'s deadlock guard, which computes the same key
+      # outside an instance and must fail the same (non-retryable) way.
+      def self.resolve_key(config, arguments, step_name)
+        key = config[:key_proc].call(arguments)
+        if key.nil? || key.to_s.empty?
+          raise KeyError.new("#{step_name}: coordination key proc returned nil/empty", step: step_name)
+        end
+
+        key
+      rescue KeyError
+        raise
+      rescue StandardError => e
+        raise KeyError.new(
+          "#{step_name}: coordination key proc raised #{e.class}: #{e.message}",
+          step: step_name, original_error: e
+        )
+      end
+
       def self.none?(step_config)
         !step_config.respond_to?(:declares_coordination?) || !step_config.declares_coordination?
       end
@@ -716,7 +736,11 @@ module RubyReactor
 
       def yield_and_mark(config, &block)
         result = block.call
-        mark_period_on_success(config, result) if config && plain_success?(result)
+        # Output validation runs AFTER `around_run` returns (same reason
+        # `chain_failed?` re-runs it): marking the bucket for a value the
+        # contract is about to reject would dedup away the next invocation of a
+        # step that in fact failed and was rolled back.
+        mark_period_on_success(config, result) if config && plain_success?(result) && !chain_failed?(result)
         result
       end
 
@@ -807,22 +831,7 @@ module RubyReactor
       end
 
       def key_for(config)
-        key = config[:key_proc].call(arguments)
-        raise_key_error(config) if key.nil? || key.to_s.empty?
-        key
-      rescue KeyError
-        raise
-      rescue StandardError => e
-        raise KeyError.new(
-          "#{step_name}: coordination key proc raised #{e.class}: #{e.message}",
-          step: step_name, original_error: e
-        )
-      end
-
-      def raise_key_error(_config)
-        raise KeyError.new(
-          "#{step_name}: coordination key proc returned nil/empty", step: step_name
-        )
+        StepCoordination.resolve_key(config, arguments, step_name)
       end
 
       def step_name

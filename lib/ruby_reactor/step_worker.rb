@@ -69,6 +69,7 @@ module RubyReactor
       context.reactor_class&.validate_definition!
       step_config = context.reactor_class&.steps&.[](@step_name)
       return record_missing_step unless step_config
+      return if already_completed?(context)
 
       complete(run_step(context, step_config), context)
     rescue Executor::StepCoordination::Contended => e
@@ -133,6 +134,24 @@ module RubyReactor
         delay, root_context_id: @root_context_id, reactor_class_name: @reactor_class_name,
                step_context_id: @step_context_id, step_name: @step_name, contention_attempts: attempt
       )
+    end
+
+    # The liveness lock only drops a CONCURRENT duplicate. A parked unit whose
+    # stamped window lapsed can be swept while its scheduled redelivery is
+    # merely late, so the two deliveries can run one after the other and repeat
+    # the side effect. The record is the durable answer: once it is terminal,
+    # the body must not run again.
+    #
+    # ponytail: the record check, not a durable delivery lease — it closes the
+    # repeat-after-completion case. Two deliveries that both arrive while the
+    # unit is still only parked still both run the body (serialized by the
+    # step's own coordination). Add a lease if that shows up in practice.
+    def already_completed?(context)
+      record = storage.retrieve_step_result(@step_context_id, @step_name, step_result_namespace(context))
+      return false unless record && record["status"] == "completed"
+
+      log(:info, "duplicate_dropped")
+      true
     end
 
     # The same park evidence `StepExecutor#handle_contention` writes, so a
