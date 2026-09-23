@@ -136,9 +136,15 @@ module RubyReactor
         return block.call if Executor::StepCoordination.none?(self)
 
         ctx = context if context.is_a?(RubyReactor::Context)
+        # `ContextSerializer` does not serialize `middlewares`, so a rehydrated
+        # context (the async_step worker's) arrives with none. Falling back to
+        # an EMPTY runner there would silently suppress every coordination hook
+        # in the worker; rebuild the configured set instead. (`middlewares_for`
+        # handles a nil reactor_class — a stand-alone `MyStep.run` still gets
+        # the globally configured middlewares.)
         Executor::StepCoordination.new(
           step_config: self, arguments: validated, context: ctx, reactor_class: ctx&.reactor_class,
-          middlewares: ctx&.middlewares || RubyReactor::MiddlewareRunner.new([])
+          middlewares: ctx&.middlewares || Executor.middlewares_for(ctx&.reactor_class)
         ).around_run(&block)
       end
 

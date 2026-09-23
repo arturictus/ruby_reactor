@@ -128,7 +128,7 @@ module RubyReactor
       delay = RubyReactor::Worker.snooze_delay(config, contended)
       log(:info, "parked", key: contended.key, primitive: contended.primitive, attempt: attempt, delay: delay)
       record_contention(context, contended, attempt)
-      mark_record_parked(context, delay)
+      mark_record_parked(context, delay, attempt)
       RubyReactor.configuration.async_router.perform_step_in(
         delay, root_context_id: @root_context_id, reactor_class_name: @reactor_class_name,
                step_context_id: @step_context_id, step_name: @step_name, contention_attempts: attempt
@@ -165,12 +165,16 @@ module RubyReactor
     # ponytail: a fixed grace covers ordinary queue latency; a park whose
     # redelivery is lost is recovered one grace period late rather than never.
     # Make it configurable only if real queue lag exceeds it.
-    def mark_record_parked(context, delay)
+    def mark_record_parked(context, delay, attempt)
       namespace = step_result_namespace(context)
       record = storage.retrieve_step_result(@step_context_id, @step_name, namespace)
       return unless record
 
       record["parked_until"] = (Time.now + delay + PARK_SWEEP_GRACE).iso8601
+      # The counter lives in the job payload, which a sweeper re-dispatch
+      # rebuilds from the record alone — without it a swept park restarts at
+      # zero and `lock_snooze_max_attempts` never bites.
+      record["contention_attempts"] = attempt
       storage.store_step_result(@step_context_id, @step_name, record, namespace)
     rescue StandardError => e
       RubyReactor.configuration.logger.warn(
@@ -228,19 +232,24 @@ module RubyReactor
       attempt = 0
       result = nil
 
-      loop do
-        attempt += 1
-        # Mirror the count onto the context: `StepCoordination` reads
-        # `retry_context` to decide whether an ordered-lock position should be
-        # held for a pending retry, and this worker is the one path that never
-        # goes through `RetryManager#prepare_retry_attempt`.
-        context.retry_context.increment_attempt_for_step(@step_name)
-        result = execute_step_body(step_config, arguments, context)
-        break unless retry?(step_config, result, attempt)
+      # Under `with_step`, exactly as `StepExecutor#execute_step_sync` runs a
+      # same-process step: the coordination hooks this worker fires must be
+      # attributable to the step, which reads `context.current_step`.
+      context.with_step(@step_name) do
+        loop do
+          attempt += 1
+          # Mirror the count onto the context: `StepCoordination` reads
+          # `retry_context` to decide whether an ordered-lock position should be
+          # held for a pending retry, and this worker is the one path that never
+          # goes through `RetryManager#prepare_retry_attempt`.
+          context.retry_context.increment_attempt_for_step(@step_name)
+          result = execute_step_body(step_config, arguments, context)
+          break unless retry?(step_config, result, attempt)
 
-        delay = backoff_delay(step_config, attempt)
-        log(:warn, "retrying", attempt: attempt, delay: delay)
-        sleep(delay)
+          delay = backoff_delay(step_config, attempt)
+          log(:warn, "retrying", attempt: attempt, delay: delay)
+          sleep(delay)
+        end
       end
 
       result
@@ -299,7 +308,7 @@ module RubyReactor
 
       Executor::StepCoordination.new(
         step_config: step_config, arguments: args, context: context, reactor_class: context.reactor_class,
-        middlewares: context.middlewares || RubyReactor::MiddlewareRunner.new([])
+        middlewares: context.middlewares || Executor.middlewares_for(context.reactor_class)
       ).around_run(&block)
     end
 
@@ -400,6 +409,10 @@ module RubyReactor
       # same unit — a fresh uuid per redelivery would make `lock.reattach`
       # fail against its own detached hold until the TTL expired.
       found&.coordination_owner = "async_step:#{@step_context_id}:#{@step_name}"
+      # `ContextSerializer` does not carry `middlewares`, and nothing else in
+      # this worker builds them — without this the step's coordination hooks
+      # fire into an empty runner, contradicting "identical hooks in a worker".
+      found&.middlewares ||= Executor.middlewares_for(found.reactor_class)
       found
     rescue RubyReactor::Error::DeserializationError, RubyReactor::Error::SchemaVersionError => e
       log(:error, "parent_context_unreadable", error: "#{e.class}: #{e.message}")

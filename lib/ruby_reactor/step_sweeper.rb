@@ -45,7 +45,7 @@ module RubyReactor
         next if parked?(record)
         next if live?(arguments)
 
-        @async_router.perform_step_async(**arguments)
+        redispatch(record, arguments)
         redispatched += 1
       rescue StandardError => e
         # One bad record must not abort the whole sweep.
@@ -56,6 +56,17 @@ module RubyReactor
     end
 
     private
+
+    # A swept park must not restart its contention counter: rebuilt from the
+    # record alone, a zeroed payload would let `lock_snooze_max_attempts`
+    # never bite. `perform_step_in(0, ...)` is the only re-dispatch that
+    # carries the count.
+    def redispatch(record, arguments)
+      attempts = record["contention_attempts"].to_i
+      return @async_router.perform_step_async(**arguments) unless attempts.positive?
+
+      @async_router.perform_step_in(0, **arguments, contention_attempts: attempts)
+    end
 
     def dispatch_arguments(record)
       values = record.values_at(*DISPATCH_KEYS)

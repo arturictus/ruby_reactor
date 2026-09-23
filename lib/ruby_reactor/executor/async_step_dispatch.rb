@@ -29,7 +29,12 @@ module RubyReactor
         end
 
         deadlock = check_async_step_deadlock(step_config)
-        return deadlock if deadlock
+        # Through the normal step-failure handler, never returned bare: a bare
+        # Failure goes straight back to `Executor#execute`, which marks the
+        # context failed WITHOUT rolling back — leaving an earlier step's side
+        # effect uncompensated. `handle_step_result` compensates and raises the
+        # `StepFailureError` the executor's own rescue chain expects.
+        return @result_handler.handle_step_result(step_config, deadlock, {}) if deadlock
 
         record_async_step_dispatch(step_config)
         enqueue_async_step(step_config)

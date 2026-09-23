@@ -52,7 +52,15 @@ module RubyReactor
           # (F8): a mid-child crash re-runs one sub-step, not the whole child.
           # `throttle: true` lets checkpoint_min_interval coalesce these mid-run
           # writes (default 0 = write every step); the terminal save still runs.
-          on_step_complete: -> { checkpoint!(throttle: true) }
+          on_step_complete: -> { checkpoint!(throttle: true) },
+          # A step-level contention park must hand this executor's reactor-level
+          # lock/semaphore over to the redelivery BEFORE `RetryManager` persists
+          # the context and enqueues the job: a worker starting in that window
+          # reads the saved context, sees no `parked_primitives` marker, and
+          # re-competes for a hold this executor has already detached — under the
+          # same owner, so it silently succeeds and the detached hold/count is
+          # left behind until its TTL.
+          on_contention_park: -> { park_held_primitives! }
         }
       )
       @result = nil
@@ -237,15 +245,6 @@ module RubyReactor
                 else
                   execute_remaining_steps
                 end
-
-      # A step-level contention park (US3) requeues at the step, exactly
-      # like an async retry requeue — but a reactor-level lock/semaphore this
-      # execution holds must stay held across the gap too (FR-018), the same
-      # way an AsyncResultPending park keeps them. `private_data[:step_contention]`
-      # (set by `StepExecutor#handle_contention`) is what distinguishes "this
-      # RetryQueuedResult came from a contention park" from an ordinary
-      # failure-retry requeue, which releases normally.
-      park_held_primitives! if @result.is_a?(RetryQueuedResult) && @context.private_data[:step_contention]
 
       update_context_status(@result)
       mark_period_on_success(@result)

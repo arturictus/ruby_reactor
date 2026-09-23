@@ -268,7 +268,11 @@ module RubyReactor
         return yield unless config
 
         info = ordered_lock_arrival_info(config)
-        gate = check_ordered_lock!(info)
+        # Nested on a key this thread is already ordered on: no nonce was
+        # assigned, so run ungated (see `ordered_lock_arrival_info`).
+        return yield unless info
+
+        gate = gate_ordered_lock(info)
 
         if gate == :skip_chain_failed
           # This position is terminal (skipped, not failed) — advance it like
@@ -279,7 +283,37 @@ module RubyReactor
           return RubyReactor.Skipped(nil, reason: :ordered_lock_chain_failed, step_name: step_name)
         end
 
-        run_under_ordered_lock(info, &block)
+        with_active_ordered_key(info[:key]) { run_under_ordered_lock(info, &block) }
+      end
+
+      # The gate check itself. A `Contended` here means "not this nonce's turn
+      # yet"; for a SYNCHRONOUS caller `StepExecutor#handle_contention` turns
+      # that into a terminal failure with no redelivery to consume the stash,
+      # so the position has to be handed back right here or every successor on
+      # the key stalls until the poison_pill_timeout. Only a real async park
+      # keeps it (a redelivery re-adopts the same nonce).
+      def gate_ordered_lock(info)
+        check_ordered_lock!(info)
+      rescue Contended
+        unless parking?
+          Executor::OrderedLockSupport.advance_with_retry(info, failed: true)
+          delete_ordered_lock_stash
+        end
+        raise
+      end
+
+      # Same thread-local guard `Reactor#assign_ordered_lock_nonce!` and
+      # `OrderedLockSupport#enter_ordered_lock_scope` keep for reactor-level
+      # ordering: while this step holds a position on `key`, a nested
+      # `Reactor.run` (or step) on the same key must see it and skip assigning
+      # a second nonce, or the two wait on each other until the poison pill.
+      def with_active_ordered_key(key)
+        active = Executor::OrderedLockSupport.active_keys
+        active << key
+        yield
+      ensure
+        idx = active.rindex(key)
+        active.delete_at(idx) if idx
       end
 
       def rate_limited
@@ -355,6 +389,20 @@ module RubyReactor
         return cached if cached
 
         key = key_for(config)
+        # Nested under an ordered scope on the SAME key in this thread (an
+        # outer step, or an outer `Reactor.run`): a second nonce would never
+        # come up — the outer waits for this one to finish, this one waits for
+        # the outer to advance. Mirror `Reactor#assign_ordered_lock_nonce!`:
+        # skip assignment, warn, and let the inner work run ungated.
+        if Executor::OrderedLockSupport.active_keys.include?(key)
+          RubyReactor.configuration.logger.warn(
+            "RubyReactor: step :#{step_name} declares `with_ordered_lock` on key '#{key}', which this " \
+            "thread is already ordered on — nonce assignment skipped, the step runs without ordering " \
+            "enforcement. Use a different key, or move the nested call to a top-level invocation."
+          )
+          return nil
+        end
+
         nonce, epoch = RubyReactor::OrderedLock.assign(key, ttl: config[:ttl])
         info = {
           key: key, nonce: nonce, epoch: epoch, poison_pill_timeout: config[:poison_pill_timeout],

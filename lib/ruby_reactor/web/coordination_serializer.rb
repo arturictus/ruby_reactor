@@ -41,24 +41,24 @@ module RubyReactor
 
         private
 
-        # US7/FR-029: one row per coordinating step, keyed to the step's
-        # OWN resolved arguments (from its latest `:run` trace entry), not
-        # the reactor's inputs. A step not yet reached is reported "pending"
-        # rather than omitted, so the dashboard's step list is stable.
+        # US7/FR-029: one row per coordinating step PER PRIMITIVE it declares,
+        # keyed to the step's OWN resolved arguments (from its latest `:run`
+        # trace entry), not the reactor's inputs. A step declaring both
+        # `with_lock` and `with_semaphore` is two rows — both gates are active,
+        # so an operator has to be able to see both. A step not yet reached is
+        # reported "pending" rather than omitted, so the list is stable.
         def build_steps(reactor_class, context_id, execution_trace, adapter)
-          reactor_class.steps.filter_map do |name, step_config|
-            next unless step_config.respond_to?(:declares_coordination?) && step_config.declares_coordination?
+          reactor_class.steps.flat_map do |name, step_config|
+            next [] unless step_config.respond_to?(:declares_coordination?) && step_config.declares_coordination?
 
-            build_step_entry(name, step_config, context_id, execution_trace, adapter)
+            build_step_entries(name, step_config, context_id, execution_trace, adapter)
           end
         end
 
-        def build_step_entry(name, step_config, context_id, execution_trace, adapter)
+        def build_step_entries(name, step_config, context_id, execution_trace, adapter)
           entry = latest_run_entry(execution_trace, name)
-          return { step: name.to_s, state: "pending" } unless entry
-
-          primitive, config = step_config.coordination_declarations.first
-          return { step: name.to_s, state: "pending" } unless primitive
+          declarations = step_config.coordination_declarations
+          return [{ step: name.to_s, state: "pending" }] if entry.nil? || declarations.empty?
 
           # The trace records PRE-contract arguments; coordination keys off the
           # defaulted inputs, so apply the contract here or a defaulted step
@@ -66,8 +66,11 @@ module RubyReactor
           args = entry[:arguments] || entry["arguments"] || {}
           contract = step_config.respond_to?(:input_contract) ? step_config.input_contract : nil
           args = contract.apply_defaults(args) if contract && args.is_a?(Hash)
-          built = build_step_primitive(primitive, config, args, context_id, adapter)
-          { step: name.to_s, primitive: primitive.to_s }.merge(built)
+
+          declarations.map do |primitive, config|
+            built = build_step_primitive(primitive, config, args, context_id, adapter)
+            { step: name.to_s, primitive: primitive.to_s }.merge(built)
+          end
         end
 
         def build_step_primitive(primitive, config, args, context_id, adapter)

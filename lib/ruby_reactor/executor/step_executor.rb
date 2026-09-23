@@ -15,6 +15,7 @@ module RubyReactor
         @compensation_manager = managers[:compensation_manager]
         @middlewares = managers[:middlewares] || context.middlewares || Executor.middlewares_for(reactor_class)
         @on_step_complete = managers[:on_step_complete]
+        @on_contention_park = managers[:on_contention_park]
       end
 
       def execute_all_steps
@@ -247,6 +248,11 @@ module RubyReactor
             "step_coordination.parked", step_config.name,
             key: contended.key, primitive: contended.primitive, attempt: attempt
           )
+          # BEFORE the requeue: `park_for_contention` persists this context and
+          # enqueues the redelivery, so the reactor-level holds must already be
+          # recorded as parked or a worker picking the job up in between sees
+          # no marker.
+          @on_contention_park&.call
           @retry_manager.park_for_contention(step_config, contended, @reactor_class)
         else
           # `@error` is the TRUE underlying error (`contended.original`), not

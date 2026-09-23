@@ -113,7 +113,12 @@ module RubyReactor
 
         # Forward coordination keys off the contract-applied inputs (`Step.run`
         # enforces before coordinating), so rollback must apply the same
-        # defaults or it re-takes a DIFFERENT key than the one it held.
+        # defaults or it re-takes a DIFFERENT key than the one it held. An
+        # inline step with no argument wiring keys off `context.inputs`
+        # (`StepExecutor#run_step_implementation`), but its undo stack entry
+        # stores the empty resolved hash — start from the same inputs, or the
+        # rollback key resolves to nil and releases the wrong exclusion.
+        arguments = @context.inputs if arguments.empty? && inline_step?(step_config)
         contract = step_config.respond_to?(:input_contract) ? step_config.input_contract : nil
         key_arguments = contract ? contract.apply_defaults(arguments) : arguments
 
@@ -121,6 +126,10 @@ module RubyReactor
           step_config: step_config, arguments: key_arguments, context: @context,
           reactor_class: @context.reactor_class, middlewares: middlewares
         ).around_rollback(&block)
+      end
+
+      def inline_step?(step_config)
+        step_config.respond_to?(:has_run_block?) && step_config.has_run_block?
       end
 
       def compensate_step(step_config, error, arguments)
