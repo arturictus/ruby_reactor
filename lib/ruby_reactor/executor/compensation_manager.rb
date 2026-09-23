@@ -3,21 +3,14 @@
 module RubyReactor
   class Executor
     class CompensationManager
-      # `error` passed to `handle_step_failure` may be the raw
-      # `Contended`/`KeyError` (the async-park ceiling-exceeded path, and any
-      # caller that never unwraps `Contended`) OR its `.original` cause (the
-      # synchronous path's `Failure#error` is `contended.original`, so
-      # `resolve_exception_class` reports the real cause rather than the
-      # `Contended` wrapper's own class name — see
-      # `StepExecutor#handle_contention`). Both shapes mean the same thing:
-      # the step's own coordination never let its body run.
+      # Raised ONLY by the step's own coordination, before its body: a
+      # coordination error raised from inside a body (a nested direct
+      # `Step.run`) arrives as `StepCoordination::NestedCoordinationError`, and
+      # a bare `Lock::AcquisitionError` etc. may come from a nested
+      # `Reactor.run` — both mean the body ran, so neither is listed here.
       NEVER_STARTED_ERROR_CLASSES = [
         RubyReactor::Executor::StepCoordination::Contended,
-        RubyReactor::Executor::StepCoordination::KeyError,
-        RubyReactor::Lock::AcquisitionError,
-        RubyReactor::Semaphore::AcquisitionError,
-        RubyReactor::RateLimit::ExceededError,
-        RubyReactor::OrderedLock::WaitError
+        RubyReactor::Executor::StepCoordination::KeyError
       ].freeze
 
       def initialize(context)
@@ -111,25 +104,13 @@ module RubyReactor
       def coordinated_rollback(step_config, arguments, &block)
         return block.call if Executor::StepCoordination.none?(step_config)
 
-        # Forward coordination keys off the contract-applied inputs (`Step.run`
-        # enforces before coordinating), so rollback must apply the same
-        # defaults or it re-takes a DIFFERENT key than the one it held. An
-        # inline step with no argument wiring keys off `context.inputs`
-        # (`StepExecutor#run_step_implementation`), but its undo stack entry
-        # stores the empty resolved hash — start from the same inputs, or the
-        # rollback key resolves to nil and releases the wrong exclusion.
-        arguments = @context.inputs if arguments.empty? && inline_step?(step_config)
-        contract = step_config.respond_to?(:input_contract) ? step_config.input_contract : nil
-        key_arguments = contract ? contract.apply_defaults(arguments) : arguments
-
+        # The undo stack stores the RESOLVED arguments; the forward key was
+        # computed from `coordination_arguments` of them, so rollback does the
+        # same and re-takes the very key the forward run held.
         Executor::StepCoordination.new(
-          step_config: step_config, arguments: key_arguments, context: @context,
-          reactor_class: @context.reactor_class, middlewares: middlewares
+          step_config: step_config, arguments: step_config.coordination_arguments(arguments, @context.inputs),
+          context: @context, reactor_class: @context.reactor_class, middlewares: middlewares
         ).around_rollback(&block)
-      end
-
-      def inline_step?(step_config)
-        step_config.respond_to?(:has_run_block?) && step_config.has_run_block?
       end
 
       def compensate_step(step_config, error, arguments)

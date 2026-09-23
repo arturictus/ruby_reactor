@@ -109,39 +109,54 @@ during rollback.
 
 | Concern | Class step | Inline step |
 |---|---|---|
-| Forward acquire/release | `Step.run`, between `enforce_contract!` and `new(...).run` | executor, around `run_block` |
-| Contention → park / fail | executor rescues `Contended` raised out of `impl.run` | same rescue |
+| Forward acquire/release (run by a reactor) | `StepCoordination.run_step` (executor / `StepWorker`), around `Step.run_without_coordination` | same call, around `run_block` |
+| Forward acquire/release (direct `Step.run`) | `Step.run`, between `enforce_contract!` and `new(...).run`; never parks | n/a |
+| Contention → park / fail | executor / `StepWorker` rescue the step's own `Contended` | same rescue |
 | Guard skip (FR-012) | executor never calls `impl.run` for a suppressed step | same |
 | Rollback re-take | executor (`CompensationManager`) | same |
 
-`Step.run` is the single entry point every caller already goes through — executor, `StepWorker`,
-`RSpec::TestSubject`, direct application calls — so putting forward acquisition there covers
-FR-023 with no second code path, validates before acquiring by construction, and hands the key
-proc the same `inputs` the instance reads. `Step.run` itself never parks: it raises
-`Contended`, and whichever caller can park (the executor inside a worker) does so. No
-`prepend`, no thread-local "already coordinated" mark: an earlier draft skipped coordination
-when the same step class was already running on the thread, which let a locked step call the
-same class for a *different* key unprotected. Re-entrancy comes only from the owner (D5).
+**Revised (PR #56 review rounds)**: an earlier revision put class-step acquisition inside
+`Step.run` ("the one entry point every caller uses") and had the executor coordinate only inline
+declarations. That split one step's coordination across two layers, and every consequence
+surfaced as a review finding: mixed inline + class declarations acquired in different orders
+(a deadlock cycle), `Step.run` unable to see the reactor's retry policy and output contract,
+and a nested direct `Step.run` raising `Contended` through the calling step's body — which then
+parked (re-running its side effects on redelivery) or was classified "never started" (skipping
+its compensation). Now:
 
-The executor coordinates forward work only for declarations made in an inline step block
-(`StepConfig`'s own configs, never the `impl` fallback), so a class step is never acquired
-twice.
+- A step run by a reactor has ONE enforcement site, `StepCoordination.run_step`, shared by
+  `StepExecutor` and `StepWorker`. It coordinates the step's EFFECTIVE declarations
+  (`StepConfig`'s readers: inline, else the class's) and calls `Step.run_without_coordination`.
+- `Step.run` coordinates only a DIRECT invocation (`direct: true`): its own unit of work that
+  waits then fails, never parks, and keeps no state on the caller's context. A coordination
+  error escaping a reactor step's body is therefore always a nested call's, and is re-raised as
+  `NestedCoordinationError` — an ordinary failure of the calling step.
+- `StepConfig#coordination_arguments` is the one derivation of what the body and every key
+  receive; forward, rollback, the dispatch guard and the dashboard all use it.
+
+No thread-local "already coordinated" mark: re-entrancy comes only from the owner (D5).
 
 **Rationale**: this deliberately differs from `002`'s decision to enforce input contracts in a
 prepended `run`. Validation is a pure function of the arguments; coordination is a property of
 the execution — it parks it, releases it, and must survive into rollback. The two belong at
 different layers, and saying so explicitly is cheaper than discovering it later.
 
-### D3 — Fixed acquisition order, mirroring the reactor's
+### D3 — Fixed acquisition order
 
 1. Ordered-lock gate (nothing else held while waiting for a turn — the existing hold-and-wait
    guard in `OrderedLockSupport`)
 2. Period gate, fast path
-3. Rate limit
-4. Exclusive lock
-5. Semaphore
-6. Period gate, re-check under the lock (closes the both-passed race, same as
+3. Exclusive lock
+4. Semaphore
+5. Period gate, re-check under the lock (closes the both-passed race, same as
    `executor.rb:113`)
+6. Rate limit
+
+**Revised (PR #56 review rounds)**: the rate limit moved from 3rd to last. It is the one
+acquisition that cannot be handed back; charged before the lock, every contention park after it
+spent a slot, which drove a "remember the charge across the park" marker and, with it, the
+temptation to carry every other partial hold across the park too — the exact design D6 rejects.
+Charged last, nothing can contend after it, so a park never has anything to carry.
 
 Released in reverse. Acquisition happens after guards and after argument validation — a step
 that will fail validation must not first take a lock (FR-012, and it keeps the critical

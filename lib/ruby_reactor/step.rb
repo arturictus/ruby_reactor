@@ -17,7 +17,9 @@ module RubyReactor
   # 2b. `.run` ONLY: step-scoped coordination (`with_lock` etc, if declared)
   #    is acquired around the rest of `.run`, keyed on the just-validated
   #    inputs — after contract enforcement, so a step that will fail
-  #    validation never takes a hold (research Finding 7 / Finding 8).
+  #    validation never takes a hold (research Finding 7 / Finding 8). A
+  #    reactor never goes through here: it calls `.run_without_coordination`
+  #    and coordinates the step itself (research D2).
   #    `.undo` and `.compensate` NEVER enforce the input contract: rollback
   #    must not fail on the very inputs that may have caused the failure.
   # 3. Build a FRESH instance, never reused across actions. An ivar set in
@@ -75,13 +77,27 @@ module RubyReactor
     # rubocop:enable Naming/MethodName
 
     class << self
+      # A DIRECT invocation — application code, or another step's body. It is
+      # its own unit of work: it takes this class's coordination itself and,
+      # having no queue to park into, waits then fails (FR-016/FR-023).
       # `context` is optional: a stand-alone `ChargeStep.run(args)` is its own
       # execution, with no reactor context to inherit ownership from.
       def run(arguments, context = nil)
         validated = enforce_contract!(arguments)
-        coordinate(validated, context) { catch(StepSignals::TAG) { new(validated, context).run } }
+        coordinate(validated, context) { run_without_coordination(validated, context) }
       end
       alias call run
+
+      # The reactor's entry (`StepConfig#call_body`): the executor or
+      # `StepWorker` has already taken this step's EFFECTIVE coordination —
+      # the class's declarations and any inline ones, in one fixed order — so
+      # taking the class's here again would split acquisition across two
+      # layers. Still enforces the contract (idempotent: it only applies
+      # defaults to already-valid arguments).
+      def run_without_coordination(arguments, context)
+        validated = enforce_contract!(arguments)
+        catch(StepSignals::TAG) { new(validated, context).run }
+      end
 
       # Same `inputs` as `.run` (defaults applied), but NEVER enforces the contract.
       def undo(result, arguments, context)
@@ -126,25 +142,20 @@ module RubyReactor
 
       private
 
-      # Step-scoped coordination (`with_lock` etc.), taken around the rest of
-      # `.run` — after `enforce_contract!`, so a step that will fail
-      # validation never takes a hold (Finding 8). Yields straight through
-      # when this step declares nothing, so a bare step pays one
-      # `declares_coordination?` check. `context` may be nil (a stand-alone
-      # `MyStep.run(args)`) — `StepCoordination#owner` handles that case.
+      # Step-scoped coordination for a DIRECT call (`direct: true`): never
+      # parks, keeps no state on `context`, and so can never be mistaken for
+      # the coordination of the reactor step whose body made the call.
+      # After `enforce_contract!`, so a step that will fail validation never
+      # takes a hold (Finding 8). A bare step pays one check. `context` may be
+      # nil (a stand-alone `MyStep.run(args)`) — `StepCoordination#owner`
+      # handles that case.
       def coordinate(validated, context, &block)
         return block.call if Executor::StepCoordination.none?(self)
 
         ctx = context if context.is_a?(RubyReactor::Context)
-        # `ContextSerializer` does not serialize `middlewares`, so a rehydrated
-        # context (the async_step worker's) arrives with none. Falling back to
-        # an EMPTY runner there would silently suppress every coordination hook
-        # in the worker; rebuild the configured set instead. (`middlewares_for`
-        # handles a nil reactor_class — a stand-alone `MyStep.run` still gets
-        # the globally configured middlewares.)
         Executor::StepCoordination.new(
           step_config: self, arguments: validated, context: ctx, reactor_class: ctx&.reactor_class,
-          middlewares: ctx&.middlewares || Executor.middlewares_for(ctx&.reactor_class)
+          middlewares: ctx&.middlewares || Executor.middlewares_for(ctx&.reactor_class), direct: true
         ).around_run(&block)
       end
 

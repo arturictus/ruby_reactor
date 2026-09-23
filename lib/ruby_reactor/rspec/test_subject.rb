@@ -644,7 +644,9 @@ module RubyReactor
         original_impl = if step_config_orig.has_run_block?
                           step_config_orig.run_block
                         elsif step_config_orig.has_impl?
-                          ->(args, ctx) { step_config_orig.impl.run(args, ctx) }
+                          # The executor already holds this step's coordination
+                          # around the wrapper; `Step.run` would take it again.
+                          ->(args, ctx) { step_config_orig.impl.run_without_coordination(args, ctx) }
                         else
                           ->(_, _) { raise "No implementation found for #{target_step}" }
                         end

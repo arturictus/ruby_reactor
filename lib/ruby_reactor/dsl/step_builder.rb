@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "delegate"
-
 module RubyReactor
   module Dsl
     class StepBuilder
@@ -176,11 +174,9 @@ module RubyReactor
       private
 
       # The same primitive declared BOTH inline and on the step class is
-      # ambiguous: the forward path would take both holds (the inline one in
-      # the executor/worker, the class's inside `Step.run`) — double-charging a
-      # rate limit or holding two keys for one step — while rollback, the
-      # dispatch guard and the dashboard read only the inline one. Refuse it at
-      # class-definition time rather than pick a winner silently.
+      # ambiguous — two keys for one slot of the fixed acquisition order, and
+      # `StepConfig`'s readers would silently let the inline one win. Refuse it
+      # at class-definition time rather than pick a winner silently.
       def check_coordination_conflicts!
         return unless @impl
 
@@ -280,13 +276,13 @@ module RubyReactor
         @ordered_lock_config = config[:ordered_lock_config]
       end
 
-      # Coordination source for a step: the step's OWN (inline) declaration if
-      # it has one, else the class step's declaration (`impl`). This fallback
-      # is the one place rollback, the dispatch guard, and the dashboard need
-      # to read — they only ever call these five readers, never `impl`
-      # directly ("Shared names" in tasks.md). The two sources can never both
-      # carry the SAME primitive — `check_coordination_conflicts!` rejects that
-      # at class-definition time — so this fallback is a union, not a winner.
+      # A step's EFFECTIVE coordination: its own (inline) declaration if it has
+      # one, else the class step's (`impl`). Every consumer — forward
+      # execution, rollback, the dispatch guard, the dashboard — reads only
+      # these five readers, so a step mixing inline and class declarations is
+      # acquired by ONE `StepCoordination` in one global order. The two sources
+      # can never both carry the SAME primitive (`check_coordination_conflicts!`
+      # rejects that at class-definition time), so this is a union.
       def lock_config
         @lock_config || (impl.lock_config if impl.respond_to?(:lock_config))
       end
@@ -321,39 +317,40 @@ module RubyReactor
         !coordination_declarations.empty?
       end
 
-      # True when THIS step's own (inline) declarations carry coordination,
-      # ignoring the `impl` fallback — a class step is coordinated once,
-      # inside `Step.run`, never a second time by the executor.
-      def inline_coordination?
-        !(@lock_config || @semaphore_config || @rate_limit_config || @period_config || @ordered_lock_config).nil?
+      # The ONE derivation of what a step's body — and therefore every
+      # coordination key — receives: an inline step with no `argument` wiring
+      # gets the reactor's inputs, and the step's contract applies its
+      # defaults. Forward execution (`body_arguments`), rollback, the async
+      # dispatch guard and the dashboard all go through here, so a key can
+      # never be computed from different values in different places.
+      # Never raises — `enforce!` returns exactly `apply_defaults(args)` when
+      # the arguments are valid, and rollback must not fail on invalid ones.
+      def coordination_arguments(resolved, inputs)
+        args = has_run_block? && resolved.empty? ? inputs : resolved
+        input_contract && args.is_a?(Hash) ? input_contract.apply_defaults(args) : args
       end
 
-      INLINE_COORDINATION_READERS = %i[lock_config semaphore_config rate_limit_config period_config
-                                       ordered_lock_config].freeze
-
-      # The same StepConfig, reporting only its OWN declarations. A
-      # class-backed step can carry an inline declaration and no run block
-      # (`step :charge, Impl do with_lock { ... } end`); the executor has to
-      # acquire it, because `Step.run` can only see `Impl`'s own config. The
-      # readers above fall back to `impl`, which would make that acquisition
-      # take `impl`'s primitives a second time — this view drops the fallback.
-      class InlineOnly < SimpleDelegator
-        INLINE_COORDINATION_READERS.each do |reader|
-          define_method(reader) { __getobj__.instance_variable_get(:"@#{reader}") }
-        end
-
-        def coordination_declarations
-          { lock: lock_config, semaphore: semaphore_config, rate_limit: rate_limit_config,
-            period: period_config, ordered_lock: ordered_lock_config }.compact
-        end
-
-        def declares_coordination?
-          !coordination_declarations.empty?
-        end
+      # `coordination_arguments`, validated: raises InputValidationError
+      # BEFORE any coordination is taken (Finding 8).
+      def body_arguments(resolved, inputs)
+        args = has_run_block? && resolved.empty? ? inputs : resolved
+        input_contract ? input_contract.enforce!(args) : args
       end
 
-      def inline_only
-        InlineOnly.new(self)
+      # The step's work as a reactor runs it. Coordination is NOT taken here:
+      # the caller (StepExecutor / StepWorker) takes this config's effective
+      # declarations — inline and class alike — in one fixed order around it.
+      def call_body(arguments, context)
+        catch(StepSignals::TAG) do
+          if has_run_block?
+            run_block.call(arguments, context)
+          elsif impl.respond_to?(:run_without_coordination)
+            impl.run_without_coordination(arguments, context)
+          else
+            # A duck-typed impl (any `.run(args, ctx)`) never coordinates itself.
+            impl.run(arguments, context)
+          end
+        end
       end
 
       # True for `async_step` / `async_reactor` — the step's work leaves this

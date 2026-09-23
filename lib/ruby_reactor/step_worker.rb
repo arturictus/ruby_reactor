@@ -108,12 +108,10 @@ module RubyReactor
 
       if !uncapped && config.lock_snooze_max_attempts != :infinity && attempt > config.lock_snooze_max_attempts
         log(:warn, "contention_exhausted", key: contended.key, attempt: attempt)
-        # Terminal: an earlier attempt parked, which deliberately KEEPS this
-        # step's state for a redelivery — the park marker (or the parent stays
-        # marked waiting on a key), a detached lock, a checked-out semaphore
-        # token, a remembered rate-limit charge and an un-advanced ordered-lock
-        # position. No redelivery is coming, so hand it all back; `context` is
-        # passed on so `complete`'s `save_root` persists the cleared state.
+        # Terminal: an earlier park kept this step's ordered-lock position and
+        # its waiting marker for a redelivery that is no longer coming — hand
+        # them back; `context` is passed on so `complete`'s `save_root`
+        # persists the cleared state.
         Executor::StepCoordination.discard_parked_state!(context) if context
         complete(
           RubyReactor::Failure(
@@ -301,26 +299,18 @@ module RubyReactor
                                  retryable: false)
     end
 
-    # `impl`'s own declarations are coordinated inside `Step.run` (T013); the
-    # step's OWN (inline) declarations are coordinated here, mirroring
-    # `StepExecutor#coordinate_inline` — including for a class-backed step,
-    # which can carry an inline declaration and no run block.
-    # `Contended`/`KeyError` propagate unrescued — `perform_unit` is where
-    # they are handled (park, or a non-retryable Failure), not here.
+    # The same single enforcement site `StepExecutor` uses
+    # (`StepCoordination.run_step`), so the worker path cannot drift from the
+    # in-process one. `Contended`/`KeyError` — this step's own — propagate
+    # unrescued: `perform_unit` handles them (park, or a non-retryable Failure).
     def execute_step_body(step_config, arguments, context)
-      result =
-        if step_config.has_run_block?
-          args = arguments.empty? ? context.inputs : arguments
-          args = step_config.inline_contract.enforce!(args) if step_config.inline_contract
-          coordinate_inline(step_config, args, context) { step_config.run_block.call(args, context) }
-        elsif step_config.has_impl?
-          coordinate_inline(step_config, with_contract_defaults(step_config, arguments), context) do
-            step_config.impl.run(arguments, context)
-          end
-        else
-          RubyReactor.Failure("Step '#{@step_name}' has no implementation")
-        end
+      unless step_config.has_run_block? || step_config.has_impl?
+        return RubyReactor.Failure("Step '#{@step_name}' has no implementation")
+      end
 
+      result = Executor::StepCoordination.run_step(step_config, arguments, context: context,
+                                                                           reactor_class: context.reactor_class,
+                                                                           middlewares: context.middlewares)
       normalize(result)
     rescue Error::InputValidationError => e
       # Same shape the executor builds, and never retried: the same arguments
@@ -332,21 +322,6 @@ module RubyReactor
       raise
     rescue StandardError => e
       RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name)
-    end
-
-    def coordinate_inline(step_config, arguments, context, &block)
-      return block.call unless step_config.inline_coordination?
-
-      Executor::StepCoordination.new(
-        step_config: step_config.inline_only, arguments: arguments, context: context,
-        reactor_class: context.reactor_class,
-        middlewares: context.middlewares || Executor.middlewares_for(context.reactor_class)
-      ).around_run(&block)
-    end
-
-    def with_contract_defaults(step_config, arguments)
-      contract = step_config.input_contract
-      contract && arguments.is_a?(Hash) ? contract.apply_defaults(arguments) : arguments
     end
 
     # Mirrors `Executor::RetryManager#can_retry_step?` for the one path that

@@ -39,6 +39,28 @@ class TelemetryLockReactor < RubyReactor::Reactor
   end
 end
 
+# A reactor-level lock plus two steps that each take their own step-level
+# lock, all inside one reactor span.
+class TelemetryStepLockReactor < RubyReactor::Reactor
+  input :user_id
+  with_lock(ttl: 10) { |inputs| "tsl_reactor:#{inputs[:user_id]}" }
+
+  step :first do
+    argument :user_id, input(:user_id)
+    with_lock { |args| "tsl_first:#{args[:user_id]}" }
+    run { RubyReactor.Success(:first) }
+  end
+
+  step :second do
+    argument :user_id, input(:user_id)
+    with_lock { |args| "tsl_second:#{args[:user_id]}" }
+    wait_for :first
+    run { RubyReactor.Success(:second) }
+  end
+
+  returns :second
+end
+
 class TelemetrySemaphoreReactor < RubyReactor::Reactor
   input :resource_id
   with_semaphore(limit: 2, wait: 0) { |inputs| "sem:#{inputs[:resource_id]}" }
@@ -305,6 +327,19 @@ RSpec.describe "RubyReactor OpenTelemetry Tracing" do
   end
 
   describe "Lock & Semaphore Telemetry Events" do
+    it "attributes each step-level lock event to its own step, and leaves reactor-level ones unattributed" do
+      TelemetryStepLockReactor.run(user_id: "u1")
+
+      reactor_span = exporter.finished_spans.find { |s| s.name == "TelemetryStepLockReactor" }
+      acquired = reactor_span.events.select { |e| e.name == "lock_acquired" }
+                             .to_h { |e| [e.attributes["lock.key"], e.attributes["ruby_reactor.step"]] }
+
+      expect(acquired).to eq("tsl_reactor:u1" => nil, "tsl_first:u1" => "first", "tsl_second:u1" => "second")
+      # A step's hold never overwrites the span's own reactor-level lock attribute.
+      expect(reactor_span.attributes["reactor.lock.key"]).to eq("tsl_reactor:u1")
+      expect(reactor_span.attributes).not_to have_key("ruby_reactor.step")
+    end
+
     it "records lock acquisition, key, and release events" do
       reactor = TelemetryLockReactor.new
       reactor.run(user_id: "user123")

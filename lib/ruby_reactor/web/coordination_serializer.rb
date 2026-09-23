@@ -29,7 +29,7 @@ module RubyReactor
           end
 
           if reactor_class.respond_to?(:steps)
-            steps = build_steps(reactor_class, context_id, execution_trace, adapter)
+            steps = build_steps(reactor_class, normalized_inputs, context_id, execution_trace, adapter)
             result[:steps] = steps unless steps.empty?
           end
 
@@ -47,15 +47,15 @@ module RubyReactor
         # `with_lock` and `with_semaphore` is two rows — both gates are active,
         # so an operator has to be able to see both. A step not yet reached is
         # reported "pending" rather than omitted, so the list is stable.
-        def build_steps(reactor_class, context_id, execution_trace, adapter)
+        def build_steps(reactor_class, inputs, context_id, execution_trace, adapter)
           reactor_class.steps.flat_map do |name, step_config|
             next [] unless step_config.respond_to?(:declares_coordination?) && step_config.declares_coordination?
 
-            build_step_entries(name, step_config, context_id, execution_trace, adapter)
+            build_step_entries(name, step_config, inputs, context_id, execution_trace, adapter)
           end
         end
 
-        def build_step_entries(name, step_config, context_id, execution_trace, adapter)
+        def build_step_entries(name, step_config, inputs, context_id, execution_trace, adapter) # rubocop:disable Metrics/ParameterLists
           entry = latest_run_entry(execution_trace, name)
           declarations = step_config.coordination_declarations
           return [{ step: name.to_s, state: "pending" }] if declarations.empty?
@@ -70,12 +70,19 @@ module RubyReactor
             end
           end
 
-          # The trace records PRE-contract arguments; coordination keys off the
-          # defaulted inputs, so apply the contract here or a defaulted step
-          # shows a different key than the one actually held.
-          args = entry[:arguments] || entry["arguments"] || {}
-          contract = step_config.respond_to?(:input_contract) ? step_config.input_contract : nil
-          args = contract.apply_defaults(args) if contract && args.is_a?(Hash)
+          # The trace records the RESOLVED arguments; the execution keyed off
+          # `coordination_arguments` of them, so the same function is applied
+          # here. A redacted value was never recorded, so a key computed from it
+          # would name a different Redis key than the one held — report it as
+          # unavailable instead of probing the wrong one.
+          traced = entry[:arguments] || entry["arguments"] || {}
+          if traced.is_a?(Hash) && traced.value?(RubyReactor::Step::InputContract::REDACTED)
+            return declarations.keys.map do |primitive|
+              { step: name.to_s, primitive: primitive.to_s, key: nil,
+                key_error: "key unavailable: the step's arguments are redacted" }
+            end
+          end
+          args = step_config.coordination_arguments(traced.transform_keys(&:to_sym), inputs)
 
           declarations.map do |primitive, config|
             built = build_step_primitive(primitive, config, args, context_id, adapter)
@@ -92,7 +99,7 @@ module RubyReactor
           else { key: resolve_key(config[:key_proc], args) }
           end
         rescue StandardError => e
-          { key: nil, error: e.message }
+          { key: nil, key_error: e.message }
         end
 
         def latest_run_entry(execution_trace, step_name)

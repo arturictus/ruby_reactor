@@ -375,71 +375,76 @@ module RubyReactor
       span = @reactor_span
       return unless span
 
-      span.set_attribute("reactor.lock.key", key.to_s)
-      set_step_attribute(span, context)
-      span.add_event("lock_acquired", attributes: { "lock.key" => key.to_s })
+      # The reactor span's own attributes describe the REACTOR's hold; a step's
+      # is recorded on its event only, so it can never overwrite them.
+      span.set_attribute("reactor.lock.key", key.to_s) unless coordinating_step(context)
+      span.add_event("lock_acquired", attributes: step_attributes(context).merge("lock.key" => key.to_s))
     end
 
     def on_lock_released(key, context)
       span = @reactor_span
       return unless span
 
-      set_step_attribute(span, context)
-      span.add_event("lock_released", attributes: { "lock.key" => key.to_s })
+      span.add_event("lock_released", attributes: step_attributes(context).merge("lock.key" => key.to_s))
     end
 
     def on_lock_failed(key, error, context)
       span = @reactor_span
       return unless span
 
-      set_step_attribute(span, context)
-      span.add_event("lock_acquisition_failed", attributes: {
-                       "lock.key" => key.to_s,
-                       "error.message" => error.message,
-                       "error.class" => error.class.name
-                     })
+      span.add_event("lock_acquisition_failed", attributes: step_attributes(context).merge(
+        "lock.key" => key.to_s,
+        "error.message" => error.message,
+        "error.class" => error.class.name
+      ))
     end
 
     def on_semaphore_acquired(key, limit, context)
       span = @reactor_span
       return unless span
 
-      span.set_attribute("reactor.semaphore.key", key.to_s)
-      span.set_attribute("reactor.semaphore.limit", limit.to_i)
-      set_step_attribute(span, context)
+      unless coordinating_step(context)
+        span.set_attribute("reactor.semaphore.key", key.to_s)
+        span.set_attribute("reactor.semaphore.limit", limit.to_i)
+      end
       span.add_event("semaphore_acquired",
-                     attributes: { "semaphore.key" => key.to_s, "semaphore.limit" => limit.to_i })
+                     attributes: step_attributes(context).merge("semaphore.key" => key.to_s,
+                                                                "semaphore.limit" => limit.to_i))
     end
 
     def on_semaphore_released(key, context)
       span = @reactor_span
       return unless span
 
-      set_step_attribute(span, context)
-      span.add_event("semaphore_released", attributes: { "semaphore.key" => key.to_s })
+      span.add_event("semaphore_released", attributes: step_attributes(context).merge("semaphore.key" => key.to_s))
     end
 
     def on_semaphore_failed(key, limit, error, context)
       span = @reactor_span
       return unless span
 
-      set_step_attribute(span, context)
-      span.add_event("semaphore_acquisition_failed", attributes: {
-                       "semaphore.key" => key.to_s,
-                       "semaphore.limit" => limit.to_i,
-                       "error.message" => error.message,
-                       "error.class" => error.class.name
-                     })
+      span.add_event("semaphore_acquisition_failed", attributes: step_attributes(context).merge(
+        "semaphore.key" => key.to_s,
+        "semaphore.limit" => limit.to_i,
+        "error.message" => error.message,
+        "error.class" => error.class.name
+      ))
     end
 
     private
 
-    # US7/FR-028: attribute a step-level hold to the step that took it. Nil
-    # for reactor-level coordination, where `current_step` is unset.
-    def set_step_attribute(span, context)
-      return unless context.respond_to?(:current_step) && context.current_step
+    # US7/FR-028: attribute a step-level hold to the step that took it, on
+    # each EVENT (several steps can coordinate within one reactor span).
+    # `coordinating_step` is set by `StepCoordination` around its own hooks
+    # only — NOT `current_step`, which is also set while a resumed reactor
+    # re-takes its own reactor-level holds.
+    def coordinating_step(context)
+      context.respond_to?(:coordinating_step) ? context.coordinating_step : nil
+    end
 
-      span.set_attribute("ruby_reactor.step", context.current_step.to_s)
+    def step_attributes(context)
+      step = coordinating_step(context)
+      step ? { "ruby_reactor.step" => step.to_s } : {}
     end
 
     def extract_context(context)

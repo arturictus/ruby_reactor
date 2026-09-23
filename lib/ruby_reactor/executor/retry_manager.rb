@@ -45,13 +45,11 @@ module RubyReactor
         # the only meaningful upper bound.
         uncapped = contended.original.is_a?(RubyReactor::OrderedLock::WaitError)
         if !uncapped && config.lock_snooze_max_attempts != :infinity && count > config.lock_snooze_max_attempts
-          # Terminal: the park kept this step's state alive for a redelivery
-          # that is no longer coming — the `:step_contention` marker (stored by
-          # `StepExecutor#handle_contention`, which would report a failed
-          # execution as still waiting on a key), a detached lock, a checked-out
-          # semaphore token, a remembered rate-limit charge, and an
-          # un-advanced ordered-lock position that would stall every successor
-          # until its poison_pill_timeout. Hand all of it back.
+          # Terminal: earlier parks kept this step's `:step_contention` marker
+          # (which would report a failed execution as still waiting on a key)
+          # and its un-advanced ordered-lock position (which would stall every
+          # successor until its poison_pill_timeout) for a redelivery that is
+          # no longer coming. Hand both back.
           Executor::StepCoordination.discard_parked_state!(@context)
 
           # Carry the contention through as a `Contended`, not a bare string:

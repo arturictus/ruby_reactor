@@ -37,6 +37,11 @@ module RubyReactor
     # process hand-off (US4-5).
     attr_accessor :coordination_owner
 
+    # Transient, NOT serialized: the step whose coordination hook is firing
+    # right now (set by `StepCoordination#emit` for the duration of the hook),
+    # so a middleware can tell a step-level hold from a reactor-level one.
+    attr_accessor :coordinating_step
+
     def initialize(inputs = {}, reactor_class = nil)
       @context_id = SecureRandom.uuid
       @inputs = inputs

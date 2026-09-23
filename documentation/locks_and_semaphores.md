@@ -737,16 +737,18 @@ Any of the five macros on an **interrupt** step raises at class-definition time:
 
 ### Where it is enforced
 
-Acquisition happens after guards and after argument validation — both the reactor's `argument` validators and the step class's own `input` contract — so a step that will be skipped, or that fails validation, never takes a hold. The fixed order (identical to the reactor form) is:
+Acquisition happens after guards and after argument validation — both the reactor's `argument` validators and the step class's own `input` contract — so a step that will be skipped, or that fails validation, never takes a hold. A step's declarations are taken **once, in one fixed order**, whether they sit on the step class, inline in the reactor's `step` block, or both:
 
 | Order | Taken | Released |
 |---|---|---|
 | 1 | Ordered-lock gate (nothing else held while waiting for a turn) | last |
 | 2 | Dedup window, fast check | — |
-| 3 | Rate limit | — |
-| 4 | Exclusive lock | 3rd |
-| 5 | Semaphore | 2nd |
-| 6 | Dedup window, re-check under the lock | marked on success |
+| 3 | Exclusive lock | 2nd |
+| 4 | Semaphore | 1st |
+| 5 | Dedup window, re-check under the lock | marked on success |
+| 6 | Rate limit | — (spent) |
+
+The rate limit is charged **last** — unlike the reactor form, which charges it first. It is the one acquisition that cannot be handed back, so taking it immediately before the step's work means a slot is only ever spent on work that is about to run: losing the lock or semaphore never costs a slot, however many times the step parks.
 
 Every entry point is coordinated:
 
@@ -759,7 +761,7 @@ Every entry point is coordinated:
 | Resume after interrupt | ✅ |
 | Each `map` iteration | ✅ |
 | `ChargeStep.run(args)` / `.run(args, nil)` directly | ✅ its own execution: contends with every holder, including running reactors; wait-then-fail |
-| `ChargeStep.run(args, context)` from inside a step body | ✅ part of that execution: re-entrant on keys it already holds, contends on any other key |
+| `ChargeStep.run(args, context)` from inside a step body | ✅ part of that execution: re-entrant on keys it already holds, contends on any other key — a direct call never parks, so losing that contention fails the *calling* step like any other error (it is compensated; it is never parked and re-run) |
 | `compensate` / `undo` | ✅ exclusion primitives only — see [Rollback](#step-rollback) |
 | Step suppressed by `where`/guard | ❌ by design |
 | Interrupt step | ❌ declaring coordination on one raises |
@@ -773,6 +775,8 @@ Losing contention behaves differently depending on where the execution is runnin
 | Running in a worker (Sidekiq/ActiveJob) | The execution **parks at that step** and is redelivered later, via `perform_in`/`perform_step_in` — reusing `lock_snooze_base_delay`/`lock_snooze_jitter`/`lock_snooze_max_attempts` ([Snooze configuration](#snooze-configuration)). No step compensates; the contended step's own work was never attempted. |
 | Running synchronously | Waits up to the configured `wait:`, then fails with a contention error naming the reactor, step, and key. Already-completed steps roll back as for any step failure; the contended step itself does not compensate — like the parked case, its own work was never attempted. |
 
+A park hands back everything the contended step took — its work has not started, so there is nothing to protect across the gap, exactly as with reactor-level contention. The only thing it keeps is its ordered-lock position, so the redelivery does not lose its place in line. Coordination the *execution* already held before reaching the step (the reactor's own lock and semaphore) stays checked out across the gap and is re-adopted on redelivery, as for any mid-flight park.
+
 A contention park is counted separately from the step's own `retries` budget — a busy key can never exhaust the retry budget meant for genuine failures, and a park never charges (or double-charges on redelivery) the reactor's own rate limit or period gate.
 
 ### Step Re-entrancy and Hand-off Refusal
@@ -780,7 +784,7 @@ A contention park is counted separately from the step's own `retries` budget —
 Step holds follow the exact same nested-workflow rules the reactor form uses — no second rule set:
 
 - Holds are owned by the **execution** (its root context) — a step keyed the same as its own reactor, or nested work inside a locked step, proceeds without waiting.
-- A step class called directly (`ChargeStep.run(args)`) is coordinated the same way (inside `Step.run`). Without a `context` it is its own execution and gets no re-entrancy; pass the current `context` to join the execution. Re-entrancy covers only keys the execution already holds — a different key always contends.
+- A step class called directly (`ChargeStep.run(args)`) is coordinated the same way (inside `Step.run`; a reactor running the step coordinates it itself instead). Without a `context` it is its own execution and gets no re-entrancy; pass the current `context` to join the execution. Re-entrancy covers only keys the execution already holds — a different key always contends.
 - Nested holds on one key are counted (same registry the reactor form's deadlock guard reads); the key frees for other executions only when the outermost hold releases.
 - **Ownership never crosses a process hand-off.** Dispatching work (`async_step`, `async_reactor`) that declares a key the execution currently holds is refused *before dispatch*, naming the key, the holder, and a remedy — for `async_step` specifically, "run the step inline (drop `async_step`) if it belongs inside the critical section." No job is enqueued.
 - An `async_step` worker gets its **own, per-job owner** — never the dispatching execution's root id (ownership never crosses the hand-off). Two such dispatches on the same key never overlap.

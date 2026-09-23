@@ -70,10 +70,14 @@ skipped or will fail validation never takes a hold.
 |---|---|---|
 | 1 | Ordered-lock gate (nothing else held while waiting for a turn) | last |
 | 2 | Dedup window, fast check | — |
-| 3 | Rate limit | — |
-| 4 | Exclusive lock | 3rd |
-| 5 | Semaphore | 2nd |
-| 6 | Dedup window, re-check under the lock | marked on success |
+| 3 | Exclusive lock | 2nd |
+| 4 | Semaphore | 1st |
+| 5 | Dedup window, re-check under the lock | marked on success |
+| 6 | Rate limit — last, immediately before the work: the one acquisition that cannot be handed back, so no contention can follow a spent slot | — |
+
+A step's EFFECTIVE declarations — on the step class, inline in the reactor's `step` block, or
+both — are taken by ONE coordinator in this order. A reactor running a class step calls
+`Step.run_without_coordination`; `Step.run` coordinates only direct invocations.
 
 Released in reverse in an `ensure`, on success, failure, or unexpected error.
 
@@ -86,7 +90,7 @@ Released in reverse in an `ensure`, on success, failure, or unexpected error.
 | Resume after interrupt | ✅ |
 | Each `map` iteration | ✅ |
 | `ChargeStep.run(args)` / `.run(args, nil)` directly | ✅ its own execution: contends with every holder, including running reactors; wait-then-fail |
-| `ChargeStep.run(args, context)` from inside a step body | ✅ part of that execution: re-entrant on keys it already holds, contends on any other key |
+| `ChargeStep.run(args, context)` from inside a step body | ✅ part of that execution: re-entrant on keys it already holds, contends on any other key. Never parks: losing that contention fails the CALLING step as an ordinary error (compensated, never parked and re-run) |
 | `compensate` / `undo` | ✅ exclusion primitives only — see §6 |
 | Step suppressed by `where`/guard | ❌ by design |
 | Interrupt step | ❌ declaring coordination on one raises |
@@ -97,6 +101,10 @@ Released in reverse in an `ensure`, on success, failure, or unexpected error.
 |---|---|
 | Running in a worker | The execution is **parked** and retried later. No step compensates; the contended step's work has not been attempted. |
 | Running synchronously | Waits up to the configured `wait:`, then fails with a contention error naming reactor, step, and key. Rollback proceeds as for any step failure. |
+
+A park releases everything the contended step took — its work has not started — and keeps only
+its ordered-lock position. Coordination the execution held before reaching the step (reactor
+level) stays checked out across the gap (§5).
 
 Contention attempts are counted separately from failure retries and bounded by a configurable
 ceiling; exceeding it turns the park into a contention failure. A busy key can therefore never
@@ -119,7 +127,7 @@ Identical to nested reactors — same primitives, no second rule set:
   execution currently holds is refused before dispatch, with a message naming the key, the
   holder, and how to restructure. This now covers `async_step` dispatch as well as
   `async_reactor`.
-- An execution that parks while holding coordination re-adopts it on resume without recording a
+- An execution that parks while holding coordination taken before the contended step re-adopts it on resume without recording a
   second acquisition, falling back to competing normally if the hold lapsed.
 
 ## 6. Rollback

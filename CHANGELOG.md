@@ -84,11 +84,12 @@
   `with_period`, and `with_ordered_lock` — the same macros as the reactor form, keyed on the step's
   own resolved arguments instead of the reactor's inputs — so one step of a workflow can be
   serialized (or rate-limited, deduped, or strictly ordered) without serializing the whole
-  workflow. Works on class steps and inline `step :x do ... end` blocks; a class step is
-  coordinated inside `Step.run` itself, so a direct `MyStep.run(args)` call is protected
-  identically to one dispatched by a reactor. Contention parks the execution in a worker
-  (bounded by `lock_snooze_max_attempts`, never consuming the step's own `retries` budget) and
-  waits-then-fails synchronously. Re-entrancy, the async dispatch deadlock guard, and rollback
+  workflow. Works on class steps and inline `step :x do ... end` blocks (or both on one step —
+  taken once, in one fixed order); a direct `MyStep.run(args)` call is protected too, as its own
+  unit of work that waits then fails. Contention parks the execution in a worker (bounded by
+  `lock_snooze_max_attempts`, never consuming the step's own `retries` budget; the parked step
+  releases what it took and never spends a rate-limit slot on a park) and waits-then-fails
+  synchronously. Re-entrancy, the async dispatch deadlock guard, and rollback
   (`compensate`/`undo` re-take lock/semaphore only) all follow the same rules as reactor-level
   coordination. See
   [Step-Scoped Coordination](documentation/locks_and_semaphores.md#step-scoped-coordination).

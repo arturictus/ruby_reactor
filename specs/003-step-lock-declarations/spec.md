@@ -150,9 +150,10 @@ work to another process and confirm the hand-off is refused with a message namin
 5. **Given** a step whose work is handed to a worker, **When** the work runs there, **Then**
    the key is taken by that worker — never taken in the dispatching process and carried
    across.
-6. **Given** an execution that parks mid-flight while holding coordination, **When** it
-   resumes, **Then** it re-adopts what it held without a duplicate acquisition being recorded,
-   and falls back to competing normally if the hold lapsed while parked.
+6. **Given** an execution that parks mid-flight while holding coordination taken before the
+   contended step, **When** it resumes, **Then** it re-adopts what it held without a duplicate
+   acquisition being recorded, and falls back to competing normally if the hold lapsed while
+   parked. (The contended step's own partial acquisitions are released at the park — FR-018.)
 7. **Given** a step class invoked on its own, outside any workflow, **When** any execution —
    a workflow holding the key at workflow or step level, or another stand-alone invocation —
    holds the same key, **Then** the stand-alone invocation contends like any other execution;
@@ -341,9 +342,12 @@ form, then move it into a class unchanged.
   naming the reactor, step, and key, and rollback MUST proceed as for any step failure.
 - **FR-017**: Retries caused by contention MUST be bounded; an execution exceeding the ceiling
   MUST report the contention rather than being retried indefinitely.
-- **FR-018**: A parked execution MUST keep ownership of coordination it already holds across
-  the gap and re-adopt it on resume without recording a duplicate acquisition, falling back to
-  competing normally if the hold lapsed while parked.
+- **FR-018**: A parked execution MUST keep ownership of coordination it held *before reaching
+  the parked step* across the gap and re-adopt it on resume without recording a duplicate
+  acquisition, falling back to competing normally if the hold lapsed while parked. Whatever the
+  contended step itself took in that attempt is released at the park — its work has not
+  started (FR-015), so there is nothing to protect across the gap (research D6); only its
+  strict-ordering position is kept, so it does not lose its place in line.
 
 #### Re-entrancy
 

@@ -128,8 +128,7 @@ class ComposedAsyncParentReactor < RubyReactor::Reactor
 end
 
 # A direct `InnerStep.run(args, context)` nested inside a coordinated outer
-# step: both scopes share `context.current_step`, so their parked markers must
-# still be told apart.
+# step, contending AFTER the outer body has already had a side effect.
 class NestedMarkerInnerStep < RubyReactor::Step
   input :account_id
 
@@ -144,10 +143,21 @@ end
 class NestedMarkerReactor < RubyReactor::Reactor
   input :account_id
 
+  def self.side_effects
+    @side_effects ||= []
+  end
+
   step :outer do
     argument :account_id, input(:account_id)
     with_lock(wait: 0) { |args| "nested_marker_outer:#{args[:account_id]}" }
-    run { |args, ctx| NestedMarkerInnerStep.run({ account_id: args[:account_id] }, ctx) }
+    run do |args, ctx|
+      NestedMarkerReactor.side_effects << :outer_ran
+      NestedMarkerInnerStep.run({ account_id: args[:account_id] }, ctx)
+    end
+    compensate do |_error, _args, _ctx|
+      NestedMarkerReactor.side_effects << :outer_compensated
+      RubyReactor.Success()
+    end
   end
 
   returns :outer
@@ -280,23 +290,29 @@ RSpec.describe "step coordination review fixes (round 3)", :step_coordination do
     end
   end
 
-  describe "a nested direct class-step invocation parked with the outer step" do
-    it "keeps its own parked marker instead of being overwritten by the outer scope's" do
+  describe "a nested direct class-step call that contends inside a worker" do
+    # The contention belongs to the nested call, not to :outer's own
+    # acquisition: :outer's body already ran, so parking it would re-run that
+    # side effect on redelivery, and treating it as "never started" would
+    # skip its compensation.
+    it "fails the outer step as an ordinary failure — compensated, never parked" do
       account_id = unique_account_id
+      NestedMarkerReactor.side_effects.clear
       holder = RubyReactor::Semaphore.new("nested_marker_sem:#{account_id}", limit: 1)
       holder.acquire
 
       context = RubyReactor::Context.new({ account_id: account_id }, NestedMarkerReactor)
       context.inline_async_execution = true
 
-      expect(RubyReactor::Executor.new(NestedMarkerReactor, {}, context).execute)
-        .to be_a(RubyReactor::RetryQueuedResult)
+      result = RubyReactor::Executor.new(NestedMarkerReactor, {}, context).execute
 
-      parked = context.private_data[:step_parked_locks]
-      # Two holds are detached across the park; one marker means the inner
-      # lock is re-acquired on redelivery and released only once.
-      expect(parked.values.map { |info| info[:key] })
-        .to contain_exactly("nested_marker_outer:#{account_id}", "nested_marker_inner:#{account_id}")
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.exception_class).to eq("RubyReactor::Executor::StepCoordination::NestedCoordinationError")
+      expect(NestedMarkerReactor.side_effects).to eq(%i[outer_ran outer_compensated])
+      expect(context.private_data[:step_contention]).to be_nil
+      adapter = RubyReactor.configuration.storage_adapter
+      expect(adapter.lock_held?("nested_marker_outer:#{account_id}")).to be(false)
+      expect(adapter.lock_held?("nested_marker_inner:#{account_id}")).to be(false)
     ensure
       holder&.release
     end

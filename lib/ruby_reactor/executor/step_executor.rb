@@ -198,13 +198,12 @@ module RubyReactor
         raise
       rescue Executor::StepCoordination::Contended => e
         handle_contention(step_config, e, resolved_arguments)
-      # `KeyError`: the coordination key proc raised or returned nil/empty.
-      # `UnknownLimitError`: a permanent configuration error (an
-      # unregistered `with_rate_limit` name). Neither is contention — both
-      # are ordinary non-retryable failures, never a park (mirrors how the
-      # reactor-level equivalent escalates instead of snoozing in
+      # `KeyError`: this step's coordination could not be resolved — a key proc
+      # that raised or returned nil/empty, or an unregistered `with_rate_limit`
+      # name. Not contention: a non-retryable failure, never a park (mirrors
+      # how the reactor-level equivalent escalates instead of snoozing in
       # `Worker#perform`).
-      rescue Executor::StepCoordination::KeyError, RubyReactor::RateLimitRegistry::UnknownLimitError => e
+      rescue Executor::StepCoordination::KeyError => e
         RubyReactor::Failure(e, step_name: step_config.name, reactor_name: @reactor_class.name,
                                 step_arguments: resolved_arguments, inputs: @context.inputs, retryable: false)
       rescue StandardError => e
@@ -256,19 +255,15 @@ module RubyReactor
           @retry_manager.park_for_contention(step_config, contended, @reactor_class,
                                              on_park: @on_contention_park)
         else
-          # `@error` is the TRUE underlying error (`contended.original`), not
-          # the `Contended` wrapper: the executor's non-retryable-failure path
-          # (`RetryManager#handle_non_retryable_failure` -> `ResultHandler
-          # #handle_retries_exhausted`) re-derives `exception_class` from
-          # `original_error.class` one level down, so wrapping it here would
-          # surface "StepCoordination::Contended" instead of the real cause.
-          # `contended.message` (reactor/step/key) still reaches the reader:
-          # `Failure#build_header` prepends "Error in reactor '<name>' step
-          # '<name>'" from the `reactor_name:`/`step_name:` kwargs below,
-          # independent of the error object's own message.
-          RubyReactor::Failure(contended.original, step_name: step_config.name, reactor_name: @reactor_class.name,
-                                                   step_arguments: resolved_arguments, inputs: @context.inputs,
-                                                   retryable: false, exception_class: contended.original.class.name)
+          # The `Contended` itself, not its `.original`: it is what tells
+          # `CompensationManager#step_never_started?` that THIS step's own
+          # acquisition failed. A bare `Lock::AcquisitionError` could equally
+          # have been raised by the body (a nested `Reactor.run`), whose side
+          # effects must be compensated. `ResultHandler#resolve_exception_class`
+          # reports the cause's class.
+          RubyReactor::Failure(contended, step_name: step_config.name, reactor_name: @reactor_class.name,
+                                          step_arguments: resolved_arguments, inputs: @context.inputs,
+                                          retryable: false, exception_class: contended.original.class.name)
         end
       end
 
@@ -416,48 +411,17 @@ module RubyReactor
           { type: :run, step: step_config.name, timestamp: Time.now,
             arguments: contract ? contract.redact(arguments) : arguments }
         )
-        if step_config.has_run_block?
-          # Execute inline block
-          # If no arguments are defined for the step, pass the reactor inputs as arguments
-          args_to_pass = arguments.empty? ? @context.inputs : arguments
-          args_to_pass = step_config.inline_contract.enforce!(args_to_pass) if step_config.inline_contract
-          coordinate_inline(step_config, args_to_pass) do
-            catch(StepSignals::TAG) { step_config.run_block.call(args_to_pass, @context) }
-          end
-        elsif step_config.has_impl?
-          # Execute step class. `Step.run` coordinates `impl`'s OWN
-          # declarations; an inline declaration on this StepConfig is invisible
-          # there, so it is acquired here — keyed off the same contract-applied
-          # arguments `Step.run` would use.
-          coordinate_inline(step_config, with_contract_defaults(step_config, arguments)) do
-            catch(StepSignals::TAG) { step_config.impl.run(arguments, @context) }
-          end
-        else
+        unless step_config.has_run_block? || step_config.has_impl?
           raise Error::ValidationError.new(
             "Step '#{step_config.name}' has no implementation",
             step: step_config.name,
             context: @context
           )
         end
-      end
 
-      # The enforcement point for a step's OWN (inline) declarations —
-      # mirroring T013's class-step wiring in `Step.run`. Only the inline
-      # declarations gate here (`inline_only`), never `impl`'s fallback: that
-      # fallback exists for read-only consumers (rollback, the dispatch guard,
-      # the dashboard) and is acquired inside `Step.run`, not a second time.
-      def coordinate_inline(step_config, arguments, &block)
-        return block.call unless step_config.inline_coordination?
-
-        Executor::StepCoordination.new(
-          step_config: step_config.inline_only, arguments: arguments, context: @context,
-          reactor_class: @reactor_class, middlewares: @middlewares
-        ).around_run(&block)
-      end
-
-      def with_contract_defaults(step_config, arguments)
-        contract = step_config.input_contract
-        contract && arguments.is_a?(Hash) ? contract.apply_defaults(arguments) : arguments
+        Executor::StepCoordination.run_step(step_config, arguments, context: @context,
+                                                                    reactor_class: @reactor_class,
+                                                                    middlewares: @middlewares)
       end
 
       def find_context_by_id(root_context, target_id)

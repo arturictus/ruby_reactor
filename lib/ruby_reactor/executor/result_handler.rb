@@ -233,6 +233,8 @@ module RubyReactor
       end
 
       def resolve_exception_class(original_error, error)
+        # A step's own contention is reported by its cause (Lock::AcquisitionError, ...).
+        original_error = original_error.original if original_error.is_a?(StepCoordination::Contended)
         return original_error.class.name if original_error
 
         error.respond_to?(:exception_class) ? error.exception_class : nil

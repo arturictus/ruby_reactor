@@ -2,12 +2,12 @@
 
 require "spec_helper"
 
-# A contention park deliberately KEEPS what the step already took — the lock
-# stays checked out, the semaphore token stays out of the pool, the rate-limit
-# charge is remembered, the ordered-lock position stays un-advanced — so the
-# redelivery re-adopts them (FR-018). These specs cover what happens when that
-# park does NOT end in a redelivery: escalated past `lock_snooze_max_attempts`,
-# or turned into a plain retry by `retries`.
+# A contention park hands back everything the contended step took (its work
+# has not started, so there is nothing to protect across the gap) and keeps
+# only its ordered-lock position, so the redelivery does not lose its place in
+# line. These specs cover the park itself and what happens when it does NOT
+# end in a redelivery: escalated past `lock_snooze_max_attempts`, or turned
+# into a plain retry by `retries`.
 
 # Lock and semaphore on the same step: hold the semaphore externally and the
 # step takes the lock, then parks on the semaphore — the shape every
@@ -51,9 +51,9 @@ class AsyncParkedHoldReactor < RubyReactor::Reactor
   returns :ack
 end
 
-# Rate limit BEFORE the lock (contract §3 order): the quota is spent, then the
-# lock parks the execution — so every redelivery re-enters an already-charged
-# gate.
+# Rate limit and a lock that will contend: the rate limit is charged LAST
+# (contract §3 order), so the lock parks the execution before any slot is
+# spent — however many times it parks.
 class QuotaParkStep < RubyReactor::Step
   input :account_id
 
@@ -178,8 +178,28 @@ RSpec.describe "escalating a step-level contention park", :step_coordination do
     reactor_class.find(dispatch.execution_id)
   end
 
+  describe "the park itself" do
+    it "releases the step's own lock instead of carrying it across the gap" do
+      account_id = unique_account_id
+      holder = RubyReactor::Semaphore.new("park_sem:#{account_id}", limit: 1)
+      holder.acquire
+
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
+      dispatch = ParkedHoldReactor.run(account_id: account_id)
+      job = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
+      RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(*job["args"].first(2))
+
+      found = ParkedHoldReactor.find(dispatch.execution_id)
+      expect(found.context.private_data[:step_contention]).to include(primitive: :semaphore)
+      expect("park_lock:#{account_id}").not_to be_locked
+    ensure
+      holder&.release
+    end
+  end
+
   describe "past the contention ceiling" do
-    it "hands back the lock the park kept checked out" do
+    it "leaves the step's lock free" do
       account_id = unique_account_id
       holder = RubyReactor::Semaphore.new("park_sem:#{account_id}", limit: 1)
       holder.acquire
@@ -194,7 +214,6 @@ RSpec.describe "escalating a step-level contention park", :step_coordination do
       # Without the release the key would stay held for the full 60s TTL,
       # blocking every other execution on this account.
       expect("park_lock:#{account_id}").not_to be_locked
-      expect(found.context.private_data[:step_parked_locks]).to be_nil
     ensure
       holder&.release
     end
@@ -222,7 +241,7 @@ RSpec.describe "escalating a step-level contention park", :step_coordination do
       holder&.release
     end
 
-    it "hands back an async_step's lock too" do
+    it "leaves an async_step's lock free too" do
       account_id = unique_account_id
       holder = RubyReactor::Semaphore.new("park_sem:#{account_id}", limit: 1)
       holder.acquire
@@ -240,7 +259,6 @@ RSpec.describe "escalating a step-level contention park", :step_coordination do
       expect(record["result"].inspect).to include("contention")
       expect("park_lock:#{account_id}").not_to be_locked
       context = AsyncParkedHoldReactor.find(result.execution_id).context
-      expect(context.private_data[:step_parked_locks]).to be_nil
       expect(context.private_data[:step_contention]).to be_nil
     ensure
       holder&.release
@@ -258,8 +276,7 @@ RSpec.describe "escalating a step-level contention park", :step_coordination do
       dispatch = QuotaParkReactor.run(account_id: account_id)
       job = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
 
-      # Two parks: the second must re-adopt the first's charge, not spend a
-      # second slot (a `limit: 2` would otherwise be exhausted by one run).
+      # Two parks spend nothing: the lock contends before the charge.
       2.times do
         RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
         RubyReactor::Adapters::Sidekiq::Worker.new.perform(*job["args"].first(2))
