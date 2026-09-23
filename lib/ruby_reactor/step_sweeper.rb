@@ -42,6 +42,7 @@ module RubyReactor
 
         arguments = dispatch_arguments(record)
         next unless arguments
+        next if parked?(record)
         next if live?(arguments)
 
         @async_router.perform_step_async(**arguments)
@@ -61,6 +62,20 @@ module RubyReactor
       return nil if values.any?(&:nil?)
 
       DISPATCH_KEYS.map(&:to_sym).zip(values).to_h
+    end
+
+    # A unit parked on step-level contention (StepWorker#handle_contention)
+    # released its liveness lock on purpose and has a redelivery already
+    # scheduled. It looks exactly like a lost unit, so without this the sweep
+    # would dispatch a duplicate that runs the body a second time once the
+    # redelivery fires. Past the stamped window it is fair game again.
+    def parked?(record)
+      parked_until = record["parked_until"]
+      return false unless parked_until
+
+      Time.iso8601(parked_until) > Time.now
+    rescue ArgumentError, TypeError
+      false
     end
 
     def live?(arguments)

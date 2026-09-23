@@ -13,6 +13,11 @@ module RubyReactor
   # fallback re-check.
   # rubocop:disable Metrics/ClassLength
   class StepWorker
+    # Grace added to a park's stamped window, so ordinary queue latency on the
+    # redelivery does not make `StepSweeper` mistake a parked unit for a lost
+    # one (see `#mark_record_parked`).
+    PARK_SWEEP_GRACE = 30
+
     class << self
       def perform(arguments)
         arguments = arguments.transform_keys(&:to_sym)
@@ -88,6 +93,14 @@ module RubyReactor
     # Result Record stays "dispatched" so a reader keeps waiting instead of
     # seeing a phantom terminal state.
     def handle_contention(contended, context = nil)
+      # `run_step`'s loop counted this round as an attempt before the body
+      # raised; a contention park is not a retry attempt, so give it back —
+      # mirrors `RetryManager#park_for_contention`. Left inflated, the count
+      # persists across redeliveries and `StepCoordination#retry_pending?`
+      # eventually reads the step as out of retries, advancing its
+      # ordered-lock position out from under an attempt still to come.
+      context&.retry_context&.decrement_attempt_for_step(@step_name)
+
       config = RubyReactor.configuration
       attempt = @contention_attempts + 1
       uncapped = contended.original.is_a?(RubyReactor::OrderedLock::WaitError)
@@ -115,6 +128,7 @@ module RubyReactor
       delay = RubyReactor::Worker.snooze_delay(config, contended)
       log(:info, "parked", key: contended.key, primitive: contended.primitive, attempt: attempt, delay: delay)
       record_contention(context, contended, attempt)
+      mark_record_parked(context, delay)
       RubyReactor.configuration.async_router.perform_step_in(
         delay, root_context_id: @root_context_id, reactor_class_name: @reactor_class_name,
                step_context_id: @step_context_id, step_name: @step_name, contention_attempts: attempt
@@ -137,6 +151,39 @@ module RubyReactor
         next_attempt_at: nil
       }
       save_root(context)
+    end
+
+    # A park releases the liveness lock (`perform`'s ensure) and leaves the
+    # Step Result Record at "dispatched" — which is EXACTLY the shape
+    # `StepSweeper` reads as "this unit's job was lost". Left unmarked it
+    # re-dispatches immediately, and when the parked redelivery then fires the
+    # body runs a second time: two jobs, sequential, so the liveness lock
+    # (which only drops CONCURRENT duplicates) never sees them collide.
+    # Stamping the window the redelivery is due in lets the sweeper tell
+    # parked from lost.
+    #
+    # ponytail: a fixed grace covers ordinary queue latency; a park whose
+    # redelivery is lost is recovered one grace period late rather than never.
+    # Make it configurable only if real queue lag exceeds it.
+    def mark_record_parked(context, delay)
+      namespace = step_result_namespace(context)
+      record = storage.retrieve_step_result(@step_context_id, @step_name, namespace)
+      return unless record
+
+      record["parked_until"] = (Time.now + delay + PARK_SWEEP_GRACE).iso8601
+      storage.store_step_result(@step_context_id, @step_name, record, namespace)
+    rescue StandardError => e
+      RubyReactor.configuration.logger.warn(
+        "RubyReactor: async_step :#{@step_name} could not mark its record parked: #{e.message}"
+      )
+    end
+
+    # Records are namespaced by the reactor that OWNS the step (what
+    # `AsyncStepDispatch#async_step_class_name` wrote them under), which for a
+    # composed child is not the root this job was handed.
+    def step_result_namespace(context)
+      owner = context&.reactor_class
+      owner ? RubyReactor.reactor_storage_name(owner) : @reactor_class_name
     end
 
     def acquire_liveness_lock

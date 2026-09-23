@@ -402,6 +402,16 @@ module RubyReactor
           result = yield
         rescue Contended
           heartbeat.stop
+          # Only a PARKED contention gets a redelivery to re-adopt this
+          # position with. A synchronous one is terminal — `StepExecutor
+          # #handle_contention`'s else branch turns it straight into a
+          # Failure — so leaving the nonce in flight would stall every
+          # successor on this key for the full poison_pill_timeout with
+          # nothing ever coming back to advance it.
+          unless parking?
+            Executor::OrderedLockSupport.advance_with_retry(info, failed: true)
+            delete_ordered_lock_stash
+          end
           raise
         rescue StandardError
           # Anything else is terminal — `StepExecutor` turns it into a

@@ -733,7 +733,7 @@ end
 
 A step class inherits its parent's declarations; redeclaring a primitive on a subclass replaces it — identical to reactor-level inheritance ([Inheritance](#inheritance)).
 
-`with_ordered_lock` on an **interrupt** step raises at class-definition time: its body is split across a pause, so a hold would span the gap. Declare coordination on the reactor instead.
+Any of the five macros on an **interrupt** step raises at class-definition time: its body is split across a pause, so a hold would span the gap. Declare coordination on the reactor instead.
 
 ### Where it is enforced
 
@@ -771,7 +771,7 @@ Losing contention behaves differently depending on where the execution is runnin
 | Execution path | Behavior |
 |---|---|
 | Running in a worker (Sidekiq/ActiveJob) | The execution **parks at that step** and is redelivered later, via `perform_in`/`perform_step_in` — reusing `lock_snooze_base_delay`/`lock_snooze_jitter`/`lock_snooze_max_attempts` ([Snooze configuration](#snooze-configuration)). No step compensates; the contended step's own work was never attempted. |
-| Running synchronously | Waits up to the configured `wait:`, then raises/fails with a contention error naming the reactor, step, and key. Rollback proceeds as for any step failure. |
+| Running synchronously | Waits up to the configured `wait:`, then fails with a contention error naming the reactor, step, and key. Already-completed steps roll back as for any step failure; the contended step itself does not compensate — like the parked case, its own work was never attempted. |
 
 A contention park is counted separately from the step's own `retries` budget — a busy key can never exhaust the retry budget meant for genuine failures, and a park never charges (or double-charges on redelivery) the reactor's own rate limit or period gate.
 
