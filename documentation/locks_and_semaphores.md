@@ -775,9 +775,66 @@ Losing contention behaves differently depending on where the execution is runnin
 | Running in a worker (Sidekiq/ActiveJob) | The execution **parks at that step** and is redelivered later, via `perform_in`/`perform_step_in` — reusing `lock_snooze_base_delay`/`lock_snooze_jitter`/`lock_snooze_max_attempts` ([Snooze configuration](#snooze-configuration)). No step compensates; the contended step's own work was never attempted. |
 | Running synchronously | Waits up to the configured `wait:`, then fails with a contention error naming the reactor, step, and key. Already-completed steps roll back as for any step failure; the contended step itself does not compensate — like the parked case, its own work was never attempted. |
 
-A park hands back everything the contended step took — its work has not started, so there is nothing to protect across the gap, exactly as with reactor-level contention. The only thing it keeps is its ordered-lock position, so the redelivery does not lose its place in line. Coordination the *execution* already held before reaching the step (the reactor's own lock and semaphore) stays checked out across the gap and is re-adopted on redelivery, as for any mid-flight park.
+A park hands back everything the contended step took — its work has not started, so there is nothing to protect across the gap, exactly as with reactor-level contention. The only thing it keeps is its ordered-lock position, so the redelivery does not lose its place in line. Coordination the *execution* already held before reaching the step stays checked out across the gap and is re-adopted on redelivery, as for any mid-flight park — **at every nesting depth**: when the contended step sits inside a composed child (or a child of a child), every workflow level on the way up keeps its *own* reactor-level lock and semaphore through the gap, re-adopts it on redelivery, and never emits a second `:lock_acquired` for it. The same holds when a step of a composed child waits on a background result (`result(:some_async_step)`) that is not ready yet: the execution parks and resumes on redelivery, instead of failing the parent.
 
-A contention park is counted separately from the step's own `retries` budget — a busy key can never exhaust the retry budget meant for genuine failures, and a park never charges (or double-charges on redelivery) the reactor's own rate limit or period gate.
+A contention park is counted separately from the step's own `retries` budget — a busy key can never exhaust the retry budget meant for genuine failures. Reactor-level `with_rate_limit` and `with_period` are applied **once per execution**, at every nesting depth: a park, and its redelivery, never charges (or double-charges) a level's rate limit or re-checks its period gate.
+
+An **`async_step`** parks in its own worker (`perform_step_in`), which is not the parent's run, so it never writes the parent's context on a park — the parent may be checkpointing newer progress at the same moment. Its park state lives on its own **Step Result Record** instead: the ordered-lock position it must keep (`ordered_lock`), the key it is waiting on (`waiting: { step, primitive, key, attempts }`), and the park window the sweeper reads (`parked_until`, `contention_attempts`). The redelivery re-reads its position from the record, and the dashboard's "waiting" badge for an `async_step` comes from it. The parent's execution trace therefore has **no** `:contention_park` entry for an `async_step` park; the structured `event="ruby_reactor.async_step.parked"` log line and the record carry the same facts. Once the unit finishes, its record is rewritten as terminal and those fields drop out.
+
+#### Nest keys in one order across levels
+
+A step park keeps the reactor's own lock and semaphore checked out — that is intended: the workflow's exclusion must not lapse halfway through. It also means two workflows that take the same two keys in **opposite order** across levels wait on each other:
+
+- Reactor X holds reactor lock `A` and parks on step lock `B`.
+- Reactor Y holds reactor lock `B` and parks on step lock `A`.
+
+Neither can proceed. Each keeps snoozing until its step gives up after `lock_snooze_max_attempts` contention attempts (default 20) and fails — or, with `lock_snooze_max_attempts = :infinity`, they wait forever.
+
+**Rule:** pick one global order for your keys and nest in that order at every level — the reactor-level key is always the *outer* one of the pair.
+
+```ruby
+# ✅ Both reactors lock the account (outer) before the ledger (inner).
+class PostLedgerStep < RubyReactor::Step
+  input :ledger_id
+  with_lock { |args| "ledger:#{args[:ledger_id]}" }
+  def run = Success(:posted)
+end
+
+class TransferReactor < RubyReactor::Reactor
+  with_lock { |inputs| "account:#{inputs[:account_id]}" }
+  input :account_id
+  input :ledger_id
+  step :post, PostLedgerStep do
+    argument :ledger_id, input(:ledger_id)
+  end
+end
+
+class RefundReactor < RubyReactor::Reactor
+  with_lock { |inputs| "account:#{inputs[:account_id]}" } # same outer key
+  input :account_id
+  input :ledger_id
+  step :post, PostLedgerStep do
+    argument :ledger_id, input(:ledger_id)
+  end
+end
+
+# ❌ The ledger is the outer key here and the account the inner one — the
+#    reverse of TransferReactor. The two can deadlock until the ceiling.
+class LockAccountStep < RubyReactor::Step
+  input :account_id
+  with_lock { |args| "account:#{args[:account_id]}" }
+  def run = Success(:locked)
+end
+
+class ReconcileReactor < RubyReactor::Reactor
+  with_lock { |inputs| "ledger:#{inputs[:ledger_id]}" }
+  input :account_id
+  input :ledger_id
+  step :lock_account, LockAccountStep do
+    argument :account_id, input(:account_id)
+  end
+end
+```
 
 ### Step Re-entrancy and Hand-off Refusal
 
@@ -799,7 +856,47 @@ Step holds follow the exact same nested-workflow rules the reactor form uses —
 | `with_lock`, `with_semaphore` | ✅ same key, computed from the same arguments |
 | `with_rate_limit`, `with_period`, `with_ordered_lock` | ❌ a forward-work quota must never suppress cleanup |
 
-Rollback never parks — the execution is already mid-failure, and there is nowhere to park it to — so it uses the *configured* `wait:` directly rather than the inline/async split. A rollback that cannot re-acquire within its `wait:` is reported (`CompensationError` for `compensate`, a `:failed_undo` trace entry for `undo`), never silently skipped.
+Rollback never parks — the execution is already mid-failure, and there is nowhere to park it to. It waits for the key with its own **`rollback_wait:`**, not the forward `wait:`:
+
+| Declaration | `rollback_wait:` default | Why |
+|---|---|---|
+| `with_lock(ttl: 60, rollback_wait: nil)` | the lock's `ttl` | a forward holder either finishes or its lock expires within `ttl`, so the undo outlasts it instead of being dropped |
+| `with_semaphore(limit: 3, rollback_wait: nil)` | 60 seconds | a semaphore slot has no hold expiry to bound the wait by |
+
+```ruby
+class ChargeStep < RubyReactor::Step
+  input :account_id
+
+  # Forward: fail fast (`wait: 0`). Rollback: wait up to 5 s for the key.
+  with_lock(ttl: 60, rollback_wait: 5) { |args| "acct:#{args[:account_id]}" }
+
+  def run = Success(charge!(inputs[:account_id]))
+  def undo = Success(refund!(inputs[:account_id]))
+end
+```
+
+`rollback_wait:` is accepted wherever the step's `with_lock`/`with_semaphore` is declared — on the step class, or inline in a `step :x do ... end` block. The wait is the same on the synchronous and the worker path. In a worker it **blocks the worker thread** for up to `rollback_wait` — rollback runs rarely and only under contention, but an author with a long `ttl` can lower it. `rollback_wait: 0` means "do not wait", which brings back the dropped-undo problem; it is legal but rarely what you want. On a reactor-level `with_lock`/`with_semaphore` the keyword is accepted and ignored: reactor holds are not re-taken for rollback.
+
+An undo or compensation that still cannot run is never silently skipped. It is listed on the final failure's **`Failure#rollback_failures`**, next to undos that raised or returned a `Failure`:
+
+```ruby
+result = OrderReactor.run(order_id: 1)
+result.failure?            # => true
+result.rollback_failures
+# => [{ step: :charge, kind: :undo, key: "acct:7",
+#       reason: :coordination_unavailable,
+#       message: "could not re-acquire lock 'acct:7' for rollback of :charge within 60s: ..." }]
+```
+
+| Field | Values |
+|---|---|
+| `step` | the step whose undo/compensation did not complete — for a composed child, the child's own step (the list is flattened) |
+| `kind` | `:undo` (a completed step being rolled back) or `:compensate` (the failing step's own compensation) |
+| `key` | the coordination key for `:coordination_unavailable`, otherwise `nil` |
+| `reason` | `:coordination_unavailable`, `:returned_failure`, or `:raised` |
+| `message` | a readable cause |
+
+The list is always an Array (empty when every rollback completed), is included in `Failure#to_h`, and survives the stored failure of a background run. It does not cover map elements or `async_reactor` children, which keep their own records. Alongside it, an undo that could not re-acquire (or returned a `Failure`) still writes a `type: :undo` execution-trace entry and fires the `on_failed_undo` hook; an undo that **raised** writes a `type: :undo_failure` entry. A `compensate` that fails still raises `CompensationError` into the reactor's failure.
 
 ### `with_period` skips the step, not the reactor
 
@@ -808,6 +905,10 @@ Reactor-level `with_period` halts the whole reactor when the bucket is marked. A
 ### The ordered-lock arrival caveat
 
 The reactor-level `with_ordered_lock` assigns its nonce at **enqueue time** ([How it works](#how-it-works)), so it orders executions by enqueue. A step's key is computed from its own resolved arguments, which do not exist until the step is reached — so the step form assigns its nonce when the execution **first arrives at that step**, ordering by arrival, not enqueue. For a step that sits first in its reactor the two coincide; the deeper the step, the weaker the promise. `compensate`/`undo` never re-take the ordered lock ([Rollback](#step-rollback)), and it is not considered by the `async_step` dispatch guard (only `with_lock` and a limit-1 `with_semaphore` have the circular-wait shape that guard defends against).
+
+> **Use only on `background all: true` reactors.** As at the reactor level, the step gate's only "wait" mechanism is a worker parking the execution and re-polling. A **synchronous** execution that arrives out of turn has nowhere to wait: it fails with a contention error naming the reactor, step and key, and **hands its position back** — it never held the turn, so later arrivals proceed and are not chain-skipped on its account. That caller's work simply did not run; ordering for concurrent synchronous callers is not enforced. A position that **reached the head and then failed** (its body failed, or it lost lock/semaphore/rate-limit contention after the gate) is different: in strict mode it still stops the line, and its strict successors are skipped with `Skipped(reason: :ordered_lock_chain_failed)`.
+
+A step whose position went stale — its batch drained past it (the poison pill, or an ops `OrderedLock.skip!`) and a newer batch reused the numbering before its retry or redelivery ran — is **skipped** with `Skipped(reason: :ordered_lock_stale_batch)` and its body does not run, mirroring the reactor level's `Halt(reason: :ordered_lock_stale_batch)`. A step whose batch merely drained (no newer batch yet) runs late, as a straggler. A body that exits abnormally (anything that is not a `StandardError`, e.g. `Sidekiq::Shutdown`) stops the position's heartbeat but does not advance it: a shut-down job is redelivered and keeps its place, and otherwise the poison pill releases the position within `poison_pill_timeout`.
 
 ### Reactor Level vs Step Level
 
@@ -863,7 +964,7 @@ Step classes inherit the same way: a `RubyReactor::Step` subclass inherits its p
 - A `Halt` result sets context status to `:halted` (separate from `:completed`/`:failed`).
 - Rate-limit counters are at `rate:<base>:<period_name>:<bucket_id>`. `GET` gives the current count for the window; `TTL` gives time until the bucket rolls.
 - Ordered-lock state lives at `ordered_lock:{<key>}:next`, `:last_completed`, and `:assigned_at`. Use `RubyReactor::OrderedLock.peek(key)` to inspect all three in one call.
-- Step-scoped events (`:lock_acquired`, `:semaphore_acquired`, etc.) fire through the identical middleware hooks as the reactor form, with `context.current_step` naming the step (`nil` for a reactor-level hold) — see [middlewares.md](middlewares.md#async-locks--semaphores). A contention park appends a `type: :contention_park` execution-trace entry and sets `context.private_data[:step_contention]`, and is never reported as `:failed_step`; a structured `event="ruby_reactor.step_coordination.parked"` log line carries the reactor, step, key, primitive, and attempt. The dashboard's coordination panel shows one row per coordinating step (primitive/key/state), plus a distinct "waiting" badge for a parked step — never rendered as a failure.
+- Step-scoped events (`:lock_acquired`, `:semaphore_acquired`, etc.) fire through the identical middleware hooks as the reactor form, with `context.coordinating_step` naming the step (`nil` for a reactor-level hold; `context.current_step` is the resume cursor and is not for attribution) — see [middlewares.md](middlewares.md#async-locks--semaphores). A contention park of a same-process step appends a `type: :contention_park` execution-trace entry, sets `context.private_data[:step_contention]`, and fires `:snooze_step` — never `:failed_step` (an `async_step` park keeps the same facts on its Step Result Record instead, see [Step Contention](#step-contention)); a structured `event="ruby_reactor.step_coordination.parked"` log line carries the reactor, step, key, primitive, and attempt. The dashboard's coordination panel shows one row per coordinating step (primitive/key/state), plus a distinct "waiting" badge for a parked step — never rendered as a failure.
 
 ## Limitations
 

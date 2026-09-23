@@ -1288,3 +1288,461 @@ class QuotaGatedRollbackReactor < RubyReactor::Reactor
 
   returns :boom
 end
+
+# --- Regression fixtures folded in from the review-round spec files (005 US7).
+# Class names kept; the examples now live in the behavior-named spec files.
+
+# A step whose key reads an input the CONTRACT supplies: every site that
+# computes the key (forward, rollback, the async dispatch guard, the
+# dashboard) has to apply the defaults first or it computes a different key
+# than the one actually held.
+class DefaultedKeyStep < RubyReactor::Step
+  input :account_id
+  input :region, :string, optional: true, default: "eu"
+
+  with_lock(wait: 0) { |args| "acct:#{args[:account_id]}:#{args[:region]}" }
+
+  def run
+    Success(region: inputs[:region])
+  end
+end
+
+class DefaultedKeyReactor < RubyReactor::Reactor
+  input :account_id
+
+  step :charge, DefaultedKeyStep do
+    argument :account_id, input(:account_id)
+  end
+
+  returns :charge
+end
+
+# Ordered lock plus a lock that will contend, run SYNCHRONOUSLY: there is no
+# queue to park into, so the position must be handed back rather than left in
+# flight for the poison_pill_timeout.
+class SyncOrderedContendedStep < RubyReactor::Step
+  input :run_id
+  input :account_id
+
+  with_ordered_lock { |args| "sync_seq:#{args[:run_id]}" }
+  with_lock(wait: 0) { |args| "sync_seq_lock:#{args[:account_id]}" }
+
+  def run
+    Success(:charged)
+  end
+end
+
+class SyncOrderedContendedReactor < RubyReactor::Reactor
+  input :run_id
+  input :account_id
+
+  step :charge, SyncOrderedContendedStep do
+    argument :run_id, input(:run_id)
+    argument :account_id, input(:account_id)
+  end
+
+  returns :charge
+end
+
+# An `async_step` that parks on a semaphore held elsewhere — the shape
+# StepSweeper must not mistake for a lost unit.
+class SweepParkStep < RubyReactor::Step
+  input :account_id
+
+  with_semaphore(limit: 1, wait: 0) { |args| "sweep_park_sem:#{args[:account_id]}" }
+
+  def run
+    Success(:charged)
+  end
+end
+
+class SweepParkReactor < RubyReactor::Reactor
+  input :account_id
+
+  async_step :charge, SweepParkStep do
+    argument :account_id, input(:account_id)
+  end
+
+  step :ack do
+    run { RubyReactor.Success(:dispatched) }
+  end
+
+  returns :ack
+end
+
+# Two primitives on ONE step: the dashboard has to show both gates, not just
+# whichever `coordination_declarations` happens to yield first.
+class TwoPrimitiveStep < RubyReactor::Step
+  input :account_id
+
+  with_lock(wait: 0) { |args| "two_prim_lock:#{args[:account_id]}" }
+  with_semaphore(limit: 2, wait: 0) { |args| "two_prim_sem:#{args[:account_id]}" }
+
+  def run
+    Success(:charged)
+  end
+end
+
+class TwoPrimitiveReactor < RubyReactor::Reactor
+  input :account_id
+
+  step :charge, TwoPrimitiveStep do
+    argument :account_id, input(:account_id)
+  end
+
+  returns :charge
+end
+
+# An INLINE step with no `argument` wiring: its body (and its lock key) read
+# the reactor's inputs, and so must its rollback — the undo stack only stores
+# the empty resolved-arguments hash.
+class InlineNoArgsRollbackReactor < RubyReactor::Reactor
+  input :account_id
+
+  step :charge do
+    with_lock(wait: 0) { |args| "inline_rollback:#{args[:account_id]}" }
+    run { RubyReactor.Success(:charged) }
+    undo { RubyReactor.Success(:undone) }
+  end
+
+  step :boom do
+    run { RubyReactor.Failure("boom") }
+  end
+
+  returns :boom
+end
+
+# A step-level `with_ordered_lock` whose body runs a nested `Reactor.run`
+# ordered on the SAME key: a second nonce could never come up.
+class NestedOrderedInnerStep < RubyReactor::Step
+  input :run_id
+
+  with_ordered_lock(poison_pill_timeout: 2) { |args| "nested_step_seq:#{args[:run_id]}" }
+
+  def run
+    Success(:inner)
+  end
+end
+
+class NestedOrderedInnerReactor < RubyReactor::Reactor
+  input :run_id
+
+  step :inner, NestedOrderedInnerStep do
+    argument :run_id, input(:run_id)
+  end
+
+  returns :inner
+end
+
+class NestedOrderedOuterReactor < RubyReactor::Reactor
+  input :run_id
+
+  step :outer do
+    with_ordered_lock(poison_pill_timeout: 2) { |args| "nested_step_seq:#{args[:run_id]}" }
+    run { |args| NestedOrderedInnerReactor.run(run_id: args[:run_id]) }
+  end
+
+  returns :outer
+end
+
+# The dispatch-time deadlock guard fires on :charge — an earlier step has
+# already run its side effect, so the reactor must unwind it.
+class DeadlockGuardChildStep < RubyReactor::Step
+  input :account_id
+
+  with_lock(wait: 0) { |args| "guard_acct:#{args[:account_id]}" }
+
+  def run
+    Success(:never)
+  end
+end
+
+DEADLOCK_GUARD_UNDONE = [] # rubocop:disable Style/MutableConstant
+
+class DeadlockGuardRollbackReactor < RubyReactor::Reactor
+  with_lock(wait: 0) { |inputs| "guard_acct:#{inputs[:account_id]}" }
+
+  input :account_id
+
+  step :side_effect do
+    run { RubyReactor.Success(:done) }
+    undo do |_value, _args, _ctx|
+      DEADLOCK_GUARD_UNDONE << :side_effect
+      RubyReactor.Success(:undone)
+    end
+  end
+
+  async_step :charge, DeadlockGuardChildStep do
+    argument :account_id, input(:account_id)
+    wait_for :side_effect
+  end
+end
+
+# A locked class step dispatched to the worker: the hooks it fires there must
+# be the configured middlewares, attributed to the step.
+class WorkerHookStep < RubyReactor::Step
+  input :account_id
+
+  with_lock(wait: 0) { |args| "worker_hook:#{args[:account_id]}" }
+
+  def run
+    Success(:charged)
+  end
+end
+
+class WorkerHookReactor < RubyReactor::Reactor
+  input :account_id
+
+  async_step :charge, WorkerHookStep do
+    argument :account_id, input(:account_id)
+  end
+
+  step :ack do
+    run { RubyReactor.Success(:dispatched) }
+  end
+
+  returns :ack
+end
+
+# A class-backed step whose coordination is declared INLINE, on the reactor's
+# step block: `Step.run` can only see the step class's own config, so the
+# executor/worker is the only place this declaration can be acquired.
+class InlineOverrideImplStep < RubyReactor::Step
+  input :account_id
+
+  def run
+    Success(:charged)
+  end
+end
+
+class InlineOverrideReactor < RubyReactor::Reactor
+  input :account_id
+
+  step :charge, InlineOverrideImplStep do
+    argument :account_id, input(:account_id)
+    with_lock(wait: 0) { |args| "inline_override:#{args[:account_id]}" }
+  end
+
+  returns :charge
+end
+
+class InlineOverrideAsyncReactor < RubyReactor::Reactor
+  input :account_id
+
+  async_step :charge, InlineOverrideImplStep do
+    argument :account_id, input(:account_id)
+    with_lock(wait: 0) { |args| "inline_override_async:#{args[:account_id]}" }
+  end
+
+  step :ack do
+    run { RubyReactor.Success(:dispatched) }
+  end
+
+  returns :ack
+end
+
+# Flipped between dispatch and delivery, so the worker is the one deciding
+# the guard — the executor already decided it the other way.
+ASYNC_GUARD_FLAG = { run: true } # rubocop:disable Style/MutableConstant
+
+class GuardedAsyncStep < RubyReactor::Step
+  input :account_id
+
+  with_lock(wait: 0) { |args| "guarded_async:#{args[:account_id]}" }
+
+  def run
+    Success(:charged)
+  end
+end
+
+class GuardedAsyncReactor < RubyReactor::Reactor
+  input :account_id
+
+  async_step :charge, GuardedAsyncStep do
+    argument :account_id, input(:account_id)
+    where { ASYNC_GUARD_FLAG[:run] }
+  end
+
+  step :ack do
+    run { RubyReactor.Success(:dispatched) }
+  end
+
+  returns :ack
+end
+
+# Reactor-level lock PLUS a step-level lock that will contend: the park hands
+# the reactor's hold to a redelivery, and the contention ceiling then cancels
+# that redelivery.
+class CeilingStep < RubyReactor::Step
+  input :account_id
+
+  with_lock(wait: 0) { |args| "ceiling_step:#{args[:account_id]}" }
+
+  def run
+    Success(:charged)
+  end
+end
+
+class CeilingReactor < RubyReactor::Reactor
+  with_lock(ttl: 60, wait: 0) { |inputs| "ceiling_reactor:#{inputs[:account_id]}" }
+
+  input :account_id
+
+  step :charge, CeilingStep do
+    argument :account_id, input(:account_id)
+  end
+
+  returns :charge
+end
+
+# An `async_step` inside a COMPOSED child: its Step Result Record belongs to
+# the child's namespace, which is what the reader looks under.
+class ComposedAsyncChildStep < RubyReactor::Step
+  input :account_id
+
+  def run
+    Success(:child_charged)
+  end
+end
+
+class ComposedAsyncChildReactor < RubyReactor::Reactor
+  input :account_id
+
+  async_step :charge, ComposedAsyncChildStep do
+    argument :account_id, input(:account_id)
+  end
+
+  step :ack do
+    run { RubyReactor.Success(:dispatched) }
+  end
+
+  returns :ack
+end
+
+class ComposedAsyncParentReactor < RubyReactor::Reactor
+  input :account_id
+
+  compose :child, ComposedAsyncChildReactor do
+    argument :account_id, input(:account_id)
+  end
+
+  returns :child
+end
+
+# A direct `InnerStep.run(args, context)` nested inside a coordinated outer
+# step, contending AFTER the outer body has already had a side effect.
+class NestedMarkerInnerStep < RubyReactor::Step
+  input :account_id
+
+  with_lock(wait: 0) { |args| "nested_marker_inner:#{args[:account_id]}" }
+  with_semaphore(limit: 1, wait: 0) { |args| "nested_marker_sem:#{args[:account_id]}" }
+
+  def run
+    Success(:inner)
+  end
+end
+
+class NestedMarkerReactor < RubyReactor::Reactor
+  input :account_id
+
+  def self.side_effects
+    @side_effects ||= []
+  end
+
+  step :outer do
+    argument :account_id, input(:account_id)
+    with_lock(wait: 0) { |args| "nested_marker_outer:#{args[:account_id]}" }
+    run do |args, ctx|
+      NestedMarkerReactor.side_effects << :outer_ran
+      NestedMarkerInnerStep.run({ account_id: args[:account_id] }, ctx)
+    end
+    compensate do |_error, _args, _ctx|
+      NestedMarkerReactor.side_effects << :outer_compensated
+      RubyReactor.Success()
+    end
+  end
+
+  returns :outer
+end
+
+# Counters the fixture bodies below bump, so a spec can tell how many times a
+# step's work actually ran.
+ROUND4_COUNTS = Hash.new(0)
+
+# An `async_step` whose key proc raises: the dispatch-time deadlock guard
+# computes that key while the parent holds one of its own, so the failure must
+# arrive as a normal step failure (rolling the earlier step back), not as a
+# generic execution error.
+class Round4RaisingKeyStep < RubyReactor::Step
+  input :account_id
+
+  with_lock(wait: 0) { |_args| raise "key proc blew up" }
+
+  def run
+    Success(:charged)
+  end
+end
+
+class Round4GuardKeyReactor < RubyReactor::Reactor
+  with_lock(ttl: 60, wait: 0) { |inputs| "round4_guard:#{inputs[:account_id]}" }
+
+  input :account_id
+
+  step :setup do
+    argument :account_id, input(:account_id)
+    run { |args| RubyReactor.Success(args[:account_id]) }
+    undo { ROUND4_COUNTS[:setup_undo] += 1 }
+  end
+
+  async_step :charge, Round4RaisingKeyStep do
+    argument :account_id, result(:setup)
+  end
+
+  step :ack do
+    run { RubyReactor.Success(:dispatched) }
+  end
+
+  returns :ack
+end
+
+# A step deduped by a window whose body returns a value its own output
+# contract rejects: the bucket must NOT be marked, or the next run is deduped
+# away on behalf of a step that failed.
+class Round4PeriodReactor < RubyReactor::Reactor
+  input :account_id
+
+  step :charge do
+    argument :account_id, input(:account_id)
+    with_period(every: :hour) { |args| "round4_period:#{args[:account_id]}" }
+    validate_output :integer
+    run do |args|
+      ROUND4_COUNTS[:period_body] += 1
+      RubyReactor.Success("not an integer: #{args[:account_id]}")
+    end
+  end
+
+  returns :charge
+end
+
+class Round4DuplicateStep < RubyReactor::Step
+  input :account_id
+
+  def run
+    ROUND4_COUNTS[:duplicate_body] += 1
+    Success(:charged)
+  end
+end
+
+class Round4DuplicateReactor < RubyReactor::Reactor
+  input :account_id
+
+  async_step :charge, Round4DuplicateStep do
+    argument :account_id, input(:account_id)
+  end
+
+  step :ack do
+    run { RubyReactor.Success(:dispatched) }
+  end
+
+  returns :ack
+end

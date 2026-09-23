@@ -21,7 +21,9 @@ module RubyReactor
       end
 
       # Compensating a failed compose and undoing a completed one are the same
-      # work: roll back whatever the child reactor completed.
+      # work: roll back whatever the child reactor completed. Any child undo
+      # that did not complete comes back on the Failure, which the parent's
+      # `CompensationManager` flattens into its own `rollback_failures`.
       def compensate
         step_name = context.current_step
         composed_data = context.composed_contexts[step_name]
@@ -32,7 +34,10 @@ module RubyReactor
         executor.undo_all
         executor.save_context
 
-        RubyReactor.Success()
+        failures = executor.compensation_manager.rollback_failures
+        return RubyReactor.Success() if failures.empty?
+
+        RubyReactor.Failure("composed :#{step_name} rollback incomplete", rollback_failures: failures)
       end
 
       alias undo compensate
@@ -79,7 +84,13 @@ module RubyReactor
       def execute_child_reactor(composed_reactor, child_context, composed_data)
         executor = RubyReactor::Executor.new(composed_reactor, {}, child_context)
 
-        if composed_data && child_context.current_step
+        # Resume once the child has been admitted, not by its `current_step`:
+        # a park two levels down unwinds the child's `with_step` and clears
+        # it, and `execute` would then re-charge the child's rate limit and
+        # fresh-acquire its lock instead of re-adopting the parked hold
+        # (005 R-02). `current_step` stays as the fallback for a child saved
+        # before `admitted` existed.
+        if composed_data && (child_context.admitted? || child_context.current_step)
           executor.resume_execution
         else
           executor.execute

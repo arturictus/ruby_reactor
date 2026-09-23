@@ -77,6 +77,13 @@ finds them there.
   author with a long `ttl` can lower `rollback_wait`.
 - **Semaphore default**: a fixed 60 seconds, the lock's default `ttl`. It is a constant, not a
   new config key. Add a key if someone asks for one.
+- **Found during implementation — the rollback semaphore wait polls**: `Semaphore#acquire` with a
+  positive wait is a blocking `BLPOP`, and the Redis storage adapter shares **one** connection
+  per process. A 60 s rollback `BLPOP` would stall every other thread's Redis call in that
+  process (lock auto-extenders, ordered-lock heartbeats) for the whole wait. The R1 semaphore
+  spec deadlocked on exactly this. `StepCoordination#poll_semaphore` retries the non-blocking
+  acquire every 0.1 s until `rollback_wait` instead, the same way `Lock#acquire` waits. The
+  forward-path `Semaphore#acquire` is unchanged.
 
 ### D-F3: A synchronous out-of-turn arrival does not poison the chain
 
@@ -155,6 +162,35 @@ finds them there.
 - **Map elements and `AsyncResultPending`**: `ElementExecutor` does not rescue it today, so a
   map element that waits on a background result goes to the backend's retry. That is on
   `main` and out of scope. The new rescue covers `StepContentionPark` only.
+  - **Amended during implementation**: with D-A2, the element's own `Executor#execute` now
+    *parks* its holds on any `ExecutionParked` (it used to *release* them on
+    `AsyncResultPending`). Left to the backend retry, which re-runs the job from its original
+    arguments, those parked holds would never be re-adopted and would leak until their TTL. So
+    `ElementExecutor` rescues `Error::ExecutionParked` — both signals — and requeues the element
+    with its parked context through `perform_map_element_in`. This is the "every final handler
+    handles every park signal" rule applied to the second final handler.
+
+**Audited 2026-09-23: 20 sites** (`grep -n "rescue StandardError\|rescue Exception\|rescue => "`
+over `executor.rb`, `executor/*.rb`, `step.rb`, `step/*.rb`, `template/*.rb`, plus
+`map/element_executor.rb` and `step/map_step.rb` read by hand):
+
+- **Re-raise untouched** (5): `StepExecutor#safe_execute_step_sync`, `StepExecutor#execute_step`
+  (`rescue Exception`, emits `:snooze_step`), `StepCoordination#around_run`,
+  `StepCoordination#run_under_ordered_lock` (outcome `:parked`), and `StepCoordination.call_body`
+  (rescues only `Contended`/`KeyError`).
+- **Park own holds, then re-raise** (2): `Executor#execute`, `Executor#resume_execution`.
+- **Final handlers** (2): `Worker#perform`, `Map::ElementExecutor.perform_element`.
+- **Unreachable for a park signal** (13): release/publish/heartbeat/advance/storage helpers
+  (`Executor#publish_completion_signal`, `#release_one`, `OrderedLockSupport` ×4,
+  `StepCoordination` release ×2, `.discard_parked_state!`, `.resolve_key`, `#chain_failed?`),
+  rollback bodies (`CompensationManager#compensate_step`/`#undo_step` — rollback never
+  resolves arguments), and `MapStep#process_results` (a collect block over finished results).
+- **Known, not changed**: an *inline* (non-fan-out) map element inside a worker has no persisted
+  context of its own, so a park there re-runs the map step on redelivery, and a reactor-level
+  hold on the element reactor is re-acquired re-entrantly by the same owner rather than
+  re-adopted. That matches `ca963444`, which parked through the element's own callback too.
+  `StepWorker` (an `async_step` body) still turns an `AsyncResultPending` raised while resolving
+  its own arguments into a Failure, as on `main`.
 - **Alternative rejected**: keep `RetryQueuedResult` and make every executor park when it sees
   a contention-flagged one. The requeue has already been saved and enqueued deep inside
   `RetryManager` by the time outer executors see the result, so their parked markers would

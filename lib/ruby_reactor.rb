@@ -133,14 +133,14 @@ module RubyReactor
 
   class Failure
     attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments, :exception_class,
-                :file_path, :line_number, :code_snippet, :validation_errors
+                :file_path, :line_number, :code_snippet, :validation_errors, :rollback_failures
 
-    # rubocop:disable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    # rubocop:disable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/MethodLength
     def initialize(error, retryable: nil, step_name: nil, inputs: {}, backtrace: nil, redact_inputs: [],
                    reactor_name: nil, step_arguments: {}, exception_class: nil,
                    file_path: nil, line_number: nil, code_snippet: nil, invalid_payload: false, validation_errors: nil,
-                   **opts)
-      # rubocop:enable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+                   rollback_failures: nil, **opts)
+      # rubocop:enable Metrics/ParameterLists, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/MethodLength
       retryable = opts[:retry] if opts.key?(:retry) # `retry:` wins over `retryable:` when both are given
       @error = error
 
@@ -159,6 +159,7 @@ module RubyReactor
         line_number ||= attributes[:line_number]
         code_snippet ||= attributes[:code_snippet]
         validation_errors ||= attributes[:validation_errors]
+        rollback_failures ||= attributes[:rollback_failures]
       end
 
       @retryable = if retryable.nil?
@@ -179,6 +180,9 @@ module RubyReactor
       @code_snippet = code_snippet
       @invalid_payload = invalid_payload
       @validation_errors = validation_errors
+      # Every undo/compensation that did not complete during this failure's
+      # rollback (005 FR-004): `{ step:, kind:, key:, reason:, message: }`.
+      @rollback_failures = normalize_rollback_failures(rollback_failures)
     end
 
     def success?
@@ -236,6 +240,7 @@ module RubyReactor
         line_number: @line_number,
         code_snippet: @code_snippet,
         validation_errors: @validation_errors,
+        rollback_failures: @rollback_failures,
         backtrace: @backtrace
       }
     end
@@ -334,8 +339,25 @@ module RubyReactor
         file_path: err[:file_path],
         line_number: err[:line_number],
         code_snippet: err[:code_snippet],
-        validation_errors: err[:validation_errors]
+        validation_errors: err[:validation_errors],
+        rollback_failures: err[:rollback_failures]
       }
+    end
+
+    ROLLBACK_FAILURE_SYMBOLS = %i[step kind reason].freeze
+    private_constant :ROLLBACK_FAILURE_SYMBOLS
+
+    # A stored failure comes back with string keys (and, through plain JSON,
+    # string values); `step`, `kind` and `reason` are Symbols on a live one.
+    def normalize_rollback_failures(entries)
+      return [] unless entries.is_a?(Array)
+
+      entries.map do |entry|
+        entry.to_h do |k, v|
+          key = k.to_sym
+          [key, ROLLBACK_FAILURE_SYMBOLS.include?(key) && v ? v.to_sym : v]
+        end
+      end
     end
   end
 

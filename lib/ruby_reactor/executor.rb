@@ -52,15 +52,7 @@ module RubyReactor
           # (F8): a mid-child crash re-runs one sub-step, not the whole child.
           # `throttle: true` lets checkpoint_min_interval coalesce these mid-run
           # writes (default 0 = write every step); the terminal save still runs.
-          on_step_complete: -> { checkpoint!(throttle: true) },
-          # A step-level contention park must hand this executor's reactor-level
-          # lock/semaphore over to the redelivery BEFORE `RetryManager` persists
-          # the context and enqueues the job: a worker starting in that window
-          # reads the saved context, sees no `parked_primitives` marker, and
-          # re-competes for a hold this executor has already detached — under the
-          # same owner, so it silently succeeds and the detached hold/count is
-          # left behind until its TTL.
-          on_contention_park: -> { park_held_primitives! }
+          on_step_complete: -> { checkpoint!(throttle: true) }
         }
       )
       @result = nil
@@ -129,6 +121,7 @@ module RubyReactor
         return finalize_halt(halted)
       end
 
+      @context.admit!
       @context.status = :running
       save_context
 
@@ -149,11 +142,14 @@ module RubyReactor
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
       raise e
-    rescue Error::AsyncResultPending
-      # Only reachable when this executor runs nested inside a worker (a
-      # composed child; sync callers never park). Propagate to the ROOT
-      # resume, which owns the park. This child's own lock/semaphore (if any)
-      # ARE released below and re-competed for on redelivery.
+    rescue Error::ExecutionParked
+      # A park signal from a step of this run (its contention, or a wait on a
+      # background result), reaching a composed child's or a map element's
+      # first run. Every executor on the stack keeps its OWN lock/semaphore
+      # through the gap and re-adopts it on redelivery (005 D-A2); the worker
+      # at the top requeues once, after all of them have saved. A synchronous
+      # caller never sees a park signal: nothing raises one outside a worker.
+      park_held_primitives! if @context.inline_async_execution
       @contention_snooze = true
       raise
     rescue StandardError => e
@@ -162,7 +158,7 @@ module RubyReactor
       completed = true
       @result
     ensure
-      release_locks
+      release_locks unless @parked
       leave_ordered_lock_scope
       save_context if persist_context? && !skip_context_persist?
 
@@ -237,6 +233,10 @@ module RubyReactor
         return finalize_halt(halted)
       end
 
+      # Past every reactor-level gate. Idempotent for a genuine resume, which
+      # was admitted on its first run (or, saved before `admitted` existed,
+      # is marked now).
+      @context.admit!
       prepare_for_resume
       save_context
 
@@ -259,11 +259,13 @@ module RubyReactor
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
       raise e
-    rescue Error::AsyncResultPending => e
-      # An awaited async unit is not terminal yet: park. Exclusive lock and
-      # semaphore stay HELD (recorded on the context for the resuming job to
-      # re-adopt); the worker snoozes the job. The context lock is still
-      # released below — the redelivered job must be able to take it.
+    rescue Error::ExecutionParked => e
+      # A step of this run parked (contention, or an awaited background result
+      # not terminal yet) — here, or in a composed child that already parked
+      # its own holds on the way through. Exclusive lock and semaphore stay
+      # HELD (recorded on the context for the resuming job to re-adopt); the
+      # worker snoozes the job. The context lock is still released below — the
+      # redelivered job must be able to take it.
       park_held_primitives!
       @contention_snooze = true
       raise e
@@ -399,12 +401,15 @@ module RubyReactor
       RubyReactor::RateLimit.new(key_base, limits: limits).check_and_increment!
     end
 
-    # True when nothing has run yet for this context — the very first execution
-    # of the reactor, including an async reactor's first worker pass. A genuine
-    # resume (paused, async-handed-off, or retried step) always records a
-    # `current_step` before serializing, so it is never mistaken for a first run.
+    # True when this execution has not yet passed its reactor-level gates —
+    # the very first execution, including an async reactor's first worker
+    # pass. Read from the explicit `admitted` marker, so a park at any depth
+    # (which unwinds `with_step` and clears `current_step`) can never make a
+    # redelivery look fresh and re-charge its rate limit (005 R-03). The old
+    # inference is AND-ed in so a context saved before the marker existed
+    # still resumes as it did.
     def first_execution?
-      @context.current_step.nil? && @context.intermediate_results.empty?
+      !@context.admitted? && @context.current_step.nil? && @context.intermediate_results.empty?
     end
 
     # Record and persist a Halt result, then return it. Shared by the

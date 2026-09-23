@@ -726,8 +726,11 @@ class ChargeStep < RubyReactor::Step
   # All five macros also work declared on a STEP, not just the reactor —
   # keying the critical section down to this one operation instead of the
   # whole workflow. Surrounding steps (audit, notify, ...) keep overlapping
-  # across concurrent executions; only :charge serializes.
-  with_lock(ttl: 60) { |args| "acct:#{args[:account_id]}" }
+  # across concurrent executions; only :charge serializes. Its undo re-takes
+  # the key, waiting up to `rollback_wait:` (default: `ttl`; 60 s for a
+  # step `with_semaphore`) — an undo that still can't run is reported on
+  # `Failure#rollback_failures`, never dropped.
+  with_lock(ttl: 60, rollback_wait: nil) { |args| "acct:#{args[:account_id]}" }
 
   def run
     Success(charge!(inputs))
@@ -1389,6 +1392,22 @@ end
 # 2. Undo debit_account (credit the sender)
 # Result: Complete rollback of the transaction
 ```
+
+A rollback that did not complete is never silent. `Failure#rollback_failures`
+lists every undo or compensation that raised, returned a `Failure`, or could not
+re-take its step's lock/semaphore within `rollback_wait:` — including those of
+composed children (flattened). It is always an Array, empty when rollback
+completed, and is part of `Failure#to_h`:
+
+```ruby
+result = TransactionReactor.run(from_account: 1, to_account: 2, amount: 10)
+result.rollback_failures
+# => [{ step: :debit_account, kind: :undo, key: nil, reason: :raised, message: "gateway timeout" }]
+```
+
+`reason` is `:coordination_unavailable`, `:returned_failure`, or `:raised`; `kind`
+is `:undo` or `:compensate`. See
+[Step Rollback](documentation/locks_and_semaphores.md#step-rollback).
 
 ### Using Pre-defined Schemas
 

@@ -61,7 +61,15 @@ module RubyReactor
         return if check_fail_fast?(arguments, storage)
 
         executor = Executor.new(context.reactor_class, {}, context)
-        arguments[:serialized_context] ? executor.resume_execution : executor.execute
+        begin
+          arguments[:serialized_context] ? executor.resume_execution : executor.execute
+        rescue Error::ExecutionParked => e
+          # The element parked (a step's contention, or an awaited background
+          # result) and its executor already parked its own holds on the
+          # context: requeue the element with that context, like `Worker`
+          # snoozes a reactor. Not finished — no result, no counter decrement.
+          return requeue_parked_element(arguments, context, e)
+        end
 
         result = executor.result
 
@@ -73,6 +81,20 @@ module RubyReactor
 
         handle_result(result, arguments, context, storage, executor)
         finalize_execution(arguments, storage)
+      end
+
+      def self.requeue_parked_element(arguments, context, error)
+        context.middlewares&.on(:before_async_enqueue, context)
+        config = RubyReactor.configuration
+        config.async_router.perform_map_element_in(
+          Worker.snooze_delay(config, error),
+          map_id: arguments[:map_id], element_id: arguments[:element_id], index: arguments[:index],
+          serialized_inputs: arguments[:serialized_inputs], reactor_class_info: arguments[:reactor_class_info],
+          strict_ordering: arguments[:strict_ordering], parent_context_id: arguments[:parent_context_id],
+          parent_reactor_class_name: arguments[:parent_reactor_class_name], step_name: arguments[:step_name],
+          batch_size: arguments[:batch_size], serialized_context: ContextSerializer.serialize(context),
+          fail_fast: arguments[:fail_fast]
+        )
       end
 
       def self.load_parent_context(arguments, reactor_class_name, storage)
@@ -204,7 +226,7 @@ module RubyReactor
         RubyReactor::Map::Dispatcher.perform(next_batch_args)
       end
 
-      private_class_method :load_parent_context, :trigger_next_batch_if_needed
+      private_class_method :load_parent_context, :trigger_next_batch_if_needed, :requeue_parked_element
     end
   end
 end

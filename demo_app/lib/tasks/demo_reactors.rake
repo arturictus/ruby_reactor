@@ -676,7 +676,8 @@ namespace :demo do
     puts "\n✅ COORDINATION DEMO COMPLETE"
   end
 
-  desc "StepLockDemoReactor — with_lock declared on a STEP, not the whole reactor"
+  desc "StepLockDemoReactor — with_lock declared on a STEP, not the whole reactor; " \
+       "plus StepLockRollbackDemoReactor — rollback under contention (rollback_wait, rollback_failures)"
   task step_lock: [:environment, :flush_redis] do
     require "sidekiq/testing"
     Sidekiq::Testing.fake!
@@ -758,6 +759,34 @@ namespace :demo do
       puts "✅ SUCCESS: :charge's undo ran under its own lock after :notify failed"
     else
       puts "❌ FAIL: status=#{r3.context.status}, undo_entries=#{undo_entries.size}"
+    end
+
+    # Synchronous sibling reactor (step_lock_rollback_demo_reactor.rb): the
+    # rollback's outcome is read straight off the returned Failure.
+    puts "\n=== 4. Rollback under contention: the undo waits for a busy key, then runs ==="
+    account4 = "demo_acct_#{SecureRandom.hex(3)}"
+    r4 = StepLockRollbackDemoReactor.run(account_id: account4, rollback_hold_seconds: 0.5)
+    undone = StepLockRollbackChargeStep.undone.include?(account4)
+    puts "  run: failure?=#{r4.failure?}  (\"demo:acct:#{account4}\" held by demo-external for 0.5s, rollback_wait: 1)"
+    puts "  :charge undo ran: #{undone}  rollback_failures=#{r4.rollback_failures.inspect}"
+    if r4.failure? && undone && r4.rollback_failures.empty?
+      puts "✅ SUCCESS: the undo waited for the key and ran"
+    else
+      puts "❌ FAIL: undone=#{undone}, rollback_failures=#{r4.rollback_failures.inspect}"
+    end
+
+    puts "\n=== 5. Rollback wait exceeded: the undo is reported, not dropped ==="
+    account5 = "demo_acct_#{SecureRandom.hex(3)}"
+    r5 = StepLockRollbackDemoReactor.run(account_id: account5, rollback_hold_seconds: 2.0)
+    undone = StepLockRollbackChargeStep.undone.include?(account5)
+    puts "  run: failure?=#{r5.failure?}  (key held for 2s, rollback_wait: 1)"
+    puts "  :charge undo ran: #{undone}"
+    puts "  rollback_failures: #{r5.rollback_failures.inspect}"
+    reported = r5.rollback_failures.any? { |e| e[:step] == :charge && e[:reason] == :coordination_unavailable }
+    if r5.failure? && !undone && reported
+      puts "✅ SUCCESS: result.rollback_failures names :charge (:coordination_unavailable)"
+    else
+      puts "❌ FAIL: undone=#{undone}, rollback_failures=#{r5.rollback_failures.inspect}"
     end
   end
 end

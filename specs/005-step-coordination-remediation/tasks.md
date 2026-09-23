@@ -48,7 +48,7 @@ description: "Task list for Step Coordination Review Remediation"
 **Purpose**: record a baseline, so FR-028 (no lost examples) and SC-011 (no *new* lint
 offenses) can be checked at the end.
 
-- [ ] T001 Record the baseline in `specs/005-step-coordination-remediation/baseline.md`.
+- [X] T001 Record the baseline in `specs/005-step-coordination-remediation/baseline.md`.
   1. Start the test Redis with `docker compose up -d redis-test`.
   2. On the current HEAD, run `bundle exec rspec` and record the total example and failure
      counts.
@@ -68,7 +68,7 @@ error classes that US2 and US3 both depend on.
 
 **⚠️ CRITICAL**: no user story work can begin until this phase is complete.
 
-- [ ] T002 Record the decisions in `specs/003-step-lock-declarations/research.md`.
+- [X] T002 Record the decisions in `specs/003-step-lock-declarations/research.md`.
   - Append the sections **D-F1**, **D-F3** and **D-A2**. Copy each one's Decision, Rationale
     and Alternatives from `specs/005-step-coordination-remediation/research.md` §2, and link
     back to it.
@@ -80,11 +80,11 @@ error classes that US2 and US3 both depend on.
     now say: waits up to `rollback_wait`, which defaults to the hold's `ttl` (60 s for a
     semaphore), then reports on `Failure#rollback_failures`. It never parks.
   - (FR-025, FR-026)
-- [ ] T003 [P] Amend **FR-026** in `specs/003-step-lock-declarations/spec.md` to read:
+- [X] T003 [P] Amend **FR-026** in `specs/003-step-lock-declarations/spec.md` to read:
   "Compensation or undo that cannot take its key within its rollback wait (default: the
   declared hold's expiry) MUST be reported on the execution's failure (`rollback_failures`)
   rather than silently skipped. See 005." (FR-026)
-- [ ] T004 Create the park-signal hierarchy (data-model "Park Signal", R-01).
+- [X] T004 Create the park-signal hierarchy (data-model "Park Signal", R-01).
   - `lib/ruby_reactor/error/execution_parked.rb`: `class ExecutionParked < Base`. Its class
     comment states the contract: every rescue between the raise site and
     `Worker`/`ElementExecutor` either re-raises it untouched, or parks its own holds and then
@@ -119,7 +119,7 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
 
 ### Tests for User Story 1 ⚠️ write first, and confirm they FAIL on `ca963444`
 
-- [ ] T005 [P] [US1] Create the fixtures in
+- [X] T005 [P] [US1] Create the fixtures in
   `spec/support/reactors/rollback_contention_reactors.rb`.
   - `RbcChargeStep`: a class step. `input :account_id`,
     `with_lock(ttl: 1) { |a| "rbc:acct:#{a[:account_id]}" }` (the default `wait: 0`). Its
@@ -140,7 +140,7 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
     - `RbcComposedParentReactor`: composes `RbcChildReactor` (which contains `RbcChargeStep`),
       then runs `:contend` on the child's key with `hold_seconds: 3` and `rollback_wait`
       exceeded. `RbcChildReactor` must use `RbcShortRollbackChargeStep` for this.
-- [ ] T006 [US1] Write `spec/ruby_reactor/step_coordination/rollback_under_contention_spec.rb`
+- [X] T006 [US1] Write `spec/ruby_reactor/step_coordination/rollback_under_contention_spec.rb`
   (R1 and variants). Each example asserts on `result`, a `RubyReactor::Failure`.
   1. `RbcReactor`, `hold_seconds: 0.5`: the undo ran (the list contains `undo:<id>`), and
      `result.rollback_failures == []`. The `ttl: 1` default outlasts the hold, where the
@@ -161,7 +161,7 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
 
 ### Implementation for User Story 1
 
-- [ ] T007 [P] [US1] In `lib/ruby_reactor/dsl/lockable.rb`:
+- [X] T007 [P] [US1] In `lib/ruby_reactor/dsl/lockable.rb`:
   - Add `rollback_wait: nil` to `with_lock` and `with_semaphore`, and store it in the config
     hash.
   - When it is not nil, raise `ArgumentError` unless it is `Numeric` and `>= 0`.
@@ -169,7 +169,7 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
     60 s for a semaphore.
   - Confirm `lib/ruby_reactor/dsl/step_builder.rb` (which includes
     `Lockable::ClassMethods`) exposes it to inline steps with no change.
-- [ ] T008 [P] [US1] Add `rollback_failures` to `RubyReactor::Failure` in `lib/ruby_reactor.rb`
+- [X] T008 [P] [US1] Add `rollback_failures` to `RubyReactor::Failure` in `lib/ruby_reactor.rb`
   (data-model "Rollback Failure Entry").
   - Add an `attr_reader :rollback_failures` and an `initialize` keyword
     `rollback_failures: nil`, stored as `Array(rollback_failures)`.
@@ -178,7 +178,7 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
     `step`, `kind` and `reason` converted to Symbols.
   - Add a `rollback_failures:` pass-through keyword to
     `lib/ruby_reactor/max_retries_exhausted_failure.rb#initialize`.
-- [ ] T009 [US1] In `lib/ruby_reactor/executor/step_coordination.rb` (R-08, D-F1):
+- [X] T009 [US1] In `lib/ruby_reactor/executor/step_coordination.rb` (R-08, D-F1):
   - Add `DEFAULT_ROLLBACK_WAIT = 60`.
   - `rollback_with_lock` uses `wait: config[:rollback_wait] || config[:ttl]`.
   - `rollback_with_semaphore` uses `config[:rollback_wait] || DEFAULT_ROLLBACK_WAIT`.
@@ -187,7 +187,7 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
     Pass `wait` in. In the `KeyError` branch the key stays `nil`.
   - Rewrite the `around_rollback` comment: it now uses `rollback_wait`, not the configured
     forward `wait:`.
-- [ ] T010 [US1] Collect failures in `lib/ruby_reactor/executor/compensation_manager.rb`.
+- [X] T010 [US1] Collect failures in `lib/ruby_reactor/executor/compensation_manager.rb`.
   - Add `attr_reader :rollback_failures`, initialized to `[]`.
   - Add a private `record_rollback_failure(step_name, kind, outcome)`:
     - a `RubyReactor::Failure` with a non-empty `rollback_failures` concatenates that list
@@ -200,7 +200,7 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
   - Call it from `undo_step` (the Failure-result branch and the `rescue StandardError` branch,
     with `kind: :undo`) and from `compensate_step` (the Failure-result branch, with
     `kind: :compensate`, and before re-raising in its `rescue`).
-- [ ] T011 [US1] Attach the list to the final failure in
+- [X] T011 [US1] Attach the list to the final failure in
   `lib/ruby_reactor/executor/result_handler.rb` (one choke point, R-08).
   - In `handle_execution_error`, bind the case result to `failure`, then run
     `failure.rollback_failures.concat(@compensation_manager.rollback_failures) if failure.is_a?(RubyReactor::Failure)`
@@ -211,14 +211,14 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
     so a composed child's entries come first.
   - In `lib/ruby_reactor/executor/retry_manager.rb#handle_non_retryable_failure`, pass
     `rollback_failures: result.rollback_failures` into `MaxRetriesExhaustedFailure.new`.
-- [ ] T012 [US1] In `lib/ruby_reactor/step/compose_step.rb#compensate` (also aliased as
+- [X] T012 [US1] In `lib/ruby_reactor/step/compose_step.rb#compensate` (also aliased as
   `undo`): after `executor.undo_all`, return
   `RubyReactor::Failure("composed :#{step_name} rollback incomplete", rollback_failures: executor.compensation_manager.rollback_failures)`
   when that list is non-empty. Otherwise return `Success()`.
-- [ ] T013 [US1] Run `bundle exec rspec spec/ruby_reactor/step_coordination/rollback_under_contention_spec.rb spec/ruby_reactor/step_coordination/rollback_spec.rb spec/ruby_reactor/skipped_rollback_spec.rb spec/ruby_reactor/interrupt_undo_spec.rb spec/ruby_reactor/failure_reporting_spec.rb`
+- [X] T013 [US1] Run `bundle exec rspec spec/ruby_reactor/step_coordination/rollback_under_contention_spec.rb spec/ruby_reactor/step_coordination/rollback_spec.rb spec/ruby_reactor/skipped_rollback_spec.rb spec/ruby_reactor/interrupt_undo_spec.rb spec/ruby_reactor/failure_reporting_spec.rb`
   and make it green. An existing spec that matched the old bare-string rollback message may
   change only its message expectation (FR-029).
-- [ ] T014 [US1] Update the "### Step Rollback" section (~:793-803) of
+- [X] T014 [US1] Update the "### Step Rollback" section (~:793-803) of
   `documentation/locks_and_semaphores.md`.
   - Replace "uses the *configured* `wait:` directly" with `rollback_wait:`: what it defaults
     to (`ttl`, or 60 s for a semaphore), that it blocks the worker thread while it waits, and
@@ -227,13 +227,13 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
   - Correct `:802`: an undo that could not re-acquire yields a `type: :undo` trace entry plus
     the `on_failed_undo` hook, and an undo that raised yields `type: :undo_failure`. Neither
     is a ":failed_undo trace entry".
-- [ ] T015 [US1] In `README.md`: add `rollback_wait:` wherever step `with_lock`/`with_semaphore`
+- [X] T015 [US1] In `README.md`: add `rollback_wait:` wherever step `with_lock`/`with_semaphore`
   options are listed, and add `Failure#rollback_failures` to the section describing
   `RubyReactor::Failure`'s readers.
 
 ### Demo for User Story 1 (Constitution VI, FR-030)
 
-- [ ] T016 [P] [US1] Add a `have_rollback_failure(step_name)` matcher in
+- [X] T016 [P] [US1] Add a `have_rollback_failure(step_name)` matcher in
   `lib/ruby_reactor/rspec/matchers.rb`.
   - Optional chains: `.for_key(key)` and `.because(reason)`.
   - It resolves `actual` the same way `be_failure` does (a `Failure`, or a `TestSubject`'s
@@ -241,7 +241,7 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
   - Its failure message lists the actual entries.
   - Add examples in the new file `spec/ruby_reactor/rspec/rollback_failure_matcher_spec.rb`:
     match, no match, `for_key` and `because`.
-- [ ] T017 [US1] Add a rollback-under-contention path to
+- [X] T017 [US1] Add a rollback-under-contention path to
   `demo_app/app/reactors/step_lock_demo_reactor.rb`.
   - Add an input `contend_on_rollback` (Boolean) and an input `rollback_hold_seconds`.
   - When `contend_on_rollback` is set, a class step `StepLockRollbackContenderStep` after
@@ -252,13 +252,13 @@ complete is listed on `Failure#rollback_failures` (F1, FR-001–FR-005).
   - If the inputs would muddle the existing reactor, create
     `demo_app/app/reactors/step_lock_rollback_demo_reactor.rb` (`StepLockRollbackDemoReactor`)
     instead. That is one reactor per file.
-- [ ] T018 [US1] In the `demo:step_lock` task in `demo_app/lib/tasks/demo_reactors.rake`, add
+- [X] T018 [US1] In the `demo:step_lock` task in `demo_app/lib/tasks/demo_reactors.rake`, add
   two scenarios:
   - "=== 4. Rollback under contention": the hold is 0.5 s, the undo waits and runs, and it
     prints the undo log entry, with ✅/❌.
   - "=== 5. Rollback wait exceeded": `short_rollback_wait: true` and a 2 s hold. It prints
     `result.rollback_failures`, with ✅ when it names `:charge` and `:coordination_unavailable`.
-- [ ] T019 [US1] In `demo_app/spec/reactors/step_lock_demo_reactor_spec.rb` (or the sibling
+- [X] T019 [US1] In `demo_app/spec/reactors/step_lock_demo_reactor_spec.rb` (or the sibling
   spec for T017's alternative), add `describe "rollback under contention"`. Use only the
   shipped surface: `test_reactor`, `be_failure`,
   `have_rollback_failure(:charge).because(:coordination_unavailable)`, and
@@ -282,7 +282,7 @@ and E2 arrives synchronously out of turn and fails. E3, arriving after E1, runs 
 
 ### Tests for User Story 3 ⚠️ write first, and confirm they FAIL on `ca963444`
 
-- [ ] T020 [P] [US3] Create the fixtures in
+- [X] T020 [P] [US3] Create the fixtures in
   `spec/support/reactors/ordering_parity_reactors.rb`.
   - `OspStrictStep`: a class step with `input :run_id` and `input :sleep_seconds` (default 0),
     and `with_ordered_lock(strict: true, poison_pill_timeout: 30) { |a| "osp:#{a[:run_id]}" }`.
@@ -296,7 +296,7 @@ and E2 arrives synchronously out of turn and fails. E3, arriving after E1, runs 
   - `OspAbortStep`: raises `NoMemoryError` when `input :abort` is true.
   - A reactor-level counterpart for parity: `OspReactorLevel`, with `background all: true` and
     reactor `with_ordered_lock(strict: true) { |i| "osp:r:#{i[:run_id]}" }`.
-- [ ] T021 [US3] Write `spec/ruby_reactor/step_coordination/ordering_parity_spec.rb`.
+- [X] T021 [US3] Write `spec/ruby_reactor/step_coordination/ordering_parity_spec.rb`.
   - **R3**:
     1. E1 runs `OspSyncReactor` in a `Thread` with `sleep_seconds: 1`.
     2. After E1 enters (poll the log), E2 runs synchronously and is expected to be a Failure
@@ -321,7 +321,7 @@ and E2 arrives synchronously out of turn and fails. E3, arriving after E1, runs 
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] Add the classifier in `lib/ruby_reactor/executor/ordered_lock_support.rb`
+- [X] T022 [US3] Add the classifier in `lib/ruby_reactor/executor/ordered_lock_support.rb`
   (R-06). Add `def self.gate(info, fresh:)`:
   - It builds `OrderedLock.new(info[:key], nonce:, epoch:, poison_pill_timeout:, strict:)` and
     calls `check!`.
@@ -337,7 +337,7 @@ and E2 arrives synchronously out of turn and fails. E3, arriving after E1, runs 
     other caller.
   - Run `bundle exec rspec spec/ruby_reactor/integration/ordered_lock_spec.rb spec/ruby_reactor/storage/redis_ordered_locking_spec.rb`.
     It must stay green: there is no reactor-level behavior change.
-- [ ] T023 [US3] Rewrite the step gate in `lib/ruby_reactor/executor/step_coordination.rb`
+- [X] T023 [US3] Rewrite the step gate in `lib/ruby_reactor/executor/step_coordination.rb`
   (R-06, D-F3).
   - `ordered_lock_gate` calls `OrderedLockSupport.gate(info, fresh: true)`, wrapping
     `WaitError` into `Contended` exactly as `check_ordered_lock!` does today. Remove or fold
@@ -351,7 +351,7 @@ and E2 arrives synchronously out of turn and fails. E3, arriving after E1, runs 
   - In `gate_ordered_lock`'s `rescue Contended` (out of turn), `unless parking?`, use
     `advance_with_retry(info, failed: **false**)` (D-F3) and delete the stash. Update the
     comment.
-- [ ] T024 [US3] Rewrite `run_under_ordered_lock` in
+- [X] T024 [US3] Rewrite `run_under_ordered_lock` in
   `lib/ruby_reactor/executor/step_coordination.rb` (R-07, F8).
   - Keep a single `outcome = :abandoned`.
   - After `yield`, set `outcome` to `:retry_pending` when `retry_pending?(result)`, otherwise
@@ -366,7 +366,7 @@ and E2 arrives synchronously out of turn and fails. E3, arriving after E1, runs 
     - `:parked`, `:retry_pending` and `:abandoned`: keep.
   - Add a comment on `:abandoned` explaining why it does not advance: `Sidekiq::Shutdown`
     redelivers the job, and the poison pill releases the position.
-- [ ] T025 [US3] Update the step `with_ordered_lock` section of
+- [X] T025 [US3] Update the step `with_ordered_lock` section of
   `documentation/locks_and_semaphores.md`.
   - Add a "**Use only on `background all: true` reactors**" callout, adapted from `:494`/`:665`:
     a synchronous out-of-turn arrival fails with a contention error and hands its position
@@ -374,7 +374,7 @@ and E2 arrives synchronously out of turn and fails. E3, arriving after E1, runs 
     still skips its strict successors.
   - Document `Skipped(reason: :ordered_lock_stale_batch)` for a step whose batch expired
     before its retry.
-- [ ] T026 [US3] Run `bundle exec rspec spec/ruby_reactor/step_coordination/ordering_parity_spec.rb spec/ruby_reactor/step_coordination/primitives_spec.rb spec/ruby_reactor/step_coordination/review_fixes_spec.rb spec/ruby_reactor/integration/ordered_lock_spec.rb`
+- [X] T026 [US3] Run `bundle exec rspec spec/ruby_reactor/step_coordination/ordering_parity_spec.rb spec/ruby_reactor/step_coordination/primitives_spec.rb spec/ruby_reactor/step_coordination/review_fixes_spec.rb spec/ruby_reactor/integration/ordered_lock_spec.rb`
   and make it green. `review_fixes_spec.rb:310` (synchronous lock contention *after* the gate)
   must still drain the key: that position was at the head, so it keeps `failed: true`.
 
@@ -399,7 +399,7 @@ rate count is 1.
 
 ### Tests for User Story 2 ⚠️ write first, and confirm they FAIL on `ca963444`
 
-- [ ] T027 [P] [US2] Create the fixtures in `spec/support/reactors/park_reactors.rb`.
+- [X] T027 [P] [US2] Create the fixtures in `spec/support/reactors/park_reactors.rb`.
   - `ParkChildStep`: a class step with `with_lock { |a| "park:acct:#{a[:account_id]}" }`.
   - `ParkChildReactor`: its first step is `:charge` (`ParkChildStep`).
   - `ParkRateParentReactor`: `background all: true`,
@@ -415,7 +415,7 @@ rate count is 1.
   - `ParkAsyncReaderParent`: `background all: true`, `compose :child, ParkAsyncReaderChild`,
     `returns :child`.
   - A map fixture, `ParkMapReactor`, whose element reactor's first step is `ParkChildStep`.
-- [ ] T028 [US2] Write `spec/ruby_reactor/step_coordination/park_spec.rb`. Use
+- [X] T028 [US2] Write `spec/ruby_reactor/step_coordination/park_spec.rb`. Use
   `Sidekiq::Testing.fake!`, and drive each job once with
   `RubyReactor::Adapters::Sidekiq::Worker.new.perform(*job["args"])`.
   - **R2**: hold `"park:acct:<id>"` externally, perform once (no failure, one job
@@ -445,15 +445,15 @@ rate count is 1.
 
 The steps follow the rescue-site order in research R-01.
 
-- [ ] T029 [US2] In `lib/ruby_reactor/executor/step_executor.rb#safe_execute_step_sync`, add
+- [X] T029 [US2] In `lib/ruby_reactor/executor/step_executor.rb#safe_execute_step_sync`, add
   `rescue Error::ExecutionParked; raise` before `rescue StandardError => e`. This is the F10
   fix: park signals leave a composed step untouched.
-- [ ] T030 [US2] In the `rescue Exception => e` of
+- [X] T030 [US2] In the `rescue Exception => e` of
   `lib/ruby_reactor/executor/step_executor.rb#execute_step`, when
   `e.is_a?(Error::ExecutionParked)`, emit
   `@middlewares.on(:snooze_step, step_config.name, e, @context)` in place of `:failed_step`,
   then re-raise (R-04).
-- [ ] T031 [US2] Rewrite `handle_contention` in `lib/ruby_reactor/executor/step_executor.rb`
+- [X] T031 [US2] Rewrite `handle_contention` in `lib/ruby_reactor/executor/step_executor.rb`
   (R-01, R-05).
   - Keep the `current_step` pin, the trace entry, the `:step_contention` marker and the log
     line.
@@ -466,12 +466,12 @@ The steps follow the rescue-site order in research R-01.
     Move that verbatim from `retry_manager.rb:47-70`.
   - Otherwise `raise Error::StepContentionPark.new(contended)`.
   - Remove `@on_contention_park` from `initialize`.
-- [ ] T032 [US2] In `lib/ruby_reactor/executor/retry_manager.rb`, delete `park_for_contention`
+- [X] T032 [US2] In `lib/ruby_reactor/executor/retry_manager.rb`, delete `park_for_contention`
   and fix the `execute_with_retry` and `requeue_job` comments that mention contention parks.
-- [ ] T033 [US2] In `lib/ruby_reactor/executor/step_coordination.rb#around_run`, add
+- [X] T033 [US2] In `lib/ruby_reactor/executor/step_coordination.rb#around_run`, add
   `rescue Error::ExecutionParked; raise` before `rescue StandardError`. A park is not terminal,
   so it must not clear the contention state.
-- [ ] T034 [US2] Add the admission marker in `lib/ruby_reactor/context.rb` and
+- [X] T034 [US2] Add the admission marker in `lib/ruby_reactor/context.rb` and
   `lib/ruby_reactor/executor.rb` (R-03, data-model "Execution Admission").
   - Add `Context#admitted?`, which reads `private_data[:admitted]` or `["admitted"]`, and
     `Context#admit!`.
@@ -482,7 +482,7 @@ The steps follow the rescue-site order in research R-01.
     `!@context.admitted? && @context.current_step.nil? && @context.intermediate_results.empty?`.
   - `fresh_ordered_lock_start?` in `lib/ruby_reactor/executor/ordered_lock_support.rb` uses
     the same predicate.
-- [ ] T035 [US2] Park at every level in `lib/ruby_reactor/executor.rb` (D-A2).
+- [X] T035 [US2] Park at every level in `lib/ruby_reactor/executor.rb` (D-A2).
   - Remove `on_contention_park:` from the `StepExecutor` managers, along with its comment.
   - In `execute`, replace `rescue Error::AsyncResultPending` with
     `rescue Error::ExecutionParked`. That branch calls
@@ -491,28 +491,28 @@ The steps follow the rescue-site order in research R-01.
   - In `resume_execution`, `rescue Error::ExecutionParked => e` keeps today's body.
   - Rewrite both comments: every level parks, and a synchronous caller never sees a park
     signal.
-- [ ] T036 [US2] In `lib/ruby_reactor/step/compose_step.rb#execute_child_reactor`, call
+- [X] T036 [US2] In `lib/ruby_reactor/step/compose_step.rb#execute_child_reactor`, call
   `executor.resume_execution` when
   `composed_data && (child_context.admitted? || child_context.current_step)`, and
   `executor.execute` otherwise (R-02).
-- [ ] T037 [US2] In `lib/ruby_reactor/worker.rb#perform`, replace
+- [X] T037 [US2] In `lib/ruby_reactor/worker.rb#perform`, replace
   `RubyReactor::Error::AsyncResultPending` in the snooze rescue list with
   `RubyReactor::Error::ExecutionParked`. In `handle_snooze`, the `capped` test excludes
   `Error::ExecutionParked`. Add a comment: the contention ceiling is enforced at the raise
   site with the per-step counter.
-- [ ] T038 [US2] In `lib/ruby_reactor/map/element_executor.rb#perform_element`, wrap the
+- [X] T038 [US2] In `lib/ruby_reactor/map/element_executor.rb#perform_element`, wrap the
   executor call in `begin … rescue Error::StepContentionPark => e`.
   - The handler runs `context.middlewares&.on(:before_async_enqueue, context)`, then calls
     `RubyReactor.configuration.async_router.perform_map_element_in(Worker.snooze_delay(RubyReactor.configuration, e), …)`,
     with the same keyword arguments as `retry_manager.rb:135-149` and
     `serialized_context: ContextSerializer.serialize(context)`.
   - Then `return`. Keep the `RetryQueuedResult` early return for failure retries.
-- [ ] T039 [P] [US2] Add `on_snooze_step(step_name, error, _context)` to
+- [X] T039 [P] [US2] Add `on_snooze_step(step_name, error, _context)` to
   `lib/ruby_reactor/open_telemetry.rb`.
   - Detach the step token, delete `@retry_errors[step_name]`, and pop the span.
   - Set `step.status = "parked"` and `step.park_reason = error.class.name`, with status OK,
     then `span.finish`.
-- [ ] T040 [US2] Update the specs that asserted the old park *mechanism* (R-12, FR-029).
+- [X] T040 [US2] Update the specs that asserted the old park *mechanism* (R-12, FR-029).
   - `spec/ruby_reactor/step_coordination/observability_spec.rb:115-158` (`run_parked`):
     expect `raise_error(RubyReactor::Error::StepContentionPark)`. Keep the log-line, waiting
     and no-`:failed_step` assertions, and add `:snooze_step`.
@@ -523,13 +523,13 @@ The steps follow the rescue-site order in research R-01.
   - Run `grep -rn "on_contention_park\|park_for_contention" spec lib`, which must print
     nothing. Check the contention-park expectations in
     `spec/ruby_reactor/telemetry_spec.rb:437`.
-- [ ] T041 [US2] Audit the park path. Run
+- [X] T041 [US2] Audit the park path. Run
   `grep -n "rescue StandardError\|rescue Exception\|rescue => " lib/ruby_reactor/executor.rb lib/ruby_reactor/executor/*.rb lib/ruby_reactor/step.rb lib/ruby_reactor/step/*.rb lib/ruby_reactor/template/*.rb`.
   Every hit between argument resolution or a step body and `Worker` must re-raise
   `Error::ExecutionParked` untouched, park and then re-raise, or be shown unreachable. Record
   the result as an "Audited <date>: <n> sites" line under the R-01 table in
   `specs/005-step-coordination-remediation/research.md`.
-- [ ] T042 [US2] Documentation.
+- [X] T042 [US2] Documentation.
   - In the "### Step Contention" section (:769-780) of
     `documentation/locks_and_semaphores.md`:
     - a park at any nesting depth keeps every level's own lock and semaphore, and re-adopts
@@ -538,7 +538,7 @@ The steps follow the rescue-site order in research R-01.
     - a background-result wait inside a composed child parks.
   - In `documentation/middlewares.md`, document the new `on_snooze_step(step_name, error, context)`:
     when it fires, and that a park never emits `:failed_step`.
-- [ ] T043 [US2] Run `bundle exec rspec spec/ruby_reactor/step_coordination spec/compose_spec.rb spec/ruby_reactor/parked_wait_spec.rb spec/ruby_reactor/dsl/async_reactor_spec.rb spec/ruby_reactor/map spec/ruby_reactor/telemetry_spec.rb`,
+- [X] T043 [US2] Run `bundle exec rspec spec/ruby_reactor/step_coordination spec/compose_spec.rb spec/ruby_reactor/parked_wait_spec.rb spec/ruby_reactor/dsl/async_reactor_spec.rb spec/ruby_reactor/map spec/ruby_reactor/telemetry_spec.rb`,
   then the full `bundle exec rspec`, and make both green. Rerun
   `spec/ruby_reactor/dsl/async_reactor_spec.rb` alone before debugging a failure in it: it is
   a known load flake.
@@ -560,13 +560,13 @@ the dashboard shows the step as waiting.
 
 ### Tests for User Story 4 ⚠️ write first, and confirm they FAIL on `ca963444`
 
-- [ ] T044 [P] [US4] Create the fixtures in `spec/support/reactors/async_step_park_reactors.rb`.
+- [X] T044 [P] [US4] Create the fixtures in `spec/support/reactors/async_step_park_reactors.rb`.
   - `AspOrderedStep`: a class step with
     `with_ordered_lock { |a| "asp:seq:#{a[:run_id]}" }` and
     `with_lock { |a| "asp:lock:#{a[:run_id]}" }`. Its body records to `"asp:log:#{run_id}"`.
   - `AspReactor`: `background all: true`, with `async_step :ordered` (`AspOrderedStep`) and a
     same-process sibling step `:progress` that records completion.
-- [ ] T045 [US4] Add a `describe "async_step park state (US4)"` block to
+- [X] T045 [US4] Add a `describe "async_step park state (US4)"` block to
   `spec/ruby_reactor/step_coordination/park_spec.rb`. This is sequential after T028, in the
   same file. Use the real Sidekiq worker from `spec/support/real_async_backend.rb`.
   - Hold `"asp:lock:<run_id>"` externally and let the unit park.
@@ -583,7 +583,7 @@ the dashboard shows the step as waiting.
 
 ### Implementation for User Story 4
 
-- [ ] T046 [US4] Change `lib/ruby_reactor/step_worker.rb` (R-09).
+- [X] T046 [US4] Change `lib/ruby_reactor/step_worker.rb` (R-09).
   - `handle_contention` passes `contended` to `mark_record_parked`.
   - `mark_record_parked(context, delay, attempt, contended)` also sets:
     - `record["ordered_lock"]` to the step's entry from
@@ -592,27 +592,27 @@ the dashboard shows the step as waiting.
     - `record["waiting"] = { "step" => @step_name, "primitive" => contended.primitive, "key" => contended.key, "attempts" => attempt }`.
   - `record_contention` keeps only the structured log line. Delete the trace append, the
     `private_data[:step_contention]` write and **`save_root`**.
-- [ ] T047 [US4] In `lib/ruby_reactor/step_worker.rb#load_step_context`, after `found` is
+- [X] T047 [US4] In `lib/ruby_reactor/step_worker.rb#load_step_context`, after `found` is
   resolved, read
   `storage.retrieve_step_result(@step_context_id, @step_name, step_result_namespace(found))`.
   When `record["ordered_lock"]` is present, set
   `(found.private_data[:step_ordered_locks] ||= {})[@step_name.to_s] = record["ordered_lock"].transform_keys(&:to_sym)`.
-- [ ] T048 [US4] In `lib/ruby_reactor/web/coordination_serializer.rb`, for steps whose
+- [X] T048 [US4] In `lib/ruby_reactor/web/coordination_serializer.rb`, for steps whose
   `step_config.async_dispatch == :step`, derive `waiting` from the step result record's
   `waiting` field.
   - Read it with `adapter.retrieve_step_result(context_id, name, RubyReactor.reactor_storage_name(reactor_class))`
     and normalize it with `normalize_waiting`.
   - Keep `private_data[:step_contention]` for same-process steps.
-- [ ] T049 [US4] Update the existing specs that asserted async_step park evidence in the
+- [X] T049 [US4] Update the existing specs that asserted async_step park evidence in the
   parent's trace or `private_data`. Find them with
   `grep -rn "contention_park\|step_contention" spec/ruby_reactor | grep -i async`, and check
   `spec/ruby_reactor/step_coordination/review_fixes_spec.rb:329-356`. Assert against the
   record, not the root blob.
-- [ ] T050 [US4] Document in `documentation/locks_and_semaphores.md` (the `async_step`
+- [X] T050 [US4] Document in `documentation/locks_and_semaphores.md` (the `async_step`
   contention note under Step Contention) that a parked `async_step` keeps its park state on
   its Step Result Record, with the `ruby_reactor.async_step.parked` log line, and that the
   parent trace has no `contention_park` entry for it.
-- [ ] T051 [US4] Run `bundle exec rspec spec/ruby_reactor/step_coordination/park_spec.rb spec/ruby_reactor/step_sweeper_spec.rb spec/ruby_reactor/step_contract_async_spec.rb`
+- [X] T051 [US4] Run `bundle exec rspec spec/ruby_reactor/step_coordination/park_spec.rb spec/ruby_reactor/step_sweeper_spec.rb spec/ruby_reactor/step_contract_async_spec.rb`
   and `grep -rln async_step spec/ruby_reactor | xargs bundle exec rspec`, and make them green.
 
 **Checkpoint**: US4 is complete. P4 is green, and the step worker never writes the root blob on
@@ -631,13 +631,13 @@ class.
 
 ### Tests for User Story 5 ⚠️ write first. P5 must FAIL on `ca963444`; R5 guards the docs claim.
 
-- [ ] T052 [P] [US5] Create the fixtures in `spec/support/reactors/attribution_reactors.rb`.
+- [X] T052 [P] [US5] Create the fixtures in `spec/support/reactors/attribution_reactors.rb`.
   - `AttrChargeStep`: a class step with `with_lock { |a| "attr:s:#{a[:account_id]}" }`.
   - `AttrReactor`: `background all: true`, reactor `with_lock { |i| "attr:r:#{i[:run_id]}" }`,
     and `:charge` (`AttrChargeStep`).
   - `AttrDirectOuterReactor`: a synchronous reactor whose step `:outer` body calls
     `AttrChargeStep.run({ account_id: args[:account_id] }, context)`.
-- [ ] T053 [US5] Write `spec/ruby_reactor/step_coordination/attribution_spec.rb`.
+- [X] T053 [US5] Write `spec/ruby_reactor/step_coordination/attribution_spec.rb`.
   - **R5**: a recording middleware captures `[event, key, context.coordinating_step]`. Hold
     `"attr:s:<id>"`, perform once (it parks), release, and perform again. Every event on
     `"attr:r:<run_id>"` has `coordinating_step == nil`, and every event on
@@ -650,15 +650,15 @@ class.
 
 ### Implementation for User Story 5
 
-- [ ] T054 [US5] In `lib/ruby_reactor/executor/step_coordination.rb#step_name`, return
+- [X] T054 [US5] In `lib/ruby_reactor/executor/step_coordination.rb#step_name`, return
   `step_config.name` when `@direct`, before the `context.current_step` fallback (F9, R-10).
   Update the comment.
-- [ ] T055 [P] [US5] Docs only, so this can ship first.
+- [X] T055 [P] [US5] Docs only, so this can ship first.
   - In `documentation/middlewares.md:126-140`, replace `context.current_step` with
     `context.coordinating_step` in the prose and in the `on_lock_acquired` example, and add
     one sentence saying `current_step` is the resume cursor and is not for attribution.
   - In `documentation/locks_and_semaphores.md:866`, make the same replacement.
-- [ ] T056 [US5] Run `bundle exec rspec spec/ruby_reactor/step_coordination/attribution_spec.rb spec/ruby_reactor/step_coordination/observability_spec.rb spec/ruby_reactor/step_coordination/single_site_spec.rb`
+- [X] T056 [US5] Run `bundle exec rspec spec/ruby_reactor/step_coordination/attribution_spec.rb spec/ruby_reactor/step_coordination/observability_spec.rb spec/ruby_reactor/step_coordination/single_site_spec.rb`
   and make it green.
 
 **Checkpoint**: US5 is complete.
@@ -673,7 +673,7 @@ FR-023, FR-024). This is docs only.
 **Independent Test**: read the Step Contention section. It states that a step park keeps the
 workflow's holds, and it gives the nesting-order rule with the A→B / B→A example.
 
-- [ ] T057 [US6] Add a "#### Nest keys in one order across levels" subsection to the
+- [X] T057 [US6] Add a "#### Nest keys in one order across levels" subsection to the
   "### Step Contention" section of `documentation/locks_and_semaphores.md`.
   - A step park keeps the reactor's own lock and semaphore, which is intended.
   - Reactor X (reactor lock A, step lock B) against reactor Y (reactor lock B, step lock A)
@@ -695,7 +695,7 @@ behavior-named test, and no example is lost (FR-027, FR-028, SC-010).
 **Independent Test**: `ls spec/ruby_reactor/step_coordination | grep review_fixes` prints
 nothing, and the example count equals the baseline plus the new examples.
 
-- [ ] T058 [US7] Fold `spec/ruby_reactor/step_coordination/review_fixes_spec.rb` into the
+- [X] T058 [US7] Fold `spec/ruby_reactor/step_coordination/review_fixes_spec.rb` into the
   behavior files.
   - Move its fixture classes (lines 1–216) into
     `spec/support/reactors/step_coordination_reactors.rb`, or into the per-behavior fixture
@@ -707,19 +707,19 @@ nothing, and the example count equals the baseline plus the new examples.
     - rollback of an inline step and the deadlock-guard unwind → `rollback_spec.rb`;
     - StepWorker hooks → `observability_spec.rb`.
   - Delete the file.
-- [ ] T059 [US7] Fold `spec/ruby_reactor/step_coordination/review_fixes_round3_spec.rb` the
+- [X] T059 [US7] Fold `spec/ruby_reactor/step_coordination/review_fixes_round3_spec.rb` the
   same way, then delete it:
   - inline declaration on a class step, and the guard-suppressed async_step →
     `single_site_spec.rb`;
   - the ceiling escalation → `park_spec.rb`;
   - async_step in a composed child → `park_spec.rb`;
   - the nested direct call → `attribution_spec.rb`.
-- [ ] T060 [US7] Fold `spec/ruby_reactor/step_coordination/review_fixes_round4_spec.rb` the
+- [X] T060 [US7] Fold `spec/ruby_reactor/step_coordination/review_fixes_round4_spec.rb` the
   same way, then delete it:
   - the deadlock guard with a key proc that raises → `rollback_spec.rb`;
   - the once-per-window step whose output contract rejects → `primitives_spec.rb`;
   - the redelivery of a finished async_step → `park_spec.rb`.
-- [ ] T061 [US7] Verify the layout.
+- [X] T061 [US7] Verify the layout.
   - `ls spec/ruby_reactor/step_coordination | grep review_fixes` prints nothing.
   - `bundle exec rspec spec/ruby_reactor/step_coordination --dry-run` equals the
     `baseline.md` total plus the examples added in T006, T021, T028, T045 and T053.
@@ -732,20 +732,20 @@ nothing, and the example count equals the baseline plus the new examples.
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T062 [P] Add entries to `CHANGELOG.md`.
+- [X] T062 [P] Add entries to `CHANGELOG.md`.
   - **Bug Fixes**, one line each for F1–F10, in user terms.
   - **Features**: `rollback_wait:` on `with_lock` and `with_semaphore`,
     `Failure#rollback_failures`, the `:snooze_step` middleware event, and the
     `have_rollback_failure` matcher.
-- [ ] T063 Consistency pass over `README.md` and `./documentation` (**REQUIRED**, Constitution
+- [X] T063 Consistency pass over `README.md` and `./documentation` (**REQUIRED**, Constitution
   Development Workflow).
   - `grep -rn "current_step" documentation README.md` has no attribution advice left.
   - `grep -rn "configured \`wait:\`" documentation` finds no rollback text.
   - Every behavior in `contracts/public-api.md` §1–§5 is documented.
-- [ ] T064 `bundle exec rubocop` reports 0 offenses beyond the baseline one in `baseline.md`.
-- [ ] T065 The full `bundle exec rspec` is green. Rerun known load flakes alone before
+- [X] T064 `bundle exec rubocop` reports 0 offenses beyond the baseline one in `baseline.md`.
+- [X] T065 The full `bundle exec rspec` is green. Rerun known load flakes alone before
   debugging (see the memory note on flaky specs).
-- [ ] T066 Docker acceptance (Constitution VI.4), from an **isolated compose project**, because
+- [X] T066 Docker acceptance (Constitution VI.4), from an **isolated compose project**, because
   the container names in `docker-compose.yml` are fixed and another worktree may own them.
   - Run
     `docker compose -p rr_step_locks -f docker-compose.yml -f <override with unique container_name and ports: !reset []> up -d --build demo-redis demo-sidekiq`.
@@ -755,7 +755,7 @@ nothing, and the example count equals the baseline plus the new examples.
   - Then
     `docker compose -p rr_step_locks run --rm -e RAILS_ENV=test demo-app bundle exec rspec spec/reactors/step_lock_demo_reactor_spec.rb`.
   - Ask before stopping another worktree's containers.
-- [ ] T067 Validate [quickstart.md](./quickstart.md). Every scenario R1–R6 and P1–P5 maps to a
+- [X] T067 Validate [quickstart.md](./quickstart.md). Every scenario R1–R6 and P1–P5 maps to a
   passing, behavior-named example (cross-check against the T061 table).
 
 ---

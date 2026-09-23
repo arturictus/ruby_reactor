@@ -108,6 +108,19 @@ module RubyReactor
       @intermediate_results[step_name.to_sym] = value
     end
 
+    # Set once this execution's reactor-level gates (rate limit, period,
+    # post-lock period re-check) have passed, and never unset — it rides
+    # `private_data`, so it survives parks, retries, pauses and redeliveries.
+    # "Is this a fresh run?" reads it instead of inferring from
+    # `current_step`, which is only the resume cursor (005 R-03).
+    def admitted?
+      !!(private_data[:admitted] || private_data["admitted"])
+    end
+
+    def admit!
+      private_data[:admitted] = true
+    end
+
     def with_step(step_name)
       old_step = @current_step
       @current_step = step_name

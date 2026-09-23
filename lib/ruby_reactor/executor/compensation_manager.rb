@@ -16,13 +16,16 @@ module RubyReactor
       def initialize(context)
         @context = context
         @undo_trace = []
+        @rollback_failures = []
       end
 
       def undo_stack
         @context.undo_stack
       end
 
-      attr_reader :undo_trace
+      # Every undo/compensation that did not complete, in rollback order
+      # (005 FR-004). `ResultHandler` attaches it to the final Failure.
+      attr_reader :undo_trace, :rollback_failures
 
       def add_to_undo_stack(step_info)
         @context.undo_stack << step_info
@@ -141,6 +144,7 @@ module RubyReactor
           @undo_trace << { type: :compensation, step: step_config.name, error: error, arguments: arguments }
 
           if compensate_result.is_a?(RubyReactor::Failure)
+            record_rollback_failure(step_config.name, :compensate, compensate_result)
             middlewares.on(:failed_compensation, step_config.name, compensate_result, @context)
           else
             middlewares.on(:complete_compensation, step_config.name, compensate_result, @context)
@@ -148,12 +152,13 @@ module RubyReactor
 
           compensate_result
         rescue StandardError => e
+          record_rollback_failure(step_config.name, :compensate, e)
           middlewares.on(:failed_compensation, step_config.name, e, @context)
           raise e
         end
       end
 
-      def undo_step(step_config, result, arguments)
+      def undo_step(step_config, result, arguments) # rubocop:disable Metrics/MethodLength
         middlewares.on(:start_undo, step_config.name, result, arguments, @context)
         begin
           undo_result = coordinated_rollback(step_config, arguments) do
@@ -180,6 +185,7 @@ module RubyReactor
           )
 
           if undo_result.is_a?(RubyReactor::Failure)
+            record_rollback_failure(step_config.name, :undo, undo_result)
             middlewares.on(:failed_undo, step_config.name, undo_result, @context)
           else
             middlewares.on(:complete_undo, step_config.name, undo_result, @context)
@@ -187,6 +193,7 @@ module RubyReactor
 
           undo_result
         rescue StandardError => e
+          record_rollback_failure(step_config.name, :undo, e)
           middlewares.on(:failed_undo, step_config.name, e, @context)
           # Log undo failure but don't halt the rollback process
           @context.append_execution_trace(
@@ -194,6 +201,30 @@ module RubyReactor
           )
           RubyReactor.Failure(e)
         end
+      end
+
+      # `outcome` is the Failure an undo/compensate returned, or the exception
+      # it raised. A composed child's Failure already carries its own list —
+      # flatten it instead of adding one opaque entry for the compose step.
+      def record_rollback_failure(step_name, kind, outcome)
+        if outcome.is_a?(RubyReactor::Failure) && outcome.rollback_failures.any?
+          @rollback_failures.concat(outcome.rollback_failures)
+          return
+        end
+
+        error = outcome.is_a?(RubyReactor::Failure) ? outcome.error : outcome
+        contended = error.is_a?(StepCoordination::Contended)
+        reason = if contended
+                   :coordination_unavailable
+                 elsif outcome.is_a?(Exception)
+                   :raised
+                 else
+                   :returned_failure
+                 end
+        @rollback_failures << {
+          step: step_name.to_sym, kind: kind, key: (error.key if contended), reason: reason,
+          message: error.respond_to?(:message) ? error.message : error.to_s
+        }
       end
     end
   end

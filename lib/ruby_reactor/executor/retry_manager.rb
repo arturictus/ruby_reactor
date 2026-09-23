@@ -12,76 +12,8 @@ module RubyReactor
         loop do
           prepare_retry_attempt(step_config)
           result = yield
-          # A RetryQueuedResult from a contention park passes straight
-          # through here unchanged (T023) — `handle_retry_result`'s
-          # `RetryQueuedResult, DispatchResult` branch returns it verbatim,
-          # so `execute_with_retry`'s loop exits on the same result a
-          # genuine async-retry requeue would produce.
           handled_result = handle_retry_result(step_config, reactor_class, result)
           return handled_result if handled_result
-        end
-      end
-
-      # Park the execution on step-level contention (US3): requeue at that
-      # step, bounded by `lock_snooze_max_attempts`, with its own counter
-      # (`RetryContext#contention_attempts`) so a busy key can never exhaust
-      # the retry budget meant for genuine failures (Finding 2).
-      # `on_park` hands this executor's reactor-level lock/semaphore to the
-      # redelivery. It fires ONLY on the requeue path below: the ceiling path
-      # returns a terminal failure with no redelivery to hand them to, and
-      # parking them there would set `Executor#@parked`, skipping
-      # `release_locks` and leaking the hold until its TTL.
-      def park_for_contention(step_config, contended, reactor_class, on_park: nil)
-        # Give back the failure-retry attempt `prepare_retry_attempt` just
-        # incremented for this round — a contention park is not a retry
-        # attempt (Finding 2).
-        @context.retry_context.decrement_attempt_for_step(step_config.name)
-
-        config = RubyReactor.configuration
-        count = @context.retry_context.increment_contention_for_step(step_config.name)
-
-        # OrderedLock::WaitError is exempt from the cap — same exemption
-        # `Worker#handle_snooze` makes for it: its own poison-pill timeout is
-        # the only meaningful upper bound.
-        uncapped = contended.original.is_a?(RubyReactor::OrderedLock::WaitError)
-        if !uncapped && config.lock_snooze_max_attempts != :infinity && count > config.lock_snooze_max_attempts
-          # Terminal: earlier parks kept this step's `:step_contention` marker
-          # (which would report a failed execution as still waiting on a key)
-          # and its un-advanced ordered-lock position (which would stall every
-          # successor until its poison_pill_timeout) for a redelivery that is
-          # no longer coming. Hand both back.
-          Executor::StepCoordination.discard_parked_state!(@context)
-
-          # Carry the contention through as a `Contended`, not a bare string:
-          # `handle_non_retryable_failure` hands `result.error` to the
-          # compensation manager as `original_error`, and `step_never_started?`
-          # must still recognise that this step's body never ran — otherwise it
-          # compensates work that never happened.
-          return RubyReactor::Failure(
-            Executor::StepCoordination::Contended.new(
-              primitive: contended.primitive, key: contended.key, step_name: step_config.name,
-              reactor_name: reactor_class.name, original: contended.original,
-              message: "Step '#{step_config.name}' gave up on #{contended.primitive} '#{contended.key}' after " \
-                       "#{count} contention attempts"
-            ),
-            step_name: step_config.name, reactor_name: reactor_class.name, retryable: false,
-            exception_class: contended.original.class.name
-          )
-        end
-
-        delay = RubyReactor::Worker.snooze_delay(config, contended)
-        @context.retry_context.next_retry_at = Time.now + delay
-        # BEFORE the requeue: `requeue_job` persists this context and enqueues
-        # the job, so the parked-primitive marker must already be on it or a
-        # worker starting in that window re-competes for a detached hold.
-        on_park&.call
-        requeue_result = requeue_job(step_config, delay)
-
-        if requeue_result.is_a?(RubyReactor::DispatchResult)
-          RetryQueuedResult.new(step_config.name, @context.retry_context.attempts_for_step(step_config.name),
-                                @context.retry_context.next_retry_at)
-        else
-          requeue_result
         end
       end
 
@@ -109,10 +41,9 @@ module RubyReactor
         requeue_job(step_config, delay)
       end
 
-      # The requeue itself, given an already-decided delay. Split out of
-      # `requeue_job_for_step_retry` (T021) so a contention park
-      # (`RetryManager#park_for_contention`, US3) can reuse the identical
-      # requeue mechanics with its own (snooze, not backoff) delay.
+      # The requeue for a failure retry, given an already-decided backoff
+      # delay. (A contention park never comes through here: it raises
+      # `Error::StepContentionPark` and is requeued by the worker, 005 R-01.)
       def requeue_job(_step_config, delay)
         # Serialize context and requeue the job
         # Use root context if available to ensure we serialize the full tree
@@ -262,7 +193,8 @@ module RubyReactor
                          end,
           reactor_name: reactor_class.name,
           step_arguments: result.respond_to?(:step_arguments) ? result.step_arguments : {},
-          validation_errors: result.validation_errors
+          validation_errors: result.validation_errors,
+          rollback_failures: result.rollback_failures
         )
       end
 

@@ -126,6 +126,32 @@ module StepCoordinationHelpers
   def overlap_recorder(run_id = step_coord_run_id)
     OverlapRecorder.new(run_id)
   end
+
+  def unique_account_id
+    SecureRandom.random_number(10**9)
+  end
+
+  # `context` is mutable and its `current_step` reverts once `with_step`'s
+  # `ensure` runs, so it is snapshotted WHEN the event fires. Each captured
+  # row is `[event, first_arg, current_step]`.
+  def capture_step_events
+    events = []
+    mw = Class.new do
+      define_method(:on) do |event, *args|
+        context = args.last
+        current_step = context.respond_to?(:current_step) ? context.current_step : nil
+        events << [event, args[0], current_step]
+      end
+    end.new
+    [mw, events]
+  end
+
+  # Performs the last enqueued `async_step` job exactly once.
+  def perform_last_step_job
+    job = RubyReactor::Adapters::Sidekiq::StepWorker.jobs.last
+    RubyReactor::Adapters::Sidekiq::StepWorker.jobs.clear
+    RubyReactor::Adapters::Sidekiq::StepWorker.new.perform(*job["args"])
+  end
 end
 
 # Fixture reactors (spec/support/reactors/step_coordination_reactors.rb) are

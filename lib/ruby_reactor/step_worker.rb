@@ -96,7 +96,7 @@ module RubyReactor
     def handle_contention(contended, context = nil)
       # `run_step`'s loop counted this round as an attempt before the body
       # raised; a contention park is not a retry attempt, so give it back —
-      # mirrors `RetryManager#park_for_contention`. Left inflated, the count
+      # mirrors `StepExecutor#handle_contention`. Left inflated, the count
       # persists across redeliveries and `StepCoordination#retry_pending?`
       # eventually reads the step as out of retries, advancing its
       # ordered-lock position out from under an attempt still to come.
@@ -126,8 +126,7 @@ module RubyReactor
 
       delay = RubyReactor::Worker.snooze_delay(config, contended)
       log(:info, "parked", key: contended.key, primitive: contended.primitive, attempt: attempt, delay: delay)
-      record_contention(context, contended, attempt)
-      mark_record_parked(context, delay, attempt)
+      mark_record_parked(context, delay, attempt, contended)
       RubyReactor.configuration.async_router.perform_step_in(
         delay, root_context_id: @root_context_id, reactor_class_name: @reactor_class_name,
                step_context_id: @step_context_id, step_name: @step_name, contention_attempts: attempt
@@ -152,24 +151,6 @@ module RubyReactor
       true
     end
 
-    # The same park evidence `StepExecutor#handle_contention` writes, so a
-    # reader sees this unit waiting on its key instead of merely pending.
-    # Persisted here because nothing else saves the context on this path —
-    # `complete` (which would) is deliberately not called while parked.
-    def record_contention(context, contended, attempt)
-      return unless context
-
-      context.append_execution_trace(
-        { type: :contention_park, step: @step_name, primitive: contended.primitive, key: contended.key,
-          attempt: attempt, timestamp: Time.now }
-      )
-      context.private_data[:step_contention] = {
-        step: @step_name, primitive: contended.primitive, key: contended.key, attempts: attempt,
-        next_attempt_at: nil
-      }
-      save_root(context)
-    end
-
     # A park releases the liveness lock (`perform`'s ensure) and leaves the
     # Step Result Record at "dispatched" — which is EXACTLY the shape
     # `StepSweeper` reads as "this unit's job was lost". Left unmarked it
@@ -182,7 +163,13 @@ module RubyReactor
     # ponytail: a fixed grace covers ordinary queue latency; a park whose
     # redelivery is lost is recovered one grace period late rather than never.
     # Make it configurable only if real queue lag exceeds it.
-    def mark_record_parked(context, delay, attempt)
+    #
+    # The record is also where the unit's OWN park state lives (005 R-09):
+    # its ordered-lock position (`load_step_context` restores it on the
+    # redelivery) and what it waits on (the dashboard's "waiting"). Never the
+    # parent's root blob: the parent may be checkpointing newer progress right
+    # now, and this worker is not its writer (F5).
+    def mark_record_parked(context, delay, attempt, contended)
       namespace = step_result_namespace(context)
       record = storage.retrieve_step_result(@step_context_id, @step_name, namespace)
       return unless record
@@ -192,11 +179,22 @@ module RubyReactor
       # rebuilds from the record alone — without it a swept park restarts at
       # zero and `lock_snooze_max_attempts` never bites.
       record["contention_attempts"] = attempt
+      position = ordered_lock_position(context)
+      record["ordered_lock"] = position if position
+      record["waiting"] = { "step" => @step_name, "primitive" => contended.primitive, "key" => contended.key,
+                            "attempts" => attempt }
       storage.store_step_result(@step_context_id, @step_name, record, namespace)
     rescue StandardError => e
       RubyReactor.configuration.logger.warn(
         "RubyReactor: async_step :#{@step_name} could not mark its record parked: #{e.message}"
       )
+    end
+
+    def ordered_lock_position(context)
+      stash = context&.private_data&.[](:step_ordered_locks) || context&.private_data&.[]("step_ordered_locks")
+      return nil unless stash
+
+      stash[@step_name.to_s] || stash[@step_name.to_sym]
     end
 
     # Records are namespaced by the reactor that OWNS the step (what
@@ -417,6 +415,7 @@ module RubyReactor
       # Kept so the paths that deliberately pass no context to `complete`
       # still write the record under the owning reactor's namespace.
       @step_context = found
+      restore_parked_position(found) if found
       # The step runs in its own job; nothing it reaches should hand off again.
       found&.inline_async_execution = true
       # Per-job owner, NEVER the root context id (US4-5, research D5):
@@ -436,6 +435,17 @@ module RubyReactor
     rescue RubyReactor::Error::DeserializationError, RubyReactor::Error::SchemaVersionError => e
       log(:error, "parent_context_unreadable", error: "#{e.class}: #{e.message}")
       nil
+    end
+
+    # A parked unit's ordered-lock position lives on its own record, not in
+    # the parent's blob (see `mark_record_parked`). Put it back where
+    # `StepCoordination` looks, so the redelivery re-reads the SAME nonce.
+    def restore_parked_position(context)
+      record = storage.retrieve_step_result(@step_context_id, @step_name, step_result_namespace(context))
+      position = record && record["ordered_lock"]
+      return unless position
+
+      (context.private_data[:step_ordered_locks] ||= {})[@step_name.to_s] = position.transform_keys(&:to_sym)
     end
 
     def find_context(context, target_id)

@@ -110,13 +110,14 @@ RSpec.describe "step-scoped coordination observability", :step_coordination do
   describe "a contention park (US7-4)" do
     # Drives the worker-side park path in-process (no live Sidekiq needed):
     # `inline_async_execution` is the only thing that distinguishes it from a
-    # sync run, and `Sidekiq::Testing.fake!` (the spec default) enqueues the
-    # requeue without executing it.
+    # sync run. The park is raised to whoever drives the executor — the
+    # worker, in production — as `Error::StepContentionPark`.
     def run_parked(reactor_class, inputs)
       context = RubyReactor::Context.new(inputs, reactor_class)
       context.inline_async_execution = true
       executor = RubyReactor::Executor.new(reactor_class, {}, context)
-      [executor.execute, context]
+      expect { executor.execute }.to raise_error(RubyReactor::Error::StepContentionPark)
+      context
     end
 
     it "logs a structured parked line, marks the context waiting (not failed), and never emits " \
@@ -133,12 +134,10 @@ RSpec.describe "step-scoped coordination observability", :step_coordination do
       original_logger = RubyReactor.configuration.logger
       RubyReactor.configuration.logger = Logger.new(io)
 
-      result, context = run_parked(WaitZeroLockedChargeReactor, run_id: step_coord_run_id, account_id: account_id)
+      context = run_parked(WaitZeroLockedChargeReactor, run_id: step_coord_run_id, account_id: account_id)
 
       RubyReactor.configuration.logger = original_logger
       holder.release
-
-      expect(result).to be_a(RubyReactor::RetryQueuedResult)
 
       line = io.string.lines.find { |l| l.include?("step_coordination.parked") }
       expect(line).not_to be_nil
@@ -155,6 +154,7 @@ RSpec.describe "step-scoped coordination observability", :step_coordination do
       expect(waiting).to include(step: :charge, primitive: :lock, key: key)
 
       expect(events.map(&:first)).not_to include(:failed_step)
+      expect(events.map(&:first)).to include(:snooze_step)
     end
   end
 
@@ -221,6 +221,97 @@ RSpec.describe "step-scoped coordination observability", :step_coordination do
       expect(result.message).to include("charge").and include(key)
     ensure
       holder&.release
+    end
+  end
+
+  describe "the direct-invocation contract" do
+    it "runs a coordinated step stand-alone, with no context argument" do
+      result = DefaultedKeyStep.run(account_id: unique_account_id)
+
+      expect(result).to be_a(RubyReactor::Success)
+      expect(result.value).to eq(region: "eu")
+    end
+
+    it "releases the hold, so a second stand-alone call on the same key succeeds" do
+      account_id = unique_account_id
+
+      expect(DefaultedKeyStep.run(account_id: account_id)).to be_a(RubyReactor::Success)
+      expect(DefaultedKeyStep.run(account_id: account_id)).to be_a(RubyReactor::Success)
+    end
+  end
+
+  describe "RubyReactor::Web::CoordinationSerializer" do
+    it "resolves the step's key from the contract-applied inputs, not the raw trace arguments" do
+      account_id = unique_account_id
+      context = RubyReactor::Context.new({ account_id: account_id }, DefaultedKeyReactor)
+      expect(RubyReactor::Executor.new(DefaultedKeyReactor, {}, context).execute).to be_a(RubyReactor::Success)
+
+      coordination = RubyReactor::Web::CoordinationSerializer.build(
+        DefaultedKeyReactor, inputs: {}, context_id: context.context_id,
+                             execution_trace: context.execution_trace, private_data: context.private_data
+      )
+
+      row = coordination[:steps].find { |s| s[:step] == "charge" }
+      expect(row[:key]).to eq("acct:#{account_id}:eu")
+    end
+
+    it "renders a named step rate limit as its registered windows, keyed by the name" do
+      RubyReactor.configuration.rate_limits.register(:step_coordination_named_limit, limit: 1, period: :minute)
+      account_id = unique_account_id
+      context = RubyReactor::Context.new({ account_id: account_id }, StepNamedRateLimitedReactor)
+      expect(RubyReactor::Executor.new(StepNamedRateLimitedReactor, {}, context).execute)
+        .to be_a(RubyReactor::Success)
+
+      coordination = RubyReactor::Web::CoordinationSerializer.build(
+        StepNamedRateLimitedReactor, inputs: {}, context_id: context.context_id,
+                                     execution_trace: context.execution_trace, private_data: context.private_data
+      )
+
+      row = coordination[:steps].find { |s| s[:step] == "charge" }
+      expect(row[:key]).to eq("step_coordination_named_limit")
+      expect(row[:key_error]).to be_nil
+      expect(row[:state].map { |w| w[:name].to_s }).to eq(["minute"])
+    end
+  end
+
+  describe "RubyReactor::Web::CoordinationSerializer with several primitives on one step" do
+    it "renders a row per declaration, so neither gate is invisible" do
+      account_id = unique_account_id
+      context = RubyReactor::Context.new({ account_id: account_id }, TwoPrimitiveReactor)
+      expect(RubyReactor::Executor.new(TwoPrimitiveReactor, {}, context).execute).to be_a(RubyReactor::Success)
+
+      coordination = RubyReactor::Web::CoordinationSerializer.build(
+        TwoPrimitiveReactor, inputs: {}, context_id: context.context_id,
+                             execution_trace: context.execution_trace, private_data: context.private_data
+      )
+
+      rows = coordination[:steps].select { |s| s[:step] == "charge" }
+      expect(rows.map { |r| r[:primitive] }).to contain_exactly("lock", "semaphore")
+      expect(rows.map { |r| r[:key] })
+        .to contain_exactly("two_prim_lock:#{account_id}", "two_prim_sem:#{account_id}")
+    end
+  end
+
+  describe "StepWorker running a coordinated class step" do
+    it "fires the configured coordination hooks, attributed to the step" do
+      mw, events = capture_step_events
+      RubyReactor.configuration.middlewares = [mw]
+      account_id = unique_account_id
+
+      WorkerHookReactor.run(account_id: account_id)
+      job = RubyReactor::Adapters::Sidekiq::StepWorker.jobs.last
+      RubyReactor::Adapters::Sidekiq::StepWorker.jobs.clear
+      events.clear
+      RubyReactor::Adapters::Sidekiq::StepWorker.new.perform(*job["args"])
+
+      lock_events = events.select { |event, *| %i[lock_acquired lock_released].include?(event) }
+      # The worker's context is rehydrated and carries no middlewares, so an
+      # empty-runner fallback would leave this silent.
+      expect(lock_events.map { |event, *| event }).to contain_exactly(:lock_acquired, :lock_released)
+      lock_events.each do |_event, key, current_step|
+        expect(key).to eq("worker_hook:#{account_id}")
+        expect(current_step.to_s).to eq("charge")
+      end
     end
   end
 end

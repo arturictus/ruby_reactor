@@ -83,8 +83,9 @@ RSpec.describe "step-scoped semaphore, rate limit, and period", :step_coordinati
     it "gives a non-retryable Failure (not a park) for an unknown named limit" do
       result = UnknownRateLimitedReactor.run(account_id: unique_id)
 
+      # A park would raise `Error::StepContentionPark` (in a worker) instead of
+      # returning; a result at all means it was not treated as contention.
       expect(result).to be_a(RubyReactor::Failure)
-      expect(result).not_to be_a(RubyReactor::RetryQueuedResult)
       # Confirms it was not retried (the retry loop's own "attempts" count
       # stayed at 1) rather than asserting `.retryable?` directly — once a
       # non-retryable Failure passes through
@@ -282,13 +283,11 @@ RSpec.describe "step-scoped semaphore, rate limit, and period", :step_coordinati
       context.inline_async_execution = true
       executor = RubyReactor::Executor.new(OrderedLockFirstReactor, {}, context)
 
-      first_result = executor.execute
-      expect(first_result).to be_a(RubyReactor::RetryQueuedResult)
+      expect { executor.execute }.to raise_error(RubyReactor::Error::StepContentionPark)
       first_nonce = context.private_data[:step_ordered_locks]["seq"][:nonce]
       expect(first_nonce).to eq(2)
 
-      second_result = executor.resume_execution
-      expect(second_result).to be_a(RubyReactor::RetryQueuedResult)
+      expect { executor.resume_execution }.to raise_error(RubyReactor::Error::StepContentionPark)
       second_nonce = context.private_data[:step_ordered_locks]["seq"][:nonce]
       expect(second_nonce).to eq(first_nonce)
     ensure
@@ -350,6 +349,18 @@ RSpec.describe "step-scoped semaphore, rate limit, and period", :step_coordinati
       expect(after_entry).not_to be_nil
     ensure
       RubyReactor::OrderedLock.reset!(key)
+    end
+  end
+
+  describe "a once-per-window step whose output contract rejects its value" do
+    before { ROUND4_COUNTS.clear }
+
+    it "leaves the bucket unmarked, so the next execution runs the step again" do
+      account_id = unique_account_id
+
+      2.times { expect(Round4PeriodReactor.run(account_id: account_id)).to be_a(RubyReactor::Failure) }
+
+      expect(ROUND4_COUNTS[:period_body]).to eq(2)
     end
   end
 end

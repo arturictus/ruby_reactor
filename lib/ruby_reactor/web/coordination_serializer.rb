@@ -33,7 +33,8 @@ module RubyReactor
             result[:steps] = steps unless steps.empty?
           end
 
-          waiting = private_data[:step_contention] || private_data["step_contention"]
+          waiting = private_data[:step_contention] || private_data["step_contention"] ||
+                    async_step_waiting(reactor_class, context_id, adapter)
           result[:waiting] = normalize_waiting(waiting) if waiting
 
           result
@@ -108,6 +109,21 @@ module RubyReactor
             step = e[:step] || e["step"]
             type.to_s == "run" && step.to_s == step_name.to_s
           end
+        end
+
+        # A parked `async_step` keeps its "waiting on" marker on its own Step
+        # Result Record, never on the parent's context (005 R-09).
+        def async_step_waiting(reactor_class, context_id, adapter)
+          return nil unless context_id && reactor_class.respond_to?(:steps)
+
+          namespace = RubyReactor.reactor_storage_name(reactor_class)
+          reactor_class.steps.each do |name, step_config|
+            next unless step_config.respond_to?(:async_dispatch) && step_config.async_dispatch == :step
+
+            record = adapter.retrieve_step_result(context_id, name, namespace)
+            return record["waiting"] if record.is_a?(Hash) && record["waiting"]
+          end
+          nil
         end
 
         def normalize_waiting(waiting)

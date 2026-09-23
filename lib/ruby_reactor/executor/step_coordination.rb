@@ -31,6 +31,11 @@ module RubyReactor
       # before its body runs; the cause and the step name are both surfaced.
       class KeyError < RubyReactor::Error::Base; end
 
+      # A semaphore slot has no hold expiry to bound a rollback wait by, so it
+      # waits the lock's default `ttl` instead (005 D-F1). A constant, not a
+      # config key — add one if someone needs it.
+      DEFAULT_ROLLBACK_WAIT = 60
+
       # A `Contended`/`KeyError` raised by a DIRECT `Step.run` inside this
       # step's body. The body had already started, so for THIS step it is an
       # ordinary failure — compensated, never parked — and must not be
@@ -44,7 +49,8 @@ module RubyReactor
 
         # `message:` overrides the default wording for a re-wrap that needs to
         # say something else (the contention-ceiling failure in
-        # `RetryManager#park_for_contention`) while staying a `Contended`.
+        # `StepExecutor#contention_ceiling_failure`, a rollback that could not
+        # re-acquire) while staying a `Contended`.
         def initialize(primitive:, key:, step_name:, reactor_name:, original:, message: nil) # rubocop:disable Metrics/ParameterLists
           @primitive = primitive
           @key = key
@@ -130,7 +136,7 @@ module RubyReactor
       # The one piece of step state a contention park carries across the gap
       # is its ordered-lock position — a park must not lose its place in line.
       # When the park is instead escalated to a TERMINAL failure (the
-      # `lock_snooze_max_attempts` ceiling, in `RetryManager#park_for_contention`
+      # `lock_snooze_max_attempts` ceiling, in `StepExecutor#handle_contention`
       # and `StepWorker#handle_contention`) no redelivery will consume it, so
       # advance it here or every later position stalls for the full
       # `poison_pill_timeout`.
@@ -173,7 +179,10 @@ module RubyReactor
         # means the step is terminal for every declaration shape.
         clear_contention_state
         result
-      rescue Contended
+      # Neither is terminal: the execution parks (or, synchronously, the
+      # caller turns contention into a failure) and this step's contention
+      # counter and marker must survive the park.
+      rescue Contended, Error::ExecutionParked
         raise
       rescue StandardError
         clear_contention_state
@@ -184,8 +193,13 @@ module RubyReactor
       # compensate/undo — never rate limit, period, or the ordered lock
       # (contracts/dsl-surface.md §6): a forward-work quota must never
       # suppress cleanup, and rollback is not part of the order forward work
-      # runs in. Uses the CONFIGURED `wait` directly — rollback never parks,
-      # the execution is already mid-failure and there is nowhere to park to.
+      # runs in. Waits the declaration's own `rollback_wait` (default: the
+      # lock's `ttl`, or `DEFAULT_ROLLBACK_WAIT` for a semaphore), never the
+      # forward `wait:` — a forward holder finishes or expires within `ttl`,
+      # so the undo outlasts it instead of being dropped (005 D-F1). Rollback
+      # never parks: the execution is already mid-failure, so in a worker the
+      # wait blocks the thread. A key still busy after the wait comes back as
+      # a `Failure(Contended)` for `CompensationManager` to report.
       def around_rollback(&block)
         rollback_with_lock do
           rollback_with_semaphore(&block)
@@ -204,8 +218,9 @@ module RubyReactor
         config = step_config.lock_config
         return yield unless config
 
-        acquire_for_rollback(:lock, config) do |key|
-          lock = RubyReactor::Lock.new(key, owner: owner, ttl: config[:ttl], wait: config[:wait],
+        wait = config[:rollback_wait] || config[:ttl]
+        acquire_for_rollback(:lock, config, wait) do |key|
+          lock = RubyReactor::Lock.new(key, owner: owner, ttl: config[:ttl], wait: wait,
                                             auto_extend: config.fetch(:auto_extend, true))
           begin
             lock.acquire
@@ -229,10 +244,10 @@ module RubyReactor
         return yield unless config
 
         limit = config[:limit]
-        acquire_for_rollback(:semaphore, config) do |key|
-          semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: config[:wait])
+        wait = config[:rollback_wait] || DEFAULT_ROLLBACK_WAIT
+        acquire_for_rollback(:semaphore, config, wait) do |key|
           begin
-            semaphore.acquire
+            semaphore = poll_semaphore(key, limit, wait)
           rescue RubyReactor::Semaphore::AcquisitionError => e
             next [nil, e]
           end
@@ -246,23 +261,46 @@ module RubyReactor
         end
       end
 
+      # Polls instead of `Semaphore#acquire`'s blocking pop: the storage
+      # adapter shares ONE Redis connection per process, and a blocking pop
+      # held for up to `rollback_wait` would stall every other thread's Redis
+      # call — lock auto-extenders and ordered-lock heartbeats included.
+      def poll_semaphore(key, limit, wait)
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + wait.to_f
+        loop do
+          semaphore = RubyReactor::Semaphore.new(key, limit: limit, wait: 0)
+          semaphore.acquire
+          return semaphore
+        rescue RubyReactor::Semaphore::AcquisitionError
+          raise if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+          sleep 0.1
+        end
+      end
+
       # Shared "compute the key, run the acquire block, turn a failure into
       # the rollback Failure shape" wrapper for the two rollback primitives.
       # The block returns `[result, acquisition_error]`; a KeyError computing
       # the key itself is reported the same way.
-      def acquire_for_rollback(primitive, config)
+      def acquire_for_rollback(primitive, config, wait)
         key = key_for(config)
         result, error = yield(key)
         return result unless error
 
-        rollback_failure(primitive, key, error)
+        rollback_failure(primitive, key, error, wait)
       rescue KeyError => e
-        rollback_failure(primitive, nil, e)
+        rollback_failure(primitive, nil, e, wait)
       end
 
-      def rollback_failure(primitive, key, error)
+      # A `Contended`, not a bare string, so `CompensationManager` can report
+      # the key and primitive on `Failure#rollback_failures`.
+      def rollback_failure(primitive, key, error, wait)
         RubyReactor::Failure(
-          "could not re-acquire #{primitive} '#{key}' for rollback of :#{step_name}: #{error.message}",
+          Contended.new(
+            primitive: primitive, key: key, step_name: step_name, reactor_name: reactor_label, original: error,
+            message: "could not re-acquire #{primitive} '#{key}' for rollback of :#{step_name} within #{wait}s: " \
+                     "#{error.message}"
+          ),
           retryable: false, step_name: step_name
         )
       end
@@ -282,32 +320,44 @@ module RubyReactor
         # assigned, so run ungated (see `ordered_lock_arrival_info`).
         return yield unless info
 
-        gate = gate_ordered_lock(info)
-
-        if gate == :skip_chain_failed
-          # This position is terminal (skipped, not failed) — advance it like
-          # the executor's reactor-level short-circuit does, or every later
-          # skipped step stays in flight and the sequence never drains.
+        # The same exhaustive classifier the reactor level uses (R-06). A
+        # step's gate always runs before its body, so the position has never
+        # started: always `fresh`.
+        case gate_ordered_lock(info)
+        when :go, :drained
+          with_active_ordered_key(info[:key]) { run_under_ordered_lock(info, &block) }
+        when :skip_chain
+          # Terminal (skipped, not failed) — advance it like the executor's
+          # reactor-level short-circuit does, or every later skipped step
+          # stays in flight and the sequence never drains.
           Executor::OrderedLockSupport.advance_with_retry(info, failed: false)
           delete_ordered_lock_stash
-          return RubyReactor.Skipped(nil, reason: :ordered_lock_chain_failed, step_name: step_name)
+          RubyReactor.Skipped(nil, reason: :ordered_lock_chain_failed, step_name: step_name)
+        when :stale
+          # The position belongs to a drained generation whose numbering a
+          # newer batch reuses (F7): the body must not run unordered. No
+          # advance — the epoch fence makes it a no-op — just drop the stash.
+          delete_ordered_lock_stash
+          RubyReactor.Skipped(nil, reason: :ordered_lock_stale_batch, step_name: step_name)
         end
-
-        with_active_ordered_key(info[:key]) { run_under_ordered_lock(info, &block) }
       end
 
-      # The gate check itself. A `Contended` here means "not this nonce's turn
-      # yet". Only a real park keeps the position (the redelivery re-adopts
-      # the same nonce); anything else is terminal, so hand the position back
-      # here or every successor on the key stalls until the poison_pill_timeout.
+      # A `WaitError` means "not this nonce's turn yet". A worker parks and
+      # keeps the position (the redelivery re-adopts the same nonce).
+      # Synchronously the execution is terminal, and the position never held
+      # the turn, so it has no failed work for successors to be protected
+      # from: hand it back with `failed: false` (005 D-F3), or it would stall
+      # every successor until the poison pill — and, with `failed: true`,
+      # chain-skip every strict successor forever.
       def gate_ordered_lock(info)
-        check_ordered_lock!(info)
-      rescue Contended
+        Executor::OrderedLockSupport.gate(info, fresh: true)
+      rescue RubyReactor::OrderedLock::WaitError => e
         unless parking?
-          Executor::OrderedLockSupport.advance_with_retry(info, failed: true)
+          Executor::OrderedLockSupport.advance_with_retry(info, failed: false)
           delete_ordered_lock_stash
         end
-        raise
+        raise Contended.new(primitive: :ordered_lock, key: info[:key], step_name: step_name,
+                            reactor_name: reactor_label, original: e)
       end
 
       # Same thread-local guard `Reactor#assign_ordered_lock_nonce!` and
@@ -417,55 +467,59 @@ module RubyReactor
         step_name.to_s
       end
 
-      def check_ordered_lock!(info)
-        RubyReactor::OrderedLock.new(
-          info[:key], nonce: info[:nonce], epoch: info[:epoch],
-                      poison_pill_timeout: info[:poison_pill_timeout], strict: info[:strict]
-        ).check!
-      rescue RubyReactor::OrderedLock::WaitError => e
-        raise Contended.new(primitive: :ordered_lock, key: info[:key], step_name: step_name,
-                            reactor_name: reactor_label, original: e)
-      end
-
       # Heartbeats while the body runs so a merely-slow step is not
-      # poison-passed by a successor (T061), then advances the cursor ONLY
-      # on a terminal result. A parked `Contended` (lock, semaphore or rate
-      # limit, raised after the gate passed) leaves this position un-advanced
-      # and its stash intact, so the redelivery resumes the SAME nonce; any
-      # other exit is terminal and advances it.
+      # poison-passed by a successor (T061). The position's fate is decided
+      # ONCE, as `outcome`, and carried out in `ensure` — so every exit,
+      # including one that is not a `StandardError`, stops the heartbeat
+      # (005 R-07, F8). This position passed the gate, so it held the turn: a
+      # failure here is the chain's failure (`failed: true`, D-F3).
       def run_under_ordered_lock(info)
         heartbeat = Executor::OrderedLockSupport.start_heartbeat(info)
+        outcome = :abandoned
         begin
           result = yield
+          outcome = if retry_pending?(result)
+                      :retry_pending
+                    elsif chain_failed?(result)
+                      :failed
+                    else
+                      :succeeded
+                    end
+          result
         rescue Contended
-          heartbeat.stop
-          # Synchronous contention is terminal — `StepExecutor
-          # #handle_contention` turns it straight into a Failure — so leaving
-          # the nonce in flight would stall every successor for the full
-          # poison_pill_timeout with nothing ever coming back to advance it.
-          unless parking?
-            Executor::OrderedLockSupport.advance_with_retry(info, failed: true)
-            delete_ordered_lock_stash
-          end
+          # Lock/semaphore/rate-limit contention after the gate: parked in a
+          # worker it keeps its place; synchronously it is terminal.
+          outcome = parking? ? :parked : :failed
+          raise
+        rescue Error::ExecutionParked
+          outcome = :parked
           raise
         rescue StandardError
-          heartbeat.stop
-          Executor::OrderedLockSupport.advance_with_retry(info, failed: true)
-          delete_ordered_lock_stash
+          outcome = :failed
           raise
+        ensure
+          heartbeat.stop
+          finish_position(info, outcome)
         end
-        heartbeat.stop
-        # A retryable failure with attempts left is NOT terminal: `RetryManager`
-        # is about to run this step again (in-process, or as a redelivery), and
-        # that attempt must keep this place in line. The stash survives, so the
-        # next attempt re-reads the SAME nonce. (The heartbeat is stopped
-        # across that gap, exactly as across a park — `poison_pill_timeout`
-        # bounds both.)
-        unless retry_pending?(result)
-          Executor::OrderedLockSupport.advance_with_retry(info, failed: chain_failed?(result))
-          delete_ordered_lock_stash
-        end
-        result
+      end
+
+      # - :succeeded / :failed — terminal: advance (a failure records the
+      #   strict chain marker) and drop the stash.
+      # - :retry_pending / :parked — `RetryManager` or the redelivery runs this
+      #   step again and must keep its place: the stash survives, so the next
+      #   attempt re-reads the SAME nonce. The heartbeat is stopped across the
+      #   gap; `poison_pill_timeout` bounds it.
+      # - :abandoned — an exit that is not a `StandardError` (`Sidekiq::Shutdown`,
+      #   `NoMemoryError`, ...). Not advanced: `Sidekiq::Shutdown` pushes the
+      #   job back to run again, which must keep this place, and `failed: true`
+      #   would poison successors for work that may yet complete. With the
+      #   heartbeat stopped, the poison pill releases the position within
+      #   `poison_pill_timeout`.
+      def finish_position(info, outcome)
+        return unless %i[succeeded failed].include?(outcome)
+
+        Executor::OrderedLockSupport.advance_with_retry(info, failed: outcome == :failed)
+        delete_ordered_lock_stash
       end
 
       # Mirrors `RetryManager#handle_failure_result`'s decision, made here one
@@ -695,12 +749,13 @@ module RubyReactor
         StepCoordination.resolve_key(config, arguments, step_name)
       end
 
+      # A direct call is its own unit of work: it names the step class that
+      # was invoked, never the caller's `current_step` — that is the step
+      # whose body made the call (F9).
       def step_name
-        if context.is_a?(RubyReactor::Context)
-          context.current_step || step_config.name.to_s
-        else
-          step_config.name
-        end
+        return step_config.name if @direct || !context.is_a?(RubyReactor::Context)
+
+        context.current_step || step_config.name.to_s
       end
 
       def push_key(key)

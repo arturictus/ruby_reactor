@@ -116,6 +116,18 @@
 * A step that returns another unit's validation failure (e.g. an `async_step` reader propagating
   the worker's `Failure`) keeps its `validation_errors` on the reactor's final failure.
 
+* **`rollback_wait:` on step `with_lock` / `with_semaphore`.** How long a step's `undo` /
+  `compensate` waits to re-take its key. Defaults to the lock's `ttl` (60 s for a semaphore);
+  rollback still never parks, so in a worker the wait blocks the thread.
+* **`Failure#rollback_failures`.** Every undo or compensation that did not complete —
+  `{ step:, kind: :undo | :compensate, key:, reason: :coordination_unavailable | :returned_failure | :raised, message: }`,
+  including composed children's (flattened). Always an Array; part of `Failure#to_h` and the
+  stored failure of a background run.
+* **`:snooze_step` middleware event** (`on_snooze_step(step_name, error, context)`): a step's
+  attempt ended in a park (contention, or an awaited background result), at any nesting depth.
+  Never `:failed_step`. The OpenTelemetry middleware closes the span as `step.status = "parked"`.
+* **`have_rollback_failure(step)` matcher**, with `.for_key(key)` and `.because(reason)`.
+
 ### Deprecations
 
 * Rules on `argument` (`argument :x, src, :type, **predicates`) and `validate_args` keep working
@@ -141,6 +153,29 @@
 * A class step that calls `halt!` under `async_step` is recorded as a halt rather than an
   ordinary `nil` success, and `result(:step)` hands the reader the `Halt` — the same way it
   already hands over a `Failure`.
+* Step coordination (F1): a step's undo is no longer dropped because another execution holds its
+  key at that moment — it waits up to `rollback_wait`, and one that still cannot run is reported
+  on `Failure#rollback_failures` instead of only in the trace.
+* Step coordination (F2): a park inside a composed child no longer releases the parent's reactor
+  lock or semaphore, and no longer charges the parent's rate limit again on redelivery — every
+  level keeps its own holds and is admitted once, at any depth.
+* Step coordination (F3): a synchronous execution that reaches a strict step-level ordered lock
+  out of turn fails without poisoning the chain; later arrivals run instead of being skipped.
+* Step coordination (F4): the docs name `context.coordinating_step` (not `current_step`) as the
+  attribution for coordination middleware events.
+* Step coordination (F5): a parked `async_step` no longer overwrites its parent's saved context;
+  its park state (ordered-lock position, "waiting" marker) lives on its own step result record.
+* Step coordination (F6): documented the cross-level key-ordering rule that avoids two workflows
+  waiting on each other's reactor and step locks.
+* Step coordination (F7): a step whose ordered-lock batch expired before its retry is skipped
+  (`Skipped(reason: :ordered_lock_stale_batch)`) instead of running unordered.
+* Step coordination (F8): a step-level ordered-lock heartbeat stops when the step body exits
+  abnormally (e.g. `Sidekiq::Shutdown`), so the poison pill can release the position.
+* Step coordination (F9): a step class invoked directly from another step's body names itself in
+  contention errors and coordination events, not the calling step.
+* A step of a composed child that reads a not-yet-finished background result in a worker (F10)
+  parks the execution, keeping the child's lock, instead of failing the parent with
+  "async result … still pending".
 
 ## [0.8.1](https://github.com/arturictus/ruby_reactor/compare/v0.8.0...v0.8.1) (2026-09-22)
 

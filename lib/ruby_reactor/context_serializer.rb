@@ -57,7 +57,8 @@ module RubyReactor
             "file_path" => value.file_path,
             "line_number" => value.line_number,
             "code_snippet" => serialize_value(value.code_snippet),
-            "validation_errors" => serialize_value(value.validation_errors)
+            "validation_errors" => serialize_value(value.validation_errors),
+            "rollback_failures" => serialize_value(value.rollback_failures)
           }
         when RubyReactor::Context
           { "_type" => "Context", "value" => value.serialize_for_retry }
@@ -140,7 +141,8 @@ module RubyReactor
                 file_path: value["file_path"],
                 line_number: value["line_number"],
                 code_snippet: deserialize_value(value["code_snippet"]),
-                validation_errors: deserialize_value(value["validation_errors"])
+                validation_errors: deserialize_value(value["validation_errors"]),
+                rollback_failures: deserialize_value(value["rollback_failures"])
               )
             when "Context"
               Context.deserialize_from_retry(value["value"])

@@ -135,7 +135,7 @@ RSpec.describe "step-level contention parks instead of failing", :step_coordinat
   # see when set from here. Driving `Worker#perform` directly, in-process,
   # is the established pattern for exercising snooze/escalation logic
   # deterministically (see spec/ruby_reactor/integration/ordered_lock_spec.rb) —
-  # it exercises the exact same `RetryManager#park_for_contention` /
+  # it exercises the exact same `StepExecutor#handle_contention` /
   # `Worker#handle_snooze` code a live redelivery would run.
   describe "the contention ceiling" do
     it "gives up after the configured ceiling, naming the key and attempt count (FR-017, US3-5)" do

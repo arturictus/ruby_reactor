@@ -185,6 +185,24 @@ module RubyReactor
       span.finish
     end
 
+    # The step's attempt ended in a park (its contention, or an awaited
+    # background result): not a failure, and the redelivery opens a new span.
+    # Closed here, since neither `complete_step` nor `failed_step` fires for
+    # it and the span is keyed by step name.
+    def on_snooze_step(step_name, error, _context)
+      token = @step_tokens.delete(step_name)
+      ::OpenTelemetry::Context.detach(token) if token
+      @retry_errors.delete(step_name)
+
+      span = @step_spans.delete(step_name)
+      return unless span
+
+      span.set_attribute("step.status", "parked")
+      span.set_attribute("step.park_reason", error.class.name)
+      span.status = ::OpenTelemetry::Trace::Status.ok
+      span.finish
+    end
+
     def on_retry_attempt(step_name, attempt, error, _context)
       return unless defined?(::OpenTelemetry)
 

@@ -94,7 +94,20 @@ last argument. The `context` exposes `context_id`, `reactor_class`, `inputs`,
 | Step started | `on_start_step` | `(step_name, arguments, context)` |
 | Step completed | `on_complete_step` | `(step_name, result, context)` |
 | Step failed | `on_failed_step` | `(step_name, error, context)` |
+| Step parked | `on_snooze_step` | `(step_name, error, context)` |
 | Retry attempt | `on_retry_attempt` | `(step_name, attempt_number, error, context)` |
+
+> **`on_snooze_step`** fires when a step's attempt ends in a **park** instead
+> of finishing: the step lost lock/semaphore/rate-limit/ordered-lock contention
+> inside a worker, or it (or a composed child beneath it) is waiting on a
+> background result that is not terminal yet. It fires at every nesting depth
+> — a park inside a composed child fires it for the child's step and for the
+> parent's `compose` step. `error` is the internal park signal
+> (`RubyReactor::Error::ExecutionParked`). A park is "try again later", never a
+> failure: `on_failed_step` and `on_complete_step` do not fire for that
+> attempt, and the redelivery fires `on_start_step` again. It mirrors
+> `on_snooze_reactor`. The bundled OpenTelemetry middleware closes the step span
+> with `step.status = "parked"` and status OK.
 
 ### Compensation & Rollback (Undo)
 
@@ -128,23 +141,31 @@ last argument. The `context` exposes `context_id`, `reactor_class`, `inputs`,
 
 The lock/semaphore events also fire for **step-scoped** holds (see
 [Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination)),
-through the identical hooks — nothing extra to wire up. `context.current_step`
+through the identical hooks — nothing extra to wire up. `context.coordinating_step`
 names the coordinating step for a step-level event, and is `nil` for a
-reactor-level one, so one middleware can attribute both:
+reactor-level one — on every run, including a resumed or redelivered one — so
+one middleware can attribute both:
 
 ```ruby
 def on_lock_acquired(key, context)
-  scope = context.current_step ? "step:#{context.current_step}" : "reactor"
+  scope = context.coordinating_step ? "step:#{context.coordinating_step}" : "reactor"
   logger.info("lock acquired key=#{key} scope=#{scope}")
 end
 ```
 
+`context.current_step` is the execution's resume cursor, not an attribution
+field: after a park or a redelivery it can name a step while a reactor-level
+hold is being acquired. Do not use it to attribute coordination events. A step class invoked directly from another step's body
+(`ChargeStep.run(args, context)`) is its own unit of work: its events — and any
+contention error it raises — name that class (`"ChargeStep"`), not the calling
+step.
+
 A step-level contention park (the execution requeued at that step, rather than
-failed) additionally logs a structured line —
+failed) fires `on_snooze_step` (above) and additionally logs a structured line —
 `event="ruby_reactor.step_coordination.parked" reactor=... step=... key=...
-primitive=... attempt=... execution_id=...` — since it has no dedicated
-middleware hook of its own; read it off `context.private_data[:step_contention]`
-or the `:contention_park` execution-trace entry if you need it programmatically.
+primitive=... attempt=... execution_id=...`; read the key it waits on off
+`context.private_data[:step_contention]` or the `:contention_park`
+execution-trace entry if you need it programmatically.
 
 ## Registering Middlewares
 

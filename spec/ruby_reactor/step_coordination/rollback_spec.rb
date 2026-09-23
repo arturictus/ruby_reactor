@@ -7,6 +7,12 @@ require "spec_helper"
 # same arguments — closing the race where a concurrent forward execution
 # could enter the step's critical section while rollback undoes it.
 RSpec.describe "step-scoped coordination on rollback (compensate/undo)", :step_coordination do
+  around do |example|
+    original = RubyReactor.configuration.middlewares
+    example.run
+    RubyReactor.configuration.middlewares = original
+  end
+
   def unique_account_id
     SecureRandom.random_number(10**9)
   end
@@ -158,5 +164,47 @@ RSpec.describe "step-scoped coordination on rollback (compensate/undo)", :step_c
   ensure
     RubyReactor.configuration.middlewares = original_mw
     holder&.release
+  end
+
+  describe "rollback of an inline step with no argument wiring" do
+    it "re-takes the key the forward run held, not one built from an empty hash" do
+      mw, events = capture_step_events
+      RubyReactor.configuration.middlewares = [mw]
+      account_id = unique_account_id
+
+      expect(InlineNoArgsRollbackReactor.run(account_id: account_id)).to be_a(RubyReactor::Failure)
+
+      keys = events.select { |event, *| event == :lock_acquired }.map { |_e, key, _s| key }
+      # Twice: once forward, once for the undo — and both on the SAME key.
+      expect(keys).to eq(["inline_rollback:#{account_id}"] * 2)
+    end
+  end
+
+  describe "the async_step dispatch deadlock guard" do
+    it "unwinds the steps that already ran instead of failing without compensation" do
+      DEADLOCK_GUARD_UNDONE.clear
+      RubyReactor::Adapters::Sidekiq::StepWorker.jobs.clear
+      account_id = unique_account_id
+
+      result = DeadlockGuardRollbackReactor.run(account_id: account_id)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.message).to include("would deadlock")
+      expect(DEADLOCK_GUARD_UNDONE).to eq([:side_effect])
+      expect(RubyReactor::Adapters::Sidekiq::StepWorker.jobs).to be_empty
+    end
+  end
+
+  describe "an async_step deadlock guard whose key proc raises" do
+    before { ROUND4_COUNTS.clear }
+
+    it "fails the step with a KeyError and still rolls the earlier step back" do
+      result = Round4GuardKeyReactor.run(account_id: unique_account_id)
+
+      expect(result).to be_a(RubyReactor::Failure)
+      expect(result.error.to_s).to match(/key proc raised RuntimeError/)
+      expect(result.to_h[:exception_class]).to eq("RubyReactor::Executor::StepCoordination::KeyError")
+      expect(ROUND4_COUNTS[:setup_undo]).to eq(1)
+    end
   end
 end

@@ -46,14 +46,23 @@ module RubyReactor
         #   refreshes the lock TTL every ttl/3 seconds while the reactor runs,
         #   protecting steps that may legitimately outlast `ttl`. Pass `false`
         #   to disable and rely solely on `ttl` for expiry.
+        # @param rollback_wait [Numeric, nil] STEP only (accepted and ignored on
+        #   a reactor, whose holds are not re-taken for rollback): how long the
+        #   step's `undo`/`compensate` waits to re-take this lock. Defaults to
+        #   `ttl` — a forward holder either finishes or expires within it.
+        #   Rollback never parks: in a worker the wait blocks the thread. An
+        #   undo that cannot re-take the key in time is reported on
+        #   `Failure#rollback_failures`.
         # @yield [inputs] Block that returns the lock key string. On a reactor,
         #   `inputs` is the reactor's inputs; on a step, it is the step's own
         #   resolved arguments (contract defaults applied).
-        def with_lock(ttl: 60, wait: 0, auto_extend: true, &block)
+        def with_lock(ttl: 60, wait: 0, auto_extend: true, rollback_wait: nil, &block)
+          validate_rollback_wait!(rollback_wait)
           @lock_config = {
             ttl: ttl,
             wait: wait,
             auto_extend: auto_extend,
+            rollback_wait: rollback_wait,
             key_proc: block
           }
         end
@@ -61,16 +70,27 @@ module RubyReactor
         # Configure semaphore for this reactor or step
         # @param limit [Integer] Maximum concurrent executions
         # @param wait [Integer] Time to wait for a token in seconds (default: 0)
+        # @param rollback_wait [Numeric, nil] STEP only, as for `with_lock`.
+        #   Defaults to 60 seconds: a semaphore slot has no hold expiry.
         # @yield [inputs] Block that returns the semaphore key string. On a
         #   reactor, `inputs` is the reactor's inputs; on a step, it is the
         #   step's own resolved arguments.
-        def with_semaphore(limit:, wait: 0, &block)
+        def with_semaphore(limit:, wait: 0, rollback_wait: nil, &block)
+          validate_rollback_wait!(rollback_wait)
           @semaphore_config = {
             limit: limit,
             wait: wait,
+            rollback_wait: rollback_wait,
             key_proc: block
           }
         end
+
+        def validate_rollback_wait!(value)
+          return if value.nil? || (value.is_a?(Numeric) && value >= 0)
+
+          raise ArgumentError, "rollback_wait must be a number of seconds >= 0 (got #{value.inspect})"
+        end
+        private :validate_rollback_wait!
 
         # Configure a calendar-aligned dedup window for this reactor or step.
         # On a reactor, a hit returns `RubyReactor::Halt` without executing

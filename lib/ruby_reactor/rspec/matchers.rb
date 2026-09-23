@@ -573,6 +573,53 @@ module RubyReactor
         end
       end
 
+      # Asserts that a failed run reports a rollback (undo or compensation)
+      # of `step_name` that did not complete, on `Failure#rollback_failures`.
+      # Subject is a `Failure` or a `test_reactor` wrapper (its `result`).
+      #
+      #   expect(result).to have_rollback_failure(:charge)
+      #   expect(subject).to have_rollback_failure(:charge).for_key("acct:1").because(:coordination_unavailable)
+      #   expect(subject).not_to have_rollback_failure(:charge)
+      ::RSpec::Matchers.define :have_rollback_failure do |step_name|
+        match do |subject|
+          @entries = rollback_failures_for(subject)
+          @entries.any? do |e|
+            e[:step].to_s == step_name.to_s &&
+              (@expected_key.nil? || e[:key].to_s == @expected_key.to_s) &&
+              (@expected_reason.nil? || e[:reason].to_s == @expected_reason.to_s)
+          end
+        end
+
+        chain :for_key do |key|
+          @expected_key = key
+        end
+
+        chain :because do |reason|
+          @expected_reason = reason
+        end
+
+        def rollback_failures_for(subject)
+          subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
+          actual = subject.respond_to?(:result) ? subject.result : subject
+          actual.respond_to?(:rollback_failures) ? actual.rollback_failures : []
+        end
+
+        def expectation_text(step_name)
+          text = "a rollback failure for :#{step_name}"
+          text += " on key #{@expected_key.inspect}" if @expected_key
+          text += " because #{@expected_reason.inspect}" if @expected_reason
+          text
+        end
+
+        failure_message do |_subject|
+          "expected #{expectation_text(step_name)}, got rollback_failures #{@entries.inspect}"
+        end
+
+        failure_message_when_negated do |_subject|
+          "expected no #{expectation_text(step_name)}, got rollback_failures #{@entries.inspect}"
+        end
+      end
+
       # Add more matchers as per plan
       # rubocop:enable Metrics/BlockLength
     end
