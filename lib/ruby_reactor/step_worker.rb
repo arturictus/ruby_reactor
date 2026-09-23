@@ -212,6 +212,16 @@ module RubyReactor
     end
 
     def run_step(context, step_config)
+      # A suppressed step never coordinates (FR-012) — decided before the
+      # arguments are validated or any hold is taken, exactly as
+      # `StepExecutor#execute_step_sync` orders it. `complete` persists the
+      # nil result, so the reader sees the same skipped unit a same-process
+      # step would produce.
+      unless step_config.should_run?(context)
+        log(:info, "skipped")
+        return RubyReactor.Success(nil)
+      end
+
       arguments = resolve_arguments(step_config, context)
       # Reactor-side `argument`/`validate_args` rules gate the step BEFORE its
       # coordination is acquired, exactly as `StepExecutor#execute_step_sync`
@@ -272,19 +282,22 @@ module RubyReactor
                                  retryable: false)
     end
 
-    # Class steps are already coordinated inside `Step.run` (T013); only the
-    # inline (`has_run_block?`) branch needs its own wrap here, mirroring
-    # `StepExecutor#run_inline_block`. `Contended`/`KeyError` propagate
-    # unrescued — `perform_unit` is where they are handled (park, or a
-    # non-retryable Failure), not here.
+    # `impl`'s own declarations are coordinated inside `Step.run` (T013); the
+    # step's OWN (inline) declarations are coordinated here, mirroring
+    # `StepExecutor#coordinate_inline` — including for a class-backed step,
+    # which can carry an inline declaration and no run block.
+    # `Contended`/`KeyError` propagate unrescued — `perform_unit` is where
+    # they are handled (park, or a non-retryable Failure), not here.
     def execute_step_body(step_config, arguments, context)
       result =
         if step_config.has_run_block?
           args = arguments.empty? ? context.inputs : arguments
           args = step_config.inline_contract.enforce!(args) if step_config.inline_contract
-          run_inline_block(step_config, args, context)
+          coordinate_inline(step_config, args, context) { step_config.run_block.call(args, context) }
         elsif step_config.has_impl?
-          step_config.impl.run(arguments, context)
+          coordinate_inline(step_config, with_contract_defaults(step_config, arguments), context) do
+            step_config.impl.run(arguments, context)
+          end
         else
           RubyReactor.Failure("Step '#{@step_name}' has no implementation")
         end
@@ -302,14 +315,19 @@ module RubyReactor
       RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name)
     end
 
-    def run_inline_block(step_config, args, context)
-      block = -> { step_config.run_block.call(args, context) }
+    def coordinate_inline(step_config, arguments, context, &block)
       return block.call unless step_config.inline_coordination?
 
       Executor::StepCoordination.new(
-        step_config: step_config, arguments: args, context: context, reactor_class: context.reactor_class,
+        step_config: step_config.inline_only, arguments: arguments, context: context,
+        reactor_class: context.reactor_class,
         middlewares: context.middlewares || Executor.middlewares_for(context.reactor_class)
       ).around_run(&block)
+    end
+
+    def with_contract_defaults(step_config, arguments)
+      contract = step_config.input_contract
+      contract && arguments.is_a?(Hash) ? contract.apply_defaults(arguments) : arguments
     end
 
     # Mirrors `Executor::RetryManager#can_retry_step?` for the one path that
@@ -359,7 +377,11 @@ module RubyReactor
         record["signal"] = "halt"
         record["reason"] = result.reason
       end
-      storage.store_step_result(@step_context_id, @step_name, record, @reactor_class_name)
+      # Namespaced by the reactor that OWNS the step — what
+      # `AsyncStepDispatch` wrote the `dispatched` record under and what the
+      # reader's `Template::Result` looks under. For an async_step inside a
+      # composed child that is the child, not the root name this job carries.
+      storage.store_step_result(@step_context_id, @step_name, record, step_result_namespace(context || @step_context))
       log(result.success? ? :info : :warn, result.success? ? "completed" : "completed_with_failure")
       storage.publish(RubyReactor.async_step_channel(@step_context_id, @step_name), "done")
       result
@@ -398,6 +420,9 @@ module RubyReactor
       root = ContextSerializer.deserialize_hash(data)
       @root_context = root
       found = find_context(root, @step_context_id)
+      # Kept so the paths that deliberately pass no context to `complete`
+      # still write the record under the owning reactor's namespace.
+      @step_context = found
       # The step runs in its own job; nothing it reaches should hand off again.
       found&.inline_async_execution = true
       # Per-job owner, NEVER the root context id (US4-5, research D5):

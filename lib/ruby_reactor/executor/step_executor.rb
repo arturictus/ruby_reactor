@@ -248,12 +248,13 @@ module RubyReactor
             "step_coordination.parked", step_config.name,
             key: contended.key, primitive: contended.primitive, attempt: attempt
           )
-          # BEFORE the requeue: `park_for_contention` persists this context and
-          # enqueues the redelivery, so the reactor-level holds must already be
-          # recorded as parked or a worker picking the job up in between sees
-          # no marker.
-          @on_contention_park&.call
-          @retry_manager.park_for_contention(step_config, contended, @reactor_class)
+          # Handed to `park_for_contention` rather than called here: it fires
+          # it immediately before the requeue (so a worker picking the job up
+          # cannot miss the marker), and NOT at all when the contention
+          # ceiling turns this park into a terminal failure — parking the
+          # reactor-level holds then would leak them until their TTL.
+          @retry_manager.park_for_contention(step_config, contended, @reactor_class,
+                                             on_park: @on_contention_park)
         else
           # `@error` is the TRUE underlying error (`contended.original`), not
           # the `Contended` wrapper: the executor's non-retryable-failure path
@@ -420,10 +421,17 @@ module RubyReactor
           # If no arguments are defined for the step, pass the reactor inputs as arguments
           args_to_pass = arguments.empty? ? @context.inputs : arguments
           args_to_pass = step_config.inline_contract.enforce!(args_to_pass) if step_config.inline_contract
-          run_inline_block(step_config, args_to_pass)
+          coordinate_inline(step_config, args_to_pass) do
+            catch(StepSignals::TAG) { step_config.run_block.call(args_to_pass, @context) }
+          end
         elsif step_config.has_impl?
-          # Execute step class
-          catch(StepSignals::TAG) { step_config.impl.run(arguments, @context) }
+          # Execute step class. `Step.run` coordinates `impl`'s OWN
+          # declarations; an inline declaration on this StepConfig is invisible
+          # there, so it is acquired here — keyed off the same contract-applied
+          # arguments `Step.run` would use.
+          coordinate_inline(step_config, with_contract_defaults(step_config, arguments)) do
+            catch(StepSignals::TAG) { step_config.impl.run(arguments, @context) }
+          end
         else
           raise Error::ValidationError.new(
             "Step '#{step_config.name}' has no implementation",
@@ -433,20 +441,23 @@ module RubyReactor
         end
       end
 
-      # Inline steps are never coordinated by `Step.run` (they have no impl),
-      # so this is the one enforcement point for them — mirroring T013's
-      # class-step wiring in `Step.run`. Only the step's OWN (inline)
-      # declarations gate here (`inline_coordination?`), never `impl`'s —
-      # that fallback exists for read-only consumers (rollback, the dispatch
-      # guard, the dashboard), not for a second acquisition site.
-      def run_inline_block(step_config, args_to_pass)
-        block = -> { catch(StepSignals::TAG) { step_config.run_block.call(args_to_pass, @context) } }
+      # The enforcement point for a step's OWN (inline) declarations —
+      # mirroring T013's class-step wiring in `Step.run`. Only the inline
+      # declarations gate here (`inline_only`), never `impl`'s fallback: that
+      # fallback exists for read-only consumers (rollback, the dispatch guard,
+      # the dashboard) and is acquired inside `Step.run`, not a second time.
+      def coordinate_inline(step_config, arguments, &block)
         return block.call unless step_config.inline_coordination?
 
         Executor::StepCoordination.new(
-          step_config: step_config, arguments: args_to_pass, context: @context, reactor_class: @reactor_class,
-          middlewares: @middlewares
+          step_config: step_config.inline_only, arguments: arguments, context: @context,
+          reactor_class: @reactor_class, middlewares: @middlewares
         ).around_run(&block)
+      end
+
+      def with_contract_defaults(step_config, arguments)
+        contract = step_config.input_contract
+        contract && arguments.is_a?(Hash) ? contract.apply_defaults(arguments) : arguments
       end
 
       def find_context_by_id(root_context, target_id)

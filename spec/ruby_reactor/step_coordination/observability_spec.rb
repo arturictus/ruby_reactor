@@ -184,8 +184,10 @@ RSpec.describe "step-scoped coordination observability", :step_coordination do
         LockedChargeReactor, inputs: {}, context_id: "irrelevant", execution_trace: [], private_data: {}
       )
 
+      # One pending row PER declared primitive, matching the reached shape —
+      # a step with several gates has several rows to wait on.
       row = coordination[:steps]&.find { |s| s[:step] == "charge" }
-      expect(row).to eq(step: "charge", state: "pending")
+      expect(row).to eq(step: "charge", primitive: "lock", state: "pending")
     end
 
     it "includes waiting: for a parked context, naming step/key/primitive" do

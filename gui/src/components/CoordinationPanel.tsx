@@ -297,7 +297,7 @@ function StepsPanel({ steps, waiting }: { steps: StepCoordinationEntry[]; waitin
     <div className="mt-3 space-y-1.5">
       <h3 className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Steps</h3>
       {steps.map((entry) => (
-        <StepRow key={entry.step} entry={entry} waiting={waiting} />
+        <StepRow key={`${entry.step}:${entry.primitive ?? 'pending'}`} entry={entry} waiting={waiting} />
       ))}
     </div>
   );

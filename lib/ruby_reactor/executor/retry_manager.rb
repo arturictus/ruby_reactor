@@ -26,7 +26,12 @@ module RubyReactor
       # step, bounded by `lock_snooze_max_attempts`, with its own counter
       # (`RetryContext#contention_attempts`) so a busy key can never exhaust
       # the retry budget meant for genuine failures (Finding 2).
-      def park_for_contention(step_config, contended, reactor_class)
+      # `on_park` hands this executor's reactor-level lock/semaphore to the
+      # redelivery. It fires ONLY on the requeue path below: the ceiling path
+      # returns a terminal failure with no redelivery to hand them to, and
+      # parking them there would set `Executor#@parked`, skipping
+      # `release_locks` and leaking the hold until its TTL.
+      def park_for_contention(step_config, contended, reactor_class, on_park: nil)
         # Give back the failure-retry attempt `prepare_retry_attempt` just
         # incremented for this round — a contention park is not a retry
         # attempt (Finding 2).
@@ -68,6 +73,10 @@ module RubyReactor
 
         delay = RubyReactor::Worker.snooze_delay(config, contended)
         @context.retry_context.next_retry_at = Time.now + delay
+        # BEFORE the requeue: `requeue_job` persists this context and enqueues
+        # the job, so the parked-primitive marker must already be on it or a
+        # worker starting in that window re-competes for a detached hold.
+        on_park&.call
         requeue_result = requeue_job(step_config, delay)
 
         if requeue_result.is_a?(RubyReactor::DispatchResult)

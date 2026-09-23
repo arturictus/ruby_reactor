@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "delegate"
+
 module RubyReactor
   module Dsl
     class StepBuilder
@@ -297,6 +299,34 @@ module RubyReactor
       # inside `Step.run`, never a second time by the executor.
       def inline_coordination?
         !(@lock_config || @semaphore_config || @rate_limit_config || @period_config || @ordered_lock_config).nil?
+      end
+
+      INLINE_COORDINATION_READERS = %i[lock_config semaphore_config rate_limit_config period_config
+                                       ordered_lock_config].freeze
+
+      # The same StepConfig, reporting only its OWN declarations. A
+      # class-backed step can carry an inline declaration and no run block
+      # (`step :charge, Impl do with_lock { ... } end`); the executor has to
+      # acquire it, because `Step.run` can only see `Impl`'s own config. The
+      # readers above fall back to `impl`, which would make that acquisition
+      # take `impl`'s primitives a second time — this view drops the fallback.
+      class InlineOnly < SimpleDelegator
+        INLINE_COORDINATION_READERS.each do |reader|
+          define_method(reader) { __getobj__.instance_variable_get(:"@#{reader}") }
+        end
+
+        def coordination_declarations
+          { lock: lock_config, semaphore: semaphore_config, rate_limit: rate_limit_config,
+            period: period_config, ordered_lock: ordered_lock_config }.compact
+        end
+
+        def declares_coordination?
+          !coordination_declarations.empty?
+        end
+      end
+
+      def inline_only
+        InlineOnly.new(self)
       end
 
       # True for `async_step` / `async_reactor` — the step's work leaves this

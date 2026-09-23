@@ -58,7 +58,17 @@ module RubyReactor
         def build_step_entries(name, step_config, context_id, execution_trace, adapter)
           entry = latest_run_entry(execution_trace, name)
           declarations = step_config.coordination_declarations
-          return [{ step: name.to_s, state: "pending" }] if entry.nil? || declarations.empty?
+          return [{ step: name.to_s, state: "pending" }] if declarations.empty?
+
+          # One PENDING row per declared primitive too, matching the reached
+          # shape below — a step declaring both a lock and a semaphore has two
+          # gates to wait on, and collapsing them to a single primitive-less
+          # row hides which.
+          if entry.nil?
+            return declarations.keys.map do |primitive|
+              { step: name.to_s, primitive: primitive.to_s, state: "pending" }
+            end
+          end
 
           # The trace records PRE-contract arguments; coordination keys off the
           # defaulted inputs, so apply the contract here or a defaulted step

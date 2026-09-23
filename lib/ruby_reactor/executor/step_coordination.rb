@@ -50,6 +50,11 @@ module RubyReactor
         end
       end
 
+      # Coordination scopes currently open on THIS thread, innermost last —
+      # what `#marker_name` reads to tell a nested direct class-step
+      # invocation apart from the reactor step it runs inside.
+      SCOPE_KEY = :ruby_reactor_step_coordination_scopes
+
       attr_reader :step_config, :arguments, :context, :reactor_class, :middlewares
 
       # rubocop:disable Metrics/ParameterLists
@@ -149,6 +154,7 @@ module RubyReactor
       # `ensure`s: semaphore releases before lock (FR-008), lock before the
       # ordered-lock gate (Phase 11) advances.
       def around_run(&block)
+        enter_scope
         result = ordered_lock_gate do
           period_fast_check do
             rate_limited do
@@ -167,6 +173,8 @@ module RubyReactor
         # makes the API report a finished step as still waiting.
         clear_contention_state
         result
+      ensure
+        leave_scope
       end
 
       # Re-take exclusion primitives ONLY (lock, then semaphore) for
@@ -336,7 +344,7 @@ module RubyReactor
           # of spending a second slot — otherwise a `limit: 2` can be exhausted
           # by one execution parking twice, which contradicts the documented
           # no-double-charge behaviour.
-          step_rate_limits[step_name.to_s] = true if parked
+          step_rate_limits[marker_name] = true if parked
         end
       end
 
@@ -358,7 +366,7 @@ module RubyReactor
       # uncharged forever.
       def consume_rate_limit_marker # rubocop:disable Naming/PredicateMethod
         stash = step_rate_limits
-        !!(stash.delete(step_name.to_s) || stash.delete(step_name.to_sym))
+        !!(stash.delete(marker_name) || stash.delete(marker_name.to_sym))
       end
 
       # Named config resolves lazily against the registry (config order does
@@ -385,7 +393,7 @@ module RubyReactor
       # it was stored as a String, so lookups check both.
       def ordered_lock_arrival_info(config)
         stash = ordered_lock_stash
-        cached = stash[step_name.to_s] || stash[step_name.to_sym]
+        cached = stash[marker_name] || stash[marker_name.to_sym]
         return cached if cached
 
         key = key_for(config)
@@ -408,7 +416,7 @@ module RubyReactor
           key: key, nonce: nonce, epoch: epoch, poison_pill_timeout: config[:poison_pill_timeout],
           ttl: config[:ttl], strict: config.fetch(:strict, true)
         }
-        stash[step_name.to_s] = info
+        stash[marker_name] = info
         info
       end
 
@@ -423,8 +431,8 @@ module RubyReactor
         stash ||= @ordered_lock_local_stash
         return unless stash
 
-        stash.delete(step_name.to_s)
-        stash.delete(step_name.to_sym)
+        stash.delete(marker_name)
+        stash.delete(marker_name.to_sym)
       end
 
       def check_ordered_lock!(info)
@@ -553,7 +561,7 @@ module RubyReactor
             # redelivery instead of releasing it and re-competing, which would
             # emit a second acquisition and leave a window for someone else.
             lock.detach
-            step_parked_locks[step_name.to_s] = { key: key, owner: owner }
+            step_parked_locks[marker_name] = { key: key, owner: owner }
             pop_key(key)
           else
             release_lock(lock)
@@ -602,7 +610,7 @@ module RubyReactor
       # the context's JSON round-trip as a Symbol, so both spellings are read.
       def consume_parked_lock_marker # rubocop:disable Naming/PredicateMethod
         stash = step_parked_locks
-        !!(stash.delete(step_name.to_s) || stash.delete(step_name.to_sym))
+        !!(stash.delete(marker_name) || stash.delete(marker_name.to_sym))
       end
 
       def with_semaphore
@@ -628,7 +636,7 @@ module RubyReactor
             # the slot checked out across the gap and re-adopt it on the
             # redelivery, rather than handing it back and letting another
             # execution into a step this one still holds.
-            step_parked_semaphores[step_name.to_s] = { key: key, token: semaphore.token, limit: limit }
+            step_parked_semaphores[marker_name] = { key: key, token: semaphore.token, limit: limit }
             pop_key(key) if limit == 1
           else
             release_semaphore(semaphore, key, limit)
@@ -669,7 +677,7 @@ module RubyReactor
       # key survives the context's JSON round-trip as a Symbol.
       def consume_parked_semaphore_token
         stash = step_parked_semaphores
-        info = stash.delete(step_name.to_s) || stash.delete(step_name.to_sym)
+        info = stash.delete(marker_name) || stash.delete(marker_name.to_sym)
         # The marker also carries the key and limit, so a park escalated to a
         # terminal failure can hand the slot back (`discard_parked_state!`).
         info.is_a?(Hash) ? (info[:token] || info["token"]) : info
@@ -823,6 +831,37 @@ module RubyReactor
         else
           step_config.name
         end
+      end
+
+      # Stash identity for every parked marker (lock, semaphore, rate-limit
+      # charge, ordered-lock nonce). Normally just `step_name` — but a nested
+      # direct `InnerStep.run(args, context)` inside an outer step shares that
+      # step's `current_step`, so the name alone would let the outer scope's
+      # marker overwrite the inner one: on redelivery the inner lock is
+      # acquired again under the same owner (bumping its Redis reentrancy
+      # count) and released only once, leaking the key. Nested scopes on the
+      # same step therefore get a depth suffix, which replays identically on
+      # the redelivery because the nesting order is the code's, not a race's.
+      def marker_name
+        @marker_name ||= begin
+          base = step_name.to_s
+          depth = open_scopes.count { |n| n == base || n.start_with?("#{base}#") }
+          depth.zero? ? base : "#{base}##{depth}"
+        end
+      end
+
+      def open_scopes
+        Thread.current[SCOPE_KEY] ||= []
+      end
+
+      # Marker identity is fixed on entry, before this scope is itself counted.
+      def enter_scope
+        open_scopes.push(marker_name)
+      end
+
+      def leave_scope
+        idx = open_scopes.rindex(marker_name)
+        open_scopes.delete_at(idx) if idx
       end
 
       def push_key(key)
