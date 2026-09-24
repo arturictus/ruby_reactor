@@ -77,15 +77,17 @@ module RubyReactor
                     .find { |key| held.include?(key) }
         return nil unless collision
 
-        RubyReactor.Failure(
-          Step::AsyncReactorStep.deadlock_message(collision, "#{@reactor_class&.name}##{step_config.name}",
-                                                  @context, kind: "async_step")
-        )
+        # A never-started error, not a bare message: the step was neither
+        # dispatched nor run, so rollback must not compensate it.
+        message = Step::AsyncReactorStep.deadlock_message(collision, "#{@reactor_class&.name}##{step_config.name}",
+                                                          @context, kind: "async_step")
+        never_started_failure(Executor::StepCoordination::DispatchRefused.new(message, step: step_config.name),
+                              step_config)
       rescue Executor::StepCoordination::KeyError => e
         # A guard key that cannot be computed is the same non-retryable step
         # failure the real acquisition would raise (FR-007) — never a generic
         # execution error, which would skip rollback of the earlier steps.
-        key_error_failure(e, step_config)
+        never_started_failure(e, step_config)
       end
 
       # Through `StepCoordination.resolve_key`, so a nil/empty or raising key
@@ -99,7 +101,7 @@ module RubyReactor
         keys.compact
       end
 
-      def key_error_failure(error, step_config)
+      def never_started_failure(error, step_config)
         RubyReactor::Failure(error, step_name: step_config.name, reactor_name: @reactor_class&.name,
                                     retryable: false)
       end
@@ -125,7 +127,7 @@ module RubyReactor
         # anything else here would let a self-deadlocking job through.
         step_config.coordination_arguments(resolved, @context.inputs)
       rescue Executor::StepCoordination::KeyError => e
-        key_error_failure(e, step_config)
+        never_started_failure(e, step_config)
       end
 
       def pending_async_source?(source)

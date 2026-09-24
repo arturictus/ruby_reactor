@@ -1445,8 +1445,11 @@ class NestedOrderedOuterReactor < RubyReactor::Reactor
   returns :outer
 end
 
+DEADLOCK_GUARD_UNDONE = [] # rubocop:disable Style/MutableConstant
+
 # The dispatch-time deadlock guard fires on :charge — an earlier step has
-# already run its side effect, so the reactor must unwind it.
+# already run its side effect, so the reactor must unwind it. :charge itself
+# never ran, so its compensate must not.
 class DeadlockGuardChildStep < RubyReactor::Step
   input :account_id
 
@@ -1455,9 +1458,12 @@ class DeadlockGuardChildStep < RubyReactor::Step
   def run
     Success(:never)
   end
-end
 
-DEADLOCK_GUARD_UNDONE = [] # rubocop:disable Style/MutableConstant
+  def compensate
+    DEADLOCK_GUARD_UNDONE << :charge
+    Success(:compensated)
+  end
+end
 
 class DeadlockGuardRollbackReactor < RubyReactor::Reactor
   with_lock(wait: 0) { |inputs| "guard_acct:#{inputs[:account_id]}" }

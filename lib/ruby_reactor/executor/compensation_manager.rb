@@ -10,7 +10,8 @@ module RubyReactor
       # `Reactor.run` — both mean the body ran, so neither is listed here.
       NEVER_STARTED_ERROR_CLASSES = [
         RubyReactor::Executor::StepCoordination::Contended,
-        RubyReactor::Executor::StepCoordination::KeyError
+        RubyReactor::Executor::StepCoordination::KeyError,
+        RubyReactor::Executor::StepCoordination::DispatchRefused
       ].freeze
 
       def initialize(context)

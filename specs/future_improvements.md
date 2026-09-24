@@ -221,3 +221,30 @@ All against real Redis, per the constitution.
 - Six writer paths rerouted, plus the cancel/undo request key.
 - Docs: `locks_and_semaphores.md`, `background_and_async.md`, and the README's "Durability &
   Recovery" section.
+
+## Fan-out map inside a composed child
+
+**Status:** bug, already present on main (0.8.1). Raised by the PR #56 review.
+
+A root that composes a child, where the child runs a `fan_out` map, never finishes. The root
+stays `running`.
+
+- `MapStep#prepare_async_execution` stores the child under its own id.
+- The map collector loads that child blob. Its `root_context` is nil, so the collector resumes
+  the child as a standalone execution. On a park, it requeues the child the same way.
+- The child completes in its own blob. Nothing resumes the root, and the root's embedded copy of
+  the child stays at the map step.
+
+To reproduce: `Root` composes `Child`, and `Child` runs a `map ... fan_out batch_size: 1`. Drain
+the element, collector and `Worker` jobs. The root is still `running`.
+
+A literal patch would have the collector write the root's blob. That breaks the single-writer
+rule, because the collector holds only `map_collect:`, never the root's `async:` lock.
+
+Direction:
+- The collector records the map's completion on the map's own records, which it already does.
+- The collector requeues the ROOT worker and does not resume the child itself.
+- On re-entry, `MapStep` adopts the finished map: collect the results, don't dispatch again.
+
+Spec: compose → fan-out map, with and without a park after the map. The root completes either
+way.

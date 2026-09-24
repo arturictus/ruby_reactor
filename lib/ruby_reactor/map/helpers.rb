@@ -92,7 +92,7 @@ module RubyReactor
           end
           # This branch runs no executor loop, so nothing else persists the
           # failed status: store it here.
-          store_root(parent_context, storage)
+          store_parent(parent_context, storage)
         else
           parent_context.set_result(step_name_sym, final_result.value)
 
@@ -133,29 +133,27 @@ module RubyReactor
       # also a final handler for park signals (005 R-01), like `Worker` and
       # `ElementExecutor`: the resume has already parked the parent's holds and
       # saved; hand the rest back to the parent's own worker.
+      #
+      # The parent is loaded from its own blob, so it has no `root_context`:
+      # a map inside a composed child resumes and requeues that child as its
+      # own execution, never its root. ponytail: the root is never resumed
+      # after such a map (already so on main); see "Fan-out map inside a
+      # composed child" in specs/future_improvements.md.
       def resume_parked_aware(executor, parent_context)
         executor.resume_execution
       rescue RubyReactor::Error::ExecutionParked => e
-        root = parent_context.root_context || parent_context
         config = RubyReactor.configuration
         config.async_router.perform_in(
-          RubyReactor::Worker.snooze_delay(config, e), root.context_id,
-          RubyReactor.reactor_storage_name(root.reactor_class)
+          RubyReactor::Worker.snooze_delay(config, e), parent_context.context_id,
+          RubyReactor.reactor_storage_name(parent_context.reactor_class)
         )
       end
 
-      # Checkpoint the ROOT, not the sub (F9/C2). When the map is embedded in a
-      # composed sub-reactor, parent_context is the *sub*; storing only the sub
-      # would leave the root blob stale and a rehydrate-by-root-id resume would
-      # lose the map's completion. Resolve the root (which embeds the sub's
-      # post-map state via composed_contexts) and store that. For a top-level
-      # map parent_context IS the root, so this is unchanged.
-      def store_root(parent_context, storage)
-        root = parent_context.root_context || parent_context
+      def store_parent(parent_context, storage)
         storage.store_context(
-          root.context_id,
-          ContextSerializer.serialize(root),
-          RubyReactor.reactor_storage_name(root.reactor_class)
+          parent_context.context_id,
+          ContextSerializer.serialize(parent_context),
+          RubyReactor.reactor_storage_name(parent_context.reactor_class)
         )
       end
     end

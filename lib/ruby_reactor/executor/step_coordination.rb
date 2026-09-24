@@ -31,6 +31,10 @@ module RubyReactor
       # before its body runs; the cause and the step name are both surfaced.
       class KeyError < RubyReactor::Error::Base; end
 
+      # An `async_step` refused at dispatch because it declares a key this
+      # execution holds (`AsyncStepDispatch`). Nothing was dispatched or run.
+      class DispatchRefused < RubyReactor::Error::Base; end
+
       # A semaphore slot has no hold expiry to bound a rollback wait by, so it
       # waits the lock's default `ttl` instead (005 D-F1). A constant, not a
       # config key — add one if someone needs it.

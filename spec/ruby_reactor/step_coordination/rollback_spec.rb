@@ -181,7 +181,7 @@ RSpec.describe "step-scoped coordination on rollback (compensate/undo)", :step_c
   end
 
   describe "the async_step dispatch deadlock guard" do
-    it "unwinds the steps that already ran instead of failing without compensation" do
+    it "unwinds the steps that already ran, without compensating the refused step" do
       DEADLOCK_GUARD_UNDONE.clear
       RubyReactor::Adapters::Sidekiq::StepWorker.jobs.clear
       account_id = unique_account_id

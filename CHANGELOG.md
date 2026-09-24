@@ -185,6 +185,8 @@
   requeues the parent on its own worker instead of escaping the map collector and leaving the run
   "running" forever; the collector also no longer re-saves the parent after resuming it, which
   could overwrite a newer save by the parent's next worker.
+* An `async_step` refused at dispatch because it would deadlock on a key the reactor holds is no
+  longer compensated. It was never dispatched or run. The steps before it still roll back.
 * A step of a composed child that reads a not-yet-finished background result in a worker (F10)
   parks the execution, keeping the child's lock, instead of failing the parent with
   "async result … still pending".
