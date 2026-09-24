@@ -221,3 +221,34 @@ class ParkLockedChildParentReactor < RubyReactor::Reactor
 
   returns :child
 end
+
+# A fan-out map, then a locked step: the map collector resumes the parent in
+# its own worker, so a park AFTER the map surfaces there, not in `Worker`.
+class ParkMapElementReactor < RubyReactor::Reactor
+  input :n
+
+  step :double do
+    argument :n, input(:n)
+    run { |args| RubyReactor.Success(args[:n] * 2) }
+  end
+
+  returns :double
+end
+
+class ParkAfterMapReactor < RubyReactor::Reactor
+  input :account_id
+  input :numbers
+
+  map :doubled, ParkMapElementReactor do
+    source input(:numbers)
+    argument :n, element(:doubled)
+    fan_out batch_size: 1
+  end
+
+  step :charge, ParkChildStep do
+    argument :account_id, input(:account_id)
+    wait_for :doubled
+  end
+
+  returns :charge
+end

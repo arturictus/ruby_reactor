@@ -880,10 +880,17 @@ A review of the finished work (`36ac35f2`) found six more issues. Decisions are 
 - [X] T071 [F1] A `compensate` that raised stopped the rollback. Repro:
   `spec/ruby_reactor/compensation_failure_spec.rb`. Fix: `CompensationManager#compensate_step`
   returns `Failure(e)` (R-15). Docs: `locks_and_semaphores.md` Step Rollback.
-- [ ] T072 [F2] `StepWorker#complete`'s terminal `save_root` overwrites a newer parent checkpoint.
-  **Not implemented**: every fix needs a design decision research.md does not settle (where the
-  dashboard's `:run` arguments and attempts live once the unit stops writing the parent). The
-  options and a recommendation are in R-18.
+- [X] T072 [F2] `StepWorker#complete`'s terminal `save_root` overwrote a newer parent checkpoint.
+  Decided: option 1 (R-18). Repros: `spec/ruby_reactor/async_step_single_writer_spec.rb` and
+  "rebuilding an async_step's run from its link" in `spec/ruby_reactor/web/api_spec.rb`. Fix:
+  `StepWorker` writes only its record (`started_at`, `arguments`, `attempts`; no `save_root`);
+  `Web::API` rebuilds the `:run` entry, attempts and coordination key from the link, recursively.
+  Docs: `background_and_async.md` (`async_step` → Other behavior), `locks_and_semaphores.md`,
+  CHANGELOG, data-model.
+- [X] T075 [R-19] A park after a fan-out map escaped the map collector and stranded the run; the
+  collector also re-saved the parent outside its context lock. Repro: "a park after a fan-out
+  map" in `park_spec.rb`. Fix: `Map::Helpers#resume_parked_aware` requeues on the parent's worker;
+  the post-resume store moved to the failure branch only.
 - [X] T073 [F3] A composed child's own reactor-level contention failed the parent in a worker.
   Repros: "a composed child's own reactor-level lock, contended in a worker" (park and ceiling) in
   `park_spec.rb` (fixtures `ParkLockedChildReactor`, `ParkLockedChildParentReactor`). Fix:

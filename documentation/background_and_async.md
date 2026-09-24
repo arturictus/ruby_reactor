@@ -306,7 +306,21 @@ only if the failure is surfaced into the parent's compensation path this way.
   `perform_step_in` (the same snooze config as a reactor-level park), bounded
   by `lock_snooze_max_attempts`.
 - A reference is recorded on the parent's context and rendered as an
-  `async_step` node in the dashboard.
+  `async_step` node in the dashboard. That link is the **only** thing the unit
+  ever puts on its parent: a context is written by one process only — the
+  execution that owns it — and the unit runs in a different one. The unit reads
+  the parent's context but never writes it back, so it can never revert
+  progress the parent saved while the unit ran. Everything about the unit lives
+  on its own **Step Result Record**: its run (`arguments`, `attempts`,
+  `started_at`), its park state while it waits on a key, and its outcome. The
+  dashboard rebuilds the unit's run — its `:run` entry, attempt count and
+  coordination key — from the link, at any composition depth. Two
+  consequences:
+  - `Reactor.find(id).context.execution_trace` has no `:run` entry for an
+    `async_step`; read the unit through its result (`result(:name)`) or its
+    record.
+  - Changes an `async_step` body makes to `context` stay in its own job and are
+    never persisted. Return data as the step's result instead.
 - On recovery, a dispatch that already happened is **re-attached**, never
   re-dispatched: the durable record written before the enqueue is also the
   re-attach marker, so a crash cannot duplicate the side effect.

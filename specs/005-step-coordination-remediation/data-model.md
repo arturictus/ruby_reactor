@@ -125,11 +125,15 @@ Fields added to the existing record hash (`storage.store_step_result`):
 |---|---|---|---|---|
 | `ordered_lock` | Hash `{key, nonce, epoch, poison_pill_timeout, ttl, strict}` or absent | `StepWorker#mark_record_parked` (from the step's stash) | `StepWorker#load_step_context`, which copies it into the step context's `private_data[:step_ordered_locks][step]` | `complete` writes a fresh record |
 | `waiting` | Hash `{step, primitive, key, attempts}` or absent | `StepWorker#mark_record_parked` | `Web::CoordinationSerializer` for `async_dispatch == :step` steps | `complete` writes a fresh record |
+| `started_at` | ISO 8601 string (µs), absent until the body is reached | `StepWorker#mark_record_parked` and `#complete` | `Web::API.async_step_runs` (places the rebuilt `:run` entry) | never; a later delivery overwrites it |
+| `arguments` | the step's resolved arguments, contract-redacted, `ContextSerializer`-serialized | same | `Web::API.with_async_step_runs` (the `:run` entry, and the coordination panel's key) | never |
+| `attempts` | Integer, body attempts in the delivery that wrote the record | same | `Web::API.with_async_step_attempts` | never |
 
 Existing fields `parked_until` and `contention_attempts` are unchanged.
 
 **Invariant**: the step's worker is the record's only writer while the unit is not terminal.
-The parent's root blob is never written by a park.
+The parent's root blob is never written by the unit — not on a park, not on completion, not on
+failure (R-18). The parent holds only the `:async_step_ref` link written at dispatch.
 
 ## Middleware Event: `:snooze_step` (research R-04)
 

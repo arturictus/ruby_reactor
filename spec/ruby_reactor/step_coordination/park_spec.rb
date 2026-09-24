@@ -232,6 +232,23 @@ RSpec.describe "parks at any depth", :step_coordination do
     end
   end
 
+  describe "a park after a fan-out map" do
+    it "requeues the parent on its own worker when the map collector resumes it into a park" do
+      holder = hold("park:acct:#{account_id}")
+      reactor = ParkAfterMapReactor.new
+      reactor.run(account_id: account_id, numbers: [1])
+      RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
+
+      expect { RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain }.not_to raise_error
+      expect(worker_class.jobs.size).to eq(1)
+
+      holder.release
+      perform_once
+
+      expect(ParkAfterMapReactor.find(reactor.context.context_id).context.status.to_s).to eq("completed")
+    end
+  end
+
   describe "a background-result wait inside a composed child (R6, F10)" do
     it "parks the execution, keeping the child's lock, instead of failing the parent" do
       dispatch = ParkAsyncReaderParent.run(run_id: run_id)

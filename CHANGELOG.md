@@ -175,6 +175,16 @@
   abnormally (e.g. `Sidekiq::Shutdown`), so the poison pill can release the position.
 * Step coordination (F9): a step class invoked directly from another step's body names itself in
   contention errors and coordination events, not the calling step.
+* An `async_step` no longer writes its parent's context when it finishes (it already stopped
+  doing so on a park). Its older snapshot overwrote whatever the parent saved while the unit ran —
+  a parent could revert to "running" and lose later steps' results. The unit's run (arguments,
+  attempts, start time) now lives on its Step Result Record, and the dashboard rebuilds it from the
+  parent's link, at any composition depth. `context.execution_trace` no longer has a `:run` entry
+  for an `async_step`, and changes an `async_step` body makes to `context` are not persisted.
+* A park after a fan-out map (a later step's contention, or an awaited background result) now
+  requeues the parent on its own worker instead of escaping the map collector and leaving the run
+  "running" forever; the collector also no longer re-saves the parent after resuming it, which
+  could overwrite a newer save by the parent's next worker.
 * A step of a composed child that reads a not-yet-finished background result in a worker (F10)
   parks the execution, keeping the child's lock, instead of failing the parent with
   "async result … still pending".

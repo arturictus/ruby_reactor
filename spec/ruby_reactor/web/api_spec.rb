@@ -312,6 +312,64 @@ RSpec.describe RubyReactor::Web::API, type: :request do
     end
   end
 
+  # The parent holds only the link an `async_step` dispatch wrote; the unit's
+  # run lives on its Step Result Record (it never writes the parent). The
+  # dashboard's view of the parent is rebuilt from those links.
+  describe "rebuilding an async_step's run from its link" do
+    def perform_unit
+      worker = RubyReactor::Adapters::Sidekiq::StepWorker
+      job = worker.jobs.last
+      worker.jobs.clear
+      worker.new.perform(*job["args"])
+    end
+
+    def run_entries(steps, step)
+      steps.select { |e| e["type"] == "run" && e["step"] == step }
+    end
+
+    it "serves the unit's run entry and attempts from its record" do
+      id = AsyncStepSiblingReactor.run(email: "a@b.c").execution_id
+      perform_unit
+
+      get "/reactors/#{id}"
+      json = JSON.parse(last_response.body)
+
+      entries = run_entries(json["steps"], "send_email")
+      expect(entries.size).to eq(1)
+      expect(entries.first).to include("arguments" => { "to" => "a@b.c" }, "background" => true)
+      expect(json["step_attempts"]).to include("send_email" => 1)
+    end
+
+    it "resolves the coordination key of a locked unit from its record" do
+      account_id = SecureRandom.random_number(10**9)
+      id = WorkerHookReactor.run(account_id: account_id).execution_id
+      perform_unit
+
+      get "/reactors/#{id}"
+      row = JSON.parse(last_response.body)["coordination"]["steps"].find { |r| r["step"] == "charge" }
+
+      expect(row["key"]).to eq("worker_hook:#{account_id}")
+    end
+
+    it "does the same inside a composed child" do
+      id = ComposedAsyncParentReactor.run(account_id: 1).execution_id
+      perform_unit
+
+      get "/reactors/#{id}"
+      child = JSON.parse(last_response.body)["composed_contexts"]["child"]["context"]
+
+      expect(run_entries(child["execution_trace"], "charge").size).to eq(1)
+    end
+
+    it "shows no run for a unit that has not started" do
+      id = AsyncStepSiblingReactor.run(email: "a@b.c").execution_id
+
+      get "/reactors/#{id}"
+
+      expect(run_entries(JSON.parse(last_response.body)["steps"], "send_email")).to be_empty
+    end
+  end
+
   # A failed map records no result on the parent, so the failing step showed
   # nothing in the dashboard while its element results sat in storage.
   describe ".with_map_summaries" do

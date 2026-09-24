@@ -180,7 +180,8 @@ over `executor.rb`, `executor/*.rb`, `step.rb`, `step/*.rb`, `template/*.rb`, pl
   `StepCoordination#run_under_ordered_lock` (outcome `:parked`), and `StepCoordination.call_body`
   (rescues only `Contended`/`KeyError`).
 - **Park own holds, then re-raise** (2): `Executor#execute`, `Executor#resume_execution`.
-- **Final handlers** (2): `Worker#perform`, `Map::ElementExecutor.perform_element`.
+- **Final handlers** (3): `Worker#perform`, `Map::ElementExecutor.perform_element`, and
+  `Map::Helpers#resume_parent_execution` (the map collector resuming the parent; added by R-19).
 - **Raise sites added after the audit** (1, R-16): the contention rescue of `Executor#execute`
   and `#resume_execution` raises `ReactorContentionPark` for a composed child in a worker. It is
   an `ExecutionParked`, so every site above handles it as listed; none needed a change except the
@@ -501,7 +502,7 @@ that review's, not the ones in §1). Decisions R-14–R-18 record how each was s
   lock's `ttl`; a lapsed lock is re-acquired and emits it (spec US2-5). Qualified in
   `locks_and_semaphores.md` and contracts §5.
 
-### R-18: F2 is deferred: `StepWorker#complete` still writes the parent's root blob
+### R-18: F2: an `async_step` unit never writes its parent (decided 2026-09-24: option 1)
 
 - **Finding (confirmed by probe)**: `complete`'s `ensure save_root(context)` writes the root
   snapshot the unit loaded when its delivery started. A parent checkpoint stored while the body ran
@@ -529,6 +530,50 @@ that review's, not the ones in §1). Decisions R-14–R-18 record how each was s
 - **Note**: the entry is already best-effort today. Any parent that saves after the unit
   finishes (a synchronous parent, or a worker parent that never parked) overwrites it.
   Recommendation: option 1, with the trace change documented.
+- **Decision (user, 2026-09-24)**: option 1, stated as a rule for the library: **a context is
+  written by one process only — the controlled execution that owns it.**
+  - The parent holds only the link written at dispatch (`:async_step_ref`).
+  - The unit never writes the parent — not on a park (R-09), not on completion, not on failure.
+    `StepWorker` has no `save_root` any more; its only write is its own Step Result Record.
+  - The record carries the unit's run: `started_at`, `arguments` (redacted, serialized),
+    `attempts`, written on a park and on completion.
+  - The web API rebuilds the view from the links (`Web::API.async_step_runs`,
+    `.with_async_step_runs`, `.with_async_step_attempts`), recursively into embedded `compose`
+    children (`.hydrate_composed_child`): the `:run` entry (placed by `started_at`), the attempt
+    count, and the coordination panel's key.
+  - Accepted consequences: `Reactor.find(id).context.execution_trace` has no `:run` entry for an
+    `async_step`, and changes an `async_step` body makes to `context` are not persisted. Both are
+    documented (`background_and_async.md`).
+- **Specs**: `spec/ruby_reactor/async_step_single_writer_spec.rb` (the parent's stored context is
+  unchanged after the unit completes or fails; a newer parent checkpoint survives; the record
+  carries arguments and attempts) and "rebuilding an async_step's run from its link" in
+  `spec/ruby_reactor/web/api_spec.rb` (root, coordination key, composed child).
+
+### R-19: The map collector is a final handler for park signals, and does not re-save the parent
+
+- **Finding (found while auditing context writers for R-18, confirmed by probe)**: after a fan-out
+  map, `Map::Helpers#resume_parent_execution` resumes the parent in the collector's worker. A
+  park there (a later step's contention, or an awaited background result) raised out of the
+  collector: nothing requeued the parent, the collector's retry saw the map result already saved
+  and returned, and the run stayed "running". Before R-01 the contention park requeued itself
+  inside `RetryManager`, so this is a regression of R-01 for contention (and was already the case
+  for `AsyncResultPending`).
+- **Decision**: the collector rescues `Error::ExecutionParked` and requeues the parent on its own
+  worker (`perform_in(Worker.snooze_delay(...), root id)`), like `Worker` snoozes. The resume has
+  already parked the parent's holds and saved.
+- **Single writer**: the collector's unconditional store of the parent after `resume_execution`
+  ran after the parent's context lock was released, and even when the resume deliberately did not
+  persist (it lost the lock to a live duplicate, or replayed a terminal run) — overwriting the
+  lock holder's state. It now stores only on the failure branch, which runs no executor loop and
+  has no other save.
+- **Spec**: "a park after a fan-out map" in `park_spec.rb`.
+- **Remaining writers outside a context lock** (not changed, reported for a decision):
+  `Worker.record_retries_exhausted`, `Worker#escalate_snooze`, `Worker#handle_deserialization_failure`
+  (terminal bookkeeping after or without an executor run) and the collector's failure branch
+  (the collector is the parent's only controller while the map runs, guarded by the
+  `map_collect:` lock, but it does not take the parent's `async:` context lock). A structural
+  guarantee would be fenced context writes: every store carries the token of the `async:` lock
+  it holds, and the storage script rejects a write whose token does not own the lock.
 
 ## 3. Open risks
 

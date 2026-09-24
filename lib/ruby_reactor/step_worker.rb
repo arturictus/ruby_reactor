@@ -11,6 +11,16 @@ module RubyReactor
   # load-bearing — the record is written BEFORE the signal, so a reader that
   # misses the (at-most-once) signal still finds the answer on its next
   # fallback re-check.
+  #
+  # Single writer: a context is written only by the execution that owns it,
+  # and this unit is not the parent's execution. It reads the parent's context
+  # and NEVER writes it back — the parent may be saving newer progress at this
+  # very moment, and an older snapshot written over it would revert that. The
+  # parent holds only the link written at dispatch (`:async_step_ref`); every
+  # fact about this unit — its run (arguments, attempts), its park state and
+  # its outcome — lives on its own Step Result Record, where the dashboard
+  # rebuilds it from the link. A body's changes to `context` are therefore
+  # local to this job and never persisted.
   # rubocop:disable Metrics/ClassLength
   class StepWorker
     # Grace added to a park's stamped window, so ordinary queue latency on the
@@ -108,10 +118,10 @@ module RubyReactor
 
       if !uncapped && config.lock_snooze_max_attempts != :infinity && attempt > config.lock_snooze_max_attempts
         log(:warn, "contention_exhausted", key: contended.key, attempt: attempt)
-        # Terminal: an earlier park kept this step's ordered-lock position and
-        # its waiting marker for a redelivery that is no longer coming — hand
-        # them back; `context` is passed on so `complete`'s `save_root`
-        # persists the cleared state.
+        # Terminal: an earlier park kept this step's ordered-lock position for
+        # a redelivery that is no longer coming — advance it, or every later
+        # position stalls until its poison pill. `complete` then writes a
+        # fresh terminal record, which drops the position and waiting marker.
         Executor::StepCoordination.discard_parked_state!(context) if context
         complete(
           RubyReactor::Failure(
@@ -183,6 +193,7 @@ module RubyReactor
       record["ordered_lock"] = position if position
       record["waiting"] = { "step" => @step_name, "primitive" => contended.primitive, "key" => contended.key,
                             "attempts" => attempt }
+      record.merge!(run_fields)
       storage.store_step_result(@step_context_id, @step_name, record, namespace)
     rescue StandardError => e
       RubyReactor.configuration.logger.warn(
@@ -246,13 +257,13 @@ module RubyReactor
       return invalid if invalid
 
       log(:info, "running")
-      # Mirrors `StepExecutor#run_step_implementation`: without a `:run` entry
-      # the dashboard has no arguments to resolve this step's key from.
+      # What `StepExecutor#run_step_implementation` records as a `:run` trace
+      # entry for a same-process step, kept on this unit's record instead (see
+      # the class comment): the dashboard resolves the step's coordination key
+      # and its inspector's arguments from it.
       contract = step_config.input_contract
-      context.append_execution_trace(
-        { type: :run, step: @step_name, timestamp: Time.now,
-          arguments: contract ? contract.redact(arguments) : arguments }
-      )
+      @run = { "started_at" => Time.now.iso8601(6),
+               "arguments" => ContextSerializer.serialize_value(contract ? contract.redact(arguments) : arguments) }
 
       attempt = 0
       result = nil
@@ -263,6 +274,7 @@ module RubyReactor
       context.with_step(@step_name) do
         loop do
           attempt += 1
+          @run["attempts"] = attempt
           # Mirror the count onto the context: `StepCoordination` reads
           # `retry_context` to decide whether an ordered-lock position should be
           # held for a pending retry, and this worker is the one path that never
@@ -369,6 +381,7 @@ module RubyReactor
         record["signal"] = "halt"
         record["reason"] = result.reason
       end
+      record.merge!(run_fields)
       # Namespaced by the reactor that OWNS the step — what
       # `AsyncStepDispatch` wrote the `dispatched` record under and what the
       # reader's `Template::Result` looks under. For an async_step inside a
@@ -377,10 +390,12 @@ module RubyReactor
       log(result.success? ? :info : :warn, result.success? ? "completed" : "completed_with_failure")
       storage.publish(RubyReactor.async_step_channel(@step_context_id, @step_name), "done")
       result
-    ensure
-      # A step body may have mutated the sub-context; nothing else will persist
-      # it, and the dashboard reads the parent's blob.
-      save_root(context) if context
+    end
+
+    # This delivery's run, once the body was reached: `started_at`,
+    # `arguments` (redacted, serialized) and `attempts`. Empty before that.
+    def run_fields
+      @run || {}
     end
 
     def record_missing_parent
@@ -410,7 +425,6 @@ module RubyReactor
       return nil unless data
 
       root = ContextSerializer.deserialize_hash(data)
-      @root_context = root
       found = find_context(root, @step_context_id)
       # Kept so the paths that deliberately pass no context to `complete`
       # still write the record under the owning reactor's namespace.
@@ -458,17 +472,6 @@ module RubyReactor
         return found if found
       end
       nil
-    end
-
-    def save_root(_context)
-      return unless @root_context
-
-      storage.store_context(@root_context.context_id, ContextSerializer.serialize(@root_context),
-                            @reactor_class_name)
-    rescue StandardError => e
-      RubyReactor.configuration.logger.warn(
-        "RubyReactor: async_step :#{@step_name} could not persist its parent context: #{e.message}"
-      )
     end
 
     def storage
