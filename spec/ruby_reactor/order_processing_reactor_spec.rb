@@ -2,7 +2,7 @@
 
 require "spec_helper"
 require "sidekiq/testing"
-RSpec.describe RubyReactor::OrderProcessingReactor do
+RSpec.describe RubyReactor::OrderProcessingReactor, type: :reactor do
   shared_examples "order processing reactor step execution" do
     def execute_op_reactor(inputs = {})
       test_reactor(described_class, inputs, async: is_async)

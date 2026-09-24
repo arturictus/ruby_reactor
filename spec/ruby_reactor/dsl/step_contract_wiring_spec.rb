@@ -4,7 +4,7 @@ require "spec_helper"
 
 # US4: a declared input with no `argument` resolves from the same-named reactor
 # input; a required input satisfied by neither fails before any step runs.
-RSpec.describe "Step contract wiring" do
+RSpec.describe "Step contract wiring", type: :reactor do
   let(:received) { [] }
 
   before do

@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe RubyReactor::RSpec::TestSubject, "#mock_step" do
+RSpec.describe RubyReactor::RSpec::TestSubject, "#mock_step", type: :reactor do
   # Define a simple reactor for testing
   class MockingTestReactor < RubyReactor::Reactor
     class AddOneStep < RubyReactor::Step

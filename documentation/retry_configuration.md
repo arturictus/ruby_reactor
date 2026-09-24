@@ -340,7 +340,7 @@ end
 ### Unit Testing
 
 ```ruby
-RSpec.describe PaymentReactor do
+RSpec.describe PaymentReactor, type: :reactor do
   it "retries failed payment with exponential backoff" do
     allow(PaymentService).to receive(:charge)
       .and_raise(NetworkError.new("Timeout"))

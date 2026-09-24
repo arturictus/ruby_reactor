@@ -48,44 +48,93 @@ module RubyReactor
         self
       end
 
-      # Fluent API for mocking nested map steps
-      # @example
-      #   reactor.map(:my_map).mock_step(:inner_step) { ... }
+      # Fluent/scoped API for mocking nested map steps.
+      #
+      # Without a block, returns a proxy scoped to this map step — chain
+      # `mock_step`/`failing_at`/`map`/`composed` on it to configure several
+      # things inside the same nested reactor:
+      #   reactor.map(:my_map).mock_step(:a) { ... }.mock_step(:b) { ... }
+      #
+      # With a block, the proxy is yielded and the *outer* subject is
+      # returned, so sibling nested reactors can be configured in the same
+      # chain without leaking scope between them:
+      #   test_reactor(Parent, params)
+      #     .map(:my_map) { |m| m.mock_step(:a) { ... } }
+      #     .composed(:other_child) { |c| c.mock_step(:b) { ... } }
       def map(step_name)
-        StepProxy.new(self, step_name)
+        proxy = StepProxy.new(self, [step_name])
+        return proxy unless block_given?
+
+        yield proxy
+        self
       end
 
-      # Fluent API for mocking nested compose steps
+      # Fluent/scoped API for mocking nested compose steps. See `#map` for
+      # the block vs. no-block behavior.
       # @example
-      #   reactor.compose(:my_sub_reactor).mock_step(:inner_step) { ... }
+      #   reactor.composed(:my_sub_reactor).mock_step(:inner_step) { ... }
       def composed(step_name)
         # If already executed, return the traversed subject
         return traverse_composed(step_name) if @executed
 
-        # Otherwise return a configuration proxy
-        StepProxy.new(self, step_name)
+        proxy = StepProxy.new(self, [step_name])
+        return proxy unless block_given?
+
+        yield proxy
+        self
       end
       alias compose composed
 
-      # Proxy class for fluent mocking configuration
+      # Proxy scoped to a nested step path (e.g. [:parent_compose, :child_map]).
+      # All mutating calls stay scoped to this path: `mock_step`/`failing_at`
+      # return the proxy itself (not the outer subject) so several inner
+      # steps of the *same* nested reactor can be chained without resetting
+      # scope back to the parent.
       class StepProxy
-        def initialize(subject, step_name)
+        def initialize(subject, step_path)
           @subject = subject
-          @step_name = step_name
+          @step_path = step_path
         end
 
-        def mock_step(inner_step_name, *nested_steps, &block)
-          @subject.mock_step(@step_name, inner_step_name, *nested_steps, &block)
-          @subject # Return subject to allow chaining or calling run
+        def mock_step(inner_step_name, *nested_steps, element_index: nil, &block)
+          @subject.mock_step(*@step_path, inner_step_name, *nested_steps, element_index: element_index, &block)
+          self
         end
 
-        # Support deep nesting?
+        def failing_at(inner_step_name, *nested_steps, element_index: nil, &block)
+          @subject.failing_at(*@step_path, inner_step_name, *nested_steps, element_index: element_index, &block)
+          self
+        end
+
         def map(inner_step_name)
-          StepProxy.new(@subject, [@step_name, inner_step_name].flatten)
+          proxy = self.class.new(@subject, @step_path + [inner_step_name])
+          return proxy unless block_given?
+
+          yield proxy
+          self
         end
 
         def composed(inner_step_name)
-          StepProxy.new(@subject, [@step_name, inner_step_name].flatten)
+          proxy = self.class.new(@subject, @step_path + [inner_step_name])
+          return proxy unless block_given?
+
+          yield proxy
+          self
+        end
+        alias compose composed
+
+        # Delegate everything else (run, success?, result, step_result, ...)
+        # to the outer subject, so a proxy can stand in for it wherever a
+        # `TestSubject` is expected (e.g. `expect(subject).to be_success`
+        # right after a non-block `.composed(:x).mock_step(:y)` chain).
+        def method_missing(name, ...)
+          return @subject.public_send(name, ...) if @subject.respond_to?(name)
+
+          super
+        end
+
+        def respond_to_missing?(name, include_private = false)
+          @subject.respond_to?(name, include_private) || super
         end
       end
 
@@ -491,12 +540,13 @@ module RubyReactor
       end
 
       def prepare_execution_class
+        @force_sync = @async == false
+
         # Even if no interceptors, we might need to subclass to force the whole
         # reactor to run in-process.
-        return @reactor_class if @interceptors.empty? && @async != false
+        return @reactor_class if @interceptors.empty? && !@force_sync
 
         interceptors = @interceptors
-        force_sync = @async == false
 
         execution_class = Class.new(@reactor_class) do
           # 1. Copy configuration from parent
@@ -514,25 +564,96 @@ module RubyReactor
           unique_name = "#{superclass.name}Mock#{object_id}"
           define_singleton_method(:name) { unique_name }
           RubyReactor::Registry.register(unique_name, self)
+        end
 
-          # 3. `async: false` / `run_async(false)` means "run this reactor's full
-          # logic here, in one process". Under the new DSL that is three things:
-          # suppress the `background` hand-off, and run `async_step` /
-          # `async_reactor` units inline instead of dispatching them.
-          if force_sync
-            @background_handoff = nil
-            @steps.each do |name, config|
-              next unless config.respond_to?(:async_dispatch?) && config.async_dispatch?
-
-              @steps[name] = config.clone.tap { |c| c.instance_variable_set(:@async_dispatch, nil) }
-            end
-          end
+        # 3. `async: false` / `run_async(false)` means "run this reactor's full
+        # logic here, in one process" — all the way down. Suppress this
+        # class's own `background` hand-off and `async_step`/`async_reactor`
+        # dispatch, then recursively do the same for every `compose`d/`map`ped
+        # child reactor (`apply_nested_interceptors` below clones from
+        # whatever class ends up wired in here, so it inherits this).
+        if @force_sync
+          strip_background_and_async!(execution_class)
+          force_sync_nested_reactors!(execution_class)
         end
 
         # 4. Apply Interceptors
         apply_interceptors(execution_class, interceptors)
 
         execution_class
+      end
+
+      # Clears the background hand-off and any `async_dispatch` flags on a
+      # class's OWN steps. Nested composed/map children are separate classes,
+      # handled by `force_sync_nested_reactors!`.
+      def strip_background_and_async!(klass)
+        klass.instance_variable_set(:@background_handoff, nil)
+        klass.steps.each do |name, config|
+          next unless config.respond_to?(:async_dispatch?) && config.async_dispatch?
+
+          klass.steps[name] = config.clone.tap { |c| c.instance_variable_set(:@async_dispatch, nil) }
+        end
+      end
+
+      # Rewrites every `compose`/`map` step to target a subclass that has
+      # itself been force-synced (background/async stripped, and recursively,
+      # its own nested composed/map children), so `run_async(false)` reaches
+      # every level of a reactor tree instead of only the top one.
+      def force_sync_nested_reactors!(klass)
+        klass.steps.each do |step_name, step_config|
+          arg_key, source = nested_reactor_source(step_config)
+          next unless source
+
+          forced_child = build_forced_sync_class(source.value)
+
+          new_args = step_config.arguments.dup
+          new_args[arg_key] = new_args[arg_key].merge(source: RubyReactor::Template::Value.new(forced_child))
+          # A fan-out map is NOT an `async_dispatch` step — its hand-off lives in
+          # the `fan_out` argument, so `strip_background_and_async!` never sees
+          # it. Turn it off here (on the clone, leaving the original config
+          # untouched for normal runs) or `run_async(false)` would still
+          # dispatch element jobs and leave the reactor parked at the map.
+          if arg_key == :mapped_reactor_class && new_args[:fan_out]
+            new_args[:fan_out] = new_args[:fan_out].merge(source: RubyReactor::Template::Value.new(false))
+          end
+
+          new_step_config = step_config.clone
+          new_step_config.instance_variable_set(:@arguments, new_args)
+          klass.steps[step_name] = new_step_config
+        end
+      end
+
+      def nested_reactor_source(step_config)
+        return [nil, nil] unless step_config.respond_to?(:arguments)
+
+        args = step_config.arguments
+        # `async_reactor` is included: clearing its dispatch marker makes the
+        # child run inline, but inline means `child_class.run(...)` on the
+        # ORIGINAL class — whose own background/async steps would dispatch
+        # again. The child has to be force-synced too.
+        %i[mapped_reactor_class composed_reactor_class async_reactor_class].each do |arg_key|
+          source = args[arg_key]&.[](:source)
+          return [arg_key, source] if source.is_a?(RubyReactor::Template::Value)
+        end
+
+        [nil, nil]
+      end
+
+      def build_forced_sync_class(original_child_reactor)
+        child_class = Class.new(original_child_reactor) do
+          define_singleton_method(:name) { original_child_reactor.name }
+          @steps = superclass.steps.dup
+          @inputs = superclass.inputs.dup
+          @input_validations = superclass.input_validations.dup
+          @middlewares = superclass.middlewares.dup
+          @return_step = superclass.return_step
+          @background_handoff = superclass.background_handoff
+          @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
+        end
+
+        strip_background_and_async!(child_class)
+        force_sync_nested_reactors!(child_class)
+        child_class
       end
 
       def apply_interceptors(klass, interceptors)
@@ -564,7 +685,7 @@ module RubyReactor
           direct_interceptors.each do |interceptor|
             case interceptor[:type]
             when :failure
-              apply_failure_interceptor(step_config, target_step)
+              apply_failure_interceptor(step_config, target_step, step_config_orig, interceptor)
             when :mock
               apply_mock_interceptor(step_config, target_step, step_config_orig, interceptor)
             end
@@ -595,9 +716,19 @@ module RubyReactor
 
         original_child_reactor = target_reactor_class_source.value
 
-        # Dynamically subclass the child reactor
+        # Dynamically subclass the child reactor.
+        #
+        # It needs a resolvable identity of its OWN: a fan-out map serializes
+        # only `mapped_reactor_class.name` into each element job, and the worker
+        # resolves that name back through `const_get` first. Keeping the
+        # original name would therefore resolve to the original, unmocked class
+        # in every element. Registering a unique name makes the fan-out payload
+        # (and the `element_reactor_class` that `#map_elements` traverses) point
+        # at THIS class.
         mocked_child_reactor = Class.new(original_child_reactor) do
-          define_singleton_method(:name) { original_child_reactor.name }
+          unique_name = "#{original_child_reactor.name || "AnonymousReactor"}Mock#{object_id}"
+          define_singleton_method(:name) { unique_name }
+          RubyReactor::Registry.register(unique_name, self)
           # Copy configuration
           @steps = superclass.steps.dup
           @inputs = superclass.inputs.dup
@@ -629,9 +760,46 @@ module RubyReactor
         step_config.arguments[arg_key][:source] = RubyReactor::Template::Value.new(mocked_child_reactor)
       end
 
-      def apply_failure_interceptor(step_config, target_step)
-        failure_impl = lambda do |_input, _context|
-          RubyReactor::Failure("Simulated failure at #{target_step}")
+      # The original run behavior for a step, used both as the fallback when
+      # `element_index` excludes the current map element and as the `original`
+      # callable a mock block can invoke.
+      def original_impl_for(step_config_orig, target_step)
+        if step_config_orig.has_run_block?
+          step_config_orig.run_block
+        elsif step_config_orig.has_impl?
+          impl = step_config_orig.impl
+
+          if impl.respond_to?(:run_without_coordination)
+            ->(args, ctx) { impl.run_without_coordination(args, ctx) }
+          else
+            ->(args, ctx) { impl.run(args, ctx) }
+          end
+        else
+          ->(_, _) { raise "No implementation found for #{target_step}" }
+        end
+      end
+
+      # A map element's own context carries `map_metadata[:index]`. When an
+      # interceptor is scoped to one element via `element_index:`, only that
+      # element's context matches — everything else falls through to the
+      # original implementation.
+      def matches_element_index?(context, element_index)
+        return true if element_index.nil?
+
+        meta = context.map_metadata
+        meta && (meta[:index] == element_index || meta["index"] == element_index)
+      end
+
+      def apply_failure_interceptor(step_config, target_step, step_config_orig, interceptor)
+        element_index = interceptor[:conditions][:element_index]
+        original_impl = original_impl_for(step_config_orig, target_step)
+
+        failure_impl = lambda do |input, context|
+          if matches_element_index?(context, element_index)
+            RubyReactor::Failure("Simulated failure at #{target_step}")
+          else
+            original_impl.call(input, context)
+          end
         end
 
         step_config.instance_variable_set(:@run_block, failure_impl)
@@ -639,20 +807,13 @@ module RubyReactor
 
       def apply_mock_interceptor(step_config, target_step, step_config_orig, interceptor)
         mock_block = interceptor[:conditions][:block]
-
-        # Prepare original implementation call
-        original_impl = if step_config_orig.has_run_block?
-                          step_config_orig.run_block
-                        elsif step_config_orig.has_impl?
-                          # The executor already holds this step's coordination
-                          # around the wrapper; `Step.run` would take it again.
-                          ->(args, ctx) { step_config_orig.impl.run_without_coordination(args, ctx) }
-                        else
-                          ->(_, _) { raise "No implementation found for #{target_step}" }
-                        end
+        element_index = interceptor[:conditions][:element_index]
+        original_impl = original_impl_for(step_config_orig, target_step)
 
         # Create the new implementation that wraps the user block
         wrapper_impl = lambda do |args, context|
+          next original_impl.call(args, context) unless matches_element_index?(context, element_index)
+
           if mock_block.arity == 3
             mock_block.call(args, context, original_impl)
           else
