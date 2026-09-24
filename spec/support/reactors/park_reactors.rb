@@ -153,3 +153,71 @@ class ParkMapReactor < RubyReactor::Reactor
     fan_out batch_size: 1
   end
 end
+
+# A reactor-level lock contended BEFORE admission snoozes the job (the
+# execution has not started, so it is not a park): the rate limit charged just
+# before the lock must not be charged again by the redelivery.
+class ParkSnoozedRootReactor < RubyReactor::Reactor
+  background all: true
+
+  with_rate_limit(limits: { hour: 100 }) { |i| "park:root_rl:#{i[:run_id]}" }
+  with_lock { |i| "park:root:#{i[:run_id]}" }
+
+  input :run_id
+
+  step :work do
+    run { RubyReactor.Success(:done) }
+  end
+end
+
+module ParkSupport
+  def self.redis
+    @redis ||= Redis.new(url: RubyReactor.configuration.storage.redis_url)
+  end
+
+  def self.undo_log_key(run_id)
+    "park:undo:#{run_id}"
+  end
+end
+
+# A composed child that declares its OWN reactor-level lock and rate limit.
+# Holding the child's key in a worker parks the parent's job instead of
+# failing the parent.
+class ParkLockedChildReactor < RubyReactor::Reactor
+  with_rate_limit(limits: { hour: 100 }) { |i| "park:locked_child_rl:#{i[:run_id]}" }
+  with_lock { |i| "park:locked_child:#{i[:run_id]}" }
+
+  input :run_id
+
+  step :work do
+    argument :run_id, input(:run_id)
+    run { |args| RubyReactor.Success("child:#{args[:run_id]}") }
+  end
+
+  returns :work
+end
+
+class ParkLockedChildParentReactor < RubyReactor::Reactor
+  background all: true
+
+  with_lock { |i| "park:locked_parent:#{i[:run_id]}" }
+
+  input :run_id
+
+  # Completes before the child contends, so a terminal failure has something
+  # to roll back. Its undo records itself in a Redis list.
+  step :reserve do
+    argument :run_id, input(:run_id)
+    run { |args| RubyReactor.Success(args[:run_id]) }
+    undo do |run_id, _args, _context|
+      ParkSupport.redis.rpush(ParkSupport.undo_log_key(run_id), "reserve")
+      RubyReactor.Success()
+    end
+  end
+
+  compose :child, ParkLockedChildReactor do
+    argument :run_id, result(:reserve)
+  end
+
+  returns :child
+end

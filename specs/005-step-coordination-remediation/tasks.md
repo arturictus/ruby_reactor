@@ -859,3 +859,38 @@ Task: "T016 have_rollback_failure matcher in rspec/matchers.rb"
 - FR-029: an existing spec may change its expectation only when it encodes a defect fixed here,
   or the removed D4 mechanism (T040).
 - Commit after each task or checkpoint. End commit messages with the Co-Authored-By trailer.
+
+---
+
+## Phase 11: Review follow-ups
+
+A review of the finished work (`36ac35f2`) found six more issues. Decisions are in
+[research.md](./research.md) R-14–R-18. Each code fix's repro was seen failing first.
+
+- [X] T068 [B1] A reactor-level lock or semaphore contended right after the rate-limit charge
+  snoozes the job before admission, and the redelivery charged again. Repro: "a reactor-level lock
+  contended before the execution is admitted" in `spec/ruby_reactor/step_coordination/park_spec.rb`
+  (fixture `ParkSnoozedRootReactor`). Fix: `private_data[:rate_limit_charged]` in
+  `Executor#check_rate_limit` (R-14). Docs: `locks_and_semaphores.md` Step Contention, contracts §5.
+- [X] T069 [B2] Docs only: `on_snooze_step` does not fire for a step whose own arguments wait on a
+  background result (it parks before `:start_step`). Narrowed in `documentation/middlewares.md`,
+  contracts §4 and `CHANGELOG.md` (R-17).
+- [X] T070 [F4] Docs only: "no second `:lock_acquired`" holds only while the park gap stays within
+  the lock's `ttl`. Qualified in `locks_and_semaphores.md` Step Contention and contracts §5 (R-17).
+- [X] T071 [F1] A `compensate` that raised stopped the rollback. Repro:
+  `spec/ruby_reactor/compensation_failure_spec.rb`. Fix: `CompensationManager#compensate_step`
+  returns `Failure(e)` (R-15). Docs: `locks_and_semaphores.md` Step Rollback.
+- [ ] T072 [F2] `StepWorker#complete`'s terminal `save_root` overwrites a newer parent checkpoint.
+  **Not implemented**: every fix needs a design decision research.md does not settle (where the
+  dashboard's `:run` arguments and attempts live once the unit stops writing the parent). The
+  options and a recommendation are in R-18.
+- [X] T073 [F3] A composed child's own reactor-level contention failed the parent in a worker.
+  Repros: "a composed child's own reactor-level lock, contended in a worker" (park and ceiling) in
+  `park_spec.rb` (fixtures `ParkLockedChildReactor`, `ParkLockedChildParentReactor`). Fix:
+  `Error::ReactorContentionPark`, `Executor#composed_contention_park` (bounded on the child's
+  `admission_parks`, inline map elements excluded), and the retry-attempt give-back in
+  `StepExecutor#safe_execute_step_sync` (R-16, R-01 audit updated). Docs:
+  `locks_and_semaphores.md` (contention table note and Step Contention), contracts §5–§6,
+  data-model.
+- [X] T074 Verify: the targeted suites, the full `bundle exec rspec`, and `bundle exec rubocop`
+  (1 baseline offense).

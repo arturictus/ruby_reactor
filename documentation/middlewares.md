@@ -98,11 +98,17 @@ last argument. The `context` exposes `context_id`, `reactor_class`, `inputs`,
 | Retry attempt | `on_retry_attempt` | `(step_name, attempt_number, error, context)` |
 
 > **`on_snooze_step`** fires when a step's attempt ends in a **park** instead
-> of finishing: the step lost lock/semaphore/rate-limit/ordered-lock contention
-> inside a worker, or it (or a composed child beneath it) is waiting on a
-> background result that is not terminal yet. It fires at every nesting depth
-> — a park inside a composed child fires it for the child's step and for the
-> parent's `compose` step. `error` is the internal park signal
+> of finishing, in two cases: the step lost its own lock/semaphore/rate-limit/
+> ordered-lock contention inside a worker, or it is a `compose` step whose
+> child parked (on that contention, on the child's own reactor-level lock,
+> semaphore or rate limit, or on a background result the child is waiting
+> for). It fires at every nesting depth — a contention park inside a composed
+> child fires it for the child's step and for the parent's `compose` step.
+> A step whose **own arguments** read a background result that is not terminal
+> yet (`argument :x, result(:some_async_step)`) parks while those arguments
+> are resolved, before it starts: it fires neither `on_start_step` nor
+> `on_snooze_step`. Its reactor fires `on_snooze_reactor`, and an enclosing
+> `compose` step fires `on_snooze_step`. `error` is the internal park signal
 > (`RubyReactor::Error::ExecutionParked`). A park is "try again later", never a
 > failure: `on_failed_step` and `on_complete_step` do not fire for that
 > attempt, and the redelivery fires `on_start_step` again. It mirrors

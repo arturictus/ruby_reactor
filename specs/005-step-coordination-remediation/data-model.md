@@ -50,6 +50,8 @@ One element of `RubyReactor::Failure#rollback_failures`.
 | Location | Key | Type | Set when | Read by |
 |---|---|---|---|---|
 | `Context#private_data` of the executor's **own** context (root or composed child) | `:admitted` | `true` | The reactor-level gates passed: rate limit, period pre-check and post-lock period re-check. This is in `execute`, and in `resume_execution` on a first run. | `Executor#first_execution?`, `OrderedLockSupport#fresh_ordered_lock_start?`, `ComposeStep#execute_child_reactor` (resume versus execute) |
+| same | `:rate_limit_charged` | `true` | `Executor#check_rate_limit` charged the reactor-level rate limit (research R-14). | `Executor#check_rate_limit`, which skips the charge. A lock or semaphore contended right after the charge snoozes the job before `admitted` is set, and the redelivery is still a first run. |
+| same, composed child only | `:admission_parks` | Integer | The child parked on its own reactor-level contention inside a worker (research R-16). | `Executor#composed_contention_park`: past `lock_snooze_max_attempts` the contention error goes through as the `compose` step's failure. |
 
 **Derived predicate**:
 `fresh? = !admitted && current_step.nil? && intermediate_results.empty?`. The last two
@@ -67,13 +69,15 @@ These are exceptions. They are never persisted.
 Error::Base
 └── Error::ExecutionParked          # new; "this execution parks, re-raise to the worker"
     ├── Error::AsyncResultPending   # existing; superclass changed from Base
-    └── Error::StepContentionPark   # new; carries the Contended
+    ├── Error::StepContentionPark   # new; carries the Contended
+    └── Error::ReactorContentionPark # new (R-16); a composed child's own reactor-level contention
 ```
 
 | Class | Attributes | Raised by | Final handler |
 |---|---|---|---|
 | `AsyncResultPending` | `channel` (existing) | `Template::Result` inside a worker | `Worker` snooze, uncapped (bounded by `async_park_timeout` at the wait site) |
 | `StepContentionPark` | `contended`, plus `original` and `retry_after_seconds` (delegated) | `StepExecutor#handle_contention` when `inline_async_execution` is set and the contention ceiling has not been reached | `Worker` snooze, uncapped (the ceiling is enforced at the raise site). `Map::ElementExecutor` requeues through `perform_map_element_in`. |
+| `ReactorContentionPark` | `original` (the `Lock`/`Semaphore::AcquisitionError` or `RateLimit::ExceededError`), `retry_after_seconds` (delegated) | `Executor#execute`/`#resume_execution` of a composed child in a worker, not under an inline map element, below its `admission_parks` ceiling | Same as `StepContentionPark`: uncapped at the `Worker` and `Map::ElementExecutor`, bounded at the raise site. |
 
 **Propagation contract**: every rescue between the raise site and the final handler either
 re-raises a park signal untouched or parks its own holds and then re-raises. The rescue-site

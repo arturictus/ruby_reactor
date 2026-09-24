@@ -154,7 +154,10 @@ module RubyReactor
         rescue StandardError => e
           record_rollback_failure(step_config.name, :compensate, e)
           middlewares.on(:failed_compensation, step_config.name, e, @context)
-          raise e
+          # A raise is a compensation failure like a returned Failure: the
+          # caller still rolls back the completed steps, then raises
+          # `CompensationError`. Re-raising here skipped both.
+          RubyReactor.Failure(e)
         end
       end
 

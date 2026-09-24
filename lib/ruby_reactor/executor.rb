@@ -141,7 +141,7 @@ module RubyReactor
            RubyReactor::RateLimitRegistry::UnknownLimitError,
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
-      raise e
+      raise composed_contention_park(e) || e
     rescue Error::ExecutionParked
       # A park signal from a step of this run (its contention, or a wait on a
       # background result), reaching a composed child's or a map element's
@@ -258,7 +258,7 @@ module RubyReactor
            RubyReactor::RateLimitRegistry::UnknownLimitError,
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
-      raise e
+      raise composed_contention_park(e) || e
     rescue Error::ExecutionParked => e
       # A step of this run parked (contention, or an awaited background result
       # not terminal yet) — here, or in a composed child that already parked
@@ -383,8 +383,15 @@ module RubyReactor
     # `execute` for sync reactors, the first `resume_execution` pass for async
     # reactors. Genuine resumes never re-check (a paused reactor must not block
     # itself on resume).
+    #
+    # At most once per execution: a lock or semaphore contended right after
+    # the charge snoozes the job BEFORE admission, and its redelivery is still
+    # a first run. The `rate_limit_charged` marker rides `private_data`, so
+    # that redelivery skips the charge but still runs every other first-run
+    # gate (the period re-check above all).
     def check_rate_limit
       return unless @reactor_class.respond_to?(:rate_limit_config) && @reactor_class.rate_limit_config
+      return if @context.private_data[:rate_limit_charged] || @context.private_data["rate_limit_charged"]
 
       config = @reactor_class.rate_limit_config
 
@@ -399,6 +406,7 @@ module RubyReactor
       end
 
       RubyReactor::RateLimit.new(key_base, limits: limits).check_and_increment!
+      @context.private_data[:rate_limit_charged] = true
     end
 
     # True when this execution has not yet passed its reactor-level gates —
@@ -410,6 +418,41 @@ module RubyReactor
     # still resumes as it did.
     def first_execution?
       !@context.admitted? && @context.current_step.nil? && @context.intermediate_results.empty?
+    end
+
+    # A composed child's own reactor-level contention inside a worker. A
+    # root's reaches `Worker#perform`, which snoozes the job; a child's would
+    # first reach the step that composed it, which turns any error into an
+    # ordinary step failure (F3). So the child raises a park signal instead,
+    # and every executor above it keeps its holds until the worker requeues.
+    #
+    # Bounded where it is raised, like a step's contention park (005 R-05):
+    # the child counts its own parks, and past `lock_snooze_max_attempts` the
+    # contention error goes through as that step's failure, so the parent
+    # rolls back and releases its holds — which the worker's snooze
+    # escalation would do neither of. Returns nil to raise `error` unchanged.
+    def composed_contention_park(error)
+      return nil unless @context.inline_async_execution && @context.root_context
+      # A configuration mistake, not contention: it stays a permanent failure.
+      return nil if error.is_a?(RubyReactor::RateLimitRegistry::UnknownLimitError)
+      return nil if within_inline_map_element?
+
+      parks = (@context.private_data[:admission_parks] || @context.private_data["admission_parks"]).to_i + 1
+      @context.private_data[:admission_parks] = parks
+      max = RubyReactor.configuration.lock_snooze_max_attempts
+      return nil if max != :infinity && parks > max
+
+      Error::ReactorContentionPark.new(error)
+    end
+
+    # An inline (non-fan-out) map element has no persisted context of its own:
+    # a park re-runs the whole map step with fresh element contexts, repeating
+    # the elements that already finished and restarting the count above (005
+    # R-01, "Known, not changed"). Under one, contention stays a failure.
+    def within_inline_map_element?
+      ctx = @context
+      ctx = ctx.parent_context until ctx.nil? || (ctx.map_metadata && ctx.root_context)
+      !ctx.nil?
     end
 
     # Record and persist a Halt result, then return it. Shared by the

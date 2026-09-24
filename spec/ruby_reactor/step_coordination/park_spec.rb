@@ -145,6 +145,71 @@ RSpec.describe "parks at any depth", :step_coordination do
     end
   end
 
+  describe "a reactor-level lock contended before the execution is admitted" do
+    it "snoozes the job without charging the rate limit again on redelivery" do
+      holder = hold("park:root:#{run_id}")
+      dispatch = ParkSnoozedRootReactor.run(run_id: run_id)
+
+      perform_once
+      expect(worker_class.jobs.size).to eq(1)
+
+      holder.release
+      perform_once
+
+      expect(status_of(ParkSnoozedRootReactor, dispatch)).to eq("completed")
+      expect("park:root_rl:#{run_id}").to have_rate_limit_count(1).for(:hour)
+    end
+  end
+
+  describe "a composed child's own reactor-level lock, contended in a worker" do
+    def undo_log
+      ParkSupport.redis.lrange(ParkSupport.undo_log_key(run_id), 0, -1)
+    end
+
+    it "parks the parent's job instead of failing it, and completes once the key is free" do
+      holder = hold("park:locked_child:#{run_id}")
+      dispatch = ParkLockedChildParentReactor.run(run_id: run_id)
+
+      perform_once
+      expect(status_of(ParkLockedChildParentReactor, dispatch)).not_to eq("failed")
+      expect(worker_class.jobs.size).to eq(1)
+      expect("park:locked_parent:#{run_id}").to be_locked
+
+      holder.release
+      perform_once
+
+      result = ParkLockedChildParentReactor.find(dispatch.execution_id)
+      expect(result.context.status.to_s).to eq("completed")
+      expect(result.context.get_result(:child)).to eq("child:#{run_id}")
+      expect("park:locked_parent:#{run_id}").not_to be_locked
+      expect("park:locked_child:#{run_id}").not_to be_locked
+      expect("park:locked_child_rl:#{run_id}").to have_rate_limit_count(1).for(:hour)
+      # The park was not a retry attempt of the compose step.
+      expect(result.context.retry_context.attempts_for_step(:child)).to eq(1)
+      expect(undo_log).to be_empty
+      expect(events_named(:failed_step)).to be_empty
+    end
+
+    it "fails at the contention ceiling, rolling the parent back and releasing its lock" do
+      RubyReactor.configuration.lock_snooze_max_attempts = 1
+      holder = hold("park:locked_child:#{run_id}")
+      dispatch = ParkLockedChildParentReactor.run(run_id: run_id)
+
+      perform_once
+      expect(worker_class.jobs.size).to eq(1)
+      perform_once
+
+      expect(status_of(ParkLockedChildParentReactor, dispatch)).to eq("failed")
+      expect(worker_class.jobs).to be_empty
+      expect(undo_log).to eq(["reserve"])
+      expect("park:locked_parent:#{run_id}").not_to be_locked
+      holder.release
+      expect("park:locked_child:#{run_id}").not_to be_locked
+    ensure
+      holder&.release
+    end
+  end
+
   describe "a map element that contends (US2-7)" do
     it "parks the element and completes it after the key is free" do
       holder = hold("park:acct:#{account_id}")

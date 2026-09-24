@@ -69,7 +69,7 @@ exists as a reactor-level `Halt` reason.
 
 | Change | Detail |
 |---|---|
-| New event `:snooze_step` | `on_snooze_step(step_name, error, context)`. It fires when a step's attempt ends in a park, for contention or an awaited background result, at any nesting depth. `:failed_step` never fires for a park. Middlewares without the method are unaffected. |
+| New event `:snooze_step` | `on_snooze_step(step_name, error, context)`. It fires when a step's attempt ends in a park, at any nesting depth: the step lost its own contention in a worker, or it is a `compose` step whose child parked (contention, or an awaited background result). A step whose own arguments await a background result parks while they are resolved, before `:start_step`, so it fires neither event; the reactor fires `:snooze_reactor`. `:failed_step` never fires for a park. Middlewares without the method are unaffected. |
 | Documented attribution | `context.coordinating_step` names the step for a step-level coordination event, and is `nil` for a reactor-level one, on every run including resumed ones. `context.current_step` is the execution's resume cursor and must not be used for attribution. |
 | Direct `Step.run` | Coordination events and `Contended` messages from a directly invoked step class name that class, not the calling step. |
 | OpenTelemetry | `on_snooze_step` finishes the step span with `step.status = "parked"` and status OK. |
@@ -80,18 +80,26 @@ There is no new API. These are the guarantees now true at every nesting depth, f
 parks and for background-result parks alike:
 
 - Every workflow level keeps the lock and semaphore it held before the park, and re-adopts them
-  on redelivery. There is no duplicate `:lock_acquired`.
-- Reactor-level `with_rate_limit` and `with_period` are applied once per execution.
+  on redelivery. While the gap stays within the lock's `ttl` there is no duplicate
+  `:lock_acquired`; a lock whose `ttl` lapsed is acquired afresh and emits it again.
+- Reactor-level `with_rate_limit` is charged once per execution, including across a snooze on the
+  reactor's own lock or semaphore before it starts. `with_period` is not re-checked after the
+  execution starts.
 - A background-result wait inside a composed child parks the execution. Before, it failed the
   parent (F10).
-- Contention parks keep their own counter and the `lock_snooze_max_attempts` ceiling.
+- A composed child's own reactor-level lock, semaphore or rate limit that is busy inside a worker
+  parks the execution too. Before, it failed the parent.
+- Contention parks keep their own counter and the `lock_snooze_max_attempts` ceiling. A park never
+  uses up a step's `retries` budget, including a park that comes up through a `compose` step.
 
 ## 6. Internal and not public (named here so a reviewer does not mistake them for API)
 
-- `Error::ExecutionParked`, `Error::StepContentionPark`. These are internal signals. They
+- `Error::ExecutionParked`, `Error::StepContentionPark`, `Error::ReactorContentionPark`. These are
+  internal signals. They
   escape only when a caller drives `Executor` directly with `inline_async_execution = true`,
   which is what the gem's own specs do.
-- `private_data[:admitted]`, and the Step Result Record fields `ordered_lock` and `waiting`.
+- `private_data[:admitted]`, `private_data[:rate_limit_charged]`, `private_data[:admission_parks]`,
+  and the Step Result Record fields `ordered_lock` and `waiting`.
 - Removed internals: `on_contention_park`, `RetryManager#park_for_contention`, and
   `RetryQueuedResult` as a contention outcome. `RetryQueuedResult` is still returned for
   failure retries.

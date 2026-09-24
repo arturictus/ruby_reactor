@@ -124,8 +124,10 @@
   including composed children's (flattened). Always an Array; part of `Failure#to_h` and the
   stored failure of a background run.
 * **`:snooze_step` middleware event** (`on_snooze_step(step_name, error, context)`): a step's
-  attempt ended in a park (contention, or an awaited background result), at any nesting depth.
-  Never `:failed_step`. The OpenTelemetry middleware closes the span as `step.status = "parked"`.
+  attempt ended in a park — it lost its own contention in a worker, or it is a `compose` step whose
+  child parked — at any nesting depth. Never `:failed_step`. A step whose own arguments wait on a
+  background result parks before it starts, so it fires neither `:start_step` nor `:snooze_step`.
+  The OpenTelemetry middleware closes the span as `step.status = "parked"`.
 * **`have_rollback_failure(step)` matcher**, with `.for_key(key)` and `.because(reason)`.
 
 ### Deprecations
@@ -176,6 +178,19 @@
 * A step of a composed child that reads a not-yet-finished background result in a worker (F10)
   parks the execution, keeping the child's lock, instead of failing the parent with
   "async result … still pending".
+* A background reactor whose own `with_lock` / `with_semaphore` is busy when it starts no longer
+  charges its `with_rate_limit` again on every snoozed redelivery.
+* A `compensate` that raises no longer stops the rollback: the completed steps are still undone,
+  and the reactor fails with `CompensationError` and a `reason: :raised` rollback failure.
+* A composed child whose own `with_lock` / `with_semaphore` / `with_rate_limit` is busy inside a
+  worker now parks the execution and snoozes the job instead of failing the parent. After
+  `lock_snooze_max_attempts` parks it fails the `compose` step, which rolls the parent back.
+* A park that comes up through a `compose` step (the child's contention, or its wait on a
+  background result) no longer uses up that step's `retries` budget.
+* Docs: `on_snooze_step` is documented for what it covers — a step's own contention park and a
+  `compose` step whose child parked, not a step whose own arguments wait on a background result.
+* Docs: a park keeps each level's lock without a second `:lock_acquired` only while the gap stays
+  within the lock's `ttl`; a lapsed lock is acquired again.
 
 ## [0.8.1](https://github.com/arturictus/ruby_reactor/compare/v0.8.0...v0.8.1) (2026-09-22)
 

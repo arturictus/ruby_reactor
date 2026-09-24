@@ -211,7 +211,10 @@ module RubyReactor
       # A park signal from a composed child (its contention, or its wait on a
       # background result) is not this step failing: let it reach the
       # executors above, which park their own holds, and the worker (F10).
+      # Nor is it a retry attempt: give back the one `prepare_retry_attempt`
+      # just counted, as `handle_contention` does for this step's own park.
       rescue Error::ExecutionParked
+        @context.retry_context.decrement_attempt_for_step(step_config.name)
         raise
       rescue StandardError => e
         # Identify redacted inputs

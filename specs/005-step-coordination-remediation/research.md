@@ -148,12 +148,13 @@ finds them there.
 
   | Site | Today | After |
   |---|---|---|
-  | `StepExecutor#safe_execute_step_sync` | `rescue StandardError` swallows them (F10) | `rescue Error::ExecutionParked; raise`, placed before `StandardError` |
+  | `StepExecutor#safe_execute_step_sync` | `rescue StandardError` swallows them (F10) | `rescue Error::ExecutionParked`, placed before `StandardError`: give back the retry attempt (R-16), then `raise` |
   | `StepExecutor#execute_step` `rescue Exception` | emits `:failed_step` | emits `:snooze_step` for a park signal (R-04), then re-raises |
   | `StepCoordination#around_run` `rescue StandardError` | clears contention state | re-raise a park signal untouched: not terminal |
   | `StepCoordination#run_under_ordered_lock` | `rescue StandardError` → `advance(failed: true)` | the outcome is `:parked`, so no advance (R-07) |
   | `Executor#execute` `rescue AsyncResultPending` | re-raise; child releases its locks | `rescue Error::ExecutionParked`: `park_held_primitives!` when `inline_async_execution`, then re-raise |
   | `Executor#resume_execution` `rescue AsyncResultPending` | park, then re-raise | `rescue Error::ExecutionParked`, same body |
+  | `Executor#execute` / `#resume_execution` contention rescue (`Lock`/`Semaphore::AcquisitionError`, `RateLimit::ExceededError`, …) | re-raise; a composed child's then fails its parent's step (review follow-up F3) | a composed child in a worker raises `ReactorContentionPark` in its place (R-16); a root, and every synchronous run, re-raise as before |
   | `Worker#perform` snooze list | `AsyncResultPending` | `Error::ExecutionParked` |
   | `Worker#handle_snooze` `capped` | uncapped for `AsyncResultPending` | uncapped for `Error::ExecutionParked`. Contention is capped at the raise site with the per-step counter. |
   | `Map::ElementExecutor.perform_element` | reads `RetryQueuedResult` | `rescue Error::StepContentionPark`: re-serialize the element context and call `perform_map_element_in(Worker.snooze_delay(...))` |
@@ -180,6 +181,10 @@ over `executor.rb`, `executor/*.rb`, `step.rb`, `step/*.rb`, `template/*.rb`, pl
   (rescues only `Contended`/`KeyError`).
 - **Park own holds, then re-raise** (2): `Executor#execute`, `Executor#resume_execution`.
 - **Final handlers** (2): `Worker#perform`, `Map::ElementExecutor.perform_element`.
+- **Raise sites added after the audit** (1, R-16): the contention rescue of `Executor#execute`
+  and `#resume_execution` raises `ReactorContentionPark` for a composed child in a worker. It is
+  an `ExecutionParked`, so every site above handles it as listed; none needed a change except the
+  attempt give-back in `safe_execute_step_sync`.
 - **Unreachable for a park signal** (13): release/publish/heartbeat/advance/storage helpers
   (`Executor#publish_completion_signal`, `#release_one`, `OrderedLockSupport` ×4,
   `StepCoordination` release ×2, `.discard_parked_state!`, `.resolve_key`, `#chain_failed?`),
@@ -411,6 +416,119 @@ over `executor.rb`, `executor/*.rb`, `step.rb`, `step/*.rb`, `template/*.rb`, pl
 - Add a matcher `have_rollback_failure(step_name)`, optionally chained with
   `.for_key(key)` and `.because(reason)`, in `lib/ruby_reactor/rspec/matchers.rb`. The demo spec
   asserts through it.
+
+### Review follow-ups (after `36ac35f2`)
+
+A review of the finished 005 work found six more issues (B1, B2, F1–F4 below; the F-numbers are
+that review's, not the ones in §1). Decisions R-14–R-18 record how each was settled.
+
+### R-14: The reactor-level rate limit is charged at most once per execution (B1)
+
+- **Finding**: `resume_execution` runs `check_rate_limit if first_run` *before* it takes the
+  reactor's lock. When the lock is held elsewhere the Worker snoozes the job, and `admit!` has not
+  run, so the redelivery is still a first run and charges again (probe: 2 charges for one run).
+  `execute` has the same order, which matters for a composed child that parks (R-16).
+- **Decision**: `check_rate_limit` sets `private_data[:rate_limit_charged]` right after a
+  successful charge and returns early when it is set. `first_run` is untouched, so a snoozed start
+  still re-checks the period gate before and after the lock — correct, because the execution has
+  not started and another run may have marked the bucket.
+- **Alternative rejected**: charge the rate limit last, after the lock and semaphore, as the step
+  level does. That also fixes B1, but changes what callers see: a synchronous caller would wait
+  up to the lock's `wait:` before learning the window is full, and a rate-limited run would take
+  and drop the lock on every attempt, briefly blocking runs that could proceed.
+
+### R-15: A `compensate` that raises is a compensation failure (F1)
+
+- **Finding**: `CompensationManager#compensate_step` re-raised the exception, so
+  `handle_step_failure` never reached `rollback_completed_steps`, and `ResultHandler` treats an
+  unknown `StandardError` as "don't roll back". The completed steps were never undone.
+- **Decision**: after recording the `:raised` rollback failure and firing `:failed_compensation`,
+  return `Failure(e)`. `handle_step_failure` then takes its existing `Failure` branch: roll back
+  the completed steps, raise `CompensationError`. A raise and a returned `Failure` now differ only
+  in the reported `reason`. No existing spec encoded the old behavior.
+
+### R-16: A composed child's own reactor-level contention parks the execution (F3)
+
+- **Finding**: in a worker, a composed child whose own `with_lock`/`with_semaphore`/
+  `with_rate_limit` is busy re-raises the contention error, and the parent's
+  `safe_execute_step_sync` turns it into a step Failure. The docs promise a snooze.
+  `safe_execute_step_sync` cannot re-raise contention errors in general: a bare
+  `Lock::AcquisitionError` from a step body (a nested `Reactor.run`) must stay an ordinary,
+  compensated failure (`CompensationManager::NEVER_STARTED_ERROR_CLASSES`).
+- **Decision**: the child converts its own admission contention, at the raise site.
+  - `Error::ReactorContentionPark < ExecutionParked` carries the original error and delegates
+    `original`/`retry_after_seconds` (as `StepContentionPark` does), so `Worker.snooze_delay` is
+    unchanged.
+  - `Executor#composed_contention_park` raises it from the contention rescue of `execute` and
+    `resume_execution` when `inline_async_execution` and `root_context` are set. The child's
+    partial holds are released by its `ensure`; every executor above parks its own (D-A2).
+  - `UnknownLimitError` is not converted: a configuration mistake stays a permanent failure.
+    `OrderedLock::WaitError` cannot occur here: a composed child's `with_ordered_lock` is ignored.
+  - The redelivery re-runs the compose: the child was never admitted, so `ComposeStep` calls
+    `execute` again, and R-14 keeps its rate limit from being charged twice.
+- **The bound (the review asked for the Worker's `snooze_count`; not used)**: the child counts
+  its own parks in `private_data[:admission_parks]`, which is saved inside the root blob through
+  `composed_contexts`, and past `lock_snooze_max_attempts` it re-raises the original error, which
+  fails the `compose` step. Reasons:
+  - Escalation at the Worker (`escalate_snooze`) marks the context failed without rolling back
+    the parent's completed steps, and leaves every parked hold locked until its TTL. At the root
+    nothing has run yet, so that is harmless there; under a parent it breaks the saga.
+  - `snooze_count` counts every snooze of the job (async-result parks, ordered-lock waits), so it
+    would bound this park by unrelated waits: the "wrong unit" problem `Worker#handle_snooze`
+    already names for step contention.
+  - It mirrors R-05: a park signal is uncapped at the Worker and bounded where it is raised.
+- **Map elements**: `Map::ElementExecutor` needs no bound of its own. A composed child inside a
+  fan-out element keeps its counter in the element context that `requeue_parked_element`
+  serializes. Probe: `lock_snooze_max_attempts = 1` fails the element on the second delivery.
+- **Inline map elements are excluded** (`within_inline_map_element?`): an inline element has no
+  persisted context (R-01, "Known, not changed"), so a park re-runs the whole map step, repeating
+  finished elements and resetting the counter, which makes it unbounded. Under one, the child's
+  contention stays a failure of the element, as before.
+- **Also changed**: `safe_execute_step_sync` gives back the retry attempt `prepare_retry_attempt`
+  counted when a park signal passes it. Without that, every park coming up from a child used one of
+  the `compose` step's `retries` (F10 parks included), which contradicted "a busy key can never
+  exhaust the retry budget".
+
+### R-17: Documentation-only follow-ups (B2, F4)
+
+- **B2**: `AsyncResultPending` for a step's own `result(:x)` argument is raised while
+  `StepExecutor#execute_step` resolves arguments, before `:start_step` and outside the block that
+  emits step events. The docs (`middlewares.md`, contracts §4, `CHANGELOG.md`) now say that
+  `:snooze_step` fires for a step's own contention park and for a `compose` step whose child
+  parked, and that the reading step itself fires neither `:start_step` nor `:snooze_step`. Event
+  emission is not restructured.
+- **F4**: "never emits a second `:lock_acquired`" holds only while the park gap stays within the
+  lock's `ttl`; a lapsed lock is re-acquired and emits it (spec US2-5). Qualified in
+  `locks_and_semaphores.md` and contracts §5.
+
+### R-18: F2 is deferred: `StepWorker#complete` still writes the parent's root blob
+
+- **Finding (confirmed by probe)**: `complete`'s `ensure save_root(context)` writes the root
+  snapshot the unit loaded when its delivery started. A parent checkpoint stored while the body ran
+  is reverted (the probe's newer `private_data` marker was gone afterwards). If the parent finished
+  or checkpointed in between, its status and later results revert, and a parked parent's
+  redelivery resumes from the older snapshot and re-runs steps.
+- **What the terminal save carries today**, all read by the dashboard from the parent blob:
+  - the unit's `:run` trace entry: its resolved, redacted arguments, which key the coordination
+    panel's rows for the step (documented, `locks_and_semaphores.md` Observability), plus the
+    StepInspector's arguments and "ran in background" label;
+  - `retry_context.step_attempts` for the step (the inspector's retry count);
+  - any change a step body makes to `context`.
+- **Why not fixed here**: stopping the write (R-09's rule) drops all three with no replacement,
+  and each replacement is a design choice this research does not settle:
+  1. Write the arguments and attempts onto the Step Result Record, and have the web API merge them
+     into the served trace and `step_attempts`. Server-side only, no GUI rebuild. But the
+     programmatic `Reactor.find(id).context.execution_trace` loses the unit's `:run` entry, the
+     API hydrates root-level refs only (nested composed children would need a recursive merge),
+     and body changes to `context` are dropped.
+  2. Same record fields, and teach the GUI (`StepInspector`, `DagVisualizer`) to read them.
+     Needs a rebuilt dashboard bundle.
+  3. Keep writing the parent, but as a compare-and-set merge (`WATCH`/`MULTI` on the context key)
+     that re-applies only the unit's own deltas. Needs a new storage-adapter primitive and merge
+     rules.
+- **Note**: the entry is already best-effort today. Any parent that saves after the unit
+  finishes (a synchronous parent, or a worker parent that never parked) overwrites it.
+  Recommendation: option 1, with the trace change documented.
 
 ## 3. Open risks
 
