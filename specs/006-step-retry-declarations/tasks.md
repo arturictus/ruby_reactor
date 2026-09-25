@@ -180,11 +180,11 @@ in a class body (FR-002, FR-003).
 **Independent Test**: the existing retry specs pass unchanged, and an inline step and a class
 step with the same declaration give identical outcomes.
 
-- [ ] T035 [P] [US3] Create `spec/ruby_reactor/step_retries/step_block_parity_spec.rb` with:
+- [X] T035 [P] [US3] Create `spec/ruby_reactor/step_retries/step_block_parity_spec.rb` with:
   - (a) an inline step with `retries max_attempts: 3, backoff: :fixed, base_delay: 0` and a `run` block, failing twice → success on attempt 3;
   - (b) a class step with **no** `retries` plus `step :s, Klass do retries max_attempts: 3, base_delay: 0 end` → retried 3 times, and `steps[:s].retry_config[:max_attempts] == 3`;
   - (c) a parity table: the same failure sequence (fail, fail, succeed) and (always fail) run through an inline step and through a class step declaring the identical `retries` line → equal attempt counts, equal final result class, equal error message.
-- [ ] T036 [US3] Run the existing retry specs unchanged: `spec/async_retry_dsl_spec.rb`, `spec/async_retry_integration_spec.rb`, `spec/ruby_reactor/retry_signals_spec.rb`, `spec/ruby_reactor/retry_reexecution_spec.rb`, `spec/ruby_reactor/order_processing_reactor_spec.rb`, `spec/compose_spec.rb`. All green, with no edits to them in this phase.
+- [X] T036 [US3] Run the existing retry specs unchanged: `spec/async_retry_dsl_spec.rb`, `spec/async_retry_integration_spec.rb`, `spec/ruby_reactor/retry_signals_spec.rb`, `spec/ruby_reactor/retry_reexecution_spec.rb`, `spec/ruby_reactor/order_processing_reactor_spec.rb`, `spec/compose_spec.rb`. All green, with no edits to them in this phase.
 
 ---
 
@@ -196,13 +196,13 @@ step with the same declaration give identical outcomes.
 **Independent Test**: adding `retries` to a reactor step block for a class that declares
 `retries` raises `Error::ValidationError` naming the reactor, the step and the class.
 
-- [ ] T037 [P] [US4] Create `spec/ruby_reactor/step_retries/conflict_spec.rb` with:
+- [X] T037 [P] [US4] Create `spec/ruby_reactor/step_retries/conflict_spec.rb` with:
   - (a) a class with `retries max_attempts: 3` plus `step :charge, Klass do retries max_attempts: 5 end` → `RubyReactor::Error::ValidationError` matching `/step :charge declares `retries` inline, but .* declares it too/` and `/subclass/`;
   - (b) the same with the class's policy **inherited** from a parent → still refused;
   - (c) a class without `retries` plus a block `retries` → no error;
   - (d) a class with `retries max_attempts: 1` in a reactor → not retried (`attempts == 1`).
-- [ ] T038 [US4] In `lib/ruby_reactor/dsl/step_builder.rb`, add a private `check_retry_conflict!` next to `check_coordination_conflicts!` (≈ line 180) and call it from `build`. It returns unless `@retry_config && @impl.respond_to?(:retry_config) && @impl.retry_config`, then raises `Error::ValidationError`: "#{reactor_label} step :#{@name} declares `retries` inline, but #{@impl} declares it too. Keep ONE: drop the inline declaration to use #{@impl}'s, or remove it from #{@impl}. To vary the policy per workflow, subclass #{@impl} and declare `retries` there."
-- [ ] T039 [US4] Run T037 and `spec/ruby_reactor/step_coordination/declaration_spec.rb` (to check the neighboring lock conflict check is untouched). Green.
+- [X] T038 [US4] In `lib/ruby_reactor/dsl/step_builder.rb`, add a private `check_retry_conflict!` next to `check_coordination_conflicts!` (≈ line 180) and call it from `build`. It returns unless `@retry_config && @impl.respond_to?(:retry_config) && @impl.retry_config`, then raises `Error::ValidationError`: "#{reactor_label} step :#{@name} declares `retries` inline, but #{@impl} declares it too. Keep ONE: drop the inline declaration to use #{@impl}'s, or remove it from #{@impl}. To vary the policy per workflow, subclass #{@impl} and declare `retries` there."
+- [X] T039 [US4] Run T037 and `spec/ruby_reactor/step_coordination/declaration_spec.rb` (to check the neighboring lock conflict check is untouched). Green.
 
 ---
 
@@ -214,13 +214,13 @@ step with the same declaration give identical outcomes.
 **Independent Test**: the same always-failing class step makes exactly the declared number of
 attempts synchronously and under `background all: true`.
 
-- [ ] T040 [P] [US5] Create `spec/ruby_reactor/step_retries/execution_paths_spec.rb` with constant-named classes defined at the top of the file (`StepRetriesPathsChargeStep < RubyReactor::Step` with `retries max_attempts: 3, backoff: :fixed, base_delay: 0` and a class-level attempt counter, plus reactors below). Cases:
+- [X] T040 [P] [US5] Create `spec/ruby_reactor/step_retries/execution_paths_spec.rb` with constant-named classes defined at the top of the file (`StepRetriesPathsChargeStep < RubyReactor::Step` with `retries max_attempts: 3, backoff: :fixed, base_delay: 0` and a class-level attempt counter, plus reactors below). Cases:
   - (a) a reactor with `background all: true`, run and drained (follow the pattern in `spec/ruby_reactor/retry_signals_spec.rb` / `spec/async_retry_integration_spec.rb`), always failing → final context failed, 3 attempts, earlier step compensated;
   - (b) fail twice then succeed under `background all: true` → success, and `retry_context.attempts_for_step` stayed consistent across requeues;
   - (c) a reactor with `background after: :first_step` → same count as (a);
   - (d) `async_step :charge, StepRetriesPathsChargeStep` → `StepWorker` retries 3 times (`lib/ruby_reactor/step_worker.rb:344-349` reads `step_config.retry_config`);
   - (e) a reactor with an `interrupt` before `:charge`, resumed, then failing → 3 attempts after the resume.
-- [ ] T041 [US5] Run T040. No runtime change is expected (research R5). If (d) fails, fix `lib/ruby_reactor/step_worker.rb` so it reads only `step_config.retry_config` (never `@retry_config` or `impl` directly). If (a)–(c) fail, fix the same kind of issue in `lib/ruby_reactor/executor/retry_manager.rb`.
+- [X] T041 [US5] Run T040. No runtime change is expected (research R5). If (d) fails, fix `lib/ruby_reactor/step_worker.rb` so it reads only `step_config.retry_config` (never `@retry_config` or `impl` directly). If (a)–(c) fail, fix the same kind of issue in `lib/ruby_reactor/executor/retry_manager.rb`.
 
 ---
 
@@ -231,12 +231,12 @@ attempts synchronously and under `background all: true`.
 **Independent Test**: a base class with `retries max_attempts: 4`, one subclass that inherits
 it and one that overrides with 2 → 4/4/2 attempts respectively.
 
-- [ ] T042 [P] [US6] Create `spec/ruby_reactor/step_retries/inheritance_spec.rb` with:
+- [X] T042 [P] [US6] Create `spec/ruby_reactor/step_retries/inheritance_spec.rb` with:
   - (a) a subclass without `retries` → `retry_config` equals the parent's, and in a reactor it makes 4 attempts;
   - (b) a subclass with `retries max_attempts: 2` → 2 attempts; the parent and a sibling still show 4;
   - (c) a subclass-per-workflow: `ReactorA` uses the base class and `ReactorB` uses a subclass with its own policy; both load without a conflict error and retry as declared;
   - (d) a subclass also inherits the parent's `with_lock` and `input` contract alongside `retries` (regression guard that `Retryable#inherited` calls `super`).
-- [ ] T043 [US6] Run T042. If (d) fails, fix the `super` chain in `lib/ruby_reactor/dsl/retryable.rb` `inherited`.
+- [X] T043 [US6] Run T042. If (d) fails, fix the `super` chain in `lib/ruby_reactor/dsl/retryable.rb` `inherited`.
 
 ---
 
@@ -248,14 +248,14 @@ exercises class policies (FR-014, FR-015, FR-016).
 **Independent Test**: `steps[:charge].retry_source == :step_class`, and `failing_at(:charge)`
 on a class step is retried under the class policy (`have_retried_step(:charge).times(2)`).
 
-- [ ] T044 [P] [US7] Create `spec/ruby_reactor/step_retries/introspection_spec.rb` with:
+- [X] T044 [P] [US7] Create `spec/ruby_reactor/step_retries/introspection_spec.rb` with:
   - (a) `retry_source` is `:step_class`, `:step_block` or `:none` for the three kinds of steps;
   - (b) `retry_config` for each matches the declaration or `NO_RETRIES`;
   - (c) with a middleware registered (see `spec/ruby_reactor/middleware_spec.rb` for the pattern), a failing class step with `retries max_attempts: 3, base_delay: 0` emits `:retry_attempt` twice, with the step name and attempt numbers 1 and 2.
-- [ ] T045 [P] [US7] Create `spec/ruby_reactor/step_retries/test_surface_spec.rb` (`type: :reactor`, using only `test_reactor`, `failing_at`, `mock_step`, `have_retried_step`, `be_failure`, `be_success`):
+- [X] T045 [P] [US7] Create `spec/ruby_reactor/step_retries/test_surface_spec.rb` (`type: :reactor`, using only `test_reactor`, `failing_at`, `mock_step`, `have_retried_step`, `be_failure`, `be_success`):
   - (a) `test_reactor(R, inputs).failing_at(:charge)` where `:charge` is a class step with `retries max_attempts: 3, base_delay: 0` → `be_failure` and `have_retried_step(:charge).times(2)`;
   - (b) `mock_step(:charge) { |_a, ctx| ctx.retry_context.attempts_for_step(:charge) < 2 ? RubyReactor.Failure("x") : RubyReactor.Success(1) }` → `be_success` and `have_retried_step(:charge).times(1)`.
-- [ ] T046 [US7] In `StepConfig` (`lib/ruby_reactor/dsl/step_builder.rb`), add `retry_source`: `:step_block` if `@retry_config`, else `:step_class` if `impl.respond_to?(:retry_config) && impl.retry_config`, else `:none`. Run T044/T045. Green.
+- [X] T046 [US7] In `StepConfig` (`lib/ruby_reactor/dsl/step_builder.rb`), add `retry_source`: `:step_block` if `@retry_config`, else `:step_class` if `impl.respond_to?(:retry_config) && impl.retry_config`, else `:none`. Run T044/T045. Green.
 
 ---
 

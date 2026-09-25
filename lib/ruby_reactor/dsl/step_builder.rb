@@ -137,6 +137,7 @@ module RubyReactor
       def build(async_dispatch: nil)
         check_contract_conflicts!
         check_coordination_conflicts!
+        check_retry_conflict!
         warn_deprecated_rules
 
         step_config = {
@@ -181,6 +182,16 @@ module RubyReactor
                 "#{reactor_label} step :#{@name} declares `#{macro}` inline, but #{@impl} declares it too. " \
                 "Keep ONE: drop the inline declaration to use #{@impl}'s, or remove it from #{@impl}."
         end
+      end
+
+      # Same rule as the coordination macros: one retry policy per step.
+      def check_retry_conflict!
+        return unless @retry_config && @impl.respond_to?(:retry_config) && @impl.retry_config
+
+        raise Error::ValidationError,
+              "#{reactor_label} step :#{@name} declares `retries` inline, but #{@impl} declares it too. " \
+              "Keep ONE: drop the inline declaration to use #{@impl}'s, or remove it from #{@impl}. " \
+              "To vary the policy per workflow, subclass #{@impl} and declare `retries` there."
       end
 
       # A step that owns its input contract takes wiring only from the
@@ -287,6 +298,14 @@ module RubyReactor
       # else a single attempt. Never nil. The reactor is never consulted.
       def retry_config
         @retry_config || (impl.retry_config if impl.respond_to?(:retry_config)) || NO_RETRIES
+      end
+
+      # Where `retry_config` came from: :step_block, :step_class or :none.
+      def retry_source
+        return :step_block if @retry_config
+        return :step_class if impl.respond_to?(:retry_config) && impl.retry_config
+
+        :none
       end
 
       def semaphore_config
