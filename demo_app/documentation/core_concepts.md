@@ -235,7 +235,22 @@ graph TD
 
 ### Retry Configuration
 
-Retries are configured per step. A step with no `retries` runs once:
+Retries are configured per step. The preferred place is the step class, next to the call it
+protects; every reactor using the step then gets its policy:
+
+```ruby
+class ReserveInventoryStep < RubyReactor::Step
+  input :product_id, :string
+  retries max_attempts: 5, backoff: :fixed, base_delay: 2 # 2 seconds
+
+  def run = Success(InventoryService.reserve(inputs[:product_id]))
+end
+```
+
+A direct call (`ReserveInventoryStep.run(args)`) runs once: only a reactor retries a step (see
+[Retry Configuration](retry_configuration.md#direct-calls-run-once)).
+
+An inline step declares `retries` in its block. A step with no `retries` runs once:
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor

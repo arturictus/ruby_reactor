@@ -32,11 +32,40 @@ graph TD
 
 ## Basic Retry Configuration
 
-### Step-Level Retry
+### Declaring retries on a step class (preferred)
+
+A step class declares its retry policy next to the call it protects, the same way it declares
+its inputs and locks. Every reactor that uses the step gets the policy, with no wiring:
+
+```ruby
+class ChargeCard < RubyReactor::Step
+  with_lock { |i| "card:#{i[:card_token]}" }
+  input :card_token, :string
+  retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
+
+  def run = Success(PaymentService.charge(inputs[:card_token]))
+end
+
+class PaymentReactor < RubyReactor::Reactor
+  background all: true
+  input :card_token
+
+  step :charge_card, ChargeCard do
+    argument :card_token, input(:card_token)
+  end
+end
+```
+
+A subclass inherits its parent's policy; declaring `retries` in the subclass changes only the
+subclass.
+
+### Inline steps
+
+An inline step declares `retries` in its block, with the same keywords:
 
 ```ruby
 class PaymentReactor < RubyReactor::Reactor
-  async true
+  background all: true
 
   step :charge_card do
     retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
@@ -45,10 +74,65 @@ class PaymentReactor < RubyReactor::Reactor
 end
 ```
 
+`retries` works the same way in `async_step`, `compose` and `async_reactor` blocks.
+
+### Where a step's policy comes from
+
+A step's effective policy is resolved in this order:
+
+1. `retries` in the reactor's step block;
+2. otherwise `retries` on the step class (declared or inherited);
+3. otherwise none: the step runs once.
+
+The reactor itself has no retry setting. You can look the result up:
+
+```ruby
+PaymentReactor.steps[:charge_card].retry_config  # => {max_attempts: 3, backoff: :exponential, base_delay: 5}
+PaymentReactor.steps[:charge_card].retry_source  # => :step_class (or :step_block, :none)
+```
+
+### One declaration per step
+
+Declaring `retries` both on a step class and in the reactor's step block for that class is
+ambiguous, so it is refused when the reactor class is defined:
+
+```ruby
+step :charge_card, ChargeCard do   # ChargeCard declares `retries`
+  retries max_attempts: 5
+end
+# => RubyReactor::Error::ValidationError:
+#    "PaymentReactor step :charge_card declares `retries` inline, but ChargeCard declares it too.
+#     Keep ONE: ... To vary the policy per workflow, subclass ChargeCard and declare `retries` there."
+```
+
+To use a different policy in one workflow, subclass the step:
+
+```ruby
+class ChargeCardBatch < ChargeCard
+  retries max_attempts: 10, backoff: :linear, base_delay: 1.minute
+end
+```
+
+A class step that declares no `retries` can still be given a policy in the step block.
+
+### Direct calls run once
+
+`ChargeCard.run(args)` (or `.call`) never retries, whatever `retries` says: only a reactor
+coordinates retries. A direct call runs the step once and returns its `Failure` to the caller.
+This differs from locks: a direct call does take the step's `with_lock` / `with_semaphore`
+declarations.
+
+> Step-level coordination contention (`with_lock`, etc. — see [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](locks_and_semaphores.md#step-scoped-coordination)) is separate from retries: a contention park has its own counter and its own bound (`lock_snooze_max_attempts`), and never consumes a step's `max_attempts`.
+
 ## Retry Parameters
 
+`retries` with no arguments means `max_attempts: 3, backoff: :exponential, base_delay: 1`.
+Values are checked when the step is declared, and an invalid one raises `ArgumentError` naming
+the step, the option and the value.
+
 ### max_attempts
-Maximum number of execution attempts (including the initial attempt).
+Maximum number of execution attempts (including the initial attempt). Must be an `Integer`
+`>= 1`; `max_attempts: 1` means "never retry".
 
 ```ruby
 retries max_attempts: 5  # 1 initial + 4 retries = 5 total attempts
@@ -57,17 +141,19 @@ retries max_attempts: 5  # 1 initial + 4 retries = 5 total attempts
 ### backoff
 The backoff strategy for calculating delays between retry attempts.
 
-**Options:**
+**Options** (anything else raises `ArgumentError`):
 - `:exponential` (default): Delay doubles with each attempt
 - `:linear`: Delay increases linearly
 - `:fixed`: Same delay for each attempt
 
 ### base_delay
+
 The base delay for retry calculations. Can be a number (seconds) or ActiveSupport duration.
+Must be `>= 0`.
 
 ```ruby
-retry base_delay: 5.seconds
-retry base_delay: 300  # 5 minutes in seconds
+retries base_delay: 5.seconds
+retries base_delay: 300  # 5 minutes in seconds
 ```
 
 ## Backoff Strategies

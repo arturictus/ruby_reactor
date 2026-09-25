@@ -789,4 +789,46 @@ namespace :demo do
       puts "❌ FAIL: undone=#{undone}, rollback_failures=#{r5.rollback_failures.inspect}"
     end
   end
+
+  desc "StepRetryDemoReactor — retries declared on the STEP class; succeed-after-retry, " \
+       "exhaust-and-compensate, undeclared step runs once"
+  task step_retry: [:environment, :flush_redis] do
+    # Zeitwerk autoloads by exact path->constant mapping: only
+    # `StepRetryDemoReactor` matches `step_retry_demo_reactor.rb`. Touching it
+    # here loads the whole file, defining the step classes and
+    # `StepRetryDemoLog` as a side effect, before either is referenced below.
+    StepRetryDemoReactor
+
+    puts "\n=== 1. :charge fails twice, then succeeds under FlakyChargeStep's own `retries` ==="
+    StepRetryDemoLog.reset!
+    r1 = StepRetryDemoReactor.run(fail_times: 2)
+    puts "  attempts=#{StepRetryDemoLog.charge_attempts} success?=#{r1.success?}"
+    if r1.success? && StepRetryDemoLog.charge_attempts == 3
+      puts "✅ SUCCESS: retried under the step class's policy, with no `retries` in the reactor"
+    else
+      puts "❌ FAIL: expected attempts=3 success?=true"
+    end
+
+    puts "\n=== 2. :charge always fails: the class policy is exhausted, :reserve_stock is rolled back ==="
+    StepRetryDemoLog.reset!
+    r2 = StepRetryDemoReactor.run(fail_times: 5)
+    puts "  success?=#{r2.success?} attempts=#{StepRetryDemoLog.charge_attempts} " \
+         "compensated=#{StepRetryDemoLog.compensated}"
+    puts "  error: #{r2.error}" if r2.failure?
+    if r2.failure? && StepRetryDemoLog.charge_attempts == 3 && StepRetryDemoLog.compensated
+      puts "✅ SUCCESS: 3 attempts, then the reserved stock was given back"
+    else
+      puts "❌ FAIL: expected success?=false attempts=3 compensated=true"
+    end
+
+    puts "\n=== 3. :notify declares no `retries`: its failure is final on the first attempt ==="
+    StepRetryDemoLog.reset!
+    r3 = StepRetryDemoReactor.run(fail_times: 0, fail_notify: true)
+    puts "  notify attempts=#{StepRetryDemoLog.notify_attempts} success?=#{r3.success?}"
+    if r3.failure? && StepRetryDemoLog.notify_attempts == 1
+      puts "✅ SUCCESS: a step with no `retries` runs once"
+    else
+      puts "❌ FAIL: expected notify attempts=1 success?=false"
+    end
+  end
 end

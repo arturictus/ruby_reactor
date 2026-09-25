@@ -263,37 +263,37 @@ on a class step is retried under the class policy (`have_retried_step(:charge).t
 
 **Purpose**: a runnable proof through the public DSL (FR-018).
 
-- [ ] T047 [P] Create `demo_app/app/reactors/step_retry_demo_reactor.rb` defining, in one file:
+- [X] T047 [P] Create `demo_app/app/reactors/step_retry_demo_reactor.rb` defining, in one file:
   - `StepRetryDemoLog` (a class-level attempt log with `reset!`);
   - `FlakyChargeStep < RubyReactor::Step` with `input :fail_times, :integer` and `retries max_attempts: 3, backoff: :fixed, base_delay: 0.05`, which fails until the attempt counter reaches `fail_times` (log each attempt);
   - `ReserveStockStep < RubyReactor::Step` with a `compensate` that records `StepRetryDemoLog.compensated = true`;
   - `NotifyStep < RubyReactor::Step` with no `retries`, which fails when `fail_notify` is true.
 
   `StepRetryDemoReactor < RubyReactor::Reactor` has inputs `fail_times` and `fail_notify` and steps `reserve_stock` → `charge` → `notify`, with no `retries` lines anywhere in the reactor. Model the file layout on `demo_app/app/reactors/step_lock_demo_reactor.rb`.
-- [ ] T048 Add `desc "StepRetryDemoReactor — retries declared on the STEP class; succeed-after-retry, exhaust-and-compensate, undeclared step runs once"` and `task step_retry: [:environment, :flush_redis]` to `demo_app/lib/tasks/demo_reactors.rake`. Touch `StepRetryDemoReactor` first (Zeitwerk note as in the `step_lock` task, ≈ line 685). It prints three scenarios:
+- [X] T048 Add `desc "StepRetryDemoReactor — retries declared on the STEP class; succeed-after-retry, exhaust-and-compensate, undeclared step runs once"` and `task step_retry: [:environment, :flush_redis]` to `demo_app/lib/tasks/demo_reactors.rake`. Touch `StepRetryDemoReactor` first (Zeitwerk note as in the `step_lock` task, ≈ line 685). It prints three scenarios:
   1. `fail_times: 2` → `attempts=3 success?=true`;
   2. `fail_times: 5` → `success?=false attempts=3 compensated=true`;
   3. `fail_times: 0, fail_notify: true` → `notify attempts=1 success?=false`.
-- [ ] T049 [P] Create `demo_app/spec/reactors/step_retry_demo_reactor_spec.rb` (`type: :reactor`, `require "rails_helper"`) using only the shipped surface. It covers the three scenarios with `be_success`/`be_failure`, `have_retried_step(:charge).times(2)`, and `expect(reactor).not_to have_retried_step(:notify)`. The compensation assertion reads `StepRetryDemoLog.compensated` (application state, not reactor internals).
-- [ ] T050 Run the demo end to end in an isolated compose project: `docker compose -p rr-retry run --rm demo-app bin/rails demo:step_retry` and `docker compose -p rr-retry run --rm demo-app bundle exec rspec spec/reactors/step_retry_demo_reactor_spec.rb`. Confirm the printed outcomes match T048.
+- [X] T049 [P] Create `demo_app/spec/reactors/step_retry_demo_reactor_spec.rb` (`type: :reactor`, `require "rails_helper"`) using only the shipped surface. It covers the three scenarios with `be_success`/`be_failure`, `have_retried_step(:charge).times(2)`, and `expect(reactor).not_to have_retried_step(:notify)`. The compensation assertion reads `StepRetryDemoLog.compensated` (application state, not reactor internals).
+- [X] T050 Run the demo end to end in an isolated compose project: `docker compose -p rr-retry run --rm demo-app bin/rails demo:step_retry` and `docker compose -p rr-retry run --rm demo-app bundle exec rspec spec/reactors/step_retry_demo_reactor_spec.rb`. Confirm the printed outcomes match T048.
 
 ---
 
 ## Phase 11: Polish & Cross-Cutting Concerns
 
-- [ ] T051 [P] In `documentation/retry_configuration.md`, add "### Declaring retries on a step class (preferred)" as the first example under "Basic Retry Configuration", with `ChargeCard` using `with_lock`, `input` and `retries` together (as in `contracts/dsl-surface.md` §2). Keep the inline example after it. Add:
+- [X] T051 [P] In `documentation/retry_configuration.md`, add "### Declaring retries on a step class (preferred)" as the first example under "Basic Retry Configuration", with `ChargeCard` using `with_lock`, `input` and `retries` together (as in `contracts/dsl-surface.md` §2). Keep the inline example after it. Add:
   - "### Where a step's policy comes from": the step block, then the step class, then none (runs once);
   - "### One declaration per step": the conflict error and the subclassing recipe;
   - "### Direct calls run once": `ChargeCard.run(args)` never retries, because only a reactor coordinates retries; contrast this with locks, which a direct call does take;
   - validation rules for `max_attempts`, `backoff` and `base_delay`.
-- [ ] T052 [P] In `documentation/core_concepts.md` line 108 (the class-step lifecycle paragraph that says direct calls are coordinated like reactor calls), append: "Retries are not: a direct call runs once — only a reactor retries a step (see [Retry Configuration](retry_configuration.md#direct-calls-run-once))." In the retry section (≈ 345), lead with the step-class form.
-- [ ] T053 [P] In `README.md`:
+- [X] T052 [P] In `documentation/core_concepts.md` line 108 (the class-step lifecycle paragraph that says direct calls are coordinated like reactor calls), append: "Retries are not: a direct call runs once — only a reactor retries a step (see [Retry Configuration](retry_configuration.md#direct-calls-run-once))." In the retry section (≈ 345), lead with the step-class form.
+- [X] T053 [P] In `README.md`:
   - Features bullet (line 24): "**Retries**: per-step retry policies (declared on the step class or step block) with exponential, linear, or fixed backoff.";
   - in "Defining Steps" (≈ line 245, the class-step example), add a `retries max_attempts: 3` line to the example step class with a one-line comment;
   - Retry Configuration blurb (line 1486): mention the step-class form.
-- [ ] T054 [P] Mirror T051–T052 into `demo_app/documentation/retry_configuration.md` and `demo_app/documentation/core_concepts.md`.
-- [ ] T055 [P] Update `llms.txt` / `llms-full.txt` if they describe the retry DSL (`grep -n "retries" llms*.txt`), so they show the step-class form.
-- [ ] T056 Final gate: `bundle exec rspec`, `bundle exec rubocop`, and T050 are all green. Walk through `quickstart.md` Phase B. Commit as `feat: declare retries on step classes`.
+- [X] T054 [P] Mirror T051–T052 into `demo_app/documentation/retry_configuration.md` and `demo_app/documentation/core_concepts.md`.
+- [X] T055 [P] Update `llms.txt` / `llms-full.txt` if they describe the retry DSL (`grep -n "retries" llms*.txt`), so they show the step-class form.
+- [X] T056 Final gate: `bundle exec rspec`, `bundle exec rubocop`, and T050 are all green. Walk through `quickstart.md` Phase B. Commit as `feat: declare retries on step classes`.
 
 ---
 

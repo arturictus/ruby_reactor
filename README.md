@@ -21,7 +21,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 - **Background Execution**: Hand a whole reactor, or everything after a declared step, to a background job via Sidekiq or ActiveJob (so any ActiveJob-compatible queue — Resque, Solid Queue, GoodJob, etc. — works too).
 - **Async Steps & Reactors**: `async_step` and `async_reactor` dispatch independent units of work while the reactor keeps running; steps that read their result wait for it.
 - **Map & Parallel Execution**: Iterate over collections in parallel with the `map` step, distributing work across multiple workers.
-- **Retries**: Configurable retry logic for failed steps, with exponential backoff.
+- **Retries**: per-step retry policies (declared on the step class or step block) with exponential, linear, or fixed backoff.
 - **Compensation**: Automatic rollback of completed steps when a failure occurs.
 - **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
@@ -247,6 +247,8 @@ One-line helpers end a step immediately from any call depth: `success!(value)`, 
 class ReserveInventoryStep < RubyReactor::Step
   # The step's input contract: enforced before `run` on every execution path.
   input :order, :hash
+  # The step's retry policy: applies in every reactor that uses this step.
+  retries max_attempts: 3
 
   def run
     reservation_id = InventoryService.reserve(inputs[:order][:items])
@@ -1483,7 +1485,7 @@ Discover how to build complex, modular workflows by composing reactors within ot
 Master the `map` feature for processing collections. Learn about parallel execution, batch processing for large datasets, and error handling strategies like fail-fast vs. partial result collection.
 
 ### [Retry Configuration](documentation/retry_configuration.md)
-Configure robust retry policies for your steps. This guide details the available backoff strategies (exponential, linear, fixed), how to configure retries per step, and how background retries work without blocking workers.
+Configure robust retry policies for your steps. This guide details the available backoff strategies (exponential, linear, fixed), how to declare retries on a step class or inline step, and how background retries work without blocking workers.
 
 ### [Interrupts](documentation/interrupts.md)
 Learn how to pause and resume reactors to handle long-running processes, manual approvals, and asynchronous callbacks. Patterns for correlation IDs, timeouts, and payload validation.
