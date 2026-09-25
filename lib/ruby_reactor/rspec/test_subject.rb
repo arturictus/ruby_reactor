@@ -556,7 +556,6 @@ module RubyReactor
           @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
           @background_handoff = superclass.background_handoff
-          @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
 
           # 2. Add Name Handling with Unique Registry Entry
           # We must register a unique name so that if this reactor is reloaded (e.g. after async child completion),
@@ -648,7 +647,6 @@ module RubyReactor
           @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
           @background_handoff = superclass.background_handoff
-          @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
         end
 
         strip_background_and_async!(child_class)
@@ -736,7 +734,6 @@ module RubyReactor
           @middlewares = superclass.middlewares.dup
           @return_step = superclass.return_step
           @background_handoff = superclass.background_handoff
-          @retry_defaults = superclass.instance_variable_get(:@retry_defaults)
         end
 
         # Recursively apply interceptors to the child reactor

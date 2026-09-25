@@ -11,9 +11,8 @@ RSpec.describe RubyReactor do
         input :email
         input :password
 
-        retry_defaults max_attempts: 3
-
         step :validate_email do
+          retries max_attempts: 3
           argument :email, input(:email)
 
           run do |args, _context|
@@ -26,6 +25,7 @@ RSpec.describe RubyReactor do
         end
 
         step :hash_password do
+          retries max_attempts: 3
           argument :password, input(:password)
 
           run do |args, _context|
@@ -36,6 +36,7 @@ RSpec.describe RubyReactor do
         end
 
         step :create_user do
+          retries max_attempts: 3
           argument :email, result(:validate_email)
           argument :password_hash, result(:hash_password)
 
@@ -218,12 +219,12 @@ RSpec.describe RubyReactor do
   describe "Max attempts behavior" do
     let(:flaky_step_class) do
       Class.new(RubyReactor::Reactor) do
-        retry_defaults max_attempts: 3
         input :should_fail_times do
           required(:should_fail_times).filled(:integer, gteq?: 0)
         end
 
         step :flaky_step do
+          retries max_attempts: 3
           argument :should_fail_times, input(:should_fail_times)
 
           run do |args, context|

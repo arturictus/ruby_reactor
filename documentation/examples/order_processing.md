@@ -91,9 +91,6 @@ end
 class OrderProcessingReactor < RubyReactor::Reactor
   background all: true  # Entire reactor runs in a background worker
 
-  # Reactor-level retry defaults
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
-
   input :order_id do
     required(:order_id).filled(:string)
   end
@@ -127,6 +124,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :reserve_inventory, ReserveInventoryStep do
     argument :order, result(:validate_order, :order)
+
+    retries max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
   end
 
   step :process_payment, ProcessPaymentStep do
@@ -139,6 +138,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
   step :update_inventory do
     argument :order, result(:validate_order, :order)
     argument :reservation_id, result(:reserve_inventory, :reservation_id)
+
+    retries max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
 
     run do |args, _ctx|
       success = InventoryService.confirm_reservation(args[:reservation_id])

@@ -11,7 +11,6 @@ module RubyReactor
         base.instance_variable_set(:@middlewares, [])
         base.instance_variable_set(:@input_validations, {})
         base.instance_variable_set(:@background_handoff, nil)
-        base.instance_variable_set(:@retry_defaults, { max_attempts: 3, backoff: :exponential, base_delay: 1 })
       end
 
       module ClassMethods
@@ -55,16 +54,14 @@ module RubyReactor
                 "inputs inside the worker."
         end
 
-        def retry_defaults(**kwargs)
-          if kwargs.empty?
-            @retry_defaults ||= { max_attempts: 1, backoff: :exponential, base_delay: 1 }
-          else
-            @retry_defaults = {
-              max_attempts: kwargs[:max_attempts] || 1,
-              backoff: kwargs[:backoff] || :exponential,
-              base_delay: kwargs[:base_delay] || 1
-            }
-          end
+        # Reactor-wide retry defaults are gone: the builders snapshotted them at
+        # `step` time, so they silently applied only to steps declared AFTER
+        # the `retry_defaults` line. A step's retry policy now lives on the step.
+        def retry_defaults(*, **)
+          raise RubyReactor::Error::DeprecatedDslError,
+                "`retry_defaults` has been removed from #{name || "this reactor"}: reactor-wide defaults " \
+                "silently applied only to steps declared after them. Declare `retries` on each step class " \
+                "(or step block) that should retry; a step with no `retries` runs once."
         end
 
         # rubocop:disable Metrics/ParameterLists

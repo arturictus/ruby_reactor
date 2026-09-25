@@ -20,7 +20,7 @@ module RubyReactor
         end
         @reactor = reactor
         @argument_mappings = {}
-        @retry_config = {}
+        @retry_config = nil
       end
 
       def argument(composed_input_name, source)
@@ -71,7 +71,7 @@ module RubyReactor
           dependencies: dependencies,
           args_validator: nil,
           output_validator: nil,
-          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
+          retry_config: @retry_config
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)

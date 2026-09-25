@@ -18,7 +18,7 @@ module RubyReactor
         @child_reactor_class = child_reactor_class
         @reactor = reactor
         @argument_mappings = {}
-        @retry_config = {}
+        @retry_config = nil
       end
 
       def argument(child_input_name, source)
@@ -49,7 +49,7 @@ module RubyReactor
           dependencies: dependencies_from_mappings,
           args_validator: nil,
           output_validator: nil,
-          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
+          retry_config: @retry_config
         )
       end
 

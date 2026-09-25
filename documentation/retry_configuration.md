@@ -1,6 +1,6 @@
 # Retry Configuration
 
-RubyReactor provides flexible, non-blocking retry mechanisms that requeue jobs instead of blocking worker threads. Retry policies can be configured at both reactor and step levels.
+RubyReactor provides flexible, non-blocking retry mechanisms that requeue jobs instead of blocking worker threads. Retry policies are configured per step; a step with no `retries` runs once.
 
 ## Overview
 
@@ -40,28 +40,6 @@ class PaymentReactor < RubyReactor::Reactor
 
   step :charge_card do
     retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
-    run { PaymentService.charge(card_token, amount) }
-  end
-end
-```
-
-### Reactor-Level Defaults
-
-```ruby
-class PaymentReactor < RubyReactor::Reactor
-  background all: true
-
-  # All steps inherit these defaults
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
-
-  step :validate_card do
-    # Uses reactor defaults
-    run { validate_card_details }
-  end
-
-  step :charge_card do
-    # Override for this specific step
-    retries max_attempts: 5, backoff: :linear, base_delay: 10.seconds
     run { PaymentService.charge(card_token, amount) }
   end
 end
@@ -173,10 +151,8 @@ An operation is idempotent if executing it multiple times produces the same resu
 class OrderProcessingReactor < RubyReactor::Reactor
   background all: true
 
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
-
   step :validate_order do
-    # Quick validation - no retry needed
+    # Quick validation - no `retries`, so it runs once
     run { validate_order_exists(order_id) }
   end
 
@@ -210,6 +186,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :confirm_order do
     # Final confirmation - must succeed
+    retries max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
     run { OrderService.mark_completed(order_id) }
   end
 end
@@ -381,3 +358,42 @@ end
 ```
 
 On the ActiveJob adapter, prefer the framework-agnostic `test_reactor` helper (see [Testing with RSpec](testing.md)) over reaching into `RubyReactor::Adapters::ActiveJob::Worker` directly — it detects and drains ActiveJob's `:test` queue adapter the same way it drains Sidekiq fake mode above.
+
+## Migrating from `retry_defaults`
+
+Reactor-wide `retry_defaults` has been removed. It was snapshotted when each step was declared,
+so it silently applied only to steps declared *after* the `retry_defaults` line. Calling it now
+raises `RubyReactor::Error::DeprecatedDslError` when the reactor class is defined.
+
+Move the values onto each step that should retry. A step without `retries` runs once.
+
+```ruby
+# Before
+class PaymentReactor < RubyReactor::Reactor
+  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
+
+  step :validate_card do
+    run { validate_card_details }
+  end
+
+  step :charge_card do
+    run { PaymentService.charge(card_token, amount) }
+  end
+end
+
+# After
+class PaymentReactor < RubyReactor::Reactor
+  step :validate_card do
+    # No `retries`: runs once
+    run { validate_card_details }
+  end
+
+  step :charge_card do
+    retries max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
+    run { PaymentService.charge(card_token, amount) }
+  end
+end
+```
+
+`max_attempts: 0` is not a valid value: write `max_attempts: 1` (or omit `retries`) for a step
+that must never retry.

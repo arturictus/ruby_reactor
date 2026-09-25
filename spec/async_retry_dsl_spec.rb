@@ -20,16 +20,18 @@ RSpec.describe "RubyReactor Async and Retry DSL" do
       end.to raise_error(RubyReactor::Error::DeprecatedDslError, /background all: true/)
     end
 
-    it "supports retry_defaults class method" do
-      reactor_class = Class.new(RubyReactor::Reactor) do
-        retry_defaults max_attempts: 5, backoff: :linear, base_delay: 2
-      end
+    it "rejects the removed reactor-level retry_defaults" do
+      expect do
+        Class.new(RubyReactor::Reactor) do
+          retry_defaults max_attempts: 5, backoff: :linear, base_delay: 2
+        end
+      end.to raise_error(RubyReactor::Error::DeprecatedDslError, /retry_defaults.*removed.*retries/m)
+    end
 
-      expect(reactor_class.retry_defaults).to eq({
-                                                   max_attempts: 5,
-                                                   backoff: :linear,
-                                                   base_delay: 2
-                                                 })
+    it "rejects retry_defaults called with no arguments" do
+      reactor_class = Class.new(RubyReactor::Reactor)
+
+      expect { reactor_class.retry_defaults }.to raise_error(RubyReactor::Error::DeprecatedDslError, /retries/)
     end
   end
 

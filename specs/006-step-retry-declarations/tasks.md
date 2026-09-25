@@ -37,8 +37,8 @@ Gem: `lib/ruby_reactor/`, `spec/`. Demo: `demo_app/`. New feature specs:
 
 **Purpose**: record a green baseline so the regressions in the later phases can be told apart.
 
-- [ ] T001 Confirm Redis is reachable and record the baseline: run `bundle exec rspec spec/async_retry_dsl_spec.rb spec/async_retry_integration_spec.rb spec/ruby_reactor_spec.rb spec/ruby_reactor/retry_signals_spec.rb spec/ruby_reactor/retry_reexecution_spec.rb spec/ruby_reactor/order_processing_reactor_spec.rb` and `bundle exec rubocop` from the repo root. Note any pre-existing failures in the PR description (see the flaky-spec note: rerun a failing file alone before treating it as real).
-- [ ] T002 Create the directory `spec/ruby_reactor/step_retries/` for the new feature specs.
+- [X] T001 Confirm Redis is reachable and record the baseline: run `bundle exec rspec spec/async_retry_dsl_spec.rb spec/async_retry_integration_spec.rb spec/ruby_reactor_spec.rb spec/ruby_reactor/retry_signals_spec.rb spec/ruby_reactor/retry_reexecution_spec.rb spec/ruby_reactor/order_processing_reactor_spec.rb` and `bundle exec rubocop` from the repo root. Note any pre-existing failures in the PR description (see the flaky-spec note: rerun a failing file alone before treating it as real).
+- [X] T002 Create the directory `spec/ruby_reactor/step_retries/` for the new feature specs.
 
 ---
 
@@ -54,8 +54,8 @@ the stub and its spec.
 
 ### Tests for User Story 1 (write first, confirm failing)
 
-- [ ] T003 [US1] In `spec/async_retry_dsl_spec.rb`, replace the example `"supports retry_defaults class method"` (lines 23-33) with `"rejects the removed reactor-level retry_defaults"`. It should expect `Class.new(RubyReactor::Reactor) { retry_defaults max_attempts: 5, backoff: :linear, base_delay: 2 }` to raise `RubyReactor::Error::DeprecatedDslError` with a message matching `/retry_defaults.*removed/m` and `/retries/`. Add a second example: calling `retry_defaults` with no arguments on a reactor class raises the same error.
-- [ ] T004 [P] [US1] Create `spec/ruby_reactor/step_retries/removal_spec.rb` with these cases:
+- [X] T003 [US1] In `spec/async_retry_dsl_spec.rb`, replace the example `"supports retry_defaults class method"` (lines 23-33) with `"rejects the removed reactor-level retry_defaults"`. It should expect `Class.new(RubyReactor::Reactor) { retry_defaults max_attempts: 5, backoff: :linear, base_delay: 2 }` to raise `RubyReactor::Error::DeprecatedDslError` with a message matching `/retry_defaults.*removed/m` and `/retries/`. Add a second example: calling `retry_defaults` with no arguments on a reactor class raises the same error.
+- [X] T004 [P] [US1] Create `spec/ruby_reactor/step_retries/removal_spec.rb` with these cases:
   - (a) an anonymous reactor whose step `run` always returns `Failure("boom")`, with no `retries` anywhere, returns a failure after exactly 1 attempt (`reactor.context.retry_context.attempts_for_step(:x) == 1`, error not prefixed "failed after");
   - (b) the same for a `compose` step whose block declares no `retries`: `steps[:c].retry_config[:max_attempts] == 1`;
   - (c) the same for `async_reactor`: `steps[:a].retry_config[:max_attempts] == 1`;
@@ -63,45 +63,45 @@ the stub and its spec.
 
 ### Implementation for User Story 1
 
-- [ ] T005 [US1] In `lib/ruby_reactor/dsl/reactor.rb`:
+- [X] T005 [US1] In `lib/ruby_reactor/dsl/reactor.rb`:
   - delete line 14 (`base.instance_variable_set(:@retry_defaults, …)`);
   - replace `def retry_defaults(**kwargs) … end` (lines 58-68) with `def retry_defaults(*, **)`, which raises `RubyReactor::Error::DeprecatedDslError`. Model the message on the `async` removal stub at lines 48-56 and follow the shape in `contracts/dsl-surface.md` §1: "`retry_defaults` has been removed from #{name || "this reactor"}: reactor-wide defaults silently applied only to steps declared after them. Declare `retries` on each step class (or step block) that should retry; a step with no `retries` runs once."
-- [ ] T006 [US1] In `lib/ruby_reactor/dsl/step_builder.rb`:
+- [X] T006 [US1] In `lib/ruby_reactor/dsl/step_builder.rb`:
   - initialize `@retry_config = nil` (line 33, currently `{}`);
   - in `build` (line 163), pass `retry_config: @retry_config`;
   - in `StepConfig`, add `NO_RETRIES = { max_attempts: 1, backoff: :exponential, base_delay: 1 }.freeze` and change line 271 to `@retry_config = config[:retry_config] || NO_RETRIES`.
 
   Keep `StepBuilder#retries` for now (it is replaced in Phase 3).
-- [ ] T007 [P] [US1] In `lib/ruby_reactor/dsl/compose_builder.rb`, initialize `@retry_config = nil` (line 23) and pass `retry_config: @retry_config` in `build` (line 74).
-- [ ] T008 [P] [US1] In `lib/ruby_reactor/dsl/async_reactor_builder.rb`, initialize `@retry_config = nil` (line 20) and pass `retry_config: @retry_config` in `build` (line 52).
-- [ ] T009 [P] [US1] In `lib/ruby_reactor/executor/retry_manager.rb` (lines 27-35), make `calculate_backoff_delay` read only `step_config.retry_config[:backoff]` and `[:base_delay]`. Drop the now-unused `reactor_class` parameter from `calculate_backoff_delay` and from its callers `requeue_job_for_step_retry` and `handle_sync_retry` (keep `reactor_class` wherever it is still used, e.g. for `async?` and `MaxRetriesExhaustedFailure`).
-- [ ] T010 [P] [US1] In `lib/ruby_reactor/rspec/test_subject.rb`, delete the three `@retry_defaults = superclass.instance_variable_get(:@retry_defaults)` lines (559, 651, 739).
-- [ ] T011 [US1] Run `grep -rn "retry_config" lib` and check that no consumer calls `.empty?` on a builder's `@retry_config` or assumes it is a Hash before `StepConfig` normalizes it. Fix any hit in place.
-- [ ] T012 [P] [US1] Migrate `spec/ruby_reactor_spec.rb`:
+- [X] T007 [P] [US1] In `lib/ruby_reactor/dsl/compose_builder.rb`, initialize `@retry_config = nil` (line 23) and pass `retry_config: @retry_config` in `build` (line 74).
+- [X] T008 [P] [US1] In `lib/ruby_reactor/dsl/async_reactor_builder.rb`, initialize `@retry_config = nil` (line 20) and pass `retry_config: @retry_config` in `build` (line 52).
+- [X] T009 [P] [US1] In `lib/ruby_reactor/executor/retry_manager.rb` (lines 27-35), make `calculate_backoff_delay` read only `step_config.retry_config[:backoff]` and `[:base_delay]`. Drop the now-unused `reactor_class` parameter from `calculate_backoff_delay` and from its callers `requeue_job_for_step_retry` and `handle_sync_retry` (keep `reactor_class` wherever it is still used, e.g. for `async?` and `MaxRetriesExhaustedFailure`).
+- [X] T010 [P] [US1] In `lib/ruby_reactor/rspec/test_subject.rb`, delete the three `@retry_defaults = superclass.instance_variable_get(:@retry_defaults)` lines (559, 651, 739).
+- [X] T011 [US1] Run `grep -rn "retry_config" lib` and check that no consumer calls `.empty?` on a builder's `@retry_config` or assumes it is a Hash before `StepConfig` normalizes it. Fix any hit in place.
+- [X] T012 [P] [US1] Migrate `spec/ruby_reactor_spec.rb`:
   - remove `retry_defaults max_attempts: 3` (line 14) and add `retries max_attempts: 3` inside the `validate_email`, `hash_password` and `create_user` step blocks;
   - remove `retry_defaults max_attempts: 3` (line 221) and add `retries max_attempts: 3` inside `step :flaky_step`.
 
   Do not change any assertion.
-- [ ] T013 [P] [US1] Migrate `spec/support/order_processing_reactor.rb`: remove `retry_defaults max_attempts: 5, backoff: :fixed, base_delay: 2` (line 28) and add `retries max_attempts: 5, backoff: :fixed, base_delay: 2` to each step without its own `retries` (`validate_order`, `check_inventory`, `reserve_inventory`, `process_payment`). Do not change `spec/ruby_reactor/order_processing_reactor_spec.rb`.
-- [ ] T014 [P] [US1] Apply the identical migration to `demo_app/spec/support/order_processing_reactor.rb` (the file is byte-identical to the gem copy today; keep it that way).
-- [ ] T015 [US1] Run `bundle exec rspec` (full suite) and `bundle exec rubocop`; everything is green, including T003/T004.
+- [X] T013 [P] [US1] Migrate `spec/support/order_processing_reactor.rb`: remove `retry_defaults max_attempts: 5, backoff: :fixed, base_delay: 2` (line 28) and add `retries max_attempts: 5, backoff: :fixed, base_delay: 2` to each step without its own `retries` (`validate_order`, `check_inventory`, `reserve_inventory`, `process_payment`). Do not change `spec/ruby_reactor/order_processing_reactor_spec.rb`.
+- [X] T014 [P] [US1] Apply the identical migration to `demo_app/spec/support/order_processing_reactor.rb` (the file is byte-identical to the gem copy today; keep it that way).
+- [X] T015 [US1] Run `bundle exec rspec` (full suite) and `bundle exec rubocop`; everything is green, including T003/T004.
 
 ### Documentation for User Story 1 (REQUIRED, Constitution Development Workflow)
 
-- [ ] T016 [P] [US1] In `documentation/retry_configuration.md`:
+- [X] T016 [P] [US1] In `documentation/retry_configuration.md`:
   - delete "### Reactor-Level Defaults" (lines 48-70);
   - rewrite the "Complex Retry Scenarios" example (≈ line 176) so each step declares its own `retries`;
   - change the intro sentence "configured at both reactor and step levels" to step level only;
   - add a section "## Migrating from `retry_defaults`" with a before/after example (move the values onto each step that needs them; a step without `retries` runs once; `max_attempts: 0` is not valid, use `1`).
-- [ ] T017 [P] [US1] In `documentation/core_concepts.md`:
+- [X] T017 [P] [US1] In `documentation/core_concepts.md`:
   - line 327: drop "either reactor-level defaults or";
   - line 345: "Retries are configured per step";
   - ≈ line 360: replace the "Uses reactor defaults" step with an explicit `retries` line or no retries, and adjust the surrounding example so it no longer declares `retry_defaults`.
-- [ ] T018 [P] [US1] In `documentation/background_and_async.md`, delete "### Reactor-Level Defaults" (≈ lines 514-530) and adjust any cross-reference to it.
-- [ ] T019 [P] [US1] In `documentation/examples/order_processing.md` (line 95), `documentation/examples/payment_processing.md` (lines 77, 228, 300) and `documentation/examples/inventory_management.md` (lines 51, 461), replace each `retry_defaults …` with `retries …` on the step(s) in that example that do external I/O. Keep the same values.
-- [ ] T020 [P] [US1] Apply the same changes to the stale copies under `demo_app/documentation/`: `retry_configuration.md` (48-70, 173), `core_concepts.md` (220, 238, 253), `async_reactors.md` (394-404), and `examples/{payment_processing (47, 230, 302, 389), order_processing (47), inventory_management (49, 460)}.md`.
-- [ ] T021 [P] [US1] In `README.md` line 1486, change "how to configure retries at the reactor or step level" to "how to configure retries per step". Run `grep -n "retry_defaults" llms.txt llms-full.txt` and fix any hit.
-- [ ] T022 [US1] Gate: `grep -rn "retry_defaults" lib spec demo_app documentation README.md llms.txt llms-full.txt` matches only `lib/ruby_reactor/dsl/reactor.rb`, `spec/async_retry_dsl_spec.rb` and `spec/ruby_reactor/step_retries/removal_spec.rb`. `bundle exec rspec` and `bundle exec rubocop` are green. Commit as `feat!: remove reactor-wide retry_defaults`, with a `BREAKING CHANGE:` footer carrying the migration text from T016 (including the `max_attempts: 0` → `1` note, which applies from Phase 3).
+- [X] T018 [P] [US1] In `documentation/background_and_async.md`, delete "### Reactor-Level Defaults" (≈ lines 514-530) and adjust any cross-reference to it.
+- [X] T019 [P] [US1] In `documentation/examples/order_processing.md` (line 95), `documentation/examples/payment_processing.md` (lines 77, 228, 300) and `documentation/examples/inventory_management.md` (lines 51, 461), replace each `retry_defaults …` with `retries …` on the step(s) in that example that do external I/O. Keep the same values.
+- [X] T020 [P] [US1] Apply the same changes to the stale copies under `demo_app/documentation/`: `retry_configuration.md` (48-70, 173), `core_concepts.md` (220, 238, 253), `async_reactors.md` (394-404), and `examples/{payment_processing (47, 230, 302, 389), order_processing (47), inventory_management (49, 460)}.md`.
+- [X] T021 [P] [US1] In `README.md` line 1486, change "how to configure retries at the reactor or step level" to "how to configure retries per step". Run `grep -n "retry_defaults" llms.txt llms-full.txt` and fix any hit.
+- [X] T022 [US1] Gate: `grep -rn "retry_defaults" lib spec demo_app documentation README.md llms.txt llms-full.txt` matches only `lib/ruby_reactor/dsl/reactor.rb`, `spec/async_retry_dsl_spec.rb` and `spec/ruby_reactor/step_retries/removal_spec.rb`. `bundle exec rspec` and `bundle exec rubocop` are green. Commit as `feat!: remove reactor-wide retry_defaults`, with a `BREAKING CHANGE:` footer carrying the migration text from T016 (including the `max_attempts: 0` → `1` note, which applies from Phase 3).
 
 **Checkpoint**: US1 is shippable on its own. Do not start Phase 3 until T022 is committed.
 

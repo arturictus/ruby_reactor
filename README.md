@@ -1483,7 +1483,7 @@ Discover how to build complex, modular workflows by composing reactors within ot
 Master the `map` feature for processing collections. Learn about parallel execution, batch processing for large datasets, and error handling strategies like fail-fast vs. partial result collection.
 
 ### [Retry Configuration](documentation/retry_configuration.md)
-Configure robust retry policies for your steps. This guide details the available backoff strategies (exponential, linear, fixed), how to configure retries at the reactor or step level, and how background retries work without blocking workers.
+Configure robust retry policies for your steps. This guide details the available backoff strategies (exponential, linear, fixed), how to configure retries per step, and how background retries work without blocking workers.
 
 ### [Interrupts](documentation/interrupts.md)
 Learn how to pause and resume reactors to handle long-running processes, manual approvals, and asynchronous callbacks. Patterns for correlation IDs, timeouts, and payload validation.

@@ -511,28 +511,6 @@ class PaymentProcessingReactor < RubyReactor::Reactor
 end
 ```
 
-### Reactor-Level Defaults
-
-```ruby
-class PaymentProcessingReactor < RubyReactor::Reactor
-  background all: true
-
-  # Set defaults for all steps
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
-
-  step :validate_payment do
-    # Inherits reactor defaults (3 attempts, exponential backoff)
-    run { validate_payment_logic }
-  end
-
-  step :charge_card do
-    # Override defaults for this step
-    retries max_attempts: 5, backoff: :linear, base_delay: 10.seconds
-    run { charge_card_logic }
-  end
-end
-```
-
 ## Retry Strategies
 
 ### Backoff Algorithms

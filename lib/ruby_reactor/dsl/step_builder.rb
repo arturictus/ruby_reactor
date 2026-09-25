@@ -30,7 +30,7 @@ module RubyReactor
         @validate_args_input = nil
         @args_validator = nil
         @output_validator = nil
-        @retry_config = {}
+        @retry_config = nil
         @inline_contract = nil
         @rule_sites = []
       end
@@ -160,7 +160,7 @@ module RubyReactor
           args_validator: @args_validator || build_args_validator(@arg_validations, @validate_args_input),
           output_validator: @output_validator,
           inline_contract: @inline_contract,
-          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config,
+          retry_config: @retry_config,
           lock_config: @lock_config,
           semaphore_config: @semaphore_config,
           rate_limit_config: @rate_limit_config,
@@ -250,6 +250,8 @@ module RubyReactor
     end
 
     class StepConfig
+      NO_RETRIES = { max_attempts: 1, backoff: :exponential, base_delay: 1 }.freeze
+
       attr_reader :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
                   :dependencies, :args_validator, :output_validator, :retry_config, :async_dispatch,
                   :inline_contract
@@ -268,7 +270,7 @@ module RubyReactor
         @args_validator = config[:args_validator]
         @output_validator = config[:output_validator]
         @inline_contract = config[:inline_contract]
-        @retry_config = { max_attempts: 1 }.merge(config[:retry_config] || {})
+        @retry_config = config[:retry_config] || NO_RETRIES
         @lock_config = config[:lock_config]
         @semaphore_config = config[:semaphore_config]
         @rate_limit_config = config[:rate_limit_config]
