@@ -4,6 +4,7 @@ module RubyReactor
   module Dsl
     class ComposeBuilder
       include RubyReactor::Dsl::TemplateHelpers
+      include RubyReactor::Dsl::Retryable
 
       attr_accessor :name, :composed_reactor_class, :argument_mappings
 
@@ -42,14 +43,6 @@ module RubyReactor
           "for one step's worth of work, `async_step`.",
           step: @name
         )
-      end
-
-      def retries(max_attempts: 3, backoff: :exponential, base_delay: 1)
-        @retry_config = {
-          max_attempts: max_attempts,
-          backoff: backoff,
-          base_delay: base_delay
-        }
       end
 
       def build

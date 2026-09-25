@@ -115,14 +115,14 @@ FR-004).
 
 **⚠️ CRITICAL**: no US2–US7 work until this phase is green.
 
-- [ ] T023 [P] Create `spec/ruby_reactor/step_retries/declaration_spec.rb` (validation, FR-004). For both a step class (`Class.new(RubyReactor::Step) { retries … }`) and an inline step block (`Class.new(RubyReactor::Reactor) { step(:s) { retries …; run { Success() } } }`):
+- [X] T023 [P] Create `spec/ruby_reactor/step_retries/declaration_spec.rb` (validation, FR-004). For both a step class (`Class.new(RubyReactor::Step) { retries … }`) and an inline step block (`Class.new(RubyReactor::Reactor) { step(:s) { retries …; run { Success() } } }`):
   - `retries` with no args stores `{max_attempts: 3, backoff: :exponential, base_delay: 1}`;
   - `retries max_attempts: 5` keeps the other defaults;
   - `ArgumentError` for `max_attempts: 0`, `-1`, `2.5` and `"3"` (message names the owner and `max_attempts`), for `backoff: :bogus` (names `backoff`) and for `base_delay: -1` (names `base_delay`);
   - `base_delay: 0` and `base_delay: 0.5` are accepted.
 
   Also assert that `compose` and `async_reactor` blocks raise the same `ArgumentError` for `backoff: :bogus`.
-- [ ] T024 Create `lib/ruby_reactor/dsl/retryable.rb` defining `RubyReactor::Dsl::Retryable` with:
+- [X] T024 Create `lib/ruby_reactor/dsl/retryable.rb` defining `RubyReactor::Dsl::Retryable` with:
   - `BACKOFF_STRATEGIES = %i[exponential linear fixed].freeze`;
   - `attr_reader :retry_config`;
   - `retries(max_attempts: 3, backoff: :exponential, base_delay: 1)`, which validates as in `data-model.md` (Integer >= 1; strategy in the list; Numeric >= 0) and raises `ArgumentError, "#{retry_owner_label}: retries #{option} must be … (got #{value.inspect})"`, then sets `@retry_config = { max_attempts:, backoff:, base_delay: }`;
@@ -130,11 +130,11 @@ FR-004).
   - a private `retry_owner_label` returning `name&.to_s || inspect`.
 
   Add `require_relative "ruby_reactor/dsl/retryable"` in `lib/ruby_reactor.rb` right after the `dsl/lockable` require (line 9).
-- [ ] T025 In `lib/ruby_reactor/step.rb`, add `extend RubyReactor::Dsl::Retryable` next to `extend RubyReactor::Dsl::Lockable::ClassMethods` (line 36), and update the class header comment ("The one `extend` is …") to mention both modules.
-- [ ] T026 In `lib/ruby_reactor/dsl/step_builder.rb`, `include RubyReactor::Dsl::Retryable`, delete `StepBuilder#retries` (lines 133-139), and remove `:retry_config` from the `attr_accessor` list (line 16). The module's reader replaces it.
-- [ ] T027 [P] In `lib/ruby_reactor/dsl/compose_builder.rb`, `include RubyReactor::Dsl::Retryable` and delete `ComposeBuilder#retries` (lines 47-53).
-- [ ] T028 [P] In `lib/ruby_reactor/dsl/async_reactor_builder.rb`, `include RubyReactor::Dsl::Retryable` and delete `AsyncReactorBuilder#retries` (lines 28-30).
-- [ ] T029 Run T023 plus `bundle exec rspec spec/async_retry_dsl_spec.rb spec/ruby_reactor/retry_signals_spec.rb spec/compose_spec.rb spec/ruby_reactor/dsl/` and `bundle exec rubocop lib/ruby_reactor/dsl/retryable.rb`. All green.
+- [X] T025 In `lib/ruby_reactor/step.rb`, add `extend RubyReactor::Dsl::Retryable` next to `extend RubyReactor::Dsl::Lockable::ClassMethods` (line 36), and update the class header comment ("The one `extend` is …") to mention both modules.
+- [X] T026 In `lib/ruby_reactor/dsl/step_builder.rb`, `include RubyReactor::Dsl::Retryable`, delete `StepBuilder#retries` (lines 133-139), and remove `:retry_config` from the `attr_accessor` list (line 16). The module's reader replaces it.
+- [X] T027 [P] In `lib/ruby_reactor/dsl/compose_builder.rb`, `include RubyReactor::Dsl::Retryable` and delete `ComposeBuilder#retries` (lines 47-53).
+- [X] T028 [P] In `lib/ruby_reactor/dsl/async_reactor_builder.rb`, `include RubyReactor::Dsl::Retryable` and delete `AsyncReactorBuilder#retries` (lines 28-30).
+- [X] T029 Run T023 plus `bundle exec rspec spec/async_retry_dsl_spec.rb spec/ruby_reactor/retry_signals_spec.rb spec/compose_spec.rb spec/ruby_reactor/dsl/` and `bundle exec rubocop lib/ruby_reactor/dsl/retryable.rb`. All green.
 
 **Checkpoint**: the `retries` vocabulary is shared. Step classes can declare it, but reactors
 don't read it yet.
@@ -152,7 +152,7 @@ always fails, the reactor fails after 3 attempts and compensates the earlier ste
 
 ### Tests for User Story 2 (write first, confirm failing)
 
-- [ ] T030 [P] [US2] Create `spec/ruby_reactor/step_retries/class_policy_spec.rb` with:
+- [X] T030 [P] [US2] Create `spec/ruby_reactor/step_retries/class_policy_spec.rb` with:
   - (a) fail twice then succeed → success, `attempts_for_step == 3`;
   - (b) always fail → `RubyReactor::MaxRetriesExhaustedFailure` with message `"Step 'charge' failed after 3 attempts: …"`, and an earlier step's `compensate`/`undo` ran;
   - (c) `retries max_attempts: 3, backoff: :linear, base_delay: 0.01` → the sleeps between attempts follow linear backoff: `allow_any_instance_of(RubyReactor::Executor::RetryManager).to receive(:sleep)`, then expect it to have received `sleep(0.01)` and then `sleep(0.02)`;
@@ -160,13 +160,13 @@ always fails, the reactor fails after 3 attempts and compensates the earlier ste
   - (e) a body doing `fail!(StandardError.new("x"), retry: false)` makes 1 attempt;
   - (f) a step class with `input :amount, :integer` given `amount: "x"` makes 1 attempt (contract failure is non-retryable);
   - (g) the step skipped by `where { false }` makes 0 attempts.
-- [ ] T031 [P] [US2] In `spec/ruby_reactor/step_retries/class_policy_spec.rb`, add a `describe "direct invocation"` example (FR-013): a step class with `retries max_attempts: 3` whose `run` counts calls and returns `Failure("x")`; `klass.run({})` returns a `Failure`, and the counter is 1. Repeat with the step called from another class step's `run` body inside a reactor: the inner direct call runs once per outer attempt.
+- [X] T031 [P] [US2] In `spec/ruby_reactor/step_retries/class_policy_spec.rb`, add a `describe "direct invocation"` example (FR-013): a step class with `retries max_attempts: 3` whose `run` counts calls and returns `Failure("x")`; `klass.run({})` returns a `Failure`, and the counter is 1. Repeat with the step called from another class step's `run` body inside a reactor: the inner direct call runs once per outer attempt.
 
 ### Implementation for User Story 2
 
-- [ ] T032 [US2] In `StepConfig` (`lib/ruby_reactor/dsl/step_builder.rb`), store the raw declaration (`@retry_config = config[:retry_config]`, no default). Remove `:retry_config` from `StepConfig`'s `attr_reader` and add, next to `lock_config` (≈ line 286): `def retry_config = @retry_config || (impl.retry_config if impl.respond_to?(:retry_config)) || NO_RETRIES`. Confirm that `retryable?` (≈ line 376) still reads through it.
-- [ ] T033 [US2] Check (no change expected, research R7) that `lib/ruby_reactor/executor/step_coordination.rb` `retry_pending?` (lines 533-540) is guarded by `context_state?` before touching `step_config.retry_config`. When `step_config` is a `Step` class, `retry_config` may be `nil` and must never be indexed. If there is any unguarded path, guard it with `&.` there.
-- [ ] T034 [US2] Run T030/T031 and `bundle exec rspec spec/ruby_reactor/step_spec.rb spec/ruby_reactor/step_inheritance_spec.rb spec/ruby_reactor/step_contract_retryable_spec.rb`. All green.
+- [X] T032 [US2] In `StepConfig` (`lib/ruby_reactor/dsl/step_builder.rb`), store the raw declaration (`@retry_config = config[:retry_config]`, no default). Remove `:retry_config` from `StepConfig`'s `attr_reader` and add, next to `lock_config` (≈ line 286): `def retry_config = @retry_config || (impl.retry_config if impl.respond_to?(:retry_config)) || NO_RETRIES`. Confirm that `retryable?` (≈ line 376) still reads through it.
+- [X] T033 [US2] Check (no change expected, research R7) that `lib/ruby_reactor/executor/step_coordination.rb` `retry_pending?` (lines 533-540) is guarded by `context_state?` before touching `step_config.retry_config`. When `step_config` is a `Step` class, `retry_config` may be `nil` and must never be indexed. If there is any unguarded path, guard it with `&.` there.
+- [X] T034 [US2] Run T030/T031 and `bundle exec rspec spec/ruby_reactor/step_spec.rb spec/ruby_reactor/step_inheritance_spec.rb spec/ruby_reactor/step_contract_retryable_spec.rb`. All green.
 
 **Checkpoint**: the core feature works on the in-process path.
 

@@ -30,12 +30,14 @@ module RubyReactor
   #    throw (`success!`/`skip!`/`fail!`/`halt!`) into its result wrapper.
   #
   # No `prepend`/`define_method`/`method_missing` — every step in the class
-  # reads top to bottom as ordinary method calls. The one `extend` is
-  # `Dsl::Lockable::ClassMethods` (the five coordination macros), a
-  # self-contained module with no hooks of its own (Finding 9).
+  # reads top to bottom as ordinary method calls. The two `extend`s are
+  # `Dsl::Lockable::ClassMethods` (the five coordination macros) and
+  # `Dsl::Retryable` (`retries`), self-contained modules whose only hook is
+  # an `inherited` that copies their declarations down (Finding 9).
   class Step
     include RubyReactor::StepSignals
     extend RubyReactor::Dsl::Lockable::ClassMethods
+    extend RubyReactor::Dsl::Retryable
 
     attr_reader :inputs, :context, :result, :reason
 
