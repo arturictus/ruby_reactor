@@ -64,6 +64,19 @@ end
 
 Use direct class-method specs for step business logic. Use `test_reactor` and `mock_step` for integration tests at the reactor level — including [mocking class-based steps](#wrapping-original-implementations), where the mock block receives an `original` callable.
 
+A step that declares coordination (`with_lock`, etc.) is protected inside `Step.run` itself, so a direct `.run(args)` call contends exactly like a reactor-dispatched one — hold the key externally with `hold_lock` (see [Asserting lock state](#asserting-lock-state)) and assert the raise:
+
+```ruby
+RSpec.describe ChargeStep do
+  it "contends with an externally-held key" do
+    hold_lock("acct:1") do
+      expect { described_class.run({ account_id: 1 }, nil) }
+        .to raise_error(RubyReactor::Executor::StepCoordination::Contended)
+    end
+  end
+end
+```
+
 ## Basic Usage
 
 ### The `test_reactor` Helper
@@ -709,6 +722,32 @@ end
 
 The `be_locked` matcher takes the **user-provided lock key** (without the internal `lock:` prefix). Use the `.by(owner)` chain to assert ownership — typically the `context_id` of the top-level execution.
 
+`hold_lock(key, owner: "spec") { ... }` holds a key as an external owner for the duration of the block (released even if it raises) — the same effect as the manual `redis.hset` above, without reaching into `RubyReactor::Lock` or raw Redis calls yourself:
+
+```ruby
+it "contends with an externally-held key" do
+  hold_lock("order:42") do
+    expect { test_reactor(RefundOrderReactor, order_id: 42).run }
+      .to raise_error(RubyReactor::Lock::AcquisitionError)
+  end
+
+  expect("order:42").not_to be_locked
+end
+```
+
+### Asserting a step-level contention park
+
+`have_contended_at(step_name)` matches a result/context whose execution trace contains a `:contention_park` entry for that step — chain `.on(key)` to pin the key:
+
+```ruby
+it "parks the loser instead of failing it" do
+  # ... dispatch two background runs on the same account, drain them ...
+
+  expect(loser).to have_contended_at(:charge)
+  expect(loser).to have_contended_at(:charge).on("acct:1")
+end
+```
+
 ### Asserting semaphore state
 
 ```ruby
@@ -1196,3 +1235,5 @@ end
 | `.for(period)` | Chain (required): which window to check (`:second`, `:minute`, …, or integer seconds) |
 | `be_period_marked` | Assert a `with_period` bucket has been marked |
 | `.for(period)` | Chain (required): which bucket granularity to check |
+| `have_contended_at(step)` | Assert the execution trace has a `:contention_park` entry for `step` |
+| `.on(key)` | Chain: assert the parked key |

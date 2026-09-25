@@ -4,6 +4,9 @@ require "English"
 require_relative "executor/input_validator"
 require_relative "executor/graph_manager"
 require_relative "executor/retry_manager"
+# Before compensation_manager: its NEVER_STARTED_ERROR_CLASSES names
+# StepCoordination at load time, while `class Executor` does not exist yet.
+require_relative "executor/step_coordination"
 require_relative "executor/compensation_manager"
 require_relative "executor/result_handler"
 require_relative "executor/async_step_dispatch"
@@ -118,6 +121,7 @@ module RubyReactor
         return finalize_halt(halted)
       end
 
+      @context.admit!
       @context.status = :running
       save_context
 
@@ -137,12 +141,15 @@ module RubyReactor
            RubyReactor::RateLimitRegistry::UnknownLimitError,
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
-      raise e
-    rescue Error::AsyncResultPending
-      # Only reachable when this executor runs nested inside a worker (a
-      # composed child; sync callers never park). Propagate to the ROOT
-      # resume, which owns the park. This child's own lock/semaphore (if any)
-      # ARE released below and re-competed for on redelivery.
+      raise composed_contention_park(e) || e
+    rescue Error::ExecutionParked
+      # A park signal from a step of this run (its contention, or a wait on a
+      # background result), reaching a composed child's or a map element's
+      # first run. Every executor on the stack keeps its OWN lock/semaphore
+      # through the gap and re-adopts it on redelivery (005 D-A2); the worker
+      # at the top requeues once, after all of them have saved. A synchronous
+      # caller never sees a park signal: nothing raises one outside a worker.
+      park_held_primitives! if @context.inline_async_execution
       @contention_snooze = true
       raise
     rescue StandardError => e
@@ -151,7 +158,7 @@ module RubyReactor
       completed = true
       @result
     ensure
-      release_locks
+      release_locks unless @parked
       leave_ordered_lock_scope
       save_context if persist_context? && !skip_context_persist?
 
@@ -226,6 +233,10 @@ module RubyReactor
         return finalize_halt(halted)
       end
 
+      # Past every reactor-level gate. Idempotent for a genuine resume, which
+      # was admitted on its first run (or, saved before `admitted` existed,
+      # is marked now).
+      @context.admit!
       prepare_for_resume
       save_context
 
@@ -247,12 +258,14 @@ module RubyReactor
            RubyReactor::RateLimitRegistry::UnknownLimitError,
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
-      raise e
-    rescue Error::AsyncResultPending => e
-      # An awaited async unit is not terminal yet: park. Exclusive lock and
-      # semaphore stay HELD (recorded on the context for the resuming job to
-      # re-adopt); the worker snoozes the job. The context lock is still
-      # released below — the redelivered job must be able to take it.
+      raise composed_contention_park(e) || e
+    rescue Error::ExecutionParked => e
+      # A step of this run parked (contention, or an awaited background result
+      # not terminal yet) — here, or in a composed child that already parked
+      # its own holds on the way through. Exclusive lock and semaphore stay
+      # HELD (recorded on the context for the resuming job to re-adopt); the
+      # worker snoozes the job. The context lock is still released below — the
+      # redelivered job must be able to take it.
       park_held_primitives!
       @contention_snooze = true
       raise e
@@ -370,8 +383,15 @@ module RubyReactor
     # `execute` for sync reactors, the first `resume_execution` pass for async
     # reactors. Genuine resumes never re-check (a paused reactor must not block
     # itself on resume).
+    #
+    # At most once per execution: a lock or semaphore contended right after
+    # the charge snoozes the job BEFORE admission, and its redelivery is still
+    # a first run. The `rate_limit_charged` marker rides `private_data`, so
+    # that redelivery skips the charge but still runs every other first-run
+    # gate (the period re-check above all).
     def check_rate_limit
       return unless @reactor_class.respond_to?(:rate_limit_config) && @reactor_class.rate_limit_config
+      return if @context.private_data[:rate_limit_charged] || @context.private_data["rate_limit_charged"]
 
       config = @reactor_class.rate_limit_config
 
@@ -386,14 +406,53 @@ module RubyReactor
       end
 
       RubyReactor::RateLimit.new(key_base, limits: limits).check_and_increment!
+      @context.private_data[:rate_limit_charged] = true
     end
 
-    # True when nothing has run yet for this context — the very first execution
-    # of the reactor, including an async reactor's first worker pass. A genuine
-    # resume (paused, async-handed-off, or retried step) always records a
-    # `current_step` before serializing, so it is never mistaken for a first run.
+    # True when this execution has not yet passed its reactor-level gates —
+    # the very first execution, including an async reactor's first worker
+    # pass. Read from the explicit `admitted` marker, so a park at any depth
+    # (which unwinds `with_step` and clears `current_step`) can never make a
+    # redelivery look fresh and re-charge its rate limit (005 R-03). The old
+    # inference is AND-ed in so a context saved before the marker existed
+    # still resumes as it did.
     def first_execution?
-      @context.current_step.nil? && @context.intermediate_results.empty?
+      !@context.admitted? && @context.current_step.nil? && @context.intermediate_results.empty?
+    end
+
+    # A composed child's own reactor-level contention inside a worker. A
+    # root's reaches `Worker#perform`, which snoozes the job; a child's would
+    # first reach the step that composed it, which turns any error into an
+    # ordinary step failure (F3). So the child raises a park signal instead,
+    # and every executor above it keeps its holds until the worker requeues.
+    #
+    # Bounded where it is raised, like a step's contention park (005 R-05):
+    # the child counts its own parks, and past `lock_snooze_max_attempts` the
+    # contention error goes through as that step's failure, so the parent
+    # rolls back and releases its holds — which the worker's snooze
+    # escalation would do neither of. Returns nil to raise `error` unchanged.
+    def composed_contention_park(error)
+      return nil unless @context.inline_async_execution && @context.root_context
+      # A configuration mistake, not contention: it stays a permanent failure.
+      return nil if error.is_a?(RubyReactor::RateLimitRegistry::UnknownLimitError)
+      return nil if within_inline_map_element?
+
+      parks = (@context.private_data[:admission_parks] || @context.private_data["admission_parks"]).to_i + 1
+      @context.private_data[:admission_parks] = parks
+      max = RubyReactor.configuration.lock_snooze_max_attempts
+      return nil if max != :infinity && parks > max
+
+      Error::ReactorContentionPark.new(error)
+    end
+
+    # An inline (non-fan-out) map element has no persisted context of its own:
+    # a park re-runs the whole map step with fresh element contexts, repeating
+    # the elements that already finished and restarting the count above (005
+    # R-01, "Known, not changed"). Under one, contention stays a failure.
+    def within_inline_map_element?
+      ctx = @context
+      ctx = ctx.parent_context until ctx.nil? || (ctx.map_metadata && ctx.root_context)
+      !ctx.nil?
     end
 
     # Record and persist a Halt result, then return it. Shared by the
@@ -612,7 +671,7 @@ module RubyReactor
       if @acquired_semaphore
         key = @acquired_semaphore.key
         release_one("semaphore", @acquired_semaphore)
-        held_lock_keys.delete(key)
+        pop_held_lock_key(key)
         middlewares.on(:semaphore_released, key, @context)
       end
       @acquired_semaphore = nil
@@ -621,9 +680,20 @@ module RubyReactor
 
       key = @acquired_lock.key
       release_one("lock", @acquired_lock)
-      held_lock_keys.delete(key)
+      pop_held_lock_key(key)
       @acquired_lock = nil
       middlewares.on(:lock_released, key, @context)
+    end
+
+    # Pop a SINGLE occurrence of `key`, not every occurrence (Finding 1).
+    # With a reactor and a step both holding K, the step's release must not
+    # erase the reactor's still-open entry — the async deadlock guard reads
+    # this registry and would stop seeing K held while the reactor's own
+    # hold is still live. `StepCoordination#pop_key` mirrors this exactly.
+    def pop_held_lock_key(key)
+      keys = held_lock_keys
+      idx = keys.index(key)
+      keys.delete_at(idx) if idx
     end
 
     # Exclusive keys this EXECUTION currently holds, recorded on the root

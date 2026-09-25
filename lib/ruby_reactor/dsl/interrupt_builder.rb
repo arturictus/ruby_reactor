@@ -42,6 +42,20 @@ module RubyReactor
               "`validate_payload`."
       end
 
+      # Step-level coordination is refused on an interrupt (research D6): its
+      # body is split across a pause, so a hold taken before the pause would
+      # span the gap — held by nothing while the workflow waits, potentially
+      # forever. `StepBuilder` (the superclass) gains the five macros once
+      # `Lockable` is hosted there; these overrides make sure an interrupt
+      # never inherits them silently (Finding 3).
+      %i[with_lock with_semaphore with_rate_limit with_period with_ordered_lock].each do |macro|
+        define_method(macro) do |*, **|
+          raise RubyReactor::Error::ValidationError,
+                "interrupt :#{@name} cannot declare step-level coordination: its body is split across a pause, " \
+                "so a hold would span the gap. Declare it on the reactor (with_lock etc.) instead."
+        end
+      end
+
       # Deprecated alias for {#validate_payload}.
       def validate(schema = nil, &block)
         unless @warned_validate

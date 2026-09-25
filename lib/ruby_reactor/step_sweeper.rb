@@ -42,9 +42,10 @@ module RubyReactor
 
         arguments = dispatch_arguments(record)
         next unless arguments
+        next if parked?(record)
         next if live?(arguments)
 
-        @async_router.perform_step_async(**arguments)
+        redispatch(record, arguments)
         redispatched += 1
       rescue StandardError => e
         # One bad record must not abort the whole sweep.
@@ -56,11 +57,38 @@ module RubyReactor
 
     private
 
+    # A swept park must not restart its contention counter: rebuilt from the
+    # record alone, a zeroed payload would let `lock_snooze_max_attempts`
+    # never bite. `perform_step_in(0, ...)` is the only re-dispatch that
+    # carries the count.
+    def redispatch(record, arguments)
+      attempts = record["contention_attempts"].to_i
+      return @async_router.perform_step_async(**arguments) unless attempts.positive?
+
+      @async_router.perform_step_in(0, **arguments, contention_attempts: attempts)
+    end
+
     def dispatch_arguments(record)
       values = record.values_at(*DISPATCH_KEYS)
       return nil if values.any?(&:nil?)
 
       DISPATCH_KEYS.map(&:to_sym).zip(values).to_h
+    end
+
+    # A unit parked on step-level contention (StepWorker#handle_contention)
+    # released its liveness lock on purpose and has a redelivery already
+    # scheduled. It looks exactly like a lost unit, so without this the sweep
+    # would dispatch a duplicate that runs the body a second time once the
+    # redelivery fires. Past the stamped window it is fair game again — a
+    # redelivery that eventually lands on a finished unit is dropped by
+    # `StepWorker#already_completed?`.
+    def parked?(record)
+      parked_until = record["parked_until"]
+      return false unless parked_until
+
+      Time.iso8601(parked_until) > Time.now
+    rescue ArgumentError, TypeError
+      false
     end
 
     def live?(arguments)

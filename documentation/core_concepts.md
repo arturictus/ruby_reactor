@@ -91,6 +91,22 @@ end
 
 > A step's own input-validation failure is always non-retryable — `result.retryable?` is `false` whether the violation happened synchronously, inside an `async_step` worker, or inside a `compose`d child (see [Step Input Contracts](../README.md#step-input-contracts) in the README).
 
+A step class can also declare `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, and `with_ordered_lock` — the same coordination macros a reactor uses, keyed on the step's own resolved arguments:
+
+```ruby
+class ChargeStep < RubyReactor::Step
+  input :account_id
+
+  with_lock(ttl: 60) { |args| "acct:#{args[:account_id]}" }
+
+  def run
+    Success(charge!(inputs))
+  end
+end
+```
+
+The full lifecycle for a class step, in order: contract enforcement (`enforce_contract!`) → coordination (acquire, in the fixed order documented in [Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination)) → the instance is built → `run` executes → signals (`success!`/`fail!`/`skip!`/`halt!`) are translated. Coordination lives INSIDE `Step.run`, so `MyStep.run(args)` — the "call it directly in a unit spec" entry point above — is protected exactly the same way a reactor-dispatched call is: a contended direct call raises rather than silently running unprotected. See [Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination) for the full acquisition order, contention behavior, and re-entrancy rules.
+
 ### Inline step definition
 
 For quick prototypes or trivial steps, define logic inline inside the reactor. Unlike a class step's zero-arg instance methods, an inline `run` block always receives two positional arguments: the resolved arguments hash and the execution context. Declare inputs with `argument :name, source`:
@@ -300,6 +316,8 @@ graph TD
 ## Retries
 
 RubyReactor supports automatic retry mechanisms for failed steps with configurable backoff strategies.
+
+> A step-level coordination contention park (see [Step Contention](locks_and_semaphores.md#step-contention)) is not a retry and does not consume the step's `max_attempts` — it has its own counter and its own bound (`lock_snooze_max_attempts`).
 
 ### When Retries Occur
 

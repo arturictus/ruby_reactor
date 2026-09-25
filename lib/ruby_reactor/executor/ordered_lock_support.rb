@@ -45,27 +45,39 @@ module RubyReactor
         }
       end
 
-      # Strict-ordering gate. Runs BEFORE rate-limit / lock / semaphore so a
-      # waiting nonce never holds any other primitive — preventing
-      # hold-and-wait deadlocks when `with_lock` and `with_ordered_lock`
-      # share inputs. Raises {OrderedLock::WaitError}; the Sidekiq worker
-      # rescues and snoozes.
-      def check_ordered_lock_gate
-        info = ordered_lock_info
-        return :go unless info
-
-        OrderedLock.new(
-          info.fetch(:key),
-          nonce: info.fetch(:nonce),
-          epoch: info.fetch(:epoch),
-          poison_pill_timeout: info.fetch(:poison_pill_timeout),
-          strict: info.fetch(:strict)
+      # THE strict-ordering gate classifier, shared by the reactor level
+      # (`enter_ordered_lock_scope`) and the step level
+      # (`StepCoordination#ordered_lock_gate`), so a gate state one level
+      # handles cannot fall through to "run" at the other (005 R-06, F7).
+      # Exhaustive: a state nobody mapped raises instead of running.
+      #
+      #   :go         — proceed (includes a poison advance past a dead blocker)
+      #   :skip_chain — strict chain already failed, and this run is `fresh`
+      #                 (an in-flight run that paused completes regardless)
+      #   :stale      — the position belongs to a drained, reused generation
+      #   :drained    — the batch drained and GC'd while this caller slept
+      #
+      # Raises {OrderedLock::WaitError} when it is not this nonce's turn.
+      def self.gate(info, fresh:)
+        state = OrderedLock.new(
+          info.fetch(:key), nonce: info.fetch(:nonce), epoch: info.fetch(:epoch),
+                            poison_pill_timeout: info.fetch(:poison_pill_timeout), strict: info.fetch(:strict)
         ).check!
+
+        case state
+        when :go then :go
+        when :skip_chain_failed then fresh ? :skip_chain : :go
+        when :stale_batch then :stale
+        when :drained_go then :drained
+        else raise ArgumentError, "unhandled ordered-lock gate state #{state.inspect}"
+        end
       end
 
       # Combined gate-check + thread-local push. Call at the top of
       # `execute` / `resume_execution`. Pair with `leave_ordered_lock_scope`
-      # in `ensure`.
+      # in `ensure`. The gate runs BEFORE rate-limit / lock / semaphore so a
+      # waiting nonce never holds any other primitive; a `WaitError` goes to
+      # the worker, which snoozes.
       #
       # The strict-mode chain-skip only fires on a *fresh* start (no step
       # has run yet on this context). This lets an in-flight run that paused
@@ -74,20 +86,19 @@ module RubyReactor
       # strict to a fresh Sidekiq job (which enters via `resume_execution`
       # but has no prior step state).
       def enter_ordered_lock_scope
-        gate = check_ordered_lock_gate
+        info = ordered_lock_info
+        outcome = info ? OrderedLockSupport.gate(info, fresh: fresh_ordered_lock_start?) : :go
         # A stale-batch run never participates regardless of fresh/resume state —
-        # its numbering belongs to a drained generation. Chain-skip stays gated
-        # on a fresh start so an in-flight paused run still completes on resume.
-        @ordered_lock_stale_batch = gate == :stale_batch
-        @ordered_lock_chain_skip = fresh_ordered_lock_start? && gate == :skip_chain_failed
+        # its numbering belongs to a drained generation.
+        @ordered_lock_stale_batch = outcome == :stale
+        @ordered_lock_chain_skip = outcome == :skip_chain
 
         # Drained-batch gate: the batch GC'd while this caller slept. A genuine
         # late straggler runs (poison semantics); a Sidekiq redelivery of an
         # ALREADY-terminal context must not re-execute its steps. Only the
         # latter — confirmed by a terminal stored status — is short-circuited.
-        @ordered_lock_drained_replay = gate == :drained_go && stored_status_terminal?
+        @ordered_lock_drained_replay = outcome == :drained && stored_status_terminal?
 
-        info = ordered_lock_info
         return unless info
 
         OrderedLockSupport.active_keys << info[:key]
@@ -101,8 +112,9 @@ module RubyReactor
         start_ordered_lock_heartbeat(info)
       end
 
+      # Same predicate as `Executor#first_execution?` (005 R-03).
       def fresh_ordered_lock_start?
-        @context.intermediate_results.empty? && @context.current_step.nil?
+        first_execution?
       end
 
       def ordered_lock_chain_skip?
@@ -215,17 +227,49 @@ module RubyReactor
       def start_ordered_lock_heartbeat(info)
         return if @ordered_lock_heartbeat_running
 
+        @ordered_lock_heartbeat_running = true
+        @ordered_lock_heartbeat = OrderedLockSupport.start_heartbeat(info)
+      end
+
+      def stop_ordered_lock_heartbeat
+        return unless @ordered_lock_heartbeat_running
+
+        @ordered_lock_heartbeat_running = false
+        @ordered_lock_heartbeat&.stop
+        @ordered_lock_heartbeat = nil
+      end
+
+      # Value object so a caller can `heartbeat.stop` without reaching into
+      # the thread/flag it wraps. Returned by `.start_heartbeat`.
+      class Heartbeat
+        def initialize(thread, running)
+          @thread = thread
+          @running = running
+        end
+
+        def stop
+          @running[0] = false
+          @thread.wakeup if @thread.alive?
+          @thread.join(0.1)
+        rescue StandardError
+          # Best-effort shutdown; never let heartbeat teardown break the caller's ensure chain.
+        end
+      end
+
+      # Shared by the reactor-level heartbeat above (`#start_ordered_lock_heartbeat`)
+      # and the step-level gate (`StepCoordination#ordered_lock_gate`, T061) — the
+      # restamp logic and interval math are identical, only the caller's own
+      # on/off bookkeeping differs.
+      def self.start_heartbeat(info)
         pp = info[:poison_pill_timeout].to_f
         interval = [pp / 3.0, HEARTBEAT_MIN_INTERVAL].max
-        @ordered_lock_heartbeat_running = true
-        lock = OrderedLock.new(
-          info.fetch(:key), nonce: info.fetch(:nonce), epoch: info.fetch(:epoch)
-        )
+        running = [true]
+        lock = OrderedLock.new(info.fetch(:key), nonce: info.fetch(:nonce), epoch: info.fetch(:epoch))
 
-        @ordered_lock_heartbeat = Thread.new do
-          while @ordered_lock_heartbeat_running
+        thread = Thread.new do
+          while running[0]
             sleep interval
-            break unless @ordered_lock_heartbeat_running
+            break unless running[0]
 
             begin
               lock.heartbeat!
@@ -238,20 +282,8 @@ module RubyReactor
             end
           end
         end
-      end
 
-      def stop_ordered_lock_heartbeat
-        return unless @ordered_lock_heartbeat_running
-
-        @ordered_lock_heartbeat_running = false
-        thread = @ordered_lock_heartbeat
-        @ordered_lock_heartbeat = nil
-        return unless thread
-
-        thread.wakeup if thread.alive?
-        thread.join(0.1)
-      rescue StandardError
-        # Best-effort shutdown; never let heartbeat teardown break the ensure chain.
+        Heartbeat.new(thread, running)
       end
 
       # Advance the cursor when this run reached a *terminal* status.

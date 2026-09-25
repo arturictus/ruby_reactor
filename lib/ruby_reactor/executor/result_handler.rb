@@ -32,7 +32,26 @@ module RubyReactor
         end
       end
 
+      # Every reactor-level Failure that follows a rollback is built here, so
+      # this is the one place `rollback_failures` is attached (005 R-08).
       def handle_execution_error(error)
+        failure = build_execution_failure(error)
+        failure.rollback_failures.concat(@compensation_manager.rollback_failures) if failure.is_a?(RubyReactor::Failure)
+        failure
+      end
+
+      def final_result(reactor_class)
+        if reactor_class.return_step
+          result_value = @context.get_result(reactor_class.return_step)
+          RubyReactor.Success(result_value)
+        else
+          RubyReactor.Success(@context.intermediate_results)
+        end
+      end
+
+      private
+
+      def build_execution_failure(error)
         case error
         when Error::StepFailureError
           handle_step_failure_error(error)
@@ -51,17 +70,6 @@ module RubyReactor
           RubyReactor.Failure("Execution failed: #{error.message}", exception_class: error.class.name)
         end
       end
-
-      def final_result(reactor_class)
-        if reactor_class.return_step
-          result_value = @context.get_result(reactor_class.return_step)
-          RubyReactor.Success(result_value)
-        else
-          RubyReactor.Success(@context.intermediate_results)
-        end
-      end
-
-      private
 
       # Failure for a validation error (reactor inputs, step arguments, or
       # step output), carrying both the structured field errors and the step/
@@ -138,7 +146,16 @@ module RubyReactor
         step_config.respond_to?(:async_dispatch?) && step_config.async_dispatch?
       end
 
+      # A composed child's Failure carries the child's own rollback failures;
+      # fold them in BEFORE this level rolls back, so they come first.
+      def adopt_rollback_failures(result)
+        return unless result.respond_to?(:rollback_failures)
+
+        @compensation_manager.rollback_failures.concat(result.rollback_failures)
+      end
+
       def handle_retries_exhausted(step_config, result, resolved_arguments)
+        adopt_rollback_failures(result)
         @compensation_manager.handle_step_failure(step_config, result.original_error, resolved_arguments)
         orig_err = result.original_error.is_a?(Exception) ? result.original_error : nil
         error = Error::StepFailureError.new(result.error, step: step_config.name, context: @context,
@@ -154,6 +171,7 @@ module RubyReactor
       end
 
       def handle_failure(step_config, result, resolved_arguments)
+        adopt_rollback_failures(result)
         failure_result = @compensation_manager.handle_step_failure(step_config, result.error, resolved_arguments)
         orig_err = result.error.is_a?(Exception) ? result.error : nil
         # A step that propagates another unit's validation failure (an
@@ -233,6 +251,8 @@ module RubyReactor
       end
 
       def resolve_exception_class(original_error, error)
+        # A step's own contention is reported by its cause (Lock::AcquisitionError, ...).
+        original_error = original_error.original if original_error.is_a?(StepCoordination::Contended)
         return original_error.class.name if original_error
 
         error.respond_to?(:exception_class) ? error.exception_class : nil

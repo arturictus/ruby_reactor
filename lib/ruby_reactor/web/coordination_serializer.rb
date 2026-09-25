@@ -4,7 +4,7 @@ module RubyReactor
   module Web
     class CoordinationSerializer
       class << self
-        def build(reactor_class, inputs:, context_id:)
+        def build(reactor_class, inputs:, context_id:, execution_trace: [], private_data: {})
           return {} unless reactor_class
 
           adapter = RubyReactor.configuration.storage_adapter
@@ -20,17 +20,121 @@ module RubyReactor
           end
 
           if reactor_class.rate_limit_config
-            result[:rate_limit] = build_rate_limit(reactor_class.rate_limit_config, normalized_inputs, adapter)
+            result[:rate_limit] = build_rate_limit(resolve_rate_limit(reactor_class.rate_limit_config),
+                                                   normalized_inputs, adapter)
           end
 
           if reactor_class.period_config
             result[:period] = build_period(reactor_class.period_config, normalized_inputs, adapter)
           end
 
+          if reactor_class.respond_to?(:steps)
+            steps = build_steps(reactor_class, normalized_inputs, context_id, execution_trace, adapter)
+            result[:steps] = steps unless steps.empty?
+          end
+
+          waiting = private_data[:step_contention] || private_data["step_contention"] ||
+                    async_step_waiting(reactor_class, context_id, adapter)
+          result[:waiting] = normalize_waiting(waiting) if waiting
+
           result
         end
 
         private
+
+        # US7/FR-029: one row per coordinating step PER PRIMITIVE it declares,
+        # keyed to the step's OWN resolved arguments (from its latest `:run`
+        # trace entry), not the reactor's inputs. A step declaring both
+        # `with_lock` and `with_semaphore` is two rows — both gates are active,
+        # so an operator has to be able to see both. A step not yet reached is
+        # reported "pending" rather than omitted, so the list is stable.
+        def build_steps(reactor_class, inputs, context_id, execution_trace, adapter)
+          reactor_class.steps.flat_map do |name, step_config|
+            next [] unless step_config.respond_to?(:declares_coordination?) && step_config.declares_coordination?
+
+            build_step_entries(name, step_config, inputs, context_id, execution_trace, adapter)
+          end
+        end
+
+        def build_step_entries(name, step_config, inputs, context_id, execution_trace, adapter) # rubocop:disable Metrics/ParameterLists
+          entry = latest_run_entry(execution_trace, name)
+          declarations = step_config.coordination_declarations
+          return [{ step: name.to_s, state: "pending" }] if declarations.empty?
+
+          # One PENDING row per declared primitive too, matching the reached
+          # shape below — a step declaring both a lock and a semaphore has two
+          # gates to wait on, and collapsing them to a single primitive-less
+          # row hides which.
+          if entry.nil?
+            return declarations.keys.map do |primitive|
+              { step: name.to_s, primitive: primitive.to_s, state: "pending" }
+            end
+          end
+
+          # The trace records the RESOLVED arguments; the execution keyed off
+          # `coordination_arguments` of them, so the same function is applied
+          # here. A redacted value was never recorded, so a key computed from it
+          # would name a different Redis key than the one held — report it as
+          # unavailable instead of probing the wrong one.
+          traced = entry[:arguments] || entry["arguments"] || {}
+          if traced.is_a?(Hash) && traced.value?(RubyReactor::Step::InputContract::REDACTED)
+            return declarations.keys.map do |primitive|
+              { step: name.to_s, primitive: primitive.to_s, key: nil,
+                key_error: "key unavailable: the step's arguments are redacted" }
+            end
+          end
+          args = step_config.coordination_arguments(traced.transform_keys(&:to_sym), inputs)
+
+          declarations.map do |primitive, config|
+            built = build_step_primitive(primitive, config, args, context_id, adapter)
+            { step: name.to_s, primitive: primitive.to_s }.merge(built)
+          end
+        end
+
+        def build_step_primitive(primitive, config, args, context_id, adapter)
+          case primitive
+          when :lock then build_lock(config, args, context_id, adapter)
+          when :semaphore then build_semaphore(config, args, adapter)
+          when :rate_limit then build_rate_limit(resolve_rate_limit(config), args, adapter)
+          when :period then build_period(config, args, adapter)
+          else { key: resolve_key(config[:key_proc], args) }
+          end
+        rescue StandardError => e
+          { key: nil, key_error: e.message }
+        end
+
+        def latest_run_entry(execution_trace, step_name)
+          Array(execution_trace).reverse_each.find do |e|
+            type = e[:type] || e["type"]
+            step = e[:step] || e["step"]
+            type.to_s == "run" && step.to_s == step_name.to_s
+          end
+        end
+
+        # A parked `async_step` keeps its "waiting on" marker on its own Step
+        # Result Record, never on the parent's context (005 R-09).
+        def async_step_waiting(reactor_class, context_id, adapter)
+          return nil unless context_id && reactor_class.respond_to?(:steps)
+
+          namespace = RubyReactor.reactor_storage_name(reactor_class)
+          reactor_class.steps.each do |name, step_config|
+            next unless step_config.respond_to?(:async_dispatch) && step_config.async_dispatch == :step
+
+            record = adapter.retrieve_step_result(context_id, name, namespace)
+            return record["waiting"] if record.is_a?(Hash) && record["waiting"]
+          end
+          nil
+        end
+
+        def normalize_waiting(waiting)
+          {
+            step: (waiting[:step] || waiting["step"]).to_s,
+            key: waiting[:key] || waiting["key"],
+            primitive: (waiting[:primitive] || waiting["primitive"]).to_s,
+            attempts: waiting[:attempts] || waiting["attempts"],
+            next_attempt_at: waiting[:next_attempt_at] || waiting["next_attempt_at"]
+          }
+        end
 
         def normalize_inputs(inputs)
           return {} unless inputs.is_a?(Hash)
@@ -132,6 +236,20 @@ module RubyReactor
             key: nil,
             key_error: e.message
           }
+        end
+
+        # `with_rate_limit(:name)` stores only the name; the renderer needs the
+        # registered windows and the name-as-key the limiter actually uses
+        # (mirrors `StepCoordination#rate_limit_key_and_limits`).
+        def resolve_rate_limit(config)
+          return config unless config[:name]
+
+          name = config[:name]
+          { limits: RubyReactor.configuration.rate_limits.fetch(name), key_proc: ->(_args) { name.to_s } }
+        rescue StandardError => e
+          # An unregistered name is a config mistake, not a reason for the
+          # dashboard to 500 — surface it as this row's key_error.
+          { limits: [], key_proc: ->(_args) { raise e } }
         end
 
         def map_limits(limits)

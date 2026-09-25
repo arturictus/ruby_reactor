@@ -720,6 +720,23 @@ class RefundOrderReactor < RubyReactor::Reactor
   end
 end
 
+class ChargeStep < RubyReactor::Step
+  input :account_id
+
+  # All five macros also work declared on a STEP, not just the reactor —
+  # keying the critical section down to this one operation instead of the
+  # whole workflow. Surrounding steps (audit, notify, ...) keep overlapping
+  # across concurrent executions; only :charge serializes. Its undo re-takes
+  # the key, waiting up to `rollback_wait:` (default: `ttl`; 60 s for a
+  # step `with_semaphore`) — an undo that still can't run is reported on
+  # `Failure#rollback_failures`, never dropped.
+  with_lock(ttl: 60, rollback_wait: nil) { |args| "acct:#{args[:account_id]}" }
+
+  def run
+    Success(charge!(inputs))
+  end
+end
+
 class GeocodeReactor < RubyReactor::Reactor
   input :address
 
@@ -843,7 +860,7 @@ step :maybe_sync do
 end
 ```
 
-See [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md) for re-entrancy, auto-extend, multi-window quotas, bucket semantics, owner identity, snooze tuning, ordered-lock assignment + poison-pill semantics, and operational notes.
+See [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md) for re-entrancy, auto-extend, multi-window quotas, bucket semantics, owner identity, snooze tuning, ordered-lock assignment + poison-pill semantics, step-scoped coordination, and operational notes.
 
 ### Map & Parallel Execution
 
@@ -1376,6 +1393,22 @@ end
 # Result: Complete rollback of the transaction
 ```
 
+A rollback that did not complete is never silent. `Failure#rollback_failures`
+lists every undo or compensation that raised, returned a `Failure`, or could not
+re-take its step's lock/semaphore within `rollback_wait:` — including those of
+composed children (flattened). It is always an Array, empty when rollback
+completed, and is part of `Failure#to_h`:
+
+```ruby
+result = TransactionReactor.run(from_account: 1, to_account: 2, amount: 10)
+result.rollback_failures
+# => [{ step: :debit_account, kind: :undo, key: nil, reason: :raised, message: "gateway timeout" }]
+```
+
+`reason` is `:coordination_unavailable`, `:returned_failure`, or `:raised`; `kind`
+is `:undo` or `:compensate`. See
+[Step Rollback](documentation/locks_and_semaphores.md#step-rollback).
+
 ### Using Pre-defined Schemas
 
 You can use existing dry-validation schemas:
@@ -1460,7 +1493,7 @@ Comprehensive guide to testing reactors with RubyReactor's testing utilities. Le
 
 ### [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md)
 
-Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-background contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
+Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Every primitive is also available [declared on a step](documentation/locks_and_semaphores.md#step-scoped-coordination) instead of the whole reactor, keying the critical section down to one operation. Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
 
 ### [Middlewares & OpenTelemetry](documentation/middlewares.md)
 

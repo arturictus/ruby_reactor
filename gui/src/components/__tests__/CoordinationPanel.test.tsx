@@ -97,6 +97,29 @@ describe('CoordinationPanel', () => {
     expect(screen.getByText('daily_report:10')).toBeInTheDocument();
   });
 
+  it('shows step-level coordination rows with a waiting badge (US7)', () => {
+    const coordination: CoordinationData = {
+      steps: [
+        {
+          step: 'charge',
+          primitive: 'lock',
+          key: 'acct:1',
+          state: { held: true, owner: 'ctx-abc', owned_by_this_context: true, ttl: 10 },
+        },
+        { step: 'notify', state: 'pending' },
+      ],
+      waiting: { step: 'charge', key: 'acct:1', primitive: 'lock', attempts: 2 },
+    };
+
+    render(<CoordinationPanel coordination={coordination} />);
+
+    expect(screen.getByText('Steps')).toBeInTheDocument();
+    expect(screen.getByText('charge')).toBeInTheDocument();
+    expect(screen.getByText('notify')).toBeInTheDocument();
+    expect(screen.getByText('Pending')).toBeInTheDocument();
+    expect(screen.getByText(/waiting on acct:1/)).toBeInTheDocument();
+  });
+
   it('shows key resolution errors', () => {
     const coordination: CoordinationData = {
       lock: {

@@ -10,6 +10,46 @@ module RubyReactor
   module Worker
     TERMINAL_STATUSES = %w[completed failed cancelled skipped].freeze
 
+    # Use the error's `retry_after_seconds` hint when available
+    # (RateLimit::ExceededError carries the time until the bucket rolls);
+    # otherwise fall back to the configured base + jitter for lock/semaphore
+    # contention which has no precise hint. Module-level (not just an
+    # instance method) so `StepCoordination::Contended` — which wraps a
+    # contention error but is not itself a snooze-worthy reactor-level
+    # error — can reuse the identical hint logic from the async_step worker
+    # (T036) without including this whole module.
+    #
+    # OrderedLock::WaitError is deliberately excluded from the hint path: its
+    # `retry_after_seconds` is the poison-pill window (the upper bound before
+    # a *dead* blocker is force-advanced), NOT how long the *live* blocker
+    # will take — which is usually milliseconds. Snoozing for the full window
+    # would make every out-of-order nonce sleep up to poison_pill_timeout even
+    # though its blocker finishes immediately, collapsing throughput. Re-poll
+    # at the base delay instead; poison auto-advance still clears a genuinely
+    # dead blocker on a later gate.
+    def self.snooze_delay(config, error)
+      jitter = config.lock_snooze_jitter.to_f
+      jitter_amount = jitter.positive? ? rand(0.0..jitter) : 0.0
+
+      if hinted_retry?(error)
+        [error.retry_after_seconds.to_f, 0.1].max + jitter_amount
+      else
+        config.lock_snooze_base_delay.to_f + jitter_amount
+      end
+    end
+
+    def self.hinted_retry?(error)
+      # `StepCoordination::Contended` wraps the WaitError as `.original` —
+      # unwrap so the same exclusion applies whether the caller is the
+      # reactor-level ordered lock (raises WaitError directly) or a step's
+      # (raises Contended, whose OWN `retry_after_seconds` just forwards the
+      # wrapped error's hint unchanged).
+      original = error.respond_to?(:original) ? error.original : error
+      return false if original.is_a?(RubyReactor::OrderedLock::WaitError)
+
+      error.respond_to?(:retry_after_seconds) && error.retry_after_seconds
+    end
+
     # Last line of observability when a job burns its whole retry budget on an
     # infrastructure failure and the backend then discards it (Sidekiq runs
     # with `dead: false`): without this, the context would stay "running"
@@ -93,8 +133,11 @@ module RubyReactor
              RubyReactor::Semaphore::AcquisitionError,
              RubyReactor::RateLimit::ExceededError,
              RubyReactor::OrderedLock::WaitError,
-             RubyReactor::Error::AsyncResultPending => e
-        # Snooze on expected concurrency, rate, or ordering contention.
+             RubyReactor::Error::ExecutionParked => e
+        # Snooze on expected concurrency, rate, or ordering contention, or on
+        # a park signal (a step's contention, or an awaited background result)
+        # — raised at any nesting depth, after every executor on the stack has
+        # parked its own holds and saved.
         # OrderedLock::WaitError carries a poison-pill-derived retry hint,
         # consumed by compute_snooze_delay below. We avoid the framework's native
         # retry path so this doesn't burn the job's retry budget or appear
@@ -147,12 +190,14 @@ module RubyReactor
       # duplicate of the *same* execution may wait arbitrarily long for the
       # live original to finish (e.g. a sweeper re-enqueue racing a slow but
       # alive worker). Capping it would fail a legitimately-waiting duplicate.
-      # A parked async wait is likewise uncapped HERE: its bound is
-      # `async_park_timeout`, enforced against `dispatched_at` at the wait
-      # site — counting snoozes would double-bound it with the wrong unit.
+      # A park signal is likewise uncapped HERE, bounded where it is raised:
+      # an async wait by `async_park_timeout` against `dispatched_at`, a
+      # step's contention by `lock_snooze_max_attempts` on that step's own
+      # contention counter (`StepExecutor#handle_contention`) — counting
+      # snoozes too would double-bound either with the wrong unit.
       capped = !(error.is_a?(RubyReactor::OrderedLock::WaitError) ||
                  error.is_a?(RubyReactor::Lock::ContextLockContention) ||
-                 error.is_a?(RubyReactor::Error::AsyncResultPending))
+                 error.is_a?(RubyReactor::Error::ExecutionParked))
 
       if capped && max != :infinity && snooze_count >= max
         escalate_snooze(context, snooze_count, error)
@@ -165,34 +210,15 @@ module RubyReactor
       self.class.perform_in(delay, context_id, reactor_class_name, snooze_count + 1)
     end
 
-    # Use the error's `retry_after_seconds` hint when available
-    # (RateLimit::ExceededError carries the time until the bucket rolls);
-    # otherwise fall back to the configured base + jitter for lock/semaphore
-    # contention which has no precise hint.
-    #
-    # OrderedLock::WaitError is deliberately excluded from the hint path: its
-    # `retry_after_seconds` is the poison-pill window (the upper bound before
-    # a *dead* blocker is force-advanced), NOT how long the *live* blocker
-    # will take — which is usually milliseconds. Snoozing for the full window
-    # would make every out-of-order nonce sleep up to poison_pill_timeout even
-    # though its blocker finishes immediately, collapsing throughput. Re-poll
-    # at the base delay instead; poison auto-advance still clears a genuinely
-    # dead blocker on a later gate.
+    # Instance methods delegate to the module functions above — worker
+    # behavior is unchanged, just relocated so other callers (StepWorker,
+    # T036) can reuse the same logic without a Worker instance.
     def compute_snooze_delay(config, error)
-      jitter = config.lock_snooze_jitter.to_f
-      jitter_amount = jitter.positive? ? rand(0.0..jitter) : 0.0
-
-      if hinted_retry?(error)
-        [error.retry_after_seconds.to_f, 0.1].max + jitter_amount
-      else
-        config.lock_snooze_base_delay.to_f + jitter_amount
-      end
+      Worker.snooze_delay(config, error)
     end
 
     def hinted_retry?(error)
-      return false if error.is_a?(RubyReactor::OrderedLock::WaitError)
-
-      error.respond_to?(:retry_after_seconds) && error.retry_after_seconds
+      Worker.hinted_retry?(error)
     end
 
     def escalate_snooze(context, snooze_count, error)

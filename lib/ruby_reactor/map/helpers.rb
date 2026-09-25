@@ -90,6 +90,9 @@ module RubyReactor
             executor.middlewares.on(:failed_reactor, parent_context.reactor_class.name, failure_response,
                                     parent_context)
           end
+          # This branch runs no executor loop, so nothing else persists the
+          # failed status: store it here.
+          store_parent(parent_context, storage)
         else
           parent_context.set_result(step_name_sym, final_result.value)
 
@@ -116,20 +119,41 @@ module RubyReactor
           # `after:` target here in the collector instead of the original
           # dispatching worker.
           parent_context.inline_async_execution = true
-          executor.resume_execution
+          resume_parked_aware(executor, parent_context)
         end
+      end
 
-        # Checkpoint the ROOT, not the sub (F9/C2). When the map is embedded in a
-        # composed sub-reactor, parent_context is the *sub*; storing only the sub
-        # would leave the root blob stale and a rehydrate-by-root-id resume would
-        # lose the map's completion. Resolve the root (which embeds the sub's
-        # post-map state via composed_contexts) and store that. For a top-level
-        # map parent_context IS the root, so this is unchanged.
-        root = parent_context.root_context || parent_context
+      # `resume_execution` persists the parent itself — under the parent's
+      # context lock, and deliberately NOT when it lost that lock to a live
+      # duplicate or replayed an already-terminal run. Storing again here, after
+      # the lock is released, would overwrite whatever the lock's holder wrote
+      # (single writer), so the resume's own save is the only one.
+      #
+      # This collector is a worker running the parent's execution, so it is
+      # also a final handler for park signals (005 R-01), like `Worker` and
+      # `ElementExecutor`: the resume has already parked the parent's holds and
+      # saved; hand the rest back to the parent's own worker.
+      #
+      # The parent is loaded from its own blob, so it has no `root_context`:
+      # a map inside a composed child resumes and requeues that child as its
+      # own execution, never its root. ponytail: the root is never resumed
+      # after such a map (already so on main); see "Fan-out map inside a
+      # composed child" in specs/future_improvements.md.
+      def resume_parked_aware(executor, parent_context)
+        executor.resume_execution
+      rescue RubyReactor::Error::ExecutionParked => e
+        config = RubyReactor.configuration
+        config.async_router.perform_in(
+          RubyReactor::Worker.snooze_delay(config, e), parent_context.context_id,
+          RubyReactor.reactor_storage_name(parent_context.reactor_class)
+        )
+      end
+
+      def store_parent(parent_context, storage)
         storage.store_context(
-          root.context_id,
-          ContextSerializer.serialize(root),
-          RubyReactor.reactor_storage_name(root.reactor_class)
+          parent_context.context_id,
+          ContextSerializer.serialize(parent_context),
+          RubyReactor.reactor_storage_name(parent_context.reactor_class)
         )
       end
     end

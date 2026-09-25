@@ -10,6 +10,23 @@ module RubyReactor
       module ClassMethods
         attr_reader :lock_config, :semaphore_config, :period_config, :rate_limit_config, :ordered_lock_config
 
+        # The five configs, nils compacted. Reactors get this too (additive);
+        # steps use it to decide whether `StepCoordination` needs building at
+        # all (`StepCoordination.none?`).
+        def coordination_declarations
+          {
+            lock: lock_config,
+            semaphore: semaphore_config,
+            rate_limit: rate_limit_config,
+            period: period_config,
+            ordered_lock: ordered_lock_config
+          }.compact
+        end
+
+        def declares_coordination?
+          !coordination_declarations.empty?
+        end
+
         # Propagate lock/semaphore/period/rate-limit config to subclasses;
         # without this a subclass of a configured reactor would silently lose
         # those settings.
@@ -22,39 +39,65 @@ module RubyReactor
           subclass.instance_variable_set(:@ordered_lock_config, @ordered_lock_config) if @ordered_lock_config
         end
 
-        # Configure locking for this reactor
+        # Configure locking for this reactor or step
         # @param ttl [Integer] Time to live in seconds (default: 60)
         # @param wait [Integer] Time to wait for lock in seconds (default: 0)
         # @param auto_extend [Boolean] When true (default), a background thread
         #   refreshes the lock TTL every ttl/3 seconds while the reactor runs,
         #   protecting steps that may legitimately outlast `ttl`. Pass `false`
         #   to disable and rely solely on `ttl` for expiry.
-        # @yield [inputs] Block that returns the lock key string
-        def with_lock(ttl: 60, wait: 0, auto_extend: true, &block)
+        # @param rollback_wait [Numeric, nil] STEP only (accepted and ignored on
+        #   a reactor, whose holds are not re-taken for rollback): how long the
+        #   step's `undo`/`compensate` waits to re-take this lock. Defaults to
+        #   `ttl` — a forward holder either finishes or expires within it.
+        #   Rollback never parks: in a worker the wait blocks the thread. An
+        #   undo that cannot re-take the key in time is reported on
+        #   `Failure#rollback_failures`.
+        # @yield [inputs] Block that returns the lock key string. On a reactor,
+        #   `inputs` is the reactor's inputs; on a step, it is the step's own
+        #   resolved arguments (contract defaults applied).
+        def with_lock(ttl: 60, wait: 0, auto_extend: true, rollback_wait: nil, &block)
+          validate_rollback_wait!(rollback_wait)
           @lock_config = {
             ttl: ttl,
             wait: wait,
             auto_extend: auto_extend,
+            rollback_wait: rollback_wait,
             key_proc: block
           }
         end
 
-        # Configure semaphore for this reactor
+        # Configure semaphore for this reactor or step
         # @param limit [Integer] Maximum concurrent executions
         # @param wait [Integer] Time to wait for a token in seconds (default: 0)
-        # @yield [inputs] Block that returns the semaphore key string
-        def with_semaphore(limit:, wait: 0, &block)
+        # @param rollback_wait [Numeric, nil] STEP only, as for `with_lock`.
+        #   Defaults to 60 seconds: a semaphore slot has no hold expiry.
+        # @yield [inputs] Block that returns the semaphore key string. On a
+        #   reactor, `inputs` is the reactor's inputs; on a step, it is the
+        #   step's own resolved arguments.
+        def with_semaphore(limit:, wait: 0, rollback_wait: nil, &block)
+          validate_rollback_wait!(rollback_wait)
           @semaphore_config = {
             limit: limit,
             wait: wait,
+            rollback_wait: rollback_wait,
             key_proc: block
           }
         end
 
-        # Configure a calendar-aligned dedup window for this reactor. The
-        # reactor will run at most once per bucket per key; subsequent calls
-        # in the same bucket return `RubyReactor::Halt` without executing
-        # any steps.
+        def validate_rollback_wait!(value)
+          return if value.nil? || (value.is_a?(Numeric) && value >= 0)
+
+          raise ArgumentError, "rollback_wait must be a number of seconds >= 0 (got #{value.inspect})"
+        end
+        private :validate_rollback_wait!
+
+        # Configure a calendar-aligned dedup window for this reactor or step.
+        # On a reactor, a hit returns `RubyReactor::Halt` without executing
+        # any steps. On a STEP, a hit instead skips just that step
+        # (`RubyReactor.Skipped(reason: :period)`) — halting the whole
+        # workflow over one deduplicated step would defeat the point of
+        # declaring it at step level; the rest of the workflow runs normally.
         #
         # Note: `with_period` is *dedup*, not *concurrency*. Two concurrent
         # racers can both see no marker and both run. Pair with `with_lock`
@@ -64,7 +107,9 @@ module RubyReactor
         #   :month / :year, or an integer number of seconds for a sliding
         #   bucket (index = `time.to_i / every`).
         # @yield [inputs] Block that returns the period key base. The final
-        #   Redis marker key is `period:<base>:<bucket_id>`.
+        #   Redis marker key is `period:<base>:<bucket_id>`. On a reactor,
+        #   `inputs` is the reactor's inputs; on a step, it is the step's own
+        #   resolved arguments.
         def with_period(every:, &block)
           # Validate eagerly so misconfiguration surfaces at class load time.
           RubyReactor::Period.period_seconds(every)
@@ -75,11 +120,13 @@ module RubyReactor
           }
         end
 
-        # Configure strict-ordering nonce gating for this reactor. A
-        # monotonically increasing nonce is assigned at enqueue time; the
-        # worker can only proceed when its nonce equals `last_completed + 1`.
-        # Otherwise the worker raises {OrderedLock::WaitError} and the Sidekiq
-        # worker snoozes via `perform_in`.
+        # Configure strict-ordering nonce gating for this reactor or step. On
+        # a reactor, a monotonically increasing nonce is assigned at enqueue
+        # time; the worker can only proceed when its nonce equals
+        # `last_completed + 1`. Otherwise the worker raises
+        # {OrderedLock::WaitError} and the Sidekiq worker snoozes via
+        # `perform_in`. On a step, the nonce is assigned on first arrival
+        # instead — see the `@yield` note below.
         #
         # Counters reset to 0 once the sequence fully drains (last_completed
         # catches up to next). Re-entrancy is NOT supported — a nested reactor
@@ -101,7 +148,13 @@ module RubyReactor
         #   check only applies to a fresh `execute`; an already-started run
         #   that paused (InterruptResult/DispatchResult) completes on resume even
         #   if the chain failed in the meantime.
-        # @yield [inputs] Block that returns the ordered-lock key string.
+        # @yield [inputs] Block that returns the ordered-lock key string. On a
+        #   STEP, the position is assigned when the execution first REACHES
+        #   the step (its key reads step arguments, which do not exist until
+        #   then), so executions are ordered by ARRIVAL at that step, not by
+        #   enqueue — identical to the reactor form only when the step is
+        #   first in its reactor. The deeper the step, the weaker the
+        #   promise (research D8, contract §1).
         def with_ordered_lock(poison_pill_timeout: OrderedLock::DEFAULT_POISON_PILL_TIMEOUT,
                               ttl: OrderedLock::DEFAULT_TTL,
                               strict: true,
@@ -114,9 +167,9 @@ module RubyReactor
           }
         end
 
-        # Configure rate limiting for this reactor (fixed-window counter).
-        # Pass either a single window via `limit:` + `period:`, or a hash of
-        # windows via `limits:` for layered API quotas.
+        # Configure rate limiting for this reactor or step (fixed-window
+        # counter). Pass either a single window via `limit:` + `period:`, or
+        # a hash of windows via `limits:` for layered API quotas.
         #
         # @example Single window
         #   with_rate_limit(limit: 3, period: :second) { |i| "stripe:#{i[:account_id]}" }
@@ -138,7 +191,9 @@ module RubyReactor
         #   :week / :month / :year, or integer seconds (single-window form)
         # @param limits [Hash{Symbol,Integer => Integer}] mapping of period
         #   unit to limit (multi-window form)
-        # @yield [inputs] Block returning the rate-limit key base (inline forms).
+        # @yield [inputs] Block returning the rate-limit key base (inline
+        #   forms). On a reactor, `inputs` is the reactor's inputs; on a
+        #   step, it is the step's own resolved arguments.
         def with_rate_limit(name = nil, limit: nil, period: nil, limits: nil, &block)
           if name
             if limit || period || limits || block

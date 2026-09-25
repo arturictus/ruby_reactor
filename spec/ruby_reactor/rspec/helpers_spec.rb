@@ -443,4 +443,29 @@ RSpec.describe RubyReactor::RSpec::Helpers, type: :reactor do
       expect(subject).to have_validation_error(:email)
     end
   end
+
+  describe "#hold_lock" do
+    it "holds the key as an external owner for the duration of the block, then releases it" do
+      key = "helpers_spec:hold_lock:#{SecureRandom.uuid}"
+      held_during_block = nil
+
+      hold_lock(key, owner: "external-owner") do
+        held_during_block = key
+        expect(key).to be_locked.by("external-owner")
+      end
+
+      expect(held_during_block).to eq(key)
+      expect(key).not_to be_locked
+    end
+
+    it "releases the key even when the block raises" do
+      key = "helpers_spec:hold_lock:#{SecureRandom.uuid}"
+
+      expect do
+        hold_lock(key) { raise "boom" }
+      end.to raise_error("boom")
+
+      expect(key).not_to be_locked
+    end
+  end
 end

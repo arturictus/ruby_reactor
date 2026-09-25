@@ -35,6 +35,7 @@ RSpec.describe "Enhanced Error Reporting" do
 
   before do
     allow(compensation_manager).to receive(:rollback_completed_steps)
+    allow(compensation_manager).to receive(:rollback_failures).and_return([])
     # Mock CodeExtractor to avoid File.read on fake paths
     allow(RubyReactor::Utils::CodeExtractor).to receive(:extract).and_return([
                                                                                { line_number: 10, content: "def foo",

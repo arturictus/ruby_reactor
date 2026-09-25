@@ -13,6 +13,11 @@ REDIS_URL = ENV.fetch("RUBY_REACTOR_TEST_REDIS_URL", "redis://localhost:6780")
 Sidekiq.configure_server do |config|
   config.redis = { url: REDIS_URL }
   config.logger = Logger.new("log/sidekiq-live.log", 3, 1_024_000)
+  # Default ~5s average poll interval for scheduled/`perform_in` jobs makes
+  # any spec that snoozes/parks multiple rounds (lock contention, ordered
+  # lock, retry backoff) needlessly slow. This is a test-only process; a
+  # faster poll interval only shortens wall time, it changes no behavior.
+  config[:poll_interval_average] = 0.2
 end
 
 RubyReactor.configure do |config|

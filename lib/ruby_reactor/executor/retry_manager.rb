@@ -38,6 +38,13 @@ module RubyReactor
         @context.current_step = step_config.name
         delay = calculate_backoff_delay(step_config, error, reactor_class)
 
+        requeue_job(step_config, delay)
+      end
+
+      # The requeue for a failure retry, given an already-decided backoff
+      # delay. (A contention park never comes through here: it raises
+      # `Error::StepContentionPark` and is requeued by the worker, 005 R-01.)
+      def requeue_job(_step_config, delay)
         # Serialize context and requeue the job
         # Use root context if available to ensure we serialize the full tree
         # BUT for map elements (which have map_metadata), we must serialize the element context itself
@@ -186,7 +193,8 @@ module RubyReactor
                          end,
           reactor_name: reactor_class.name,
           step_arguments: result.respond_to?(:step_arguments) ? result.step_arguments : {},
-          validation_errors: result.validation_errors
+          validation_errors: result.validation_errors,
+          rollback_failures: result.rollback_failures
         )
       end
 

@@ -5,7 +5,9 @@ require "spec_helper"
 # rubocop:disable RSpec/MultipleMemoizedHelpers
 RSpec.describe "Failure Reporting" do
   let(:context) { RubyReactor::Context.new }
-  let(:compensation_manager) { instance_double(RubyReactor::Executor::CompensationManager, rollback_completed_steps: nil) }
+  let(:compensation_manager) do
+    instance_double(RubyReactor::Executor::CompensationManager, rollback_completed_steps: nil, rollback_failures: [])
+  end
   let(:dependency_graph) { instance_double(RubyReactor::DependencyGraph) }
   # Mock ReactorClass properly
   let(:reactor_class_double) { class_double(RubyReactor::Reactor, name: "TestReactor") }

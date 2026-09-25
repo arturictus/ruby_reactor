@@ -15,6 +15,44 @@ module RubyReactor
     # ordered-lock nonce at ENQUEUE time (so ordering matches caller order), and
     # persist before enqueueing (F2).
     class AsyncReactorStep < RubyReactor::Step
+      class << self
+        # Exclusive keys this EXECUTION currently holds, read from the root
+        # context's registry. Shared by the `async_reactor` dispatch check
+        # below (via `detect_lock_deadlock`) and the `async_step` dispatch-time
+        # guard (`Executor::AsyncStepDispatch`, T034) — both hand off work to
+        # a process that will never share this execution's owner, so a key
+        # the execution currently holds would deadlock the dispatched unit.
+        def held_lock_keys(context)
+          root = context.root_context || context
+          Array(root.private_data[:held_lock_keys] || root.private_data["held_lock_keys"])
+        end
+
+        # `kind:` names what is being dispatched ("async_reactor" / "async_step")
+        # so the two guards share one message shape instead of drifting apart.
+        def deadlock_message(key, dispatched_name, context, kind: "async_reactor")
+          parent = context.reactor_class&.name || "the dispatching reactor"
+          <<~MSG.strip
+            #{kind} dispatch of #{dispatched_name || "<anonymous>"} would deadlock: it declares the lock key \
+            '#{key}', which #{parent} currently holds and will not release until it finishes.
+            The child would snooze forever, and if #{parent} later reads this child's result it would wait \
+            for work that can never start. Lock ownership is never shared across the async boundary — the \
+            two run concurrently, so sharing it would break mutual exclusion outright.
+            Fix, in order of preference:
+              1. Use `compose` instead of `async_reactor` if the child belongs inside #{parent}'s critical \
+            section and its result is needed — waiting for it means the work is sequential anyway.
+              2. Narrow the lock keys, if parent and child actually protect different resources.
+              3. Restructure so the locked reactor never reads the child's result — fire-and-forget, and \
+            verify in the child itself or in a successor reactor outside the lock window.#{async_step_remedy(kind)}
+          MSG
+        end
+
+        def async_step_remedy(kind)
+          return "" unless kind == "async_step"
+
+          "\n  4. Run the step inline (drop `async_step`) if it belongs inside the critical section."
+        end
+      end
+
       def run
         child_class = inputs[:async_reactor_class]
         child_inputs = build_child_inputs(inputs[:argument_mappings] || {})
@@ -60,13 +98,13 @@ module RubyReactor
       # loudly, at dispatch. Ordinary cross-execution contention on the same
       # key is unaffected and still snoozes normally.
       def detect_lock_deadlock(child_class, child_inputs)
-        held = held_lock_keys
+        held = self.class.held_lock_keys(context)
         return nil if held.empty?
 
         collision = child_lock_keys(child_class, child_inputs).find { |key| held.include?(key) }
         return nil unless collision
 
-        RubyReactor.Failure(deadlock_message(collision, child_class))
+        RubyReactor.Failure(self.class.deadlock_message(collision, child_class.name, context))
       end
 
       def child_lock_keys(child_class, child_inputs)
@@ -81,28 +119,6 @@ module RubyReactor
         keys << semaphore[:key_proc].call(child_inputs) if semaphore && semaphore[:limit] == 1
 
         keys.compact
-      end
-
-      def held_lock_keys
-        root = context.root_context || context
-        Array(root.private_data[:held_lock_keys] || root.private_data["held_lock_keys"])
-      end
-
-      def deadlock_message(key, child_class)
-        parent = context.reactor_class&.name || "the dispatching reactor"
-        <<~MSG.strip
-          async_reactor dispatch of #{child_class.name || "<anonymous>"} would deadlock: it declares the \
-          lock key '#{key}', which #{parent} currently holds and will not release until it finishes.
-          The child would snooze forever, and if #{parent} later reads this child's result it would wait \
-          for work that can never start. Lock ownership is never shared across the async boundary — the \
-          two run concurrently, so sharing it would break mutual exclusion outright.
-          Fix, in order of preference:
-            1. Use `compose` instead of `async_reactor` if the child belongs inside #{parent}'s critical \
-          section and its result is needed — waiting for it means the work is sequential anyway.
-            2. Narrow the lock keys, if parent and child actually protect different resources.
-            3. Restructure so the locked reactor never reads the child's result — fire-and-forget, and \
-          verify in the child itself or in a successor reactor outside the lock window.
-        MSG
       end
 
       # `RSpec::TestSubject`'s `async: false` clears the dispatch marker to run

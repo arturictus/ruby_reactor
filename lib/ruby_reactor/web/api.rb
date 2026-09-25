@@ -47,6 +47,9 @@ module RubyReactor
               structure = self.class.build_structure(reactor_class) if reactor_class.respond_to?(:steps)
 
               api_status = self.class.reactor_status(data)
+              class_name = data[:reactor_class]&.to_s
+              runs = self.class.async_step_runs(data[:composed_contexts], class_name)
+              trace = self.class.with_async_step_runs(data[:execution_trace] || [], runs)
 
               response_data = {
                 id: data[:context_id],
@@ -55,7 +58,9 @@ module RubyReactor
                 current_step: data[:current_step].to_s,
                 retry_count: data[:retry_count] || 0,
                 undo_stack: data[:undo_stack] || [],
-                step_attempts: data.dig(:retry_context, :step_attempts) || {},
+                step_attempts: self.class.with_async_step_attempts(
+                  data.dig(:retry_context, :step_attempts) || {}, runs
+                ),
                 created_at: data[:started_at],
                 inputs: data[:inputs],
                 intermediate_results: self.class.with_map_summaries(
@@ -65,15 +70,14 @@ module RubyReactor
                 # Once per reactor, never per step: the old per-step `async`
                 # field is gone because there is now exactly one hand-off point.
                 background_handoff: self.class.background_handoff_for(reactor_class),
-                steps: data[:execution_trace] || [],
-                composed_contexts: self.class.hydrate_composed_contexts(
-                  data[:composed_contexts] || {},
-                  data[:reactor_class]&.to_s
-                ),
+                steps: trace,
+                composed_contexts: self.class.hydrate_composed_contexts(data[:composed_contexts] || {}, class_name),
                 coordination: CoordinationSerializer.build(
                   reactor_class,
                   inputs: data[:inputs],
-                  context_id: data[:context_id]
+                  context_id: data[:context_id],
+                  execution_trace: trace,
+                  private_data: data[:private_data] || {}
                 ),
                 error: data[:failure_reason]
               }
@@ -294,8 +298,69 @@ module RubyReactor
           when "map_ref" then hydrate_map_ref(value, reactor_class_name)
           when "async_step_ref" then hydrate_async_step_ref(value, reactor_class_name)
           when "async_reactor_ref" then hydrate_async_reactor_ref(value)
+          when "composed" then hydrate_composed_child(value)
           else value
           end
+        end
+      end
+
+      # An inline `compose` child is embedded in the parent's blob, so its own
+      # `async_step` links are rebuilt the same way, one level down.
+      def self.hydrate_composed_child(value)
+        child = value[:context] || value["context"]
+        return value unless child.is_a?(RubyReactor::Context)
+
+        class_name = RubyReactor.reactor_storage_name(child.reactor_class)
+        runs = async_step_runs(child.composed_contexts, class_name)
+        view = child.to_h.merge(
+          execution_trace: with_async_step_runs(child.execution_trace, runs),
+          composed_contexts: hydrate_composed_contexts(child.composed_contexts, class_name)
+        )
+        value.merge(context: view)
+      end
+
+      # Single writer: an `async_step` unit never writes its parent, which
+      # holds only the `:async_step_ref` written at dispatch. The unit's run —
+      # arguments, attempts, when it started — is on its Step Result Record.
+      # `{ step_name => record }` for every linked unit that has started.
+      def self.async_step_runs(composed_contexts, reactor_class_name)
+        return {} unless composed_contexts.is_a?(Hash)
+
+        composed_contexts.each_with_object({}) do |(name, ref), runs|
+          next unless (ref[:type] || ref["type"]).to_s == "async_step_ref"
+
+          record = async_step_record(ref, reactor_class_name)
+          runs[name] = record if record&.key?("started_at")
+        end
+      end
+
+      def self.async_step_record(ref_data, reactor_class_name)
+        context_id = ref_data[:context_id] || ref_data["context_id"]
+        name = ref_data[:name] || ref_data["name"]
+        return nil unless context_id && name
+
+        RubyReactor.configuration.storage_adapter.retrieve_step_result(context_id, name, reactor_class_name)
+      end
+
+      # The parent's own trace, with each started unit's `:run` entry placed by
+      # its start time — the entry a same-process step writes for itself. A
+      # unit that already has one (a context saved before units stopped
+      # writing their parent) is left as it is.
+      def self.with_async_step_runs(trace, runs)
+        runs.each_with_object(trace.dup) do |(name, record), merged|
+          next if merged.any? { |e| (e[:type] || e["type"]).to_s == "run" && (e[:step] || e["step"]).to_s == name.to_s }
+
+          started = Time.iso8601(record["started_at"])
+          entry = { type: :run, step: name, timestamp: started, background: true,
+                    arguments: ContextSerializer.deserialize_value(record["arguments"]) }
+          later = merged.index { |e| e[:timestamp].is_a?(Time) && e[:timestamp] > started }
+          merged.insert(later || merged.size, entry)
+        end
+      end
+
+      def self.with_async_step_attempts(step_attempts, runs)
+        runs.each_with_object(step_attempts.dup) do |(name, record), merged|
+          merged[name] = record["attempts"] if record["attempts"]
         end
       end
 

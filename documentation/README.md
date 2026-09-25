@@ -22,7 +22,7 @@ Most examples in this documentation mix class steps with inline blocks — class
 - [Composition](composition.md)
 - [Data Pipelines](data_pipelines.md)
 - [Retry Configuration](retry_configuration.md)
-- [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](locks_and_semaphores.md)
+- [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](locks_and_semaphores.md) — including [step-scoped coordination](locks_and_semaphores.md#step-scoped-coordination)
 - [Interrupts](interrupts.md)
 - [Middlewares & OpenTelemetry](middlewares.md)
 - [Testing with RSpec](testing.md)

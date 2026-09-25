@@ -9,7 +9,7 @@ module RubyReactor
     # re-enqueues itself via the snooze path, and the wait resumes on
     # redelivery. Bounded by `Configuration#async_park_timeout`, enforced at
     # the wait site before this is raised.
-    class AsyncResultPending < Base
+    class AsyncResultPending < ExecutionParked
       attr_reader :channel
 
       def initialize(message, channel: nil)

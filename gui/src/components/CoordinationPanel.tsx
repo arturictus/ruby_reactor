@@ -46,11 +46,30 @@ interface PeriodCoordination {
   state?: { marked: boolean; ttl: number };
 }
 
+interface StepCoordinationEntry {
+  step: string;
+  primitive?: string;
+  key?: string | null;
+  key_error?: string;
+  state?: LockState | { available: number; held: number; limit: number } | RateLimitWindow[] |
+    { marked: boolean; ttl: number } | 'pending';
+}
+
+interface StepWaiting {
+  step: string;
+  key?: string | null;
+  primitive: string;
+  attempts?: number;
+  next_attempt_at?: string | null;
+}
+
 export interface CoordinationData {
   lock?: LockCoordination;
   semaphore?: SemaphoreCoordination;
   rate_limit?: RateLimitCoordination;
   period?: PeriodCoordination;
+  steps?: StepCoordinationEntry[];
+  waiting?: StepWaiting;
 }
 
 interface CoordinationPanelProps {
@@ -224,6 +243,66 @@ function PeriodCard({ period }: { period: PeriodCoordination }) {
   );
 }
 
+function stepStateLabel(entry: StepCoordinationEntry): string {
+  const { state } = entry;
+  if (state === 'pending' || state === undefined) return 'Pending';
+  if (entry.primitive === 'lock') {
+    const s = state as LockState;
+    if (!s.held) return 'Free';
+    return s.owned_by_this_context ? 'Held (this run)' : 'Held (other)';
+  }
+  if (entry.primitive === 'semaphore') {
+    const s = state as { available: number; held: number; limit: number };
+    return `${s.held} / ${s.limit} held`;
+  }
+  if (entry.primitive === 'rate_limit') {
+    const windows = state as RateLimitWindow[];
+    return windows.map((w) => `${w.name}: ${w.count}/${w.limit}`).join(', ');
+  }
+  if (entry.primitive === 'period') {
+    const s = state as { marked: boolean; ttl: number };
+    return s.marked ? 'Bucket marked' : 'Bucket open';
+  }
+  return '—';
+}
+
+function StepRow({ entry, waiting }: { entry: StepCoordinationEntry; waiting?: StepWaiting }) {
+  const isWaiting = waiting?.step === entry.step;
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="font-mono text-slate-300 shrink-0">{entry.step}</span>
+        {entry.primitive && (
+          <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">{entry.primitive}</span>
+        )}
+        <KeyDisplay keyValue={entry.key ?? null} keyError={entry.key_error} />
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <span className="text-slate-400">{stepStateLabel(entry)}</span>
+        {isWaiting && (
+          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border bg-amber-500/10 text-amber-400 border-amber-500/20">
+            waiting on {waiting?.key ?? entry.key} (attempt {waiting?.attempts ?? '—'})
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StepsPanel({ steps, waiting }: { steps: StepCoordinationEntry[]; waiting?: StepWaiting }) {
+  if (steps.length === 0) return null;
+
+  return (
+    <div className="mt-3 space-y-1.5">
+      <h3 className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Steps</h3>
+      {steps.map((entry) => (
+        <StepRow key={`${entry.step}:${entry.primitive ?? 'pending'}`} entry={entry} waiting={waiting} />
+      ))}
+    </div>
+  );
+}
+
 export default function CoordinationPanel({ coordination }: CoordinationPanelProps) {
   if (!coordination || Object.keys(coordination).length === 0) {
     return null;
@@ -241,6 +320,7 @@ export default function CoordinationPanel({ coordination }: CoordinationPanelPro
           {coordination.rate_limit && <RateLimitCard rateLimit={coordination.rate_limit} />}
           {coordination.period && <PeriodCard period={coordination.period} />}
         </div>
+        {coordination.steps && <StepsPanel steps={coordination.steps} waiting={coordination.waiting} />}
       </div>
     </div>
   );

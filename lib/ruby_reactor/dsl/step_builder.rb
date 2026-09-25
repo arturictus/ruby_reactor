@@ -5,6 +5,12 @@ module RubyReactor
     class StepBuilder
       include RubyReactor::Dsl::TemplateHelpers
       include RubyReactor::Dsl::ValidationHelpers
+      include RubyReactor::Dsl::Lockable::ClassMethods
+
+      COORDINATION_MACROS = {
+        lock_config: "with_lock", semaphore_config: "with_semaphore", rate_limit_config: "with_rate_limit",
+        period_config: "with_period", ordered_lock_config: "with_ordered_lock"
+      }.freeze
 
       attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
                     :dependencies, :args_validator, :output_validator, :retry_config
@@ -137,6 +143,7 @@ module RubyReactor
       # `async_reactor`. Nil for an ordinary step.
       def build(async_dispatch: nil)
         check_contract_conflicts!
+        check_coordination_conflicts!
         warn_deprecated_rules
 
         step_config = {
@@ -153,13 +160,35 @@ module RubyReactor
           args_validator: @args_validator || build_args_validator(@arg_validations, @validate_args_input),
           output_validator: @output_validator,
           inline_contract: @inline_contract,
-          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
+          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config,
+          lock_config: @lock_config,
+          semaphore_config: @semaphore_config,
+          rate_limit_config: @rate_limit_config,
+          period_config: @period_config,
+          ordered_lock_config: @ordered_lock_config
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)
       end
 
       private
+
+      # The same primitive declared BOTH inline and on the step class is
+      # ambiguous — two keys for one slot of the fixed acquisition order, and
+      # `StepConfig`'s readers would silently let the inline one win. Refuse it
+      # at class-definition time rather than pick a winner silently.
+      def check_coordination_conflicts!
+        return unless @impl
+
+        COORDINATION_MACROS.each do |reader, macro|
+          next unless instance_variable_get(:"@#{reader}")
+          next unless @impl.respond_to?(reader) && @impl.public_send(reader)
+
+          raise Error::ValidationError,
+                "#{reactor_label} step :#{@name} declares `#{macro}` inline, but #{@impl} declares it too. " \
+                "Keep ONE: drop the inline declaration to use #{@impl}'s, or remove it from #{@impl}."
+        end
+      end
 
       # A step that owns its input contract takes wiring only from the
       # reactor: rules here would be a second, overlapping rule set.
@@ -240,6 +269,88 @@ module RubyReactor
         @output_validator = config[:output_validator]
         @inline_contract = config[:inline_contract]
         @retry_config = { max_attempts: 1 }.merge(config[:retry_config] || {})
+        @lock_config = config[:lock_config]
+        @semaphore_config = config[:semaphore_config]
+        @rate_limit_config = config[:rate_limit_config]
+        @period_config = config[:period_config]
+        @ordered_lock_config = config[:ordered_lock_config]
+      end
+
+      # A step's EFFECTIVE coordination: its own (inline) declaration if it has
+      # one, else the class step's (`impl`). Every consumer — forward
+      # execution, rollback, the dispatch guard, the dashboard — reads only
+      # these five readers, so a step mixing inline and class declarations is
+      # acquired by ONE `StepCoordination` in one global order. The two sources
+      # can never both carry the SAME primitive (`check_coordination_conflicts!`
+      # rejects that at class-definition time), so this is a union.
+      def lock_config
+        @lock_config || (impl.lock_config if impl.respond_to?(:lock_config))
+      end
+
+      def semaphore_config
+        @semaphore_config || (impl.semaphore_config if impl.respond_to?(:semaphore_config))
+      end
+
+      def rate_limit_config
+        @rate_limit_config || (impl.rate_limit_config if impl.respond_to?(:rate_limit_config))
+      end
+
+      def period_config
+        @period_config || (impl.period_config if impl.respond_to?(:period_config))
+      end
+
+      def ordered_lock_config
+        @ordered_lock_config || (impl.ordered_lock_config if impl.respond_to?(:ordered_lock_config))
+      end
+
+      def coordination_declarations
+        {
+          lock: lock_config,
+          semaphore: semaphore_config,
+          rate_limit: rate_limit_config,
+          period: period_config,
+          ordered_lock: ordered_lock_config
+        }.compact
+      end
+
+      def declares_coordination?
+        !coordination_declarations.empty?
+      end
+
+      # The ONE derivation of what a step's body — and therefore every
+      # coordination key — receives: an inline step with no `argument` wiring
+      # gets the reactor's inputs, and the step's contract applies its
+      # defaults. Forward execution (`body_arguments`), rollback, the async
+      # dispatch guard and the dashboard all go through here, so a key can
+      # never be computed from different values in different places.
+      # Never raises — `enforce!` returns exactly `apply_defaults(args)` when
+      # the arguments are valid, and rollback must not fail on invalid ones.
+      def coordination_arguments(resolved, inputs)
+        args = has_run_block? && resolved.empty? ? inputs : resolved
+        input_contract && args.is_a?(Hash) ? input_contract.apply_defaults(args) : args
+      end
+
+      # `coordination_arguments`, validated: raises InputValidationError
+      # BEFORE any coordination is taken (Finding 8).
+      def body_arguments(resolved, inputs)
+        args = has_run_block? && resolved.empty? ? inputs : resolved
+        input_contract ? input_contract.enforce!(args) : args
+      end
+
+      # The step's work as a reactor runs it. Coordination is NOT taken here:
+      # the caller (StepExecutor / StepWorker) takes this config's effective
+      # declarations — inline and class alike — in one fixed order around it.
+      def call_body(arguments, context)
+        catch(StepSignals::TAG) do
+          if has_run_block?
+            run_block.call(arguments, context)
+          elsif impl.respond_to?(:run_without_coordination)
+            impl.run_without_coordination(arguments, context)
+          else
+            # A duck-typed impl (any `.run(args, ctx)`) never coordinates itself.
+            impl.run(arguments, context)
+          end
+        end
       end
 
       # True for `async_step` / `async_reactor` — the step's work leaves this

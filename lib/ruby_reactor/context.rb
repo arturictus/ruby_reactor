@@ -29,6 +29,19 @@ module RubyReactor
                   :cancelled, :cancellation_reason, :parent_context_id, :retried_from_id, :status, :failure_reason,
                   :middlewares
 
+    # Transient, NOT serialized (absent from `to_h`, `serialize_for_retry`,
+    # and `deserialize_from_retry` below — confirmed by
+    # reentrancy_spec.rb US4-16). Overrides `StepCoordination#owner` for
+    # everything coordinated with this context (research D5): set by the
+    # `async_step` worker to a per-job id so re-entrancy never crosses a
+    # process hand-off (US4-5).
+    attr_accessor :coordination_owner
+
+    # Transient, NOT serialized: the step whose coordination hook is firing
+    # right now (set by `StepCoordination#emit` for the duration of the hook),
+    # so a middleware can tell a step-level hold from a reactor-level one.
+    attr_accessor :coordinating_step
+
     def initialize(inputs = {}, reactor_class = nil)
       @context_id = SecureRandom.uuid
       @inputs = inputs
@@ -93,6 +106,19 @@ module RubyReactor
 
     def set_result(step_name, value)
       @intermediate_results[step_name.to_sym] = value
+    end
+
+    # Set once this execution's reactor-level gates (rate limit, period,
+    # post-lock period re-check) have passed, and never unset — it rides
+    # `private_data`, so it survives parks, retries, pauses and redeliveries.
+    # "Is this a fresh run?" reads it instead of inferring from
+    # `current_step`, which is only the resume cursor (005 R-03).
+    def admitted?
+      !!(private_data[:admitted] || private_data["admitted"])
+    end
+
+    def admit!
+      private_data[:admitted] = true
     end
 
     def with_step(step_name)

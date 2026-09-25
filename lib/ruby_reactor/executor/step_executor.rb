@@ -2,6 +2,7 @@
 
 module RubyReactor
   class Executor
+    # rubocop:disable Metrics/ClassLength
     class StepExecutor
       include AsyncStepDispatch
 
@@ -106,7 +107,13 @@ module RubyReactor
           end
           result
         rescue Exception => e # rubocop:disable Lint/RescueException
-          @middlewares.on(:failed_step, step_config.name, e, @context) unless completed
+          # A park signal (contention, or an awaited background result) is
+          # "try again later", never a failure: `:snooze_step`, mirroring
+          # `:snooze_reactor` (005 R-04).
+          unless completed
+            event = e.is_a?(Error::ExecutionParked) ? :snooze_step : :failed_step
+            @middlewares.on(event, step_config.name, e, @context)
+          end
           raise
         end
       end
@@ -191,6 +198,24 @@ module RubyReactor
         e.step_name = step_config.name
         e.step_arguments ||= resolved_arguments
         raise
+      rescue Executor::StepCoordination::Contended => e
+        handle_contention(step_config, e, resolved_arguments)
+      # `KeyError`: this step's coordination could not be resolved — a key proc
+      # that raised or returned nil/empty, or an unregistered `with_rate_limit`
+      # name. Not contention: a non-retryable failure, never a park (mirrors
+      # how the reactor-level equivalent escalates instead of snoozing in
+      # `Worker#perform`).
+      rescue Executor::StepCoordination::KeyError => e
+        RubyReactor::Failure(e, step_name: step_config.name, reactor_name: @reactor_class.name,
+                                step_arguments: resolved_arguments, inputs: @context.inputs, retryable: false)
+      # A park signal from a composed child (its contention, or its wait on a
+      # background result) is not this step failing: let it reach the
+      # executors above, which park their own holds, and the worker (F10).
+      # Nor is it a retry attempt: give back the one `prepare_retry_attempt`
+      # just counted, as `handle_contention` does for this step's own park.
+      rescue Error::ExecutionParked
+        @context.retry_context.decrement_attempt_for_step(step_config.name)
+        raise
       rescue StandardError => e
         # Identify redacted inputs
         redact_inputs = @reactor_class.inputs.select { |_, config| config[:redact] }.keys
@@ -203,6 +228,89 @@ module RubyReactor
           reactor_name: @reactor_class.name,
           step_arguments: resolved_arguments
         )
+      end
+
+      # Contention (US3). Synchronously there is no queue to park into: the
+      # step fails. In a worker the execution parks at this step — by raising
+      # `Error::StepContentionPark`, which every executor on the stack lets
+      # through after parking its own holds, and which the worker (or
+      # `Map::ElementExecutor`) requeues once, at the top, after all of them
+      # have saved (005 R-01). Bounded by `lock_snooze_max_attempts` on this
+      # step's own contention counter, separate from its retry budget.
+      #
+      # `Context#with_step`'s `ensure` has already restored `current_step` to
+      # its pre-step value by the time this rescue runs, so it is pinned again
+      # here: it is the resume cursor the redelivery continues from.
+      def handle_contention(step_config, contended, resolved_arguments)
+        return contention_failure(step_config, contended, resolved_arguments) unless @context.inline_async_execution
+
+        @context.current_step = step_config.name
+        # Park evidence belongs to the async path ONLY: synchronously there is
+        # no requeue, the step just fails, and writing these would report a
+        # terminal execution as parked and leave the dashboard "waiting".
+        attempt = @context.retry_context.contention_attempts_for_step(step_config.name) + 1
+        @context.append_execution_trace(
+          { type: :contention_park, step: step_config.name, primitive: contended.primitive, key: contended.key,
+            attempt: attempt, timestamp: Time.now }
+        )
+        @context.private_data[:step_contention] = {
+          step: step_config.name, primitive: contended.primitive, key: contended.key, attempts: attempt,
+          next_attempt_at: nil
+        }
+        log_async_event(
+          "step_coordination.parked", step_config.name,
+          key: contended.key, primitive: contended.primitive, attempt: attempt
+        )
+
+        # A park is not a retry attempt (Finding 2): give back the one
+        # `prepare_retry_attempt` just counted, and count contention instead.
+        @context.retry_context.decrement_attempt_for_step(step_config.name)
+        count = @context.retry_context.increment_contention_for_step(step_config.name)
+        return contention_ceiling_failure(step_config, contended, count) if contention_ceiling?(contended, count)
+
+        raise Error::StepContentionPark, contended
+      end
+
+      # `OrderedLock::WaitError` is exempt, as in `Worker#handle_snooze`: its
+      # own poison-pill timeout is the only meaningful upper bound.
+      def contention_ceiling?(contended, count)
+        max = RubyReactor.configuration.lock_snooze_max_attempts
+        return false if contended.original.is_a?(RubyReactor::OrderedLock::WaitError)
+
+        max != :infinity && count > max
+      end
+
+      # Terminal: earlier parks kept this step's `:step_contention` marker
+      # (which would report a failed execution as still waiting on a key) and
+      # its un-advanced ordered-lock position (which would stall every
+      # successor until its poison_pill_timeout) for a redelivery that is no
+      # longer coming. Hand both back. Carried as a `Contended`, not a bare
+      # string, so `CompensationManager#step_never_started?` still recognises
+      # that this step's body never ran.
+      def contention_ceiling_failure(step_config, contended, count)
+        Executor::StepCoordination.discard_parked_state!(@context)
+        RubyReactor::Failure(
+          Executor::StepCoordination::Contended.new(
+            primitive: contended.primitive, key: contended.key, step_name: step_config.name,
+            reactor_name: @reactor_class.name, original: contended.original,
+            message: "Step '#{step_config.name}' gave up on #{contended.primitive} '#{contended.key}' after " \
+                     "#{count} contention attempts"
+          ),
+          step_name: step_config.name, reactor_name: @reactor_class.name, retryable: false,
+          exception_class: contended.original.class.name
+        )
+      end
+
+      # The `Contended` itself, not its `.original`: it is what tells
+      # `CompensationManager#step_never_started?` that THIS step's own
+      # acquisition failed. A bare `Lock::AcquisitionError` could equally have
+      # been raised by the body (a nested `Reactor.run`), whose side effects
+      # must be compensated. `ResultHandler#resolve_exception_class` reports
+      # the cause's class.
+      def contention_failure(step_config, contended, resolved_arguments)
+        RubyReactor::Failure(contended, step_name: step_config.name, reactor_name: @reactor_class.name,
+                                        step_arguments: resolved_arguments, inputs: @context.inputs,
+                                        retryable: false, exception_class: contended.original.class.name)
       end
 
       def execute_step_sync(step_config, resolved_arguments = nil)
@@ -349,22 +457,17 @@ module RubyReactor
           { type: :run, step: step_config.name, timestamp: Time.now,
             arguments: contract ? contract.redact(arguments) : arguments }
         )
-        if step_config.has_run_block?
-          # Execute inline block
-          # If no arguments are defined for the step, pass the reactor inputs as arguments
-          args_to_pass = arguments.empty? ? @context.inputs : arguments
-          args_to_pass = step_config.inline_contract.enforce!(args_to_pass) if step_config.inline_contract
-          catch(StepSignals::TAG) { step_config.run_block.call(args_to_pass, @context) }
-        elsif step_config.has_impl?
-          # Execute step class
-          catch(StepSignals::TAG) { step_config.impl.run(arguments, @context) }
-        else
+        unless step_config.has_run_block? || step_config.has_impl?
           raise Error::ValidationError.new(
             "Step '#{step_config.name}' has no implementation",
             step: step_config.name,
             context: @context
           )
         end
+
+        Executor::StepCoordination.run_step(step_config, arguments, context: @context,
+                                                                    reactor_class: @reactor_class,
+                                                                    middlewares: @middlewares)
       end
 
       def find_context_by_id(root_context, target_id)
@@ -382,5 +485,6 @@ module RubyReactor
         nil
       end
     end
+    # rubocop:enable Metrics/ClassLength
   end
 end

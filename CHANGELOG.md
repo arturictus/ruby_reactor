@@ -80,6 +80,19 @@
 
 ### Features
 
+* **Step-scoped coordination.** Steps can declare `with_lock`, `with_semaphore`, `with_rate_limit`,
+  `with_period`, and `with_ordered_lock` — the same macros as the reactor form, keyed on the step's
+  own resolved arguments instead of the reactor's inputs — so one step of a workflow can be
+  serialized (or rate-limited, deduped, or strictly ordered) without serializing the whole
+  workflow. Works on class steps and inline `step :x do ... end` blocks (or both on one step —
+  taken once, in one fixed order); a direct `MyStep.run(args)` call is protected too, as its own
+  unit of work that waits then fails. Contention parks the execution in a worker (bounded by
+  `lock_snooze_max_attempts`, never consuming the step's own `retries` budget; the parked step
+  releases what it took and never spends a rate-limit slot on a park) and waits-then-fails
+  synchronously. Re-entrancy, the async dispatch deadlock guard, and rollback
+  (`compensate`/`undo` re-take lock/semaphore only) all follow the same rules as reactor-level
+  coordination. See
+  [Step-Scoped Coordination](documentation/locks_and_semaphores.md#step-scoped-coordination).
 * **Step input contracts.** A step class declares its own inputs with `input :name, :type, **predicates`
   (plus `optional:`, `default:`, `redact:`, the `do |i| ... end` macro block and `validate:`) and
   cross-field rules with `validate_inputs`. The contract is enforced before `run` on every path
@@ -102,6 +115,20 @@
   crosses a worker boundary.
 * A step that returns another unit's validation failure (e.g. an `async_step` reader propagating
   the worker's `Failure`) keeps its `validation_errors` on the reactor's final failure.
+
+* **`rollback_wait:` on step `with_lock` / `with_semaphore`.** How long a step's `undo` /
+  `compensate` waits to re-take its key. Defaults to the lock's `ttl` (60 s for a semaphore);
+  rollback still never parks, so in a worker the wait blocks the thread.
+* **`Failure#rollback_failures`.** Every undo or compensation that did not complete —
+  `{ step:, kind: :undo | :compensate, key:, reason: :coordination_unavailable | :returned_failure | :raised, message: }`,
+  including composed children's (flattened). Always an Array; part of `Failure#to_h` and the
+  stored failure of a background run.
+* **`:snooze_step` middleware event** (`on_snooze_step(step_name, error, context)`): a step's
+  attempt ended in a park — it lost its own contention in a worker, or it is a `compose` step whose
+  child parked — at any nesting depth. Never `:failed_step`. A step whose own arguments wait on a
+  background result parks before it starts, so it fires neither `:start_step` nor `:snooze_step`.
+  The OpenTelemetry middleware closes the span as `step.status = "parked"`.
+* **`have_rollback_failure(step)` matcher**, with `.for_key(key)` and `.because(reason)`.
 
 ### Deprecations
 
@@ -128,6 +155,54 @@
 * A class step that calls `halt!` under `async_step` is recorded as a halt rather than an
   ordinary `nil` success, and `result(:step)` hands the reader the `Halt` — the same way it
   already hands over a `Failure`.
+* Step coordination (F1): a step's undo is no longer dropped because another execution holds its
+  key at that moment — it waits up to `rollback_wait`, and one that still cannot run is reported
+  on `Failure#rollback_failures` instead of only in the trace.
+* Step coordination (F2): a park inside a composed child no longer releases the parent's reactor
+  lock or semaphore, and no longer charges the parent's rate limit again on redelivery — every
+  level keeps its own holds and is admitted once, at any depth.
+* Step coordination (F3): a synchronous execution that reaches a strict step-level ordered lock
+  out of turn fails without poisoning the chain; later arrivals run instead of being skipped.
+* Step coordination (F4): the docs name `context.coordinating_step` (not `current_step`) as the
+  attribution for coordination middleware events.
+* Step coordination (F5): a parked `async_step` no longer overwrites its parent's saved context;
+  its park state (ordered-lock position, "waiting" marker) lives on its own step result record.
+* Step coordination (F6): documented the cross-level key-ordering rule that avoids two workflows
+  waiting on each other's reactor and step locks.
+* Step coordination (F7): a step whose ordered-lock batch expired before its retry is skipped
+  (`Skipped(reason: :ordered_lock_stale_batch)`) instead of running unordered.
+* Step coordination (F8): a step-level ordered-lock heartbeat stops when the step body exits
+  abnormally (e.g. `Sidekiq::Shutdown`), so the poison pill can release the position.
+* Step coordination (F9): a step class invoked directly from another step's body names itself in
+  contention errors and coordination events, not the calling step.
+* An `async_step` no longer writes its parent's context when it finishes (it already stopped
+  doing so on a park). Its older snapshot overwrote whatever the parent saved while the unit ran —
+  a parent could revert to "running" and lose later steps' results. The unit's run (arguments,
+  attempts, start time) now lives on its Step Result Record, and the dashboard rebuilds it from the
+  parent's link, at any composition depth. `context.execution_trace` no longer has a `:run` entry
+  for an `async_step`, and changes an `async_step` body makes to `context` are not persisted.
+* A park after a fan-out map (a later step's contention, or an awaited background result) now
+  requeues the parent on its own worker instead of escaping the map collector and leaving the run
+  "running" forever; the collector also no longer re-saves the parent after resuming it, which
+  could overwrite a newer save by the parent's next worker.
+* An `async_step` refused at dispatch because it would deadlock on a key the reactor holds is no
+  longer compensated. It was never dispatched or run. The steps before it still roll back.
+* A step of a composed child that reads a not-yet-finished background result in a worker (F10)
+  parks the execution, keeping the child's lock, instead of failing the parent with
+  "async result … still pending".
+* A background reactor whose own `with_lock` / `with_semaphore` is busy when it starts no longer
+  charges its `with_rate_limit` again on every snoozed redelivery.
+* A `compensate` that raises no longer stops the rollback: the completed steps are still undone,
+  and the reactor fails with `CompensationError` and a `reason: :raised` rollback failure.
+* A composed child whose own `with_lock` / `with_semaphore` / `with_rate_limit` is busy inside a
+  worker now parks the execution and snoozes the job instead of failing the parent. After
+  `lock_snooze_max_attempts` parks it fails the `compose` step, which rolls the parent back.
+* A park that comes up through a `compose` step (the child's contention, or its wait on a
+  background result) no longer uses up that step's `retries` budget.
+* Docs: `on_snooze_step` is documented for what it covers — a step's own contention park and a
+  `compose` step whose child parked, not a step whose own arguments wait on a background result.
+* Docs: a park keeps each level's lock without a second `:lock_acquired` only while the gap stays
+  within the lock's `ttl`; a lapsed lock is acquired again.
 
 ## [0.8.2](https://github.com/arturictus/ruby_reactor/compare/v0.8.1...v0.8.2) (2026-09-22)
 
