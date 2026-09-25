@@ -43,9 +43,6 @@ graph TD
 class PaymentProcessingReactor < RubyReactor::Reactor
   async true
 
-  # Payment processing needs careful retry configuration
-  retry_defaults max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
-
   input :amount, validate: -> do
     required(:amount).filled(:decimal, gt?: 0)
   end
@@ -76,6 +73,8 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     argument :validation_data, result(:validate_payment)
     argument :amount, input(:amount)
     argument :card_token, input(:card_token)
+
+    retries max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
 
     run do |args, _context|
       amount = args[:amount]
@@ -227,10 +226,10 @@ end
 class MultiAttemptPaymentReactor < RubyReactor::Reactor
   async true
 
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 10.seconds
-
   step :attempt_primary_card do
     argument :order, input(:order)
+
+    retries max_attempts: 3, backoff: :exponential, base_delay: 10.seconds
 
     run do |args, _context|
       order = args[:order]
@@ -247,6 +246,8 @@ class MultiAttemptPaymentReactor < RubyReactor::Reactor
   step :attempt_backup_card do
     argument :primary_attempt, result(:attempt_primary_card)
     argument :order, input(:order)
+
+    retries max_attempts: 3, backoff: :exponential, base_delay: 10.seconds
 
     run do |args, _context|
       order = args[:order]
@@ -299,8 +300,6 @@ end
 class SubscriptionPaymentReactor < RubyReactor::Reactor
   async true
 
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 1.hour
-
   input :subscription_id, validate: -> do
     required(:subscription_id).filled(:string)
   end
@@ -322,6 +321,8 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
   step :calculate_proration do
     argument :validation_data, result(:validate_subscription)
 
+    retries max_attempts: 3, backoff: :exponential, base_delay: 1.hour
+
     run do |args, _context|
       subscription = args[:validation_data][:subscription]
 
@@ -334,6 +335,8 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
   step :charge_subscription do
     argument :validation_data, result(:validate_subscription)
     argument :proration_data, result(:calculate_proration)
+
+    retries max_attempts: 3, backoff: :exponential, base_delay: 1.hour
 
     run do |args, _context|
       subscription = args[:validation_data][:subscription]
@@ -386,8 +389,6 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
 class SubscriptionPaymentReactor < RubyReactor::Reactor
   async true
 
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 1.hour
-
   input :subscription_id, validate: -> do
     required(:subscription_id).filled(:string)
   end
@@ -409,6 +410,8 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
   step :calculate_proration do
     argument :validation_data, result(:validate_subscription)
 
+    retries max_attempts: 3, backoff: :exponential, base_delay: 1.hour
+
     run do |args, _context|
       subscription = args[:validation_data][:subscription]
 
@@ -421,6 +424,8 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
   step :charge_subscription do
     argument :validation_data, result(:validate_subscription)
     argument :proration_data, result(:calculate_proration)
+
+    retries max_attempts: 3, backoff: :exponential, base_delay: 1.hour
 
     run do |args, _context|
       subscription = args[:validation_data][:subscription]

@@ -46,8 +46,6 @@ graph TD
 class InventoryManagementReactor < RubyReactor::Reactor
   async true
 
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 1.second
-
   step :validate_request do
     validate_args do
       required(:product_id).filled(:string)
@@ -86,6 +84,8 @@ class InventoryManagementReactor < RubyReactor::Reactor
   step :acquire_lock do
     argument :request_data, result(:validate_request)
     argument :availability_data, result(:check_availability)
+
+    retries max_attempts: 3, backoff: :exponential, base_delay: 1.second
 
     run do |args, _context|
       product = args[:request_data][:product]
@@ -457,8 +457,6 @@ end
 class ReplenishmentReactor < RubyReactor::Reactor
   async true
 
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 5.minutes
-
   step :check_supplier_availability do
     validate_args do
       required(:product_id).filled(:string)
@@ -503,6 +501,8 @@ class ReplenishmentReactor < RubyReactor::Reactor
     argument :supplier_data, result(:check_supplier_availability)
     argument :quantity_data, result(:calculate_order_quantity)
 
+    retries max_attempts: 3, backoff: :exponential, base_delay: 5.minutes
+
     run do |args, _context|
       supplier = args[:supplier_data][:supplier]
       product = args[:supplier_data][:product]
@@ -530,6 +530,8 @@ class ReplenishmentReactor < RubyReactor::Reactor
   step :place_supplier_order do
     argument :supplier_data, result(:check_supplier_availability)
     argument :inventory_data, result(:check_supplier_inventory)
+
+    retries max_attempts: 3, backoff: :exponential, base_delay: 5.minutes
 
     run do |args, _context|
       supplier = args[:supplier_data][:supplier]

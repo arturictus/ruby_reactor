@@ -24,19 +24,18 @@ module RubyReactor
                                                                          step_config.retry_config[:max_attempts])
       end
 
-      def calculate_backoff_delay(step_config, _error, reactor_class)
+      def calculate_backoff_delay(step_config)
         attempt_number = @context.retry_context.attempts_for_step(step_config.name)
-        backoff_strategy = step_config.retry_config[:backoff] || reactor_class.retry_defaults[:backoff]
-        base_delay = step_config.retry_config[:base_delay] || reactor_class.retry_defaults[:base_delay]
+        retry_config = step_config.retry_config
 
-        delay = RetryContext.calculate_backoff_delay(attempt_number, backoff_strategy, base_delay)
+        delay = RetryContext.calculate_backoff_delay(attempt_number, retry_config[:backoff], retry_config[:base_delay])
         @context.retry_context.next_retry_at = Time.now + delay
         delay
       end
 
-      def requeue_job_for_step_retry(step_config, error, reactor_class)
+      def requeue_job_for_step_retry(step_config)
         @context.current_step = step_config.name
-        delay = calculate_backoff_delay(step_config, error, reactor_class)
+        delay = calculate_backoff_delay(step_config)
 
         requeue_job(step_config, delay)
       end
@@ -147,14 +146,14 @@ module RubyReactor
 
         # Always try async retry if configured
         if is_async
-          handle_async_retry(step_config, reactor_class, result)
+          handle_async_retry(step_config)
         else
-          handle_sync_retry(step_config, reactor_class, result)
+          handle_sync_retry(step_config)
         end
       end
 
-      def handle_async_retry(step_config, reactor_class, result)
-        requeue_result = requeue_job_for_step_retry(step_config, result.error, reactor_class)
+      def handle_async_retry(step_config)
+        requeue_result = requeue_job_for_step_retry(step_config)
 
         # If it returned an DispatchResult, we are truly async.
         # Otherwise, it ran inline and we should return the result of that execution.
@@ -169,8 +168,8 @@ module RubyReactor
         end
       end
 
-      def handle_sync_retry(step_config, reactor_class, result)
-        delay = calculate_backoff_delay(step_config, result.error, reactor_class)
+      def handle_sync_retry(step_config)
+        delay = calculate_backoff_delay(step_config)
         sleep(delay)
         nil # continue loop
       end

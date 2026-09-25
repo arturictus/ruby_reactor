@@ -43,9 +43,6 @@ graph TD
 class OrderProcessingReactor < RubyReactor::Reactor
   async true  # Enable asynchronous execution
 
-  # Reactor-level retry defaults
-  retry_defaults max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
-
   step :validate_order do
     validate_args do
       required(:order_id).filled(:string)
@@ -86,6 +83,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :reserve_inventory do
     argument :order, result(:validate_order)
+
+    retries max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
 
     run do |order:, **|
       reservation_id = InventoryService.reserve_items(order.items)
@@ -128,6 +127,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
   step :update_inventory do
     argument :order, result(:validate_order)
     argument :reservation_id, result(:reserve_inventory)
+
+    retries max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
 
     run do |order:, reservation_id:, **|
       # Convert reservation to permanent inventory reduction

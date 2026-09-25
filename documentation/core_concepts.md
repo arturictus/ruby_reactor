@@ -105,7 +105,7 @@ class ChargeStep < RubyReactor::Step
 end
 ```
 
-The full lifecycle for a class step, in order: contract enforcement (`enforce_contract!`) → coordination (acquire, in the fixed order documented in [Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination)) → the instance is built → `run` executes → signals (`success!`/`fail!`/`skip!`/`halt!`) are translated. Coordination lives INSIDE `Step.run`, so `MyStep.run(args)` — the "call it directly in a unit spec" entry point above — is protected exactly the same way a reactor-dispatched call is: a contended direct call raises rather than silently running unprotected. See [Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination) for the full acquisition order, contention behavior, and re-entrancy rules.
+The full lifecycle for a class step, in order: contract enforcement (`enforce_contract!`) → coordination (acquire, in the fixed order documented in [Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination)) → the instance is built → `run` executes → signals (`success!`/`fail!`/`skip!`/`halt!`) are translated. Coordination lives INSIDE `Step.run`, so `MyStep.run(args)` — the "call it directly in a unit spec" entry point above — is protected exactly the same way a reactor-dispatched call is: a contended direct call raises rather than silently running unprotected. Retries are not: a direct call runs once — only a reactor retries a step (see [Retry Configuration](retry_configuration.md#direct-calls-run-once)). See [Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination) for the full acquisition order, contention behavior, and re-entrancy rules.
 
 ### Inline step definition
 
@@ -324,7 +324,7 @@ RubyReactor supports automatic retry mechanisms for failed steps with configurab
 When a step fails during execution, RubyReactor can automatically retry the step before triggering compensation and rollback. Retries occur when:
 
 1. A step raises an exception during its `run` block
-2. The step has retry configuration (either reactor-level defaults or step-specific settings)
+2. The step has retry configuration (`retries` on the step)
 3. The maximum retry attempts haven't been exceeded
 
 ### Retry Execution Flow
@@ -342,7 +342,19 @@ graph TD
 
 ### Retry Configuration
 
-Retries can be configured at the reactor level (as defaults) or per step:
+Retries are configured per step. The preferred place is the step class, next to the call it
+protects; every reactor using the step then gets its policy:
+
+```ruby
+class ReserveInventoryStep < RubyReactor::Step
+  input :product_id, :string
+  retries max_attempts: 5, backoff: :fixed, base_delay: 2 # 2 seconds
+
+  def run = Success(InventoryService.reserve(inputs[:product_id]))
+end
+```
+
+An inline step declares `retries` in its block. A step with no `retries` runs once:
 
 ```ruby
 class OrderProcessingReactor < RubyReactor::Reactor
@@ -357,7 +369,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :check_inventory do
-    # Uses reactor defaults (5 attempts, fixed backoff)
+    retries max_attempts: 5, backoff: :fixed, base_delay: 2 # 2 seconds
     run do 
       InventoryService.check_availability(product_id, quantity) 
     end

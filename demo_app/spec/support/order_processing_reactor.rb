@@ -25,9 +25,9 @@ module RubyReactor
     input :amount do
       required(:amount).filled(:integer, gt?: 0.0)
     end
-    retry_defaults max_attempts: 5, backoff: :fixed, base_delay: 2
 
     step :validate_order do
+      retries max_attempts: 5, backoff: :fixed, base_delay: 2
       argument :order_id, input(:order_id)
       argument :fail_at, input(:fail_at)
       run do |args, _context|
@@ -52,6 +52,7 @@ module RubyReactor
     end
 
     step :check_inventory do
+      retries max_attempts: 5, backoff: :fixed, base_delay: 2
       argument :product_id, input(:product_id)
       argument :quantity, input(:quantity)
       argument :fail_at, input(:fail_at)
@@ -82,6 +83,7 @@ module RubyReactor
     end
 
     step :reserve_inventory do
+      retries max_attempts: 5, backoff: :fixed, base_delay: 2
       argument :inventory, result(:check_inventory)
       argument :fail_at, input(:fail_at)
       argument :success_at_retry, input(:success_at_retry)
@@ -117,6 +119,7 @@ module RubyReactor
     end
 
     step :process_payment do
+      retries max_attempts: 5, backoff: :fixed, base_delay: 2
       argument :order, result(:validate_order)
       argument :amount, input(:amount)
       argument :fail_at, input(:fail_at)

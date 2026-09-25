@@ -7,6 +7,7 @@ require "time"
 require_relative "ruby_reactor/registry"
 require_relative "ruby_reactor/utils/code_extractor"
 require_relative "ruby_reactor/dsl/lockable" # Add this
+require_relative "ruby_reactor/dsl/retryable"
 require_relative "ruby_reactor/lock"
 require_relative "ruby_reactor/ordered_lock"
 require_relative "ruby_reactor/semaphore"

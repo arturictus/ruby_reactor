@@ -4,6 +4,7 @@ module RubyReactor
   module Dsl
     class ComposeBuilder
       include RubyReactor::Dsl::TemplateHelpers
+      include RubyReactor::Dsl::Retryable
 
       attr_accessor :name, :composed_reactor_class, :argument_mappings
 
@@ -20,7 +21,7 @@ module RubyReactor
         end
         @reactor = reactor
         @argument_mappings = {}
-        @retry_config = {}
+        @retry_config = nil
       end
 
       def argument(composed_input_name, source)
@@ -44,14 +45,6 @@ module RubyReactor
         )
       end
 
-      def retries(max_attempts: 3, backoff: :exponential, base_delay: 1)
-        @retry_config = {
-          max_attempts: max_attempts,
-          backoff: backoff,
-          base_delay: base_delay
-        }
-      end
-
       def build
         warn_if_child_has_ordered_lock!
         dependencies = extract_dependencies_from_mappings
@@ -71,7 +64,7 @@ module RubyReactor
           dependencies: dependencies,
           args_validator: nil,
           output_validator: nil,
-          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config
+          retry_config: @retry_config
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)

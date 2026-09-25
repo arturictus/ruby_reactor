@@ -6,6 +6,7 @@ module RubyReactor
       include RubyReactor::Dsl::TemplateHelpers
       include RubyReactor::Dsl::ValidationHelpers
       include RubyReactor::Dsl::Lockable::ClassMethods
+      include RubyReactor::Dsl::Retryable
 
       COORDINATION_MACROS = {
         lock_config: "with_lock", semaphore_config: "with_semaphore", rate_limit_config: "with_rate_limit",
@@ -13,7 +14,7 @@ module RubyReactor
       }.freeze
 
       attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
-                    :dependencies, :args_validator, :output_validator, :retry_config
+                    :dependencies, :args_validator, :output_validator
 
       def initialize(name, impl = nil, reactor = nil)
         @name = name
@@ -30,7 +31,7 @@ module RubyReactor
         @validate_args_input = nil
         @args_validator = nil
         @output_validator = nil
-        @retry_config = {}
+        @retry_config = nil
         @inline_contract = nil
         @rule_sites = []
       end
@@ -130,20 +131,13 @@ module RubyReactor
         )
       end
 
-      def retries(max_attempts: 3, backoff: :exponential, base_delay: 1)
-        @retry_config = {
-          max_attempts: max_attempts,
-          backoff: backoff,
-          base_delay: base_delay
-        }
-      end
-
       # `async_dispatch` marks a step whose work is dispatched as an independent
       # unit rather than run inline — `:step` for `async_step`, `:reactor` for
       # `async_reactor`. Nil for an ordinary step.
       def build(async_dispatch: nil)
         check_contract_conflicts!
         check_coordination_conflicts!
+        check_retry_conflict!
         warn_deprecated_rules
 
         step_config = {
@@ -160,7 +154,7 @@ module RubyReactor
           args_validator: @args_validator || build_args_validator(@arg_validations, @validate_args_input),
           output_validator: @output_validator,
           inline_contract: @inline_contract,
-          retry_config: @retry_config.empty? ? (@reactor&.retry_defaults || {}) : @retry_config,
+          retry_config: @retry_config,
           lock_config: @lock_config,
           semaphore_config: @semaphore_config,
           rate_limit_config: @rate_limit_config,
@@ -188,6 +182,16 @@ module RubyReactor
                 "#{reactor_label} step :#{@name} declares `#{macro}` inline, but #{@impl} declares it too. " \
                 "Keep ONE: drop the inline declaration to use #{@impl}'s, or remove it from #{@impl}."
         end
+      end
+
+      # Same rule as the coordination macros: one retry policy per step.
+      def check_retry_conflict!
+        return unless @retry_config && @impl.respond_to?(:retry_config) && @impl.retry_config
+
+        raise Error::ValidationError,
+              "#{reactor_label} step :#{@name} declares `retries` inline, but #{@impl} declares it too. " \
+              "Keep ONE: drop the inline declaration to use #{@impl}'s, or remove it from #{@impl}. " \
+              "To vary the policy per workflow, subclass #{@impl} and declare `retries` there."
       end
 
       # A step that owns its input contract takes wiring only from the
@@ -250,8 +254,10 @@ module RubyReactor
     end
 
     class StepConfig
+      NO_RETRIES = { max_attempts: 1, backoff: :exponential, base_delay: 1 }.freeze
+
       attr_reader :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
-                  :dependencies, :args_validator, :output_validator, :retry_config, :async_dispatch,
+                  :dependencies, :args_validator, :output_validator, :async_dispatch,
                   :inline_contract
 
       def initialize(config)
@@ -268,7 +274,7 @@ module RubyReactor
         @args_validator = config[:args_validator]
         @output_validator = config[:output_validator]
         @inline_contract = config[:inline_contract]
-        @retry_config = { max_attempts: 1 }.merge(config[:retry_config] || {})
+        @retry_config = config[:retry_config]
         @lock_config = config[:lock_config]
         @semaphore_config = config[:semaphore_config]
         @rate_limit_config = config[:rate_limit_config]
@@ -285,6 +291,21 @@ module RubyReactor
       # rejects that at class-definition time), so this is a union.
       def lock_config
         @lock_config || (impl.lock_config if impl.respond_to?(:lock_config))
+      end
+
+      # A step's EFFECTIVE retry policy, resolved like the coordination
+      # readers: its own (step block) declaration, else the class step's,
+      # else a single attempt. Never nil. The reactor is never consulted.
+      def retry_config
+        @retry_config || (impl.retry_config if impl.respond_to?(:retry_config)) || NO_RETRIES
+      end
+
+      # Where `retry_config` came from: :step_block, :step_class or :none.
+      def retry_source
+        return :step_block if @retry_config
+        return :step_class if impl.respond_to?(:retry_config) && impl.retry_config
+
+        :none
       end
 
       def semaphore_config
