@@ -204,6 +204,13 @@
 * Docs: a park keeps each level's lock without a second `:lock_acquired` only while the gap stays
   within the lock's `ttl`; a lapsed lock is acquired again.
 
+## [0.8.3](https://github.com/arturictus/ruby_reactor/compare/v0.8.2...v0.8.3) (2026-09-25)
+
+
+### Features
+
+* move locks declarations to step classes ([#56](https://github.com/arturictus/ruby_reactor/issues/56)) ([a7862ca](https://github.com/arturictus/ruby_reactor/commit/a7862ca765ae706aebb361d9eadcf4c0ead12caf))
+
 ## [0.8.2](https://github.com/arturictus/ruby_reactor/compare/v0.8.1...v0.8.2) (2026-09-22)
 
 
