@@ -248,3 +248,21 @@ Direction:
 
 Spec: compose → fan-out map, with and without a park after the map. The root completes either
 way.
+
+## Rollback follow-ups (008)
+
+Raised while implementing specs/008-rollback-reliability. None blocks it.
+
+- **Sweeper re-enqueues in-progress inline runs.** `RubyReactor::Sweeper` re-enqueues any
+  top-level context that is `running` with no `async:` lock. A run still executing in the
+  caller's process never holds that lock, so a sweep during it enqueues a worker that resumes the
+  same run forward. Pre-existing; 008 only keeps `aborted` runs out of it. Direction: mark
+  caller-process runs (the `inline_async_execution` inverse) so the sweeper skips them until they
+  are stale by a timestamp, or give them their own liveness lock.
+- **Map-level `undo_all` override.** Map rollback always replays each element's own step `undo`s.
+  A bulk refund API may want one call for all elements instead. Direction: an optional
+  `undo_all { |completed_results| ... }` on `map` that replaces the per-element replay.
+- **Rollback fan-out for very large maps.** Map rollback is serial, in the process that detected
+  the failure, so its time is linear in the number of completed elements (10,000 elements take
+  about a minute in the test suite). Direction: enqueue one rollback job per element (or per
+  batch) and resolve the parent's failure once they report back.

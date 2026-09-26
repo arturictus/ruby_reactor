@@ -133,7 +133,9 @@ end
 
 Probe.scenario "S-map-01", "a → map(4 elems, inline, fail_fast; elem 2 fails) → b   [Q1]",
                mode: :inline,
-               expected: ["run:a", *elements(0, 1, 2, fail_at: 2), "undo:a", "=>", "failure(m)"] do
+               expected: %w[run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2]
+                            compensate:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0]
+                            undo:a => failure(m)] do
   P::Map01.run(P::ITEMS)
 end
 
@@ -145,13 +147,18 @@ end
 
 Probe.scenario "S-map-03", "a → map(inline, all ok) → b(fails)   [Q1: later failure]",
                mode: :inline,
-               expected: ["run:a", *elements(0, 1, 2, 3), "run:b", "compensate:b", "undo:a", "=>", "failure(b)"] do
+               expected: %w[run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2]
+                            run:e.e1[3] run:e.e2[3] run:b compensate:b undo:e.e2[3] undo:e.e1[3] undo:e.e2[2]
+                            undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a =>
+                            failure(b)] do
   P::Map03.run(P::ITEMS)
 end
 
 Probe.scenario "S-map-04", "a → map(fan_out, fail_fast; elem 2 fails) → b",
                mode: :worker,
-               expected: ["run:a", *elements(0, 1, 2, fail_at: 2), "undo:a", "=>", "failure(m)"] do
+               expected: %w[run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2]
+                            compensate:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0]
+                            undo:a => failure(m)] do
   Probe.run_async(P::Map04, P::ITEMS)
 end
 
@@ -163,28 +170,33 @@ end
 
 Probe.scenario "S-map-06", "a → map(fan_out, all ok) → b(fails)",
                mode: :worker,
-               expected: ["run:a", *elements(0, 1, 2, 3), "run:b", "compensate:b", "undo:a", "=>", "failure(b)"] do
+               expected: %w[run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2]
+                            run:e.e1[3] run:e.e2[3] run:b compensate:b undo:e.e2[3] undo:e.e1[3] undo:e.e2[2]
+                            undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a =>
+                            failure(b)] do
   Probe.run_async(P::Map06, P::ITEMS)
 end
 
 Probe.scenario "S-map-07", "a → compose(c0 → map(elem 2 fails))",
                mode: :inline,
-               expected: ["run:a", "run:child.c0", *elements(0, 1, 2, fail_at: 2), "undo:child.c0", "undo:a",
-                          "=>", "failure(child)"] do
+               expected: %w[run:a run:child.c0 run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2]
+                            run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0]
+                            undo:e.e1[0] undo:child.c0 undo:a => failure(child)] do
   P::Map07.run(P::ITEMS)
 end
 
 Probe.scenario "S-map-08", "map(elem: e1 → compose(k1) → e2; elem 2 fails)",
                mode: :inline,
-               expected: ["run:e.e1[0]", "run:k.k1", "run:e.e2[0]", "run:e.e1[1]", "run:k.k1", "run:e.e2[1]",
-                          "run:e.e1[2]", "run:k.k1", "run:e.e2[2]", "compensate:e.e2[2]", "undo:k.k1",
-                          "undo:e.e1[2]", "=>", "failure(m)"] do
+               expected: %w[run:e.e1[0] run:k.k1 run:e.e2[0] run:e.e1[1] run:k.k1 run:e.e2[1] run:e.e1[2]
+                            run:k.k1 run:e.e2[2] compensate:e.e2[2] undo:k.k1 undo:e.e1[2] undo:e.e2[1]
+                            undo:k.k1 undo:e.e1[1] undo:e.e2[0] undo:k.k1 undo:e.e1[0] => failure(m)] do
   P::Map08.run(P::ITEMS)
 end
 
 Probe.scenario "S-map-04b", "map(fan_out, fail_fast; elem 2 fails), element jobs performed 3,2,1,0",
                mode: :worker,
-               expected: ["run:a", *elements(3), *elements(2, fail_at: 2), "undo:a", "=>", "failure(m)"] do
+               expected: %w[run:a run:e.e1[3] run:e.e2[3] run:e.e1[2] run:e.e2[2] compensate:e.e2[2]
+                            undo:e.e1[2] undo:e.e2[3] undo:e.e1[3] undo:a => failure(m)] do
   dispatched = P::Map04.run(P::ITEMS)
   RubyReactor::Adapters::Sidekiq::MapElementWorker.jobs.reverse!
   Probe.drain
@@ -212,8 +224,8 @@ end
 
 Probe.scenario "S-map-12", "a → map(fan_out; element e1 → async_step u, e2; elem 1 fails) → b",
                mode: :worker,
-               expected: %w[run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] compensate:e.e2[1] undo:e.e1[1]
-                            undo:a run:e.u[0] run:e.u[1] => failure(m)] do
+               expected: %w[run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] compensate:e.e2[1]
+                            undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a run:e.u[0] run:e.u[1] => failure(m)] do
   result = Probe.run_async(P::Map12, { items: [0, 1] })
   Probe.note("StepWorker jobs left after drain: #{RubyReactor::Adapters::Sidekiq::StepWorker.jobs.size}")
   result

@@ -69,7 +69,7 @@ end
 
 Probe.scenario "S-async-01", "a → async_step u(fails), no reader; b",
                mode: :"inline parent + drained StepWorker",
-               expected: %w[run:a run:b run:u => success] do
+               expected: %w[run:a run:b run:u compensate:u => success] do
   result = P::Async01.run({})
   Probe.drain
   result
@@ -77,7 +77,7 @@ end
 
 Probe.scenario "S-async-02", "a → async_step u(fails) → r reads u and fails",
                mode: :"inline parent + Sidekiq inline!",
-               expected: %w[run:a run:u run:r compensate:r undo:a => failure(r)] do
+               expected: %w[run:a run:u compensate:u run:r compensate:r undo:a => failure(r)] do
   Probe.inline_jobs { P::Async02.run({}) }
 end
 
@@ -114,7 +114,7 @@ end
 
 Probe.scenario "S-async-07", "a → async_step u(always fails, retries 3), no reader; b",
                mode: :"inline parent + drained StepWorker",
-               expected: %w[run:a run:b run:u run:u run:u => success] do
+               expected: %w[run:a run:b run:u run:u run:u compensate:u => success] do
   result = P::Async07.run({})
   Probe.drain
   result
@@ -124,7 +124,7 @@ end
 # async_wait_timeout (2s here). The unit is drained afterwards.
 Probe.scenario "S-async-08", "a → async_step u → r reads u; unit never finishes in time",
                mode: :"inline parent + drained StepWorker (after)",
-               expected: %w[run:a undo:a run:u => failure(?)] do
+               expected: %w[run:a undo:a run:u compensate:u => failure(r)] do
   result = P::Async02.run({})
   Probe.note("error=#{result.error.to_s.lines.first&.strip}")
   Probe.drain

@@ -143,13 +143,16 @@ end
 
 Probe.scenario "S-edge-03", "a → b(raises a non-StandardError Exception)",
                mode: :inline, expected: %w[run:a run:b => raised(P::Crash)] do
-  P::Edge03.run({})
+  reactor = P::Edge03.new
+  reactor.run({})
 rescue P::Crash
+  stored = RubyReactor.configuration.storage_adapter.retrieve_context(reactor.context.context_id, "P::Edge03")
+  Probe.note("stored status=#{stored["status"]}") # 008 R-08: aborted, awaiting a manual undo
   "raised(P::Crash)"
 end
 
 Probe.scenario "S-edge-04", "a → b(where-condition raises)",
-               mode: :inline, expected: %w[run:a compensate:b undo:a => failure(b)] do
+               mode: :inline, expected: %w[run:a undo:a => failure(b)] do
   P::Edge04.run({})
 end
 

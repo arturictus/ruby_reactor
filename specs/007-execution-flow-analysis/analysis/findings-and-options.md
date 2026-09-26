@@ -17,6 +17,8 @@ All options are **proposals pending later analysis**, not decisions.
 
 ### F-01 · High · Map elements that already succeeded are never rolled back
 
+- **Resolved by 008**: map rollback replays every completed element's undo stack, highest index first, in inline and fan-out mode (008 R-02, R-03). See `spec/ruby_reactor/rollback/map_rollback_spec.rb`.
+
 - **Scenarios**: [O: S-map-01] [O: S-map-03] [O: S-map-04] [O: S-map-04b] [O: S-map-06] [O: S-map-07] [O: S-map-08]
 - **Reader expects**: a map is "a step that happens N times". When the map fails, or a later step
   fails, the elements that completed are rolled back the way a `compose` child is (README: "automatic
@@ -41,6 +43,8 @@ All options are **proposals pending later analysis**, not decisions.
 
 ### F-02 · High · `compose` with `retries` resumes a child whose earlier steps were already undone
 
+- **Resolved by 008**: a compose retry after a failed attempt starts a fresh child (008 R-05). See `spec/ruby_reactor/rollback/compose_retry_spec.rb`.
+
 - **Scenarios**: [O: S-compose-05] [O: S-compose-05b]
 - **Reader expects**: `retries` on a compose retries the sub-saga. After a failed attempt that
   rolled the child back, the next attempt starts the child again.
@@ -55,6 +59,8 @@ All options are **proposals pending later analysis**, not decisions.
 - **Related**: INV-13 (VIOLATED, no coverage).
 
 ### F-03 · High · Some failures skip rollback entirely
+
+- **Resolved by 008**: argument, condition and unknown `StandardError`s roll back and carry `step_name`; a non-`StandardError` marks a caller-process run `aborted` for a manual undo (008 R-06–R-08). See `spec/ruby_reactor/rollback/failure_rollback_spec.rb`, `aborted_execution_spec.rb`.
 
 - **Scenarios**: [O: S-plain-07] [O: S-edge-03]
 - **Reader expects**: "if any part of your workflow fails … automatically triggers compensation"
@@ -73,6 +79,8 @@ All options are **proposals pending later analysis**, not decisions.
 
 ### F-04 · High · An `async_step`'s own `compensate` / `undo` never run; the docs say they do
 
+- **Resolved by 008**: an `async_step` unit compensates itself once, in its own job, after its final attempt; an inline `undo` is rejected, a class `undo` warned (008 R-09). See `spec/ruby_reactor/rollback/async_step_compensate_spec.rb`.
+
 - **Scenarios**: [O: S-async-02] [O: S-async-07]
 - **Reader expects** (documentation/background_and_async.md:291-292): "`compensate` / `undo` blocks
   declared on an `async_step` still register; they run only if the failure is surfaced into the
@@ -88,6 +96,8 @@ All options are **proposals pending later analysis**, not decisions.
 
 ### F-05 · Medium · Fan-out fail-fast leaves a scheduling-dependent set of elements in place
 
+- **Resolved by 008**: a fail-fast fan-out map settles every index before applying its failure, and every completed element is rolled back, so nothing is left in place whatever the job order (008 R-04). See `spec/ruby_reactor/rollback/map_fan_out_settle_spec.rb`.
+
 - **Scenarios**: [O: S-map-04] vs [O: S-map-04b]
 - **Actual**: the fail-fast marker is checked only when an element job **starts**
   [R: lib/ruby_reactor/map/element_executor.rb:61, :145]. Elements that started, or finished,
@@ -98,6 +108,8 @@ All options are **proposals pending later analysis**, not decisions.
 - **Related**: INV-22 (CONDITIONAL).
 
 ### F-06 · Medium · A raising `where`/`guard` compensates a step whose body never ran
+
+- **Resolved by 008**: a raising `where`/`guard` is a never-started `ConditionError`: not compensated, not retried (008 R-06).
 
 - **Scenario**: [O: S-edge-04]
 - **Actual**: conditions are evaluated inside the step's rescue
@@ -156,6 +168,17 @@ All options are **proposals pending later analysis**, not decisions.
   | `async_step` | left in place | own hooks never run; parent unaffected unless a reader opts in |
   | `async_reactor` | left in place | child self-rolls back; parent unaffected unless a reader opts in |
 
+- **Resolved by 008** (the table rebuilt from 008's rollback contract, RS §2): one rule for every
+  construct, and each construct's own `compensate`/`undo` decides what rollback means for it. The
+  coordinator asks the step whether a success is tracked for undo (`rollback_tracked?`).
+
+  | Construct | Child/element/unit completed, later parent failure | Child/element/unit fails |
+  |---|---|---|
+  | `compose` | undone (full child replay) | child self-rolls back, parent rolls back; a retry starts a fresh child |
+  | `map` | **undone** (every completed element, highest index first) | failed element self-rolls back; completed siblings undone, then the parent rolls back |
+  | `async_step` | left in place (independent by design, documented) | the unit compensates itself once, in its own job; parent unaffected unless a reader opts in |
+  | `async_reactor` | left in place (independent by design, documented) | child self-rolls back; parent unaffected unless a reader opts in |
+
   `compose`, `map` and the async macros accept no `compensate`/`undo` declaration of their own, so
   a reader cannot tell from the class body what will be rolled back. This is the user's
   "does the DSL help clearly understand" question.
@@ -177,6 +200,8 @@ All options are **proposals pending later analysis**, not decisions.
   [R: lib/ruby_reactor/step_worker.rb:275-289]. **Related**: INV-29.
 
 ### F-13 · Low · Failures without step attribution after rollback
+
+- **Resolved by 008**: argument, condition, unknown and compensation failures all carry `step_name` and `reactor_name` (008 R-06, R-07).
 
 - **Scenarios**: [O: S-plain-03] (compensate fails → `CompensationError` → "Execution error: …",
   no `step_name`), [O: S-plain-07] (argument resolution → no `step_name`).

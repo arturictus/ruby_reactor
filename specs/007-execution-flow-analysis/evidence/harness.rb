@@ -176,7 +176,8 @@ module Probe
         retries(**opts[:retries]) if opts[:retries]
         run(&body)
         compensate(&on_compensate)
-        undo(&on_undo)
+        # 008 R-09: an async_step is never undone, so `undo` on one is rejected.
+        undo(&on_undo) unless opts[:kind] == :async_step
         instance_eval(&extra) if extra
       end
     end

@@ -84,7 +84,7 @@ Probe.scenario "S-plain-02", "a → b(raises) → c",
 end
 
 Probe.scenario "S-plain-03", "a → b(fails, its compensate fails)",
-               mode: :inline, expected: %w[run:a run:b compensate:b undo:a => failure(?)] do
+               mode: :inline, expected: %w[run:a run:b compensate:b undo:a => failure(b)] do
   Probe.rollback_note(P::Plain03.run({}))
 end
 
@@ -104,7 +104,7 @@ Probe.scenario "S-plain-06", "a → b(Skipped) → c(fails)",
 end
 
 Probe.scenario "S-plain-07", "a → b(argument transform raises StandardError)",
-               mode: :inline, expected: %w[run:a => failure(?)] do
+               mode: :inline, expected: %w[run:a undo:a => failure(b)] do
   result = P::Plain07.run({})
   Probe.note("error=#{result.error.to_s.lines.first&.strip}")
   result

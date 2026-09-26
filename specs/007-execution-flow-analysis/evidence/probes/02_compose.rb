@@ -147,7 +147,7 @@ end
 Probe.scenario "S-compose-05", "compose(c1 → c2 fails once), compose retries max_attempts: 2",
                mode: :inline,
                expected: %w[run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 retry:child#1
-                            run:child.c2 => success] do
+                            run:child.c1 run:child.c2 => success] do
   result = P::Compose05.run({})
   Probe.note("child result c1 still visible after its undo: #{result.value[:child].inspect}") if result.success?
   result
@@ -156,7 +156,8 @@ end
 Probe.scenario "S-compose-05b", "compose(c1 → c2 fails once, retried) → b(fails)",
                mode: :inline,
                expected: %w[run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 retry:child#1
-                            run:child.c2 run:b compensate:b undo:child.c2 => failure(b)] do
+                            run:child.c1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 =>
+                            failure(b)] do
   P::Compose05b.run({})
 end
 
