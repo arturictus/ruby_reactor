@@ -204,6 +204,18 @@
 * Docs: a park keeps each level's lock without a second `:lock_acquired` only while the gap stays
   within the lock's `ttl`; a lapsed lock is acquired again.
 
+## [0.8.4](https://github.com/arturictus/ruby_reactor/compare/v0.8.3...v0.8.4) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* `retry_defaults` on a reactor raises RubyReactor::Error::DeprecatedDslError. Migration: move the values onto each step that should retry (`retries max_attempts: 3, backoff: :exponential, base_delay: 2` inside the step block, or on the step class once supported). A step without `retries` runs once. `max_attempts: 0` is not valid: use `max_attempts: 1` (or omit `retries`) for a step that must never retry.
+
+### Features
+
+* implement step-scoped retry declarations ([#61](https://github.com/arturictus/ruby_reactor/issues/61)) ([75d9c4e](https://github.com/arturictus/ruby_reactor/commit/75d9c4edca1a6ec53183d56c9c6261e792c98cc2))
+* Inputs protection ([#63](https://github.com/arturictus/ruby_reactor/issues/63)) ([faf90e8](https://github.com/arturictus/ruby_reactor/commit/faf90e8dbfff87f6492af863b90e8247c84bd673))
+
 ## [0.8.3](https://github.com/arturictus/ruby_reactor/compare/v0.8.2...v0.8.3) (2026-09-25)
 
 
