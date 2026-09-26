@@ -18,7 +18,7 @@ class ValidatedSignupAsyncReactor < RubyReactor::Reactor
     argument :profile, result(:profile)
 
     run do |args|
-      profile = args[:profile]
+      profile = args.profile
       if profile.is_a?(RubyReactor::Failure)
         Rails.logger.warn "ValidatedSignupAsyncReactor: profile rejected in the worker — #{profile.validation_errors}"
         profile

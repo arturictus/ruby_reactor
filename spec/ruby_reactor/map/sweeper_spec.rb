@@ -8,7 +8,7 @@ class MapSweepReactor < RubyReactor::Reactor
   input :items
   step :work do
     argument :items, input(:items)
-    run { |a, _| RubyReactor.Success(a[:items]) }
+    run { |a, _| RubyReactor.Success(a.items) }
   end
 end
 

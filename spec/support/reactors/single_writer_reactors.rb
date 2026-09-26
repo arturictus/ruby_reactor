@@ -11,7 +11,7 @@ class SingleWriterCheckpointStep < RubyReactor::Step
     storage = RubyReactor.configuration.storage_adapter
     root_id = context.root_context&.context_id || context.context_id
     newer = RubyReactor::ContextSerializer.deserialize_hash(storage.retrieve_context(root_id, "SingleWriterReactor"))
-    newer.private_data[:parent_checkpoint] = inputs[:marker]
+    newer.private_data[:parent_checkpoint] = inputs.marker
     storage.store_context(root_id, RubyReactor::ContextSerializer.serialize(newer), "SingleWriterReactor")
     Success(:done)
   end

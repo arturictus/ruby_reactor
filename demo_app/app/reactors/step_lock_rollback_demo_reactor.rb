@@ -24,11 +24,11 @@ class StepLockRollbackChargeStep < RubyReactor::Step
   end
 
   def run
-    Success(charged: true, account_id: inputs[:account_id])
+    Success(charged: true, account_id: inputs.account_id)
   end
 
   def undo
-    self.class.undone << inputs[:account_id]
+    self.class.undone << inputs.account_id
     Success(refunded: true)
   end
 end
@@ -40,14 +40,14 @@ class StepLockRollbackContenderStep < RubyReactor::Step
   input :rollback_hold_seconds, :float
 
   def run
-    key = "demo:acct:#{inputs[:account_id]}"
+    key = "demo:acct:#{inputs.account_id}"
     holder = RubyReactor::Lock.new(key, owner: "demo-external", ttl: 30, auto_extend: false)
     holder.acquire
     Thread.new do
-      sleep inputs[:rollback_hold_seconds]
+      sleep inputs.rollback_hold_seconds
       holder.release
     end
-    Failure("contender holds #{key} for #{inputs[:rollback_hold_seconds]}s, then fails")
+    Failure("contender holds #{key} for #{inputs.rollback_hold_seconds}s, then fails")
   end
 end
 

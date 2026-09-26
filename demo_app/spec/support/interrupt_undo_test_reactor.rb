@@ -31,7 +31,7 @@ class InterruptUndoTestReactor < RubyReactor::Reactor
 
     run do |args, context|
       context.reactor_class.trace << :process_run
-      Success(args[:payload])
+      Success(args.payload)
     end
   end
 

@@ -33,10 +33,10 @@ class MultipleRequestsReactor < RubyReactor::Reactor
     argument :service_3_result, result(:call_service_3)
     run do |args, _context|
       Success({
-                request_id: args[:request_id],
-                service_1_result: args[:service_1_result],
-                service_2_result: args[:service_2_result],
-                service_3_result: args[:service_3_result]
+                request_id: args.request_id,
+                service_1_result: args.service_1_result,
+                service_2_result: args.service_2_result,
+                service_3_result: args.service_3_result
               })
     end
   end

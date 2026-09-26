@@ -11,10 +11,10 @@ class RateLimitDemoReactor < RubyReactor::Reactor
     argument :account_id, input(:account_id)
     argument :hold_seconds, input(:hold_seconds)
     run do |args|
-      hold = args[:hold_seconds] || 5
-      puts "[EXECUTION] RateLimitDemoReactor.call_external_api - account_id: #{args[:account_id]}, holding for #{hold}s"
+      hold = args.hold_seconds || 5
+      puts "[EXECUTION] RateLimitDemoReactor.call_external_api - account_id: #{args.account_id}, holding for #{hold}s"
       sleep hold
-      Success(called: true, account_id: args[:account_id], held_for: hold)
+      Success(called: true, account_id: args.account_id, held_for: hold)
     end
   end
 

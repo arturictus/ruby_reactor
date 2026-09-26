@@ -6,7 +6,7 @@ class TestInterruptReactor < RubyReactor::Reactor
   step :prepare do
     argument :user_id, input(:user_id)
     run do |args|
-      Success("prepared-#{args[:user_id]}")
+      Success("prepared-#{args.user_id}")
     end
   end
 
@@ -26,7 +26,7 @@ class TestInterruptReactor < RubyReactor::Reactor
   step :finalize do
     argument :approval_data, result(:wait_for_approval)
     run do |args|
-      Success("finalized-#{args[:approval_data][:status]}-by-#{args[:approval_data][:approver]}")
+      Success("finalized-#{args.approval_data[:status]}-by-#{args.approval_data[:approver]}")
     end
   end
 end

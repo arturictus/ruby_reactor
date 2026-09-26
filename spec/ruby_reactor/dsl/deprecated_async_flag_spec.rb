@@ -98,7 +98,7 @@ RSpec.describe "the removed per-step `async` flag" do
         input :element
         step :double do
           argument :element, input(:element)
-          run { |args| RubyReactor.Success(args[:element] * 2) }
+          run { |args| RubyReactor.Success(args.element * 2) }
         end
       end
     end

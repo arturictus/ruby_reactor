@@ -50,11 +50,11 @@ class RefundLockReactor < RubyReactor::Reactor
     argument :delay, input(:delay)
 
     run do |args, _context|
-      sleep(args[:delay]) if args[:delay] && args[:delay].positive?
+      sleep(args.delay) if args.delay && args.delay.positive?
 
-      Log.record(order_id: args[:order_id], amount: args[:amount], at: Time.current.iso8601(3))
+      Log.record(order_id: args.order_id, amount: args.amount, at: Time.current.iso8601(3))
 
-      Success(order_id: args[:order_id], refunded: args[:amount])
+      Success(order_id: args.order_id, refunded: args.amount)
     end
   end
 

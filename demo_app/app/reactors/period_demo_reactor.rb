@@ -9,8 +9,8 @@ class PeriodDemoReactor < RubyReactor::Reactor
   step :build_report do
     argument :org_id, input(:org_id)
     run do |args|
-      puts "[EXECUTION] PeriodDemoReactor.build_report - org_id: #{args[:org_id]}"
-      Success(built: true, org_id: args[:org_id])
+      puts "[EXECUTION] PeriodDemoReactor.build_report - org_id: #{args.org_id}"
+      Success(built: true, org_id: args.org_id)
     end
   end
 
@@ -18,8 +18,8 @@ class PeriodDemoReactor < RubyReactor::Reactor
     argument :report, result(:build_report)
     wait_for :build_report
     run do |args|
-      puts "[EXECUTION] PeriodDemoReactor.publish_report - report: #{args[:report]}"
-      Success(published: true, report: args[:report])
+      puts "[EXECUTION] PeriodDemoReactor.publish_report - report: #{args.report}"
+      Success(published: true, report: args.report)
     end
   end
 
@@ -31,13 +31,13 @@ class PeriodDemoReactor < RubyReactor::Reactor
     argument :report, result(:publish_report)
     wait_for :publish_report
     run do |args|
-      if args[:notify] == "skip"
+      if args.notify == "skip"
         puts "[EXECUTION] PeriodDemoReactor.notify_subscribers - skipped (notify: \"skip\")"
-        skip!(args[:report])
+        skip!(args.report)
       end
 
-      puts "[EXECUTION] PeriodDemoReactor.notify_subscribers - report: #{args[:report]}"
-      Success(args[:report])
+      puts "[EXECUTION] PeriodDemoReactor.notify_subscribers - report: #{args.report}"
+      Success(args.report)
     end
   end
 

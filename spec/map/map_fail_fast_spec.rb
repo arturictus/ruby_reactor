@@ -19,10 +19,10 @@ RSpec.describe "Map fail_fast Option" do
         step :process do
           argument :val, input(:item)
           run do |args, _|
-            if args[:val] == "error"
-              RubyReactor::Failure("Failed: #{args[:val]}")
+            if args.val == "error"
+              RubyReactor::Failure("Failed: #{args.val}")
             else
-              RubyReactor::Success(args[:val].upcase)
+              RubyReactor::Success(args.val.upcase)
             end
           end
         end
@@ -62,10 +62,10 @@ RSpec.describe "Map fail_fast Option" do
         step :process do
           argument :val, input(:item)
           run do |args, _|
-            if args[:val] == "error"
-              RubyReactor::Failure("Failed: #{args[:val]}")
+            if args.val == "error"
+              RubyReactor::Failure("Failed: #{args.val}")
             else
-              RubyReactor::Success(args[:val].upcase)
+              RubyReactor::Success(args.val.upcase)
             end
           end
         end
@@ -118,10 +118,10 @@ RSpec.describe "Map fail_fast Option" do
         step :process do
           argument :val, input(:item)
           run do |args, _|
-            if args[:val].start_with?("error")
-              RubyReactor::Failure("Failed: #{args[:val]}")
+            if args.val.start_with?("error")
+              RubyReactor::Failure("Failed: #{args.val}")
             else
-              RubyReactor::Success(args[:val].upcase)
+              RubyReactor::Success(args.val.upcase)
             end
           end
         end
@@ -203,10 +203,10 @@ RSpec.describe "Map fail_fast Option" do
         step :process do
           argument :val, input(:item)
           run do |args, _|
-            if args[:val] == "error"
-              RubyReactor::Failure("Failed: #{args[:val]}")
+            if args.val == "error"
+              RubyReactor::Failure("Failed: #{args.val}")
             else
-              RubyReactor::Success(args[:val].upcase)
+              RubyReactor::Success(args.val.upcase)
             end
           end
         end
@@ -258,7 +258,7 @@ RSpec.describe "Map fail_fast Option" do
         step :validate do
           argument :rec, input(:record)
           run do |args, _|
-            record = args[:rec]
+            record = args.rec
             errors = []
 
             errors << "Missing name" if record[:name].nil? || record[:name].empty?
@@ -337,10 +337,10 @@ RSpec.describe "Map fail_fast Option" do
           argument :fail_val, input(:fail_item)
 
           run do |args|
-            if args[:val] == args[:fail_val]
-              RubyReactor::Failure("Simulated failure for #{args[:val]}")
+            if args.val == args.fail_val
+              RubyReactor::Failure("Simulated failure for #{args.val}")
             else
-              RubyReactor::Success(args[:val] * 2)
+              RubyReactor::Success(args.val * 2)
             end
           end
         end

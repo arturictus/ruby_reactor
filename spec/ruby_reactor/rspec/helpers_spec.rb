@@ -12,7 +12,7 @@ RSpec.describe RubyReactor::RSpec::Helpers, type: :reactor do
 
     step :add_one do
       run do |inputs|
-        RubyReactor::Success(inputs[:value] + 1)
+        RubyReactor::Success(inputs.value + 1)
       end
     end
   end
@@ -30,14 +30,14 @@ RSpec.describe RubyReactor::RSpec::Helpers, type: :reactor do
     background all: true
     input :value
     step :add_one do
-      run { |inputs| RubyReactor::Success(inputs[:value] + 1) }
+      run { |inputs| RubyReactor::Success(inputs.value + 1) }
     end
   end
 
   class HelpersAsyncStepReactor < RubyReactor::Reactor
     input :value
     step :add_one do
-      run { |inputs| RubyReactor::Success(inputs[:value] + 1) }
+      run { |inputs| RubyReactor::Success(inputs.value + 1) }
     end
 
     background before: :add_one
@@ -82,7 +82,7 @@ RSpec.describe RubyReactor::RSpec::Helpers, type: :reactor do
 
     step :prepare do
       argument :user_id, input(:user_id)
-      run { |args| RubyReactor::Success("prepared-#{args[:user_id]}") }
+      run { |args| RubyReactor::Success("prepared-#{args.user_id}") }
     end
 
     interrupt :approval do
@@ -96,7 +96,7 @@ RSpec.describe RubyReactor::RSpec::Helpers, type: :reactor do
 
     step :finalize do
       argument :approval_data, result(:approval)
-      run { |args| RubyReactor::Success("finalized-by-#{args[:approval_data][:approver]}") }
+      run { |args| RubyReactor::Success("finalized-by-#{args.approval_data[:approver]}") }
     end
   end
 

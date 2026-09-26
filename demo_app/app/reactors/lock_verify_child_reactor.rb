@@ -8,8 +8,8 @@ class LockVerifyChildReactor < RubyReactor::Reactor
   step :verify_ledger do
     argument :order_id, input(:order_id)
     run do |args|
-      puts "[EXECUTION] LockVerifyChildReactor.verify_ledger - order_id: #{args[:order_id]}"
-      Success(verified: true, order_id: args[:order_id])
+      puts "[EXECUTION] LockVerifyChildReactor.verify_ledger - order_id: #{args.order_id}"
+      Success(verified: true, order_id: args.order_id)
     end
   end
 

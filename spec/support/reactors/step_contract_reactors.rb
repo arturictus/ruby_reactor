@@ -37,8 +37,8 @@ class ContractAsyncStepReactor < RubyReactor::Reactor
   step :confirm do
     argument :charge, result(:charge)
     run do |args|
-      StepContractFixtures.received << args[:charge]
-      args[:charge].is_a?(RubyReactor::Failure) ? args[:charge] : RubyReactor.Success(args[:charge])
+      StepContractFixtures.received << args.charge
+      args.charge.is_a?(RubyReactor::Failure) ? args.charge : RubyReactor.Success(args.charge)
     end
   end
 
@@ -77,8 +77,8 @@ class ContractInlineAsyncReactor < RubyReactor::Reactor
   step :confirm do
     argument :charge, result(:charge)
     run do |args|
-      StepContractFixtures.received << args[:charge]
-      args[:charge].is_a?(RubyReactor::Failure) ? args[:charge] : RubyReactor.Success(args[:charge])
+      StepContractFixtures.received << args.charge
+      args.charge.is_a?(RubyReactor::Failure) ? args.charge : RubyReactor.Success(args.charge)
     end
   end
 
@@ -95,8 +95,8 @@ class ContractNameResolvedAsyncReactor < RubyReactor::Reactor
   step :confirm do
     argument :charge, result(:charge)
     run do |args|
-      StepContractFixtures.received << args[:charge]
-      args[:charge].is_a?(RubyReactor::Failure) ? args[:charge] : RubyReactor.Success(args[:charge])
+      StepContractFixtures.received << args.charge
+      args.charge.is_a?(RubyReactor::Failure) ? args.charge : RubyReactor.Success(args.charge)
     end
   end
 

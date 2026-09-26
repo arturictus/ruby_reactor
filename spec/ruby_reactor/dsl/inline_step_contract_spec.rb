@@ -96,7 +96,7 @@ RSpec.describe "Inline step input contracts" do
         inputs { input :greeting, optional: true, default: "x" }
         argument :greeting, input(:greeting)
         run do |args, _|
-          received << args[:greeting]
+          received << args.greeting
           RubyReactor.Success(args)
         end
       end

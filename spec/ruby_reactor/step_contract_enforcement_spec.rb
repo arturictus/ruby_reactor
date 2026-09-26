@@ -28,7 +28,7 @@ RSpec.describe "Step input contract enforcement", type: :reactor do
       input :currency, :string, included_in?: %w[USD EUR]
 
       define_method(:run) do
-        sink << inputs
+        sink << inputs.to_h
         Success(inputs)
       end
     end
@@ -59,7 +59,7 @@ RSpec.describe "Step input contract enforcement", type: :reactor do
         input :note, :string, optional: true
 
         define_method(:run) do
-          sink << inputs
+          sink << inputs.to_h
           Success(inputs)
         end
       end)
@@ -123,8 +123,8 @@ RSpec.describe "Step input contract enforcement", type: :reactor do
         input :notify, :bool
 
         define_method(:run) do
-          sink << inputs
-          Success(inputs[:notify])
+          sink << inputs.to_h
+          Success(inputs.notify)
         end
       end)
       notify_reactor = Class.new(RubyReactor::Reactor) do
@@ -212,7 +212,7 @@ RSpec.describe "Step input contract enforcement", type: :reactor do
         input :greeting, optional: true, default: "x"
 
         define_method(:run) do
-          sink << inputs[:greeting]
+          sink << inputs.greeting
           Success(inputs)
         end
       end)

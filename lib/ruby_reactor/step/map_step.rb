@@ -3,8 +3,18 @@
 module RubyReactor
   class Step
     class MapStep < RubyReactor::Step
+      # Untyped, so no validation: declared only so `inputs.x` can read them.
+      input :source
+      input :mapped_reactor_class
+      input :argument_mappings, optional: true
+      input :strict_ordering, optional: true
+      input :batch_size, optional: true
+      input :collect_block, optional: true
+      input :fail_fast, optional: true
+      input :fan_out, optional: true
+
       def run
-        return RubyReactor::Failure("Map source cannot be nil") if inputs[:source].nil?
+        return RubyReactor::Failure("Map source cannot be nil") if inputs.source.nil?
 
         # Initialize map state in context if not present
         context.map_operations ||= {}
@@ -77,21 +87,21 @@ module RubyReactor
       def fan_out?
         return false if context.map_metadata || context.root_context&.map_metadata
 
-        inputs[:fan_out]
+        inputs.fan_out
       end
 
       def run_inline
         results = execute_inline_map
         return results if results.is_a?(RubyReactor::Failure) || results.is_a?(RubyReactor::Halt)
 
-        process_results(results, inputs[:collect_block], inputs[:fail_fast])
+        process_results(results, inputs.collect_block, inputs.fail_fast)
       end
 
       def execute_inline_map
         results = []
-        fail_fast = inputs[:fail_fast].nil? || inputs[:fail_fast]
+        fail_fast = inputs.fail_fast.nil? || inputs.fail_fast
 
-        inputs[:source].each_with_index do |element, index|
+        inputs.source.each_with_index do |element, index|
           result = execute_single_element(element, index)
 
           # An element-level Halt propagates as a run halt: stop immediately
@@ -110,8 +120,8 @@ module RubyReactor
       end
 
       def execute_single_element(element, index)
-        mapped_inputs = self.class.build_mapped_inputs(inputs[:argument_mappings] || {}, context, element)
-        child_context = RubyReactor::Context.new(mapped_inputs, inputs[:mapped_reactor_class])
+        mapped_inputs = self.class.build_mapped_inputs(inputs.argument_mappings || {}, context, element)
+        child_context = RubyReactor::Context.new(mapped_inputs, inputs.mapped_reactor_class)
 
         link_contexts(child_context, context)
 
@@ -131,10 +141,10 @@ module RubyReactor
           name: context.current_step,
           type: :map_ref,
           map_id: map_id,
-          element_reactor_class: inputs[:mapped_reactor_class].name
+          element_reactor_class: inputs.mapped_reactor_class.name
         }
 
-        executor = RubyReactor::Executor.new(inputs[:mapped_reactor_class], {}, child_context)
+        executor = RubyReactor::Executor.new(inputs.mapped_reactor_class, {}, child_context)
         executor.execute
         executor.result
       end
@@ -162,9 +172,9 @@ module RubyReactor
       def run_async(step_name)
         map_id = "#{context.context_id}:#{step_name}"
         context.map_operations[step_name.to_s] = map_id
-        prepare_async_execution(map_id, inputs[:source].size)
+        prepare_async_execution(map_id, inputs.source.size)
 
-        reactor_class_info = build_reactor_class_info(inputs[:mapped_reactor_class], step_name)
+        reactor_class_info = build_reactor_class_info(inputs.mapped_reactor_class, step_name)
 
         initialize_map_metadata(map_id, reactor_class_info)
 
@@ -175,7 +185,7 @@ module RubyReactor
           name: step_name.to_s,
           type: :map_ref,
           map_id: map_id,
-          element_reactor_class: inputs[:mapped_reactor_class].name
+          element_reactor_class: inputs.mapped_reactor_class.name
         }
 
         RubyReactor::DispatchResult.new(
@@ -188,9 +198,9 @@ module RubyReactor
       def initialize_map_metadata(map_id, reactor_class_info)
         storage = RubyReactor.configuration.storage_adapter
         storage.initialize_map_operation(
-          map_id, inputs[:source].size, context.reactor_class.name,
-          strict_ordering: inputs[:strict_ordering], reactor_class_info: reactor_class_info,
-          **map_recovery_metadata(inputs[:step_name] || context.current_step)
+          map_id, inputs.source.size, context.reactor_class.name,
+          strict_ordering: inputs.strict_ordering, reactor_class_info: reactor_class_info,
+          **map_recovery_metadata(context.current_step)
         )
       end
 
@@ -215,21 +225,21 @@ module RubyReactor
         # own worker, with the map counter/collector tracking completion. This
         # lets elements with async steps or async retries hand off correctly
         # instead of being forced to run synchronously in a single worker.
-        batch_size = inputs[:batch_size] || inputs[:source].size
+        batch_size = inputs.batch_size || inputs.source.size
 
         RubyReactor::Map::Dispatcher.perform(
           map_id: map_id,
           parent_context_id: context.context_id,
           parent_reactor_class_name: context.reactor_class.name,
-          source: inputs[:source],
+          source: inputs.source,
           batch_size: batch_size,
           step_name: step_name,
-          argument_mappings: inputs[:argument_mappings],
-          strict_ordering: inputs[:strict_ordering],
-          mapped_reactor_class: inputs[:mapped_reactor_class],
-          fail_fast: inputs[:fail_fast].nil? || inputs[:fail_fast]
+          argument_mappings: inputs.argument_mappings,
+          strict_ordering: inputs.strict_ordering,
+          mapped_reactor_class: inputs.mapped_reactor_class,
+          fail_fast: inputs.fail_fast.nil? || inputs.fail_fast
         )
-        queue_collector(map_id, step_name, inputs[:strict_ordering])
+        queue_collector(map_id, step_name, inputs.strict_ordering)
         "map:#{map_id}"
       end
 

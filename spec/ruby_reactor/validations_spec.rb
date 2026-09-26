@@ -33,9 +33,9 @@ RSpec.describe "Dry::Validation Integration" do
             run do |args, _context|
               user = {
                 id: SecureRandom.uuid,
-                username: args[:username],
-                email: args[:email],
-                age: args[:age],
+                username: args.username,
+                email: args.email,
+                age: args.age,
                 created_at: Time.now
               }
               Success(user)
@@ -178,7 +178,7 @@ RSpec.describe "Dry::Validation Integration" do
             argument :order, input(:order)
 
             run do |args, _context|
-              order = args[:order]
+              order = args.order
               total = order[:items].sum { |item| item[:quantity] * item[:price] }
 
               processed_order = order.merge(
@@ -283,7 +283,7 @@ RSpec.describe "Dry::Validation Integration" do
             argument :user, input(:user)
 
             run do |args, _context|
-              user = args[:user]
+              user = args.user
               profile = {
                 full_name: "#{user[:first_name]} #{user[:last_name]}",
                 email: user[:email],
@@ -358,9 +358,9 @@ RSpec.describe "Dry::Validation Integration" do
             run do |args, _context|
               # Simulate payment validation
               validated_data = {
-                amount: args[:amount],
-                currency: args[:currency],
-                card_token: args[:card_token],
+                amount: args.amount,
+                currency: args.currency,
+                card_token: args.card_token,
                 validated_at: Time.now
               }
               Success(validated_data)
@@ -371,7 +371,7 @@ RSpec.describe "Dry::Validation Integration" do
             argument :validated_data, result(:validate_payment_data)
 
             run do |args, _context|
-              data = args[:validated_data]
+              data = args.validated_data
               # Simulate payment processing
               payment_result = {
                 transaction_id: SecureRandom.uuid,
@@ -466,7 +466,7 @@ RSpec.describe "Dry::Validation Integration" do
             end
 
             run do |args, _context|
-              product = args[:product_data]
+              product = args.product_data
               inventory_item = {
                 product_id: SecureRandom.uuid,
                 name: product[:name],
@@ -474,7 +474,7 @@ RSpec.describe "Dry::Validation Integration" do
                 category: product[:category],
                 price: product[:price],
                 stock_quantity: product[:stock_quantity],
-                warehouse_id: args[:warehouse_id],
+                warehouse_id: args.warehouse_id,
                 description: product[:description],
                 created_at: Time.now
               }
@@ -486,7 +486,7 @@ RSpec.describe "Dry::Validation Integration" do
             argument :inventory_item, result(:validate_and_prepare_inventory)
 
             run do |args, _context|
-              item = args[:inventory_item]
+              item = args.inventory_item
               # Simulate inventory update
               updated_item = item.merge(
                 last_updated: Time.now,
@@ -598,7 +598,7 @@ RSpec.describe "Dry::Validation Integration" do
             end
 
             run do |args, _context|
-              booking = args[:booking]
+              booking = args.booking
 
               # Custom validation: check_out must be after check_in
               if booking[:check_out] <= booking[:check_in]
@@ -618,7 +618,7 @@ RSpec.describe "Dry::Validation Integration" do
             argument :validated_booking, result(:validate_booking)
 
             run do |args, _context|
-              booking = args[:validated_booking]
+              booking = args.validated_booking
               confirmed_booking = booking.merge(
                 status: "confirmed",
                 confirmation_code: "BK#{SecureRandom.hex(4).upcase}"
@@ -694,7 +694,7 @@ RSpec.describe "Dry::Validation Integration" do
             argument :data, input(:raw_data)
 
             run do |args, _context|
-              raw = args[:data]
+              raw = args.data
               # Simulate data processing that might return invalid results
               processed = {
                 id: SecureRandom.uuid,
@@ -717,7 +717,7 @@ RSpec.describe "Dry::Validation Integration" do
             argument :processed_data, result(:process_data)
 
             run do |args, _context|
-              data = args[:processed_data]
+              data = args.processed_data
               # Simulate storing the result
               stored = data.merge(
                 stored_at: Time.now,
@@ -842,7 +842,7 @@ RSpec.describe "Dry::Validation Integration" do
             argument :data, input(:data)
 
             run do |args, _context|
-              Success(args[:data])
+              Success(args.data)
             end
           end
 
@@ -896,7 +896,7 @@ RSpec.describe "Dry::Validation Integration" do
 
           step :echo do
             argument :user, input(:user)
-            run { |args, _| Success(args[:user]) }
+            run { |args, _| Success(args.user) }
           end
           returns :echo
         end
@@ -957,7 +957,7 @@ RSpec.describe "Dry::Validation Integration" do
 
           step :build do
             argument :record, input(:record)
-            run { |args, _| Success(args[:record]) }
+            run { |args, _| Success(args.record) }
           end
           returns :build
         end
@@ -989,7 +989,7 @@ RSpec.describe "Dry::Validation Integration" do
 
           step :build do
             argument :order, input(:order)
-            run { |args, _| Success(args[:order]) }
+            run { |args, _| Success(args.order) }
           end
           returns :build
         end

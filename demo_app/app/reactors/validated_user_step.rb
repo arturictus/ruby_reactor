@@ -12,7 +12,7 @@ class ValidatedUserStep < RubyReactor::Step
   input :marketing_opt_in, :bool
 
   def run
-    Rails.logger.info "ValidatedUserStep: creating profile for #{inputs[:email]}"
-    Success(inputs.merge(created_at: Time.current.iso8601))
+    Rails.logger.info "ValidatedUserStep: creating profile for #{inputs.email}"
+    Success(inputs.to_h.merge(created_at: Time.current.iso8601))
   end
 end

@@ -145,11 +145,11 @@ step :final_step do
   # Get the complete result hash from the composed reactor
   argument :payment_result, result(:process_payment)
   
-  run { |args| 
-    # args[:payment_result] contains the full hash: 
+  run { |inputs| 
+    # inputs.payment_result contains the full hash: 
     # { authorize_payment: ..., capture_payment: ... }
     # 
-    # args[:payment_status] contains just the capture_payment result
+    # inputs.payment_status contains just the capture_payment result
   }
 end
 ```

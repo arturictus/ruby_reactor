@@ -18,7 +18,7 @@ class TestAsyncReactor < RubyReactor::Reactor
     argument :email, input(:email)
 
     run do |args, _context|
-      if args[:user_id].to_i > 0 && args[:email].include?("@")
+      if args.user_id.to_i > 0 && args.email.include?("@")
         Success("valid")
       else
         Failure("Invalid input")
@@ -28,10 +28,12 @@ class TestAsyncReactor < RubyReactor::Reactor
 
   step :create_user do
     argument :validation, result(:validate_input)
+    argument :user_id, input(:user_id)
+    argument :email, input(:email)
 
     run do |args, _context|
       # Simulate user creation
-      user = { id: args[:user_id], email: args[:email] }
+      user = { id: args.user_id, email: args.email }
       Success(user)
     end
   end
@@ -41,7 +43,7 @@ class TestAsyncReactor < RubyReactor::Reactor
 
     run do |args, _context|
       # Simulate email sending
-      Success("Email sent to #{args[:user][:email]}")
+      Success("Email sent to #{args.user[:email]}")
     end
   end
 end
@@ -55,7 +57,7 @@ class TestStepAsyncReactor < RubyReactor::Reactor
     argument :email, input(:email)
 
     run do |args, _context|
-      if args[:user_id].to_i > 0 && args[:email].include?("@")
+      if args.user_id.to_i > 0 && args.email.include?("@")
         Success("valid")
       else
         Failure("Invalid input")
@@ -65,10 +67,12 @@ class TestStepAsyncReactor < RubyReactor::Reactor
 
   step :create_user do
     argument :validation, result(:validate_input)
+    argument :user_id, input(:user_id)
+    argument :email, input(:email)
 
     run do |args, _context|
       # Simulate user creation
-      user = { id: args[:user_id], email: args[:email] }
+      user = { id: args.user_id, email: args.email }
       Success(user)
     end
   end
@@ -80,7 +84,7 @@ class TestStepAsyncReactor < RubyReactor::Reactor
 
     run do |args, _context|
       # Simulate email sending
-      Success("Email sent to #{args[:user][:email]}")
+      Success("Email sent to #{args.user[:email]}")
     end
   end
 end
@@ -172,8 +176,8 @@ class TestInnerReactorWithAsync < RubyReactor::Reactor
 
   step :sync_step do
     run do |args, _context|
-      puts "[INNER] Executing sync_step with value: #{args[:value]}"
-      RubyReactor.Success(args[:value] * 2)
+      puts "[INNER] Executing sync_step with value: #{args.value}"
+      RubyReactor.Success(args.value * 2)
     end
   end
 
@@ -181,8 +185,8 @@ class TestInnerReactorWithAsync < RubyReactor::Reactor
     argument :doubled, result(:sync_step)
 
     run do |args, _context|
-      puts "[INNER] Executing async_step with doubled: #{args[:doubled]}"
-      RubyReactor.Success(args[:doubled] + 1)
+      puts "[INNER] Executing async_step with doubled: #{args.doubled}"
+      RubyReactor.Success(args.doubled + 1)
     end
   end
 
@@ -211,12 +215,12 @@ class TestRetryInnerReactor < RubyReactor::Reactor
 
     run do |args, context|
       attempt = context.retry_context.attempts_for_step(:failing_step)
-      puts "[INNER RETRY] Attempt #{attempt} for value: #{args[:value]}"
+      puts "[INNER RETRY] Attempt #{attempt} for value: #{args.value}"
 
       if attempt < 1 # First attempt fails, second succeeds
         RubyReactor.Failure("Temporary failure")
       else
-        RubyReactor.Success(args[:value] * 3)
+        RubyReactor.Success(args.value * 3)
       end
     end
   end

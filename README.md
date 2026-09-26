@@ -251,12 +251,12 @@ class ReserveInventoryStep < RubyReactor::Step
   retries max_attempts: 3
 
   def run
-    reservation_id = InventoryService.reserve(inputs[:order][:items])
+    reservation_id = InventoryService.reserve(inputs.order[:items])
     Success(reservation_id: reservation_id)
   end
 
   def compensate
-    InventoryService.release_partial(inputs[:order][:items])
+    InventoryService.release_partial(inputs.order[:items])
     Success()
   end
 
@@ -329,7 +329,7 @@ require 'ruby_reactor'
 
 class ValidateEmailStep < RubyReactor::Step
   def run
-    email = inputs[:email]
+    email = inputs.email
     email&.include?('@') ? Success(email.strip) : Failure("Email must contain @")
   end
 end
@@ -338,14 +338,14 @@ class CreateUserStep < RubyReactor::Step
   def run
     Success(
       id: rand(10000),
-      email: inputs[:email],
-      password_hash: inputs[:password_hash],
+      email: inputs.email,
+      password_hash: inputs.password_hash,
       created_at: Time.now
     )
   end
 
   def compensate
-    Notify.to(inputs[:email])
+    Notify.to(inputs.email)
     Success()
   end
 end
@@ -360,9 +360,9 @@ class UserRegistrationReactor < RubyReactor::Reactor
 
   step :hash_password do
     argument :password, input(:password)
-    run do |args, _context|
+    run do |inputs, _context|
       require 'digest'
-      Success(Digest::SHA256.hexdigest(args[:password]))
+      Success(Digest::SHA256.hexdigest(inputs.password))
     end
   end
 
@@ -375,13 +375,13 @@ class UserRegistrationReactor < RubyReactor::Reactor
     argument :email, result(:validate_email)
     wait_for :create_user
 
-    run do |args, _context|
-      Email.send!(args[:email], "verify your email")
+    run do |inputs, _context|
+      Email.send!(inputs.email, "verify your email")
       Success()
     end
 
-    compensate do |_error, args, _context|
-      Email.send("support@acme.com", "Email verification for #{args[:email]} couldn't be sent")
+    compensate do |_error, inputs, _context|
+      Email.send("support@acme.com", "Email verification for #{inputs.email} couldn't be sent")
       Success()
     end
   end
@@ -445,12 +445,12 @@ class CreateUserReactor < RubyReactor::Reactor
   input :params
 
   step :validate_inputs do
-    run { |args| validate(args[:params]) }
+    run { |inputs| validate(inputs.params) }
   end
 
   step :create_user do
     argument :params, result(:validate_inputs)
-    run { |args| User.create(args[:params]) }
+    run { |inputs| User.create(inputs.params) }
   end
 
   # :create_user is the LAST step to run in the calling process.
@@ -459,13 +459,13 @@ class CreateUserReactor < RubyReactor::Reactor
 
   step :open_account do
     argument :user, result(:create_user)
-    run { |args| Bank.open_account(args[:user]) }
+    run { |inputs| Bank.open_account(inputs.user) }
   end
 
   step :report_new_user do
     argument :user, result(:create_user)
     wait_for :open_account
-    run { |args| Analytics.track(args[:user]) }
+    run { |inputs| Analytics.track(inputs.user) }
   end
 end
 
@@ -516,19 +516,19 @@ class SignupReactor < RubyReactor::Reactor
 
   async_step :send_email do
     argument :to, input(:email)
-    run { |args| Mailer.welcome(args[:to]).deliver_now; Success(:sent) }
+    run { |inputs| Mailer.welcome(inputs.to).deliver_now; Success(:sent) }
   end
 
   # Does NOT wait — it has no dependency on :send_email.
   step :record_signup do
     argument :email, input(:email)
-    run { |args| Success(Signup.create!(email: args[:email])) }
+    run { |inputs| Success(Signup.create!(email: inputs.email)) }
   end
 
   # DOES wait, because it reads the result.
   step :confirm_delivery do
     argument :delivery, result(:send_email)
-    run { |args| Success("confirmed") }
+    run { |inputs| Success("confirmed") }
   end
 end
 ```
@@ -566,8 +566,8 @@ class SignupReactor < RubyReactor::Reactor
 
   step :verify do
     argument :account, result(:provision_account)   # waits for the child
-    run do |args|
-      args[:account].success? ? Success(args[:account].value) : Failure(args[:account].error)
+    run do |inputs|
+      inputs.account.success? ? Success(inputs.account.value) : Failure(inputs.account.error)
     end
   end
 end
@@ -669,7 +669,7 @@ Pause execution to wait for external events like webhooks or user approvals.
 ```ruby
 class ApprovalReactor < RubyReactor::Reactor
   step :submit_request do
-    run { |args| RequestService.submit(args) }
+    run { |inputs| RequestService.submit(inputs.to_h) }
   end
 
   interrupt :wait_for_manager do
@@ -680,8 +680,8 @@ class ApprovalReactor < RubyReactor::Reactor
 
   step :process_decision do
     argument :decision, result(:wait_for_manager)
-    run do |args| 
-      args[:decision] == 'approved' ? Success() : Failure("Rejected")
+    run do |inputs| 
+      inputs.decision == 'approved' ? Success() : Failure("Rejected")
     end
   end
 end
@@ -718,7 +718,7 @@ class RefundOrderReactor < RubyReactor::Reactor
 
   step :refund do
     argument :order_id, input(:order_id)
-    run { |args| PaymentGateway.refund(args[:order_id]) }
+    run { |inputs| PaymentGateway.refund(inputs.order_id) }
   end
 end
 
@@ -747,7 +747,7 @@ class GeocodeReactor < RubyReactor::Reactor
 
   step :geocode do
     argument :address, input(:address)
-    run { |args| Geocoder.lookup(args[:address]) }
+    run { |inputs| Geocoder.lookup(inputs.address) }
   end
 end
 
@@ -761,7 +761,7 @@ class MonthlyBillingReactor < RubyReactor::Reactor
 
   step :build do
     argument :org_id, input(:org_id)
-    run { |args| Billing.generate(args[:org_id]) }
+    run { |inputs| Billing.generate(inputs.org_id) }
   end
 end
 
@@ -777,7 +777,7 @@ class ChargeReactor < RubyReactor::Reactor
 
   step :charge do
     argument :account_id, input(:account_id)
-    run { |args| Stripe.charge(args[:account_id]) }
+    run { |inputs| Stripe.charge(inputs.account_id) }
   end
 end
 
@@ -794,7 +794,7 @@ class OrderedTransactionReactor < RubyReactor::Reactor
 
   step :apply do
     argument :transaction, input(:transaction)
-    run { |args| Ledger.apply(args[:transaction]) }
+    run { |inputs| Ledger.apply(inputs.transaction) }
   end
 end
 
@@ -818,7 +818,7 @@ class ChargeReactor < RubyReactor::Reactor
 
   step :charge do
     argument :account_id, input(:account_id)
-    run { |args| Stripe.charge(args[:account_id]) }
+    run { |inputs| Stripe.charge(inputs.account_id) }
   end
 end
 ```
@@ -843,9 +843,9 @@ A step's `run` block can also return `Halt(reason: "...")` to stop the reactor c
 ```ruby
 step :ensure_active do
   argument :user, result(:fetch_user)
-  run do |args, _ctx|
-    next Halt(reason: "user_opted_out") if args[:user].opted_out?
-    Success(args[:user])
+  run do |inputs, _ctx|
+    next Halt(reason: "user_opted_out") if inputs.user.opted_out?
+    Success(inputs.user)
   end
 end
 ```
@@ -855,9 +855,9 @@ To skip a *single* step while the reactor continues — the step did nothing, bu
 ```ruby
 step :maybe_sync do
   argument :user, result(:fetch_user)
-  run do |args, _ctx|
-    next Skipped(args[:user]) if args[:user].already_synced?
-    Success(sync!(args[:user]))
+  run do |inputs, _ctx|
+    next Skipped(inputs.user) if inputs.user.already_synced?
+    Success(sync!(inputs.user))
   end
 end
 ```
@@ -881,7 +881,7 @@ class DataProcessingReactor < RubyReactor::Reactor
 
     step :transform do
       argument :item, input(:item)
-      run { |args| transform_item(args[:item]) }
+      run { |inputs| transform_item(inputs.item) }
     end
 
     returns :transform
@@ -915,7 +915,7 @@ map :archive_old_users do
 
   step :archive do
     argument :user, input(:user)
-    run { |args| args[:user].archive! }
+    run { |inputs| inputs.user.archive! }
   end
   
   returns :archive
@@ -923,9 +923,9 @@ end
 
 step :summary do
   argument :results, result(:archive_old_users)
-  run do |args|
-    puts "Archived: #{args[:results].successes.count}"
-    puts "Failed: #{args[:results].failures.count}"
+  run do |inputs|
+    puts "Archived: #{inputs.results.successes.count}"
+    puts "Failed: #{inputs.results.failures.count}"
     Success()
   end
 end
@@ -1007,12 +1007,12 @@ class ValidatedUserReactor < RubyReactor::Reactor
     argument :age, input(:age)
     argument :bio, input(:bio)
 
-    run do |args, context|
+    run do |inputs, context|
       profile = {
-        name: args[:name],
-        email: args[:email],
-        age: args[:age],
-        bio: args[:bio] || "No bio provided",
+        name: inputs.name,
+        email: inputs.email,
+        age: inputs.age,
+        bio: inputs.bio || "No bio provided",
         created_at: Time.now
       }
       Success(profile)
@@ -1126,7 +1126,7 @@ step :charge do
   argument :amount,   input(:amount)
   argument :currency, input(:currency)
 
-  run { |args, _| charge!(args) }
+  run { |inputs, _| charge!(inputs) }
 end
 ```
 
@@ -1203,9 +1203,9 @@ class OrderProcessingReactor < RubyReactor::Reactor
   step :validate_user do
     argument :user_id, input(:user_id)
 
-    run do |args, context|
+    run do |inputs, context|
       # Check if user exists and has permission to purchase
-      user = find_user(args[:user_id])
+      user = find_user(inputs.user_id)
       user ? Success(user) : Failure("User not found")
     end
   end
@@ -1213,8 +1213,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
   step :validate_products do
     argument :product_ids, input(:product_ids)
 
-    run do |args, context|
-      products = args[:product_ids].map { |id| find_product(id) }
+    run do |inputs, context|
+      products = inputs.product_ids.map { |id| find_product(id) }
       if products.all?
         Success(products)
       else
@@ -1226,8 +1226,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
   step :calculate_total do
     argument :products, result(:validate_products)
 
-    run do |args, context|
-      total = args[:products].sum { |p| p[:price] }
+    run do |inputs, context|
+      total = inputs.products.sum { |p| p[:price] }
       Success(total)
     end
   end
@@ -1235,8 +1235,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
   step :check_inventory do
     argument :products, result(:validate_products)
 
-    run do |args, context|
-      available = args[:products].all? { |p| p[:stock] > 0 }
+    run do |inputs, context|
+      available = inputs.products.all? { |p| p[:stock] > 0 }
       available ? Success(true) : Failure("Out of stock")
     end
   end
@@ -1245,15 +1245,15 @@ class OrderProcessingReactor < RubyReactor::Reactor
     argument :user, result(:validate_user)
     argument :total, result(:calculate_total)
 
-    run do |args, context|
+    run do |inputs, context|
       # Process payment logic here
-      payment_id = process_payment(args[:user][:id], args[:total])
+      payment_id = process_payment(inputs.user[:id], inputs.total)
       Success(payment_id)
     end
 
-    undo do |error, args, context|
+    undo do |error, inputs, context|
       # Refund payment on failure
-      refund_payment(args[:payment_id])
+      refund_payment(inputs.payment_id)
       Success()
     end
   end
@@ -1263,14 +1263,14 @@ class OrderProcessingReactor < RubyReactor::Reactor
     argument :products, result(:validate_products)
     argument :payment_id, result(:process_payment)
 
-    run do |args, context|
-      order = create_order_record(args[:user], args[:products], args[:payment_id])
+    run do |inputs, context|
+      order = create_order_record(inputs.user, inputs.products, inputs.payment_id)
       Success(order)
     end
 
-    undo do |error, args, context|
+    undo do |error, inputs, context|
       # Cancel order and update inventory
-      cancel_order(args[:order][:id])
+      cancel_order(inputs.order[:id])
       Success()
     end
   end
@@ -1278,14 +1278,14 @@ class OrderProcessingReactor < RubyReactor::Reactor
   step :update_inventory do
     argument :products, result(:validate_products)
 
-    run do |args, context|
-      args[:products].each { |p| decrement_stock(p[:id]) }
+    run do |inputs, context|
+      inputs.products.each { |p| decrement_stock(p[:id]) }
       Success(true)
     end
 
-    undo do |error, args, context|
+    undo do |error, inputs, context|
       # Restock products
-      args[:products].each { |p| increment_stock(p[:id]) }
+      inputs.products.each { |p| increment_stock(p[:id]) }
       Success()
     end
   end
@@ -1294,8 +1294,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
     argument :user, result(:validate_user)
     argument :order, result(:create_order)
 
-    run do |args, context|
-      send_email(args[:user][:email], "Order confirmed", order_details(args[:order]))
+    run do |inputs, context|
+      send_email(inputs.user[:email], "Order confirmed", order_details(inputs.order))
       Success(true)
     end
   end
@@ -1318,9 +1318,9 @@ class TransactionReactor < RubyReactor::Reactor
     argument :from_account, input(:from_account)
     argument :to_account, input(:to_account)
 
-    run do |args, context|
-      from = find_account(args[:from_account])
-      to = find_account(args[:to_account])
+    run do |inputs, context|
+      from = find_account(inputs.from_account)
+      to = find_account(inputs.to_account)
 
       if from && to && from != to
         Success({from: from, to: to})
@@ -1334,9 +1334,9 @@ class TransactionReactor < RubyReactor::Reactor
     argument :accounts, result(:validate_accounts)
     argument :amount, input(:amount)
 
-    run do |args, context|
-      if args[:accounts][:from][:balance] >= args[:amount]
-        Success(args[:accounts])
+    run do |inputs, context|
+      if inputs.accounts[:from][:balance] >= inputs.amount
+        Success(inputs.accounts)
       else
         Failure("Insufficient funds")
       end
@@ -1347,14 +1347,14 @@ class TransactionReactor < RubyReactor::Reactor
     argument :accounts, result(:check_balance)
     argument :amount, input(:amount)
 
-    run do |args, context|
-      debit(args[:accounts][:from][:id], args[:amount])
-      Success(args[:accounts])
+    run do |inputs, context|
+      debit(inputs.accounts[:from][:id], inputs.amount)
+      Success(inputs.accounts)
     end
 
-    undo do |error, args, context|
+    undo do |error, inputs, context|
       # Credit the amount back
-      credit(args[:accounts][:from][:id], args[:amount])
+      credit(inputs.accounts[:from][:id], inputs.amount)
       Success()
     end
   end
@@ -1363,14 +1363,14 @@ class TransactionReactor < RubyReactor::Reactor
     argument :accounts, result(:debit_account)
     argument :amount, input(:amount)
 
-    run do |args, context|
-      credit(args[:accounts][:to][:id], args[:amount])
+    run do |inputs, context|
+      credit(inputs.accounts[:to][:id], inputs.amount)
       Success({transaction_id: generate_transaction_id()})
     end
 
-    undo do |error, args, context|
+    undo do |error, inputs, context|
       # Debit the amount back from recipient
-      debit(args[:accounts][:to][:id], args[:amount])
+      debit(inputs.accounts[:to][:id], inputs.amount)
       Success()
     end
   end
@@ -1379,9 +1379,9 @@ class TransactionReactor < RubyReactor::Reactor
     argument :accounts, result(:validate_accounts)
     wait_for :credit_account, :debit_account
 
-    run do |args, context|
-      Notify.to(args[:accounts][:from])
-      Notify.to(args[:accounts][:to])
+    run do |inputs, context|
+      Notify.to(inputs.accounts[:from])
+      Notify.to(inputs.accounts[:to])
     end
      
   end
@@ -1432,8 +1432,8 @@ class SchemaValidatedReactor < RubyReactor::Reactor
   step :process_user do
     argument :user, input(:user)
 
-    run do |args, context|
-      Success(args[:user])
+    run do |inputs, context|
+      Success(inputs.user)
     end
   end
 

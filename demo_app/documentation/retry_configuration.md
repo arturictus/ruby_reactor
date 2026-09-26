@@ -43,7 +43,7 @@ class ChargeCard < RubyReactor::Step
   input :card_token, :string
   retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
 
-  def run = Success(PaymentService.charge(inputs[:card_token]))
+  def run = Success(PaymentService.charge(inputs.card_token))
 end
 
 class PaymentReactor < RubyReactor::Reactor

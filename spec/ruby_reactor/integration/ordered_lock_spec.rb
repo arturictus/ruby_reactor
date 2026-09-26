@@ -530,7 +530,7 @@ RSpec.describe "OrderedLock Integration" do
         step :recurse do
           argument :k, input(:k)
           run do |args|
-            InnerOrderedReactor.run(k: args[:k])
+            InnerOrderedReactor.run(k: args.k)
             RubyReactor.Success(:outer_done)
           end
         end

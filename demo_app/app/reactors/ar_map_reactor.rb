@@ -15,15 +15,15 @@ class ArMapReactor < RubyReactor::Reactor
     
     step :get_product do
       run do |args|
-        puts "Fetching product id: #{args[:product].id}"
-        Success(args[:product])
+        puts "Fetching product id: #{args.product.id}"
+        Success(args.product)
       end
     end
 
     step :check_product do
       argument :product, result(:get_product)
       run do |args|
-        raise "NO Stock" if args[:product].stock < 1
+        raise "NO Stock" if args.product.stock < 1
         Success("Correct")
       end
     end
@@ -33,7 +33,7 @@ class ArMapReactor < RubyReactor::Reactor
       wait_for :check_product
 
       run do |args|
-        p = args[:product]
+        p = args.product
         Product.increment_counter(:stock, p.id)
         puts p.class
         Success(p)
@@ -54,7 +54,7 @@ class ArMapReactor < RubyReactor::Reactor
   step :show_results do
     argument :products, result(:prepare_products)
     run do |args|
-      col = args[:products]
+      col = args.products
       puts "Result of map class is: #{col.class}"
       col.successes.each do |e|
         puts "id: #{e.id}, stock: #{e.stock}"

@@ -16,8 +16,8 @@ class FireAndForgetAsyncReactorDemo < RubyReactor::Reactor
     argument :user_id, input(:user_id)
 
     run do |args|
-      Rails.logger.info "FireAndForgetAsyncReactorDemo: acknowledged #{args[:user_id]}, not waiting on the backfill"
-      Success("Acknowledged #{args[:user_id]}")
+      Rails.logger.info "FireAndForgetAsyncReactorDemo: acknowledged #{args.user_id}, not waiting on the backfill"
+      Success("Acknowledged #{args.user_id}")
     end
   end
 

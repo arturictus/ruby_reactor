@@ -61,7 +61,7 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
 
         step :after do
           argument :value, result(:maybe)
-          run { |args, _ctx| Success(args[:value]) }
+          run { |args, _ctx| Success(args.value) }
         end
 
         returns :after
@@ -144,7 +144,7 @@ RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
         end
 
         def check!(args)
-          fail!("nope") unless args[:ok]
+          fail!("nope") unless args.ok
         end
       end
 

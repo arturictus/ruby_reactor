@@ -123,7 +123,7 @@ module RubyReactor
           compensate_result = coordinated_rollback(step_config, arguments) do
             catch(StepSignals::TAG) do
               if step_config.compensate_block
-                step_config.compensate_block.call(error, arguments, @context)
+                step_config.compensate_block.call(error, step_config.wrap_inputs(arguments), @context)
               elsif step_config.has_impl?
                 step_config.impl.compensate(error, arguments, @context)
               else
@@ -168,7 +168,7 @@ module RubyReactor
           undo_result = coordinated_rollback(step_config, arguments) do
             catch(StepSignals::TAG) do
               if step_config.undo_block
-                step_config.undo_block.call(result.value, arguments, @context)
+                step_config.undo_block.call(result.value, step_config.wrap_inputs(arguments), @context)
               elsif step_config.has_impl?
                 step_config.impl.undo(result.value, arguments, @context)
               else

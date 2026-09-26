@@ -11,16 +11,16 @@ require_relative "../step_coordination_helpers"
 # process observes the same trace the spec asserts against.
 module StepCoordinationRecording
   def recorder
-    OverlapRecorder.new(inputs[:run_id])
+    OverlapRecorder.new(inputs.run_id)
   end
 
-  def record_around(tag = inputs[:tag])
-    return (yield if block_given?) unless inputs[:run_id]
+  def record_around(tag = inputs.tag)
+    return (yield if block_given?) unless inputs.run_id
 
     recorder.enter(tag)
     yield if block_given?
   ensure
-    recorder.leave(tag) if inputs[:run_id]
+    recorder.leave(tag) if inputs.run_id
   end
 end
 
@@ -34,8 +34,8 @@ class RecordingStep < RubyReactor::Step
   input :sleep_for, :float, optional: true, default: 0.0
 
   def run
-    record_around { sleep(inputs[:sleep_for]) if inputs[:sleep_for].to_f.positive? }
-    Success(inputs[:tag])
+    record_around { sleep(inputs.sleep_for) if inputs.sleep_for.to_f.positive? }
+    Success(inputs.tag)
   end
 end
 
@@ -59,20 +59,20 @@ class LockedChargeStep < RubyReactor::Step
   with_lock(wait: 5) { |args| "acct:#{args[:account_id]}" }
 
   def run
-    record_around(:charge) { sleep(inputs[:sleep_for]) if inputs[:sleep_for].to_f.positive? }
-    raise "LockedChargeStep exploded on purpose" if inputs[:raise_after]
-    return Failure("charge declined for acct:#{inputs[:account_id]}") if inputs[:fail_after]
+    record_around(:charge) { sleep(inputs.sleep_for) if inputs.sleep_for.to_f.positive? }
+    raise "LockedChargeStep exploded on purpose" if inputs.raise_after
+    return Failure("charge declined for acct:#{inputs.account_id}") if inputs.fail_after
 
-    Success(account_id: inputs[:account_id])
+    Success(account_id: inputs.account_id)
   end
 
   def compensate
-    record_around(:charge_compensate) { sleep(inputs[:sleep_for]) if inputs[:sleep_for].to_f.positive? }
+    record_around(:charge_compensate) { sleep(inputs.sleep_for) if inputs.sleep_for.to_f.positive? }
     Success()
   end
 
   def undo
-    record_around(:charge_undo) { sleep(inputs[:sleep_for]) if inputs[:sleep_for].to_f.positive? }
+    record_around(:charge_undo) { sleep(inputs.sleep_for) if inputs.sleep_for.to_f.positive? }
     Success()
   end
 end
@@ -96,8 +96,8 @@ class SleepyStep < RubyReactor::Step
   with_lock(ttl: 2, wait: 0, auto_extend: true) { |args| "acct:#{args[:account_id]}" }
 
   def run
-    record_around(:sleepy) { sleep(inputs[:sleep_for]) if inputs[:sleep_for].to_f.positive? }
-    Success(inputs[:account_id])
+    record_around(:sleepy) { sleep(inputs.sleep_for) if inputs.sleep_for.to_f.positive? }
+    Success(inputs.account_id)
   end
 end
 
@@ -113,7 +113,7 @@ class RegionLockedStep < RubyReactor::Step
 
   def run
     record_around(:region)
-    Success(inputs[:region])
+    Success(inputs.region)
   end
 end
 
@@ -129,7 +129,7 @@ class AmountContractStep < RubyReactor::Step
 
   def run
     record_around(:amount)
-    Success(inputs[:amount])
+    Success(inputs.amount)
   end
 end
 
@@ -462,7 +462,7 @@ class ReentrancyObserverStep < RubyReactor::Step
 
   def run
     record_around(:observe)
-    key = "acct:#{inputs[:account_id]}"
+    key = "acct:#{inputs.account_id}"
     root = context.root_context || context
     info = RubyReactor.configuration.storage_adapter.lock_info("lock:#{key}")
     Success(locked: !info.nil?, held_count: root.private_data[:held_lock_keys].to_a.count(key))
@@ -527,7 +527,7 @@ class ComposeStyleLockedStep < RubyReactor::Step
   def run
     record_around(:compose_style)
     child_context = RubyReactor::Context.new(
-      { run_id: inputs[:run_id], account_id: inputs[:account_id] }, ComposeStyleChildReactor
+      { run_id: inputs.run_id, account_id: inputs.account_id }, ComposeStyleChildReactor
     )
     child_context.root_context = context.root_context || context if context
     child_context.inline_async_execution = context.inline_async_execution if context
@@ -582,7 +582,7 @@ class AsyncStepLockedChildStep < RubyReactor::Step
 
   def run
     record_around(:async_step_charge) { sleep(0.3) }
-    Success(inputs[:account_id])
+    Success(inputs.account_id)
   end
 end
 
@@ -640,10 +640,10 @@ class ReentrantInnerCallStep < RubyReactor::Step
 
   def run
     record_around(:outer)
-    inner_id = inputs[:inner_account_id] || inputs[:account_id]
-    inner_ctx = inputs[:pass_context] ? context : nil
+    inner_id = inputs.inner_account_id || inputs.account_id
+    inner_ctx = inputs.pass_context ? context : nil
     begin
-      inner_result = WaitZeroLockedChargeStep.run({ run_id: inputs[:run_id], account_id: inner_id }, inner_ctx)
+      inner_result = WaitZeroLockedChargeStep.run({ run_id: inputs.run_id, account_id: inner_id }, inner_ctx)
       Success(
         inner_class: inner_result.class.name,
         inner_message: (inner_result.message if inner_result.respond_to?(:message))
@@ -698,21 +698,21 @@ class InlineLockedChargeReactor < RubyReactor::Reactor
     argument :raise_after, input(:raise_after)
 
     run do |args, _ctx|
-      recorder = args[:run_id] && OverlapRecorder.new(args[:run_id])
+      recorder = args.run_id && OverlapRecorder.new(args.run_id)
       recorder&.enter(:charge)
-      sleep(args[:sleep_for].to_f) if args[:sleep_for].to_f.positive?
-      raise "InlineLockedChargeStep exploded on purpose" if args[:raise_after]
-      next RubyReactor.Failure("charge declined for acct:#{args[:account_id]}") if args[:fail_after]
+      sleep(args.sleep_for.to_f) if args.sleep_for.to_f.positive?
+      raise "InlineLockedChargeStep exploded on purpose" if args.raise_after
+      next RubyReactor.Failure("charge declined for acct:#{args.account_id}") if args.fail_after
 
-      RubyReactor.Success(account_id: args[:account_id])
+      RubyReactor.Success(account_id: args.account_id)
     ensure
       recorder&.leave(:charge)
     end
 
     compensate do |_error, args, _ctx|
-      recorder = args[:run_id] && OverlapRecorder.new(args[:run_id])
+      recorder = args.run_id && OverlapRecorder.new(args.run_id)
       recorder&.enter(:charge_compensate)
-      sleep(args[:sleep_for].to_f) if args[:sleep_for].to_f.positive?
+      sleep(args.sleep_for.to_f) if args.sleep_for.to_f.positive?
       RubyReactor.Success()
     ensure
       recorder&.leave(:charge_compensate)
@@ -737,8 +737,8 @@ class OrderedLockFirstStep < RubyReactor::Step
   with_ordered_lock { |args| "seq:#{args[:run_id]}" }
 
   def run
-    record_around(:seq) { sleep(inputs[:sleep_for]) if inputs[:sleep_for].to_f.positive? }
-    Success(inputs[:position])
+    record_around(:seq) { sleep(inputs.sleep_for) if inputs.sleep_for.to_f.positive? }
+    Success(inputs.position)
   end
 end
 
@@ -749,7 +749,7 @@ class OrderedLockThenUnorderedStep < RubyReactor::Step
   input :sleep_for, :float, optional: true, default: 0.0
 
   def run
-    record_around(:after_seq) { sleep(inputs[:sleep_for]) if inputs[:sleep_for].to_f.positive? }
+    record_around(:after_seq) { sleep(inputs.sleep_for) if inputs.sleep_for.to_f.positive? }
     Success(:ran)
   end
 end
@@ -825,9 +825,9 @@ class OrderedLockLenientStep < RubyReactor::Step
 
   def run
     record_around(:lenient_seq)
-    return Failure("OrderedLockLenientStep fails on purpose") if inputs[:fail_at]
+    return Failure("OrderedLockLenientStep fails on purpose") if inputs.fail_at
 
-    Success(inputs[:position])
+    Success(inputs.position)
   end
 end
 
@@ -859,7 +859,7 @@ class OrderedLockPoisonStep < RubyReactor::Step
 
   def run
     record_around(:poison_seq)
-    Success(inputs[:position])
+    Success(inputs.position)
   end
 end
 
@@ -949,8 +949,8 @@ class SemaphoreStep < RubyReactor::Step
   with_semaphore(limit: 2, wait: 0) { |args| "sem:#{args[:resource_id]}" }
 
   def run
-    record_around(:sem) { sleep(inputs[:sleep_for]) }
-    Success(inputs[:resource_id])
+    record_around(:sem) { sleep(inputs.sleep_for) }
+    Success(inputs.resource_id)
   end
 end
 
@@ -978,7 +978,7 @@ class SemaphoreLimitOneStep < RubyReactor::Step
 
   def run
     root = context.root_context || context
-    Success(held: root.private_data[:held_lock_keys].to_a.include?("sem1:#{inputs[:resource_id]}"))
+    Success(held: root.private_data[:held_lock_keys].to_a.include?("sem1:#{inputs.resource_id}"))
   end
 end
 
@@ -1066,7 +1066,7 @@ class PeriodStep < RubyReactor::Step
 
   def run
     record_around(:period_body)
-    return Failure("boom, deliberately") if inputs[:fail_body]
+    return Failure("boom, deliberately") if inputs.fail_body
 
     Success(:ran)
   end
@@ -1303,7 +1303,7 @@ class DefaultedKeyStep < RubyReactor::Step
   with_lock(wait: 0) { |args| "acct:#{args[:account_id]}:#{args[:region]}" }
 
   def run
-    Success(region: inputs[:region])
+    Success(region: inputs.region)
   end
 end
 
@@ -1439,7 +1439,7 @@ class NestedOrderedOuterReactor < RubyReactor::Reactor
 
   step :outer do
     with_ordered_lock(poison_pill_timeout: 2) { |args| "nested_step_seq:#{args[:run_id]}" }
-    run { |args| NestedOrderedInnerReactor.run(run_id: args[:run_id]) }
+    run { |args| NestedOrderedInnerReactor.run(run_id: args.run_id) }
   end
 
   returns :outer
@@ -1660,7 +1660,7 @@ class NestedMarkerReactor < RubyReactor::Reactor
     with_lock(wait: 0) { |args| "nested_marker_outer:#{args[:account_id]}" }
     run do |args, ctx|
       NestedMarkerReactor.side_effects << :outer_ran
-      NestedMarkerInnerStep.run({ account_id: args[:account_id] }, ctx)
+      NestedMarkerInnerStep.run({ account_id: args.account_id }, ctx)
     end
     compensate do |_error, _args, _ctx|
       NestedMarkerReactor.side_effects << :outer_compensated
@@ -1696,7 +1696,7 @@ class Round4GuardKeyReactor < RubyReactor::Reactor
 
   step :setup do
     argument :account_id, input(:account_id)
-    run { |args| RubyReactor.Success(args[:account_id]) }
+    run { |args| RubyReactor.Success(args.account_id) }
     undo { ROUND4_COUNTS[:setup_undo] += 1 }
   end
 
@@ -1723,7 +1723,7 @@ class Round4PeriodReactor < RubyReactor::Reactor
     validate_output :integer
     run do |args|
       ROUND4_COUNTS[:period_body] += 1
-      RubyReactor.Success("not an integer: #{args[:account_id]}")
+      RubyReactor.Success("not an integer: #{args.account_id}")
     end
   end
 

@@ -17,12 +17,12 @@ class AsyncStepDemoReactor < RubyReactor::Reactor
     argument :fail_at, input(:fail_at)
 
     run do |args|
-      if args[:fail_at]&.to_sym == :send_email
-        Rails.logger.warn "AsyncStepDemoReactor: email delivery failed for #{args[:to]}"
+      if args.fail_at&.to_sym == :send_email
+        Rails.logger.warn "AsyncStepDemoReactor: email delivery failed for #{args.to}"
         Failure("SMTP provider rejected the message")
       else
-        Rails.logger.info "AsyncStepDemoReactor: sending welcome email to #{args[:to]} in its own job"
-        Success({ delivered_to: args[:to], sent_at: Time.current.iso8601 })
+        Rails.logger.info "AsyncStepDemoReactor: sending welcome email to #{args.to} in its own job"
+        Success({ delivered_to: args.to, sent_at: Time.current.iso8601 })
       end
     end
   end
@@ -32,12 +32,12 @@ class AsyncStepDemoReactor < RubyReactor::Reactor
     argument :email, input(:email)
 
     run do |args|
-      Rails.logger.info "AsyncStepDemoReactor: recording signup for #{args[:email]} right away"
+      Rails.logger.info "AsyncStepDemoReactor: recording signup for #{args.email} right away"
       Success(:recorded)
     end
 
     undo do |_result, args, _ctx|
-      Rails.logger.warn "AsyncStepDemoReactor: undoing signup record for #{args[:email]}"
+      Rails.logger.warn "AsyncStepDemoReactor: undoing signup record for #{args.email}"
       Success()
     end
   end
@@ -51,11 +51,11 @@ class AsyncStepDemoReactor < RubyReactor::Reactor
     argument :delivery, result(:send_email)
 
     run do |args|
-      if args[:delivery].is_a?(RubyReactor::Failure)
-        Rails.logger.warn "AsyncStepDemoReactor: email failed — #{args[:delivery].error}"
-        Failure(args[:delivery].error)
+      if args.delivery.is_a?(RubyReactor::Failure)
+        Rails.logger.warn "AsyncStepDemoReactor: email failed — #{args.delivery.error}"
+        Failure(args.delivery.error)
       else
-        Success("Confirmed delivery to #{args[:delivery][:delivered_to]}")
+        Success("Confirmed delivery to #{args.delivery[:delivered_to]}")
       end
     end
   end

@@ -36,7 +36,7 @@ class FlakyChargeStep < RubyReactor::Step
 
   def run
     attempt = StepRetryDemoLog.charge_attempts += 1
-    return Failure("card declined (attempt #{attempt})") if attempt <= inputs[:fail_times]
+    return Failure("card declined (attempt #{attempt})") if attempt <= inputs.fail_times
 
     Success(charged: true)
   end
@@ -48,7 +48,7 @@ class NotifyStep < RubyReactor::Step
 
   def run
     StepRetryDemoLog.notify_attempts += 1
-    return Failure("notification service down") if inputs[:fail_notify]
+    return Failure("notification service down") if inputs.fail_notify
 
     Success(notified: true)
   end

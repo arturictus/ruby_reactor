@@ -50,7 +50,7 @@ require 'ruby_reactor'
 
 class ValidateOrderStep < RubyReactor::Step
   def run
-    order = Order.find_by(id: inputs[:order_id])
+    order = Order.find_by(id: inputs.order_id)
     fail!("Order not found") unless order
     fail!("Order already processed") if order.processed?
 
@@ -60,7 +60,7 @@ end
 
 class ProcessPaymentStep < RubyReactor::Step
   def run
-    order = inputs[:order]
+    order = inputs.order
     payment = PaymentService.charge(order.total, order.customer.card_token)
     fail!("Payment failed") unless payment.success?
 
@@ -70,7 +70,7 @@ end
 
 class UpdateInventoryStep < RubyReactor::Step
   def run
-    inputs[:order].items.each do |item|
+    inputs.order.items.each do |item|
       InventoryService.decrement(item.product_id, item.quantity)
     end
     Success(inventory_updated: true)
@@ -99,8 +99,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
     argument :order, result(:validate_order, :order)
     argument :payment_id, result(:process_payment, :payment_id)
 
-    run do |args, _context|
-      EmailService.send_confirmation(args[:order].customer.email, order: args[:order])
+    run do |inputs, _context|
+      EmailService.send_confirmation(inputs.order.customer.email, order: inputs.order)
       Success(confirmation_sent: true)
     end
   end
@@ -197,13 +197,13 @@ end
 
 class CheckInventoryStep < RubyReactor::Step
   def run
-    check_inventory_for_order(inputs[:order])
+    check_inventory_for_order(inputs.order)
   end
 end
 
 class ProcessPaymentStep < RubyReactor::Step
   def run
-    process_payment_for_order(inputs[:order])
+    process_payment_for_order(inputs.order)
   end
 end
 
@@ -235,7 +235,7 @@ When a step fails (returns `Failure(...)` or raises), the reactor:
 ```ruby
 class ProcessPaymentStep < RubyReactor::Step
   def run
-    PaymentService.charge(inputs[:order])
+    PaymentService.charge(inputs.order)
   end
 
   def undo
@@ -247,12 +247,12 @@ end
 
 class UpdateInventoryStep < RubyReactor::Step
   def run
-    InventoryService.decrement_all(inputs[:order].items)
+    InventoryService.decrement_all(inputs.order.items)
   end
 
   def compensate
     # Runs only if THIS step fails
-    inputs[:order].items.each { |i| InventoryService.increment(i.product_id, i.quantity) }
+    inputs.order.items.each { |i| InventoryService.increment(i.product_id, i.quantity) }
     Success()
   end
 end

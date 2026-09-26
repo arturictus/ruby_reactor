@@ -364,7 +364,7 @@ module RubyReactor
       def call_body(arguments, context)
         catch(StepSignals::TAG) do
           if has_run_block?
-            run_block.call(arguments, context)
+            run_block.call(wrap_inputs(arguments), context)
           elsif impl.respond_to?(:run_without_coordination)
             impl.run_without_coordination(arguments, context)
           else
@@ -392,6 +392,11 @@ module RubyReactor
 
       def has_run_block?
         !@run_block.nil?
+      end
+
+      # What an inline `run`/`undo`/`compensate` block receives as its inputs.
+      def wrap_inputs(arguments)
+        RubyReactor::Step::Inputs.new(arguments, contract: input_contract, owner: "step :#{name}")
       end
 
       def retryable?

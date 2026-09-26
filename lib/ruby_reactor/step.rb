@@ -5,13 +5,14 @@ module RubyReactor
   #
   #   class MyStep < RubyReactor::Step
   #     input :amount, :integer
-  #     def run = Success(charged: inputs[:amount])
+  #     def run = Success(charged: inputs.amount)
   #   end
   #
   # Lifecycle of every class-level call (`.run`/`.call`, `.undo`, `.compensate`):
   #
   # 1. Resolve `inputs`: the given arguments with the contract's defaults
-  #    applied. `run`, `undo`, and `compensate` all see the same values.
+  #    applied. `run`, `undo`, and `compensate` all see the same values,
+  #    through a read-only `Step::Inputs` (`inputs.amount`).
   # 2. `.run` ONLY: enforce the declared input contract, raising
   #    `Error::InputValidationError` before any instance exists.
   # 2b. `.run` ONLY: step-scoped coordination (`with_lock` etc, if declared)
@@ -42,7 +43,8 @@ module RubyReactor
     attr_reader :inputs, :context, :result, :reason
 
     def initialize(inputs, context, result: nil, reason: nil)
-      @inputs = inputs
+      contract = self.class.input_contract if self.class.declares_inputs?
+      @inputs = Inputs.new(inputs, contract: contract, owner: self.class.name || self.class.inspect)
       @context = context
       @result = result
       @reason = reason
@@ -165,11 +167,13 @@ module RubyReactor
         @own_input_contract ||= Step::InputContract.new(owner: self)
       end
 
+      # `to_h`: a step body may hand its own `Inputs` on (`OtherStep.run(inputs, context)`).
       def with_defaults(arguments)
-        input_contract.apply_defaults(arguments)
+        input_contract.apply_defaults(arguments.to_h)
       end
 
       def enforce_contract!(arguments)
+        arguments = arguments.to_h
         return arguments unless declares_inputs?
 
         input_contract.enforce!(arguments)

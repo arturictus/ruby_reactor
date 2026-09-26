@@ -21,10 +21,10 @@ RSpec.describe "Map Async Retry Behavior" do
         run do |args, context|
           attempt = context.retry_context.attempts_for_step(:process_with_retry)
 
-          if attempt < args[:fail_until]
+          if attempt < args.fail_until
             RubyReactor::Failure("Attempt #{attempt} failed")
           else
-            RubyReactor::Success(args[:val].upcase)
+            RubyReactor::Success(args.val.upcase)
           end
         end
       end
@@ -121,10 +121,10 @@ RSpec.describe "Map Async Retry Behavior" do
         run do |args, context|
           attempt = context.retry_context.attempts_for_step(:process_with_retry)
 
-          if attempt < args[:fail_until]
+          if attempt < args.fail_until
             RubyReactor::Failure("Attempt #{attempt} failed")
           else
-            RubyReactor::Success(args[:val].upcase)
+            RubyReactor::Success(args.val.upcase)
           end
         end
       end
@@ -209,15 +209,15 @@ RSpec.describe "Map Async Retry Behavior" do
         retries max_attempts: 4, backoff: :fixed, base_delay: 0
 
         run do |args, context|
-          if args[:fail_items].include?(args[:val])
+          if args.fail_items.include?(args.val)
             attempt = context.retry_context.attempts_for_step(:process)
-            if attempt < args[:fail_until]
-              RubyReactor::Failure("Item #{args[:val]} failed on attempt #{attempt}")
+            if attempt < args.fail_until
+              RubyReactor::Failure("Item #{args.val} failed on attempt #{attempt}")
             else
-              RubyReactor::Success(args[:val].upcase)
+              RubyReactor::Success(args.val.upcase)
             end
           else
-            RubyReactor::Success(args[:val].upcase)
+            RubyReactor::Success(args.val.upcase)
           end
         end
       end

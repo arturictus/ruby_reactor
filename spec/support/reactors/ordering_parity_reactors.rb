@@ -30,9 +30,9 @@ class OspStrictStep < RubyReactor::Step
   with_ordered_lock(strict: true, poison_pill_timeout: 30) { |a| "osp:#{a[:run_id]}" }
 
   def run
-    OspSupport.record(inputs[:run_id], inputs[:tag])
-    sleep inputs[:sleep_seconds] if inputs[:sleep_seconds].positive?
-    Success(inputs[:tag])
+    OspSupport.record(inputs.run_id, inputs.tag)
+    sleep inputs.sleep_seconds if inputs.sleep_seconds.positive?
+    Success(inputs.tag)
   end
 end
 
@@ -58,7 +58,7 @@ class OspRetryStep < RubyReactor::Step
   with_ordered_lock(strict: true, poison_pill_timeout: 30) { |a| "osp:retry:#{a[:run_id]}" }
 
   def run
-    count = OspSupport.redis.incr("osp:count:#{inputs[:run_id]}")
+    count = OspSupport.redis.incr("osp:count:#{inputs.run_id}")
     count == 1 ? Failure("transient") : Success(count)
   end
 end
@@ -82,7 +82,7 @@ class OspAbortStep < RubyReactor::Step
   with_ordered_lock(strict: true, poison_pill_timeout: 30) { |a| "osp:abort:#{a[:run_id]}" }
 
   def run
-    raise NoMemoryError, "simulated abnormal exit" if inputs[:abort]
+    raise NoMemoryError, "simulated abnormal exit" if inputs.abort
 
     Success(:done)
   end
@@ -113,8 +113,8 @@ class OspReactorLevel < RubyReactor::Reactor
     argument :run_id, input(:run_id)
     argument :tag, input(:tag)
     run do |args|
-      OspSupport.record(args[:run_id], args[:tag])
-      RubyReactor.Success(args[:tag])
+      OspSupport.record(args.run_id, args.tag)
+      RubyReactor.Success(args.tag)
     end
   end
 

@@ -212,7 +212,7 @@ Use `mock_step` to intercept and replace step implementations:
 
 ```ruby
 subject = test_reactor(PaymentReactor, order_id: 123)
-  .mock_step(:charge_card) do |args, context|
+  .mock_step(:charge_card) do |inputs, context|
     # Custom implementation
     Success({ transaction_id: "test-123" })
   end
@@ -229,9 +229,9 @@ You can chain multiple `mock_step` calls to mock several steps in a single fluen
 RSpec.describe MultipleRequestsReactor, type: :reactor do
   subject(:reactor) do
     test_reactor(described_class, request_id: 1)
-      .mock_step(:call_service_1) { |args| Success(args[:request_id]) }
-      .mock_step(:call_service_2) { |args| Success(args[:request_id]) }
-      .mock_step(:call_service_3) { |args| Success(args[:request_id]) }
+      .mock_step(:call_service_1) { |inputs| Success(inputs.request_id) }
+      .mock_step(:call_service_2) { |inputs| Success(inputs.request_id) }
+      .mock_step(:call_service_3) { |inputs| Success(inputs.request_id) }
   end
 
   it "processes successfully with all mocked services" do
@@ -248,9 +248,9 @@ The mock block receives a third parameter that allows calling the original imple
 
 ```ruby
 subject = test_reactor(MyReactor, params)
-  .mock_step(:some_step) do |args, context, original|
+  .mock_step(:some_step) do |inputs, context, original|
     # Modify args before calling original
-    modified_args = args.merge(extra: "value")
+    modified_args = inputs.merge(extra: "value")
     result = original.call(modified_args, context)
     
     # Post-process the result
@@ -277,7 +277,7 @@ For more control, raise exceptions within mock blocks:
 
 ```ruby
 subject = test_reactor(PaymentReactor, params)
-  .mock_step(:charge_card) do |args, context|
+  .mock_step(:charge_card) do |inputs, context|
     raise PaymentDeclinedError, "Card was declined"
   end
 
@@ -297,7 +297,7 @@ When testing reactors that use `compose`, you can mock steps within the composed
 # Parent reactor composes ChildReactor at :process_child step
 subject = test_reactor(ParentReactor, params)
   .composed(:process_child)
-  .mock_step(:inner_step) do |args, context|
+  .mock_step(:inner_step) do |inputs, context|
     Success("mocked inner result")
   end
 
@@ -311,8 +311,8 @@ things inside the *same* child — scope stays put:
 ```ruby
 subject = test_reactor(ParentReactor, params)
   .composed(:process_child)
-  .mock_step(:inner_step_a) { |args, _ctx| Success("a") }
-  .mock_step(:inner_step_b) { |args, _ctx| Success("b") }
+  .mock_step(:inner_step_a) { |inputs, _ctx| Success("a") }
+  .mock_step(:inner_step_b) { |inputs, _ctx| Success("b") }
 ```
 
 To mock steps in **multiple composed reactors** in the same test, pass a
@@ -322,10 +322,10 @@ subject, so each `.composed` call starts a fresh scope:
 ```ruby
 subject = test_reactor(ParentReactor, params)
   .composed(:process_child) do |child|
-    child.mock_step(:inner_step) { |args, _ctx| Success("mocked inner result") }
+    child.mock_step(:inner_step) { |inputs, _ctx| Success("mocked inner result") }
   end
   .composed(:another_child) do |child|
-    child.mock_step(:other_step) { |args, _ctx| Success("mocked other result") }
+    child.mock_step(:other_step) { |inputs, _ctx| Success("mocked other result") }
   end
 
 expect(subject).to be_success
@@ -367,8 +367,8 @@ expect(first_element).to be_success
 # Mock within map elements
 subject = test_reactor(BatchProcessor, items: [1, 2, 3])
   .map(:process_items)
-  .mock_step(:transform) do |args, context|
-    Success(args[:item] * 2)
+  .mock_step(:transform) do |inputs, context|
+    Success(inputs.item * 2)
   end
 ```
 
@@ -379,10 +379,10 @@ map/composed steps right after without scope leaking between them:
 ```ruby
 subject = test_reactor(BatchProcessor, items: [1, 2, 3])
   .map(:process_items) do |item|
-    item.mock_step(:transform) { |args, _ctx| Success(args[:item] * 2) }
+    item.mock_step(:transform) { |inputs, _ctx| Success(inputs.item * 2) }
   end
   .composed(:notify_child) do |child|
-    child.mock_step(:send_email) { |args, _ctx| Success("sent") }
+    child.mock_step(:send_email) { |inputs, _ctx| Success("sent") }
   end
 
 expect(subject).to be_success
@@ -986,7 +986,7 @@ RSpec.describe PaymentWorkflow, type: :reactor do
         order_id: 123,
         amount: 99.99,
         card_token: "tok_declined"
-      ).mock_step(:charge_card) do |args, context|
+      ).mock_step(:charge_card) do |inputs, context|
         Failure("Card declined", code: "card_declined")
       end
       
@@ -1000,12 +1000,12 @@ RSpec.describe PaymentWorkflow, type: :reactor do
       attempt = 0
       
       subject = test_reactor(PaymentWorkflow, params)
-        .mock_step(:charge_card) do |args, context, original|
+        .mock_step(:charge_card) do |inputs, context, original|
           attempt += 1
           if attempt < 3
             raise NetworkError, "Connection timeout"
           end
-          original.call(args, context)
+          original.call(inputs, context)
         end
       
       expect(subject).to be_success
@@ -1022,7 +1022,7 @@ RSpec.describe OrderProcessor, type: :reactor do
   it "processes order through composed payment reactor" do
     subject = test_reactor(OrderProcessor, order_id: 123)
       .composed(:process_payment)
-      .mock_step(:validate_card) do |args, context|
+      .mock_step(:validate_card) do |inputs, context|
         Success({ valid: true })
       end
     
@@ -1044,8 +1044,8 @@ RSpec.describe BatchEmailSender, type: :reactor do
     
     subject = test_reactor(BatchEmailSender, recipients: recipients)
       .map(:send_emails)
-      .mock_step(:deliver) do |args, context|
-        Success({ sent_to: args[:recipient] })
+      .mock_step(:deliver) do |inputs, context|
+        Success({ sent_to: inputs.recipient })
       end
     
     expect(subject).to be_success
@@ -1060,11 +1060,11 @@ RSpec.describe BatchEmailSender, type: :reactor do
     
     subject = test_reactor(BatchEmailSender, recipients: recipients)
       .map(:send_emails)
-      .mock_step(:deliver) do |args, context|
-        if args[:recipient].include?("bad")
+      .mock_step(:deliver) do |inputs, context|
+        if inputs.recipient.include?("bad")
           Failure("Invalid email")
         else
-          Success({ sent_to: args[:recipient] })
+          Success({ sent_to: inputs.recipient })
         end
       end
     

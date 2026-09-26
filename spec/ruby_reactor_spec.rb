@@ -16,8 +16,8 @@ RSpec.describe RubyReactor do
           argument :email, input(:email)
 
           run do |args, _context|
-            if args[:email]&.include?("@")
-              Success(args[:email])
+            if args.email&.include?("@")
+              Success(args.email)
             else
               Failure("Email must contain @")
             end
@@ -30,7 +30,7 @@ RSpec.describe RubyReactor do
 
           run do |args, _context|
             require "digest"
-            hashed = Digest::SHA256.hexdigest(args[:password])
+            hashed = Digest::SHA256.hexdigest(args.password)
             Success(hashed)
           end
         end
@@ -43,8 +43,8 @@ RSpec.describe RubyReactor do
           run do |args, _context|
             user = {
               id: rand(10_000),
-              email: args[:email],
-              password_hash: args[:password_hash],
+              email: args.email,
+              password_hash: args.password_hash,
               created_at: Time.now
             }
             Success(user)
@@ -229,7 +229,7 @@ RSpec.describe RubyReactor do
 
           run do |args, context|
             attempt = context.retry_context.attempts_for_step(:flaky_step)
-            if attempt < args[:should_fail_times]
+            if attempt < args.should_fail_times
               Failure("Intentional failure on attempt #{attempt}")
             else
               Success("Succeeded on attempt #{attempt}")
@@ -328,9 +328,9 @@ RSpec.describe RubyReactor do
 
             run do |args, _context|
               profile = {
-                name: args[:name],
-                email: args[:email],
-                age: args[:age],
+                name: args.name,
+                email: args.email,
+                age: args.age,
                 created_at: Time.now
               }
               Success(profile)
@@ -435,8 +435,8 @@ RSpec.describe RubyReactor do
 
             run do |args, _context|
               profile = {
-                username: args[:username],
-                bio: args[:bio] || "No bio provided"
+                username: args.username,
+                bio: args.bio || "No bio provided"
               }
               Success(profile)
             end
@@ -506,7 +506,7 @@ RSpec.describe RubyReactor do
             argument :user, input(:user)
 
             run do |args, _context|
-              Success(args[:user])
+              Success(args.user)
             end
           end
 
@@ -552,7 +552,7 @@ RSpec.describe RubyReactor do
             argument :data, input(:data)
 
             run do |args, _context|
-              Success(args[:data])
+              Success(args.data)
             end
           end
 
@@ -607,7 +607,7 @@ RSpec.describe RubyReactor do
           argument :value, input(:value)
 
           run do |args, _context|
-            Success(args[:value] * 2)
+            Success(args.value * 2)
           end
         end
 
@@ -671,8 +671,8 @@ RSpec.describe RubyReactor do
 
       step :sync_step do
         run do |args, _context|
-          puts "[INNER] Executing sync_step with value: #{args[:value]}"
-          RubyReactor.Success(args[:value] * 2)
+          puts "[INNER] Executing sync_step with value: #{args.value}"
+          RubyReactor.Success(args.value * 2)
         end
       end
 
@@ -680,8 +680,8 @@ RSpec.describe RubyReactor do
         argument :doubled, result(:sync_step)
 
         run do |args, _context|
-          puts "[INNER] Executing async_step with doubled: #{args[:doubled]}"
-          RubyReactor.Success(args[:doubled] + 1)
+          puts "[INNER] Executing async_step with doubled: #{args.doubled}"
+          RubyReactor.Success(args.doubled + 1)
         end
       end
 
@@ -695,8 +695,8 @@ RSpec.describe RubyReactor do
 
       step :validate_number do
         run do |args, _context|
-          if args[:number].is_a?(Numeric) && args[:number] >= 0
-            RubyReactor.Success(args[:number])
+          if args.number.is_a?(Numeric) && args.number >= 0
+            RubyReactor.Success(args.number)
           else
             RubyReactor.Failure("Number must be a non-negative numeric value")
           end
@@ -713,7 +713,7 @@ RSpec.describe RubyReactor do
         argument :result, result(:async_process)
 
         run do |args, _context|
-          RubyReactor.Success(args[:result] * 2)
+          RubyReactor.Success(args.result * 2)
         end
       end
 
@@ -744,11 +744,11 @@ RSpec.describe RubyReactor do
 
         run do |args, context|
           attempt = context.retry_context.attempts_for_step(:failing_step)
-          puts "[INNER RETRY] Attempt #{attempt} for value: #{args[:value]}"
+          puts "[INNER RETRY] Attempt #{attempt} for value: #{args.value}"
           if attempt < 5 # First 4 attempts fail, fifth succeeds
             RubyReactor.Failure("Temporary failure")
           else
-            RubyReactor.Success(args[:value] * 3)
+            RubyReactor.Success(args.value * 3)
           end
         end
       end
@@ -771,8 +771,8 @@ RSpec.describe RubyReactor do
         argument :input, input(:number)
 
         run do |args, _context|
-          puts "[OUTER RETRY] after_compose with result: #{args[:result]}"
-          RubyReactor.Success(args[:result] + args[:input])
+          puts "[OUTER RETRY] after_compose with result: #{args.result}"
+          RubyReactor.Success(args.result + args.input)
         end
       end
 
@@ -800,13 +800,13 @@ RSpec.describe RubyReactor do
 
         step :sync_step do
           run do |args, _context|
-            Success(args[:value] + 1)
+            Success(args.value + 1)
           end
         end
         step :async_step do
           argument :value, result(:sync_step)
           run do |args, _context|
-            Success(args[:value] * 2)
+            Success(args.value * 2)
           end
         end
 

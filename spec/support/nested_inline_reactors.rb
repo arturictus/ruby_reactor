@@ -5,7 +5,7 @@ module Support
     input :id
 
     step :async_step do
-      run { |args, _| RubyReactor::Success("async_done_#{args[:id]}") }
+      run { |args, _| RubyReactor::Success("async_done_#{args.id}") }
     end
 
     background before: :async_step
@@ -39,7 +39,7 @@ module Support
 
       step :async_step do
         run do |args, _|
-          RubyReactor::Success("async_done_#{args[:id]}")
+          RubyReactor::Success("async_done_#{args.id}")
         end
       end
 

@@ -188,13 +188,14 @@ module RubyReactor
         raise error
       end
 
+      # Wrapped first, so a returned `Step::Inputs` is validated and stored as its Hash.
       def handle_unknown_result(step_config, result, resolved_arguments)
-        validate_step_output(step_config, result, resolved_arguments)
         success_result = RubyReactor.Success(result)
+        validate_step_output(step_config, success_result.value, resolved_arguments)
         @step_results[step_config.name] = success_result
         @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments,
                                                   result: success_result })
-        @context.set_result(step_config.name, result)
+        @context.set_result(step_config.name, success_result.value)
         @dependency_graph.complete_step(step_config.name)
       end
 

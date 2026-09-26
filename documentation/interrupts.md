@@ -46,8 +46,8 @@ class ReportReactor < RubyReactor::Reactor
     # The result of the interrupt step is the payload provided when resuming
     argument :webhook_payload, result(:wait_for_report)
 
-    run do |args, _ctx|
-      Success(ReportProcessor.call(args[:webhook_payload]))
+    run do |inputs, _ctx|
+      Success(ReportProcessor.call(inputs.webhook_payload))
     end
   end
 end
@@ -173,8 +173,8 @@ end
 
 step :process_decision do
   argument :decision, result(:wait_for_approval)
-  run do |args, _ctx|
-    fail!("Rejected") unless args[:decision][:approved]
+  run do |inputs, _ctx|
+    fail!("Rejected") unless inputs.decision[:approved]
 
     Success("Approved")
   end

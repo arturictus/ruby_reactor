@@ -64,10 +64,10 @@ class InventoryManagementReactor < RubyReactor::Reactor
   step :check_availability do
     argument :request_data, result(:validate_request)
 
-    run do |args, _context|
-      product = args[:request_data][:product]
-      quantity = args[:request_data][:quantity]
-      operation = args[:request_data][:operation]
+    run do |inputs, _context|
+      product = inputs.request_data[:product]
+      quantity = inputs.request_data[:quantity]
+      operation = inputs.request_data[:operation]
 
       case operation
       when 'consume'
@@ -87,8 +87,8 @@ class InventoryManagementReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 1.second
 
-    run do |args, _context|
-      product = args[:request_data][:product]
+    run do |inputs, _context|
+      product = inputs.request_data[:product]
 
       # Acquire distributed lock to prevent race conditions
       lock_key = "inventory_lock:#{product.id}"
@@ -99,8 +99,8 @@ class InventoryManagementReactor < RubyReactor::Reactor
       Success({ lock_key: lock_key })
     end
 
-    compensate do |args, _context|
-      lock_key = args[:availability_data][:lock_key] || args[:lock_key]
+    compensate do |_error, inputs, _context|
+      lock_key = inputs.availability_data[:lock_key]
       # Release lock on failure
       RedisLock.release(lock_key) if lock_key
     end
@@ -110,10 +110,10 @@ class InventoryManagementReactor < RubyReactor::Reactor
     argument :request_data, result(:validate_request)
     argument :lock_data, result(:acquire_lock)
 
-    run do |args, _context|
-      product = args[:request_data][:product]
-      quantity = args[:request_data][:quantity]
-      operation = args[:request_data][:operation]
+    run do |inputs, _context|
+      product = inputs.request_data[:product]
+      quantity = inputs.request_data[:quantity]
+      operation = inputs.request_data[:operation]
 
       case operation
       when 'reserve'
@@ -128,10 +128,10 @@ class InventoryManagementReactor < RubyReactor::Reactor
       end
     end
 
-    compensate do |args, _context|
-      product = args[:request_data][:product]
-      quantity = args[:request_data][:quantity]
-      operation = args[:request_data][:operation]
+    compensate do |_error, inputs, _context|
+      product = inputs.request_data[:product]
+      quantity = inputs.request_data[:quantity]
+      operation = inputs.request_data[:operation]
 
       # Reverse the operation
       case operation
@@ -149,8 +149,8 @@ class InventoryManagementReactor < RubyReactor::Reactor
     argument :lock_data, result(:acquire_lock)
     argument :operation_data, result(:perform_operation)
 
-    run do |args, _context|
-      lock_key = args[:lock_data][:lock_key]
+    run do |inputs, _context|
+      lock_key = inputs.lock_data[:lock_key]
 
       RedisLock.release(lock_key)
       Success({ lock_released: true })
@@ -161,10 +161,10 @@ class InventoryManagementReactor < RubyReactor::Reactor
     argument :request_data, result(:validate_request)
     argument :release_data, result(:release_lock)
 
-    run do |args, _context|
-      product = args[:request_data][:product]
-      quantity = args[:request_data][:quantity]
-      operation = args[:request_data][:operation]
+    run do |inputs, _context|
+      product = inputs.request_data[:product]
+      quantity = inputs.request_data[:quantity]
+      operation = inputs.request_data[:operation]
 
       InventoryTransaction.create!(
         product: product,
@@ -181,8 +181,8 @@ class InventoryManagementReactor < RubyReactor::Reactor
     argument :request_data, result(:validate_request)
     argument :log_data, result(:log_transaction)
 
-    run do |args, _context|
-      product = args[:request_data][:product]
+    run do |inputs, _context|
+      product = inputs.request_data[:product]
 
       if product.inventory_count <= product.reorder_point
         # Trigger replenishment process
@@ -201,11 +201,11 @@ class InventoryManagementReactor < RubyReactor::Reactor
     idempotent true
     retries max_attempts: 3, backoff: :linear, base_delay: 5.seconds
 
-    run do |args, _context|
-      product = args[:request_data][:product]
-      operation = args[:request_data][:operation]
-      quantity = args[:request_data][:quantity]
-      replenishment_triggered = args[:replenishment_data][:replenishment_triggered]
+    run do |inputs, _context|
+      product = inputs.request_data[:product]
+      operation = inputs.request_data[:operation]
+      quantity = inputs.request_data[:quantity]
+      replenishment_triggered = inputs.replenishment_data[:replenishment_triggered]
 
       notifications = []
 
@@ -266,8 +266,8 @@ class BulkInventoryReactor < RubyReactor::Reactor
   step :execute_operations do
     argument :bulk_data, result(:validate_bulk_request)
 
-    run do |args, _context|
-      validated_operations = args[:bulk_data][:validated_operations]
+    run do |inputs, _context|
+      validated_operations = inputs.bulk_data[:validated_operations]
 
       results = []
 
@@ -347,10 +347,10 @@ class InventoryTransferReactor < RubyReactor::Reactor
   step :reserve_source do
     argument :transfer_data, result(:validate_transfer)
 
-    run do |args, _context|
-      from_location = args[:transfer_data][:from_location]
-      product = args[:transfer_data][:product]
-      quantity = args[:transfer_data][:quantity]
+    run do |inputs, _context|
+      from_location = inputs.transfer_data[:from_location]
+      product = inputs.transfer_data[:product]
+      quantity = inputs.transfer_data[:quantity]
 
       # Reserve inventory at source location
       reservation = InventoryService.reserve_at_location(
@@ -364,8 +364,8 @@ class InventoryTransferReactor < RubyReactor::Reactor
       Success({ source_reservation_id: reservation.id })
     end
 
-    compensate do |args, _context|
-      source_reservation_id = args[:transfer_data][:source_reservation_id] || args[:source_reservation_id]
+    compensate do |_error, inputs, _context|
+      source_reservation_id = inputs.transfer_data[:source_reservation_id]
       InventoryService.release_reservation(source_reservation_id)
     end
   end
@@ -374,10 +374,10 @@ class InventoryTransferReactor < RubyReactor::Reactor
     argument :transfer_data, result(:validate_transfer)
     argument :reservation_data, result(:reserve_source)
 
-    run do |args, _context|
-      to_location = args[:transfer_data][:to_location]
-      product = args[:transfer_data][:product]
-      quantity = args[:transfer_data][:quantity]
+    run do |inputs, _context|
+      to_location = inputs.transfer_data[:to_location]
+      product = inputs.transfer_data[:product]
+      quantity = inputs.transfer_data[:quantity]
 
       # Ensure destination location can accept the inventory
       destination_inventory = LocationInventory.find_or_create_by(
@@ -394,12 +394,12 @@ class InventoryTransferReactor < RubyReactor::Reactor
     argument :reservation_data, result(:reserve_source)
     argument :destination_data, result(:prepare_destination)
 
-    run do |args, _context|
-      from_location = args[:transfer_data][:from_location]
-      to_location = args[:transfer_data][:to_location]
-      product = args[:transfer_data][:product]
-      quantity = args[:transfer_data][:quantity]
-      source_reservation_id = args[:reservation_data][:source_reservation_id]
+    run do |inputs, _context|
+      from_location = inputs.transfer_data[:from_location]
+      to_location = inputs.transfer_data[:to_location]
+      product = inputs.transfer_data[:product]
+      quantity = inputs.transfer_data[:quantity]
+      source_reservation_id = inputs.reservation_data[:source_reservation_id]
 
       # Atomically transfer inventory
       InventoryService.transfer_inventory(
@@ -413,11 +413,11 @@ class InventoryTransferReactor < RubyReactor::Reactor
       Success({ transfer_completed: true })
     end
 
-    compensate do |args, _context|
-      from_location = args[:transfer_data][:from_location]
-      to_location = args[:transfer_data][:to_location]
-      product = args[:transfer_data][:product]
-      quantity = args[:transfer_data][:quantity]
+    compensate do |_error, inputs, _context|
+      from_location = inputs.transfer_data[:from_location]
+      to_location = inputs.transfer_data[:to_location]
+      product = inputs.transfer_data[:product]
+      quantity = inputs.transfer_data[:quantity]
 
       # Reverse the transfer - this is complex and might require manual intervention
       Rails.logger.error("Transfer compensation needed for #{product.id} x #{quantity}")
@@ -429,11 +429,11 @@ class InventoryTransferReactor < RubyReactor::Reactor
     argument :transfer_data, result(:validate_transfer)
     argument :transfer_result, result(:execute_transfer)
 
-    run do |args, _context|
-      from_location = args[:transfer_data][:from_location]
-      to_location = args[:transfer_data][:to_location]
-      product = args[:transfer_data][:product]
-      quantity = args[:transfer_data][:quantity]
+    run do |inputs, _context|
+      from_location = inputs.transfer_data[:from_location]
+      to_location = inputs.transfer_data[:to_location]
+      product = inputs.transfer_data[:product]
+      quantity = inputs.transfer_data[:quantity]
 
       InventoryTransfer.create!(
         from_location: from_location,
@@ -476,9 +476,9 @@ class ReplenishmentReactor < RubyReactor::Reactor
   step :calculate_order_quantity do
     argument :supplier_data, result(:check_supplier_availability)
 
-    run do |args, _context|
-      product = args[:supplier_data][:product]
-      supplier = args[:supplier_data][:supplier]
+    run do |inputs, _context|
+      product = inputs.supplier_data[:product]
+      supplier = inputs.supplier_data[:supplier]
 
       # Calculate optimal order quantity
       current_stock = product.inventory_count
@@ -503,10 +503,10 @@ class ReplenishmentReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 5.minutes
 
-    run do |args, _context|
-      supplier = args[:supplier_data][:supplier]
-      product = args[:supplier_data][:product]
-      order_quantity = args[:quantity_data][:order_quantity]
+    run do |inputs, _context|
+      supplier = inputs.supplier_data[:supplier]
+      product = inputs.supplier_data[:product]
+      order_quantity = inputs.quantity_data[:order_quantity]
 
       # Query supplier API for availability
       supplier_response = SupplierAPI.check_availability(
@@ -533,10 +533,10 @@ class ReplenishmentReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 5.minutes
 
-    run do |args, _context|
-      supplier = args[:supplier_data][:supplier]
-      product = args[:supplier_data][:product]
-      adjusted_quantity = args[:inventory_data][:adjusted_quantity]
+    run do |inputs, _context|
+      supplier = inputs.supplier_data[:supplier]
+      product = inputs.supplier_data[:product]
+      adjusted_quantity = inputs.inventory_data[:adjusted_quantity]
 
       order_response = SupplierAPI.place_order(
         supplier_id: supplier.id,
@@ -552,8 +552,8 @@ class ReplenishmentReactor < RubyReactor::Reactor
       Success({ supplier_order_id: order_response.order_id, order_placed: true })
     end
 
-    compensate do |args, _context|
-      supplier_order_id = args[:inventory_data][:supplier_order_id] || args[:supplier_order_id]
+    compensate do |_error, inputs, _context|
+      supplier_order_id = inputs.inventory_data[:supplier_order_id]
       # Cancel the supplier order
       SupplierAPI.cancel_order(supplier_order_id) if supplier_order_id
     end
@@ -564,11 +564,11 @@ class ReplenishmentReactor < RubyReactor::Reactor
     argument :inventory_data, result(:check_supplier_inventory)
     argument :order_data, result(:place_supplier_order)
 
-    run do |args, _context|
-      product = args[:supplier_data][:product]
-      supplier = args[:supplier_data][:supplier]
-      adjusted_quantity = args[:inventory_data][:adjusted_quantity]
-      supplier_order_id = args[:order_data][:supplier_order_id]
+    run do |inputs, _context|
+      product = inputs.supplier_data[:product]
+      supplier = inputs.supplier_data[:supplier]
+      adjusted_quantity = inputs.inventory_data[:adjusted_quantity]
+      supplier_order_id = inputs.order_data[:supplier_order_id]
 
       purchase_order = PurchaseOrder.create!(
         supplier: supplier,
@@ -589,8 +589,8 @@ class ReplenishmentReactor < RubyReactor::Reactor
   step :schedule_delivery_tracking do
     argument :purchase_data, result(:record_purchase_order)
 
-    run do |args, _context|
-      supplier_order_id = args[:order_data][:supplier_order_id]
+    run do |inputs, _context|
+      supplier_order_id = inputs.order_data[:supplier_order_id]
 
       # Schedule job to track delivery status
       DeliveryTrackingJob.set(wait: 1.hour).perform_later(supplier_order_id)

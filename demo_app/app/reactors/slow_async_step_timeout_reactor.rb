@@ -17,10 +17,10 @@ class SlowAsyncStepTimeoutReactor < RubyReactor::Reactor
     argument :sleep_seconds, input(:sleep_seconds)
 
     run do |args|
-      Rails.logger.info "SlowAsyncStepTimeoutReactor: starting a #{args[:sleep_seconds]}s task for #{args[:job_id]}"
-      sleep args[:sleep_seconds]
-      Rails.logger.info "SlowAsyncStepTimeoutReactor: task for #{args[:job_id]} finished"
-      Success({ job_id: args[:job_id], finished_at: Time.current.iso8601 })
+      Rails.logger.info "SlowAsyncStepTimeoutReactor: starting a #{args.sleep_seconds}s task for #{args.job_id}"
+      sleep args.sleep_seconds
+      Rails.logger.info "SlowAsyncStepTimeoutReactor: task for #{args.job_id} finished"
+      Success({ job_id: args.job_id, finished_at: Time.current.iso8601 })
     end
   end
 
@@ -28,12 +28,12 @@ class SlowAsyncStepTimeoutReactor < RubyReactor::Reactor
     argument :job_id, input(:job_id)
 
     run do |args|
-      Rails.logger.info "SlowAsyncStepTimeoutReactor: acknowledged #{args[:job_id]}"
+      Rails.logger.info "SlowAsyncStepTimeoutReactor: acknowledged #{args.job_id}"
       Success(:acknowledged)
     end
 
     undo do |_result, args, _ctx|
-      Rails.logger.warn "SlowAsyncStepTimeoutReactor: undoing acknowledgement for #{args[:job_id]}"
+      Rails.logger.warn "SlowAsyncStepTimeoutReactor: undoing acknowledgement for #{args.job_id}"
       Success()
     end
   end
@@ -42,7 +42,7 @@ class SlowAsyncStepTimeoutReactor < RubyReactor::Reactor
     argument :task, result(:slow_task)
 
     run do |args|
-      Success(args[:task])
+      Success(args.task)
     end
   end
 

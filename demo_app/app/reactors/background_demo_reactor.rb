@@ -10,8 +10,8 @@ class BackgroundDemoReactor < RubyReactor::Reactor
   step :validate_user do
     argument :user_id, input(:user_id)
     run do |args|
-      Rails.logger.info "BackgroundDemoReactor: validating user #{args[:user_id]} in the calling process"
-      args[:user_id].present? ? Success(args[:user_id]) : Failure("Invalid user")
+      Rails.logger.info "BackgroundDemoReactor: validating user #{args.user_id} in the calling process"
+      args.user_id.present? ? Success(args.user_id) : Failure("Invalid user")
     end
   end
 
@@ -24,7 +24,7 @@ class BackgroundDemoReactor < RubyReactor::Reactor
     argument :user_id, result(:validate_user)
 
     run do |args|
-      Rails.logger.info "BackgroundDemoReactor: processing user #{args[:user_id]} in the worker"
+      Rails.logger.info "BackgroundDemoReactor: processing user #{args.user_id} in the worker"
       Success("Heavy processing complete")
     end
   end
@@ -33,7 +33,7 @@ class BackgroundDemoReactor < RubyReactor::Reactor
     argument :result, result(:heavy_processing)
 
     run do |args|
-      Rails.logger.info "BackgroundDemoReactor: notification sent. Result: #{args[:result]}"
+      Rails.logger.info "BackgroundDemoReactor: notification sent. Result: #{args.result}"
       Success("Done")
     end
   end

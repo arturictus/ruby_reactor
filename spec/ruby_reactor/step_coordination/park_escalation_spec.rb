@@ -115,8 +115,8 @@ class OrderedRetryStep < RubyReactor::Step
   with_ordered_lock { |args| "park_retry:#{args[:run_id]}" }
 
   def run
-    ATTEMPTS[inputs[:run_id]] += 1
-    return Failure("first attempt always fails") if ATTEMPTS[inputs[:run_id]] == 1
+    ATTEMPTS[inputs.run_id] += 1
+    return Failure("first attempt always fails") if ATTEMPTS[inputs.run_id] == 1
 
     Success(:charged)
   end
@@ -141,7 +141,7 @@ class ValidatedAsyncReactor < RubyReactor::Reactor
   async_step :charge do
     argument :amount, input(:amount), :integer, gt?: 0
     with_lock(wait: 0) { |args| "park_validated:#{args[:amount]}" }
-    run { |args| RubyReactor.Success(args[:amount]) }
+    run { |args| RubyReactor.Success(args.amount) }
   end
 
   step :ack do

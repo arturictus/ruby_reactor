@@ -34,7 +34,7 @@ class AttrDirectOuterReactor < RubyReactor::Reactor
 
   step :outer do
     argument :account_id, input(:account_id)
-    run { |args, context| AttrChargeStep.run({ account_id: args[:account_id] }, context) }
+    run { |args, context| AttrChargeStep.run({ account_id: args.account_id }, context) }
   end
 
   returns :outer

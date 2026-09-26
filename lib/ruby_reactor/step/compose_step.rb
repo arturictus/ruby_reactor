@@ -3,6 +3,10 @@
 module RubyReactor
   class Step
     class ComposeStep < RubyReactor::Step
+      # Untyped, so no validation: declared only so `inputs.x` can read them.
+      input :composed_reactor_class
+      input :argument_mappings, optional: true
+
       def run
         step_name = context.current_step
         composed_data = context.composed_contexts[step_name]
@@ -12,7 +16,7 @@ module RubyReactor
         store_child_context(step_name, child_context)
 
         # Execute the composed reactor
-        result = execute_child_reactor(inputs[:composed_reactor_class], child_context, composed_data)
+        result = execute_child_reactor(inputs.composed_reactor_class, child_context, composed_data)
 
         # Update the stored context
         store_child_context(step_name, child_context)
@@ -30,7 +34,7 @@ module RubyReactor
         return RubyReactor.Success() unless composed_data && composed_data[:context]
 
         child_context = composed_data[:context]
-        executor = RubyReactor::Executor.new(inputs[:composed_reactor_class], {}, child_context)
+        executor = RubyReactor::Executor.new(inputs.composed_reactor_class, {}, child_context)
         executor.undo_all
         executor.save_context
 
@@ -59,8 +63,8 @@ module RubyReactor
         child_context = composed_data ? composed_data[:context] : nil
 
         unless child_context
-          composed_inputs = build_composed_inputs(inputs[:argument_mappings] || {})
-          child_context = RubyReactor::Context.new(composed_inputs, inputs[:composed_reactor_class])
+          composed_inputs = build_composed_inputs(inputs.argument_mappings || {})
+          child_context = RubyReactor::Context.new(composed_inputs, inputs.composed_reactor_class)
         end
 
         link_contexts(child_context, context)

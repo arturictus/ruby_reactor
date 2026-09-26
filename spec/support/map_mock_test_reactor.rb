@@ -10,7 +10,7 @@ module Support
 
       step :transform do
         argument :value, input(:value)
-        run { |args| RubyReactor::Success(args[:value] * 2) }
+        run { |args| RubyReactor::Success(args.value * 2) }
       end
     end
 
@@ -20,7 +20,7 @@ module Support
 
       step :label do
         argument :value, input(:value)
-        run { |args| RubyReactor::Success("item_#{args[:value]}") }
+        run { |args| RubyReactor::Success("item_#{args.value}") }
       end
     end
   end
@@ -36,7 +36,7 @@ module Support
 
       step :transform do
         argument :value, input(:value)
-        run { |args| RubyReactor::Success(args[:value] * 2) }
+        run { |args| RubyReactor::Success(args.value * 2) }
       end
     end
   end

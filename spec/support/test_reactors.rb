@@ -9,7 +9,7 @@ class ApiTestReactor < RubyReactor::Reactor
 
   step :step2 do
     run do |input, _context|
-      raise "Something went wrong" if input[:should_fail]
+      raise "Something went wrong" if input.should_fail
 
       RubyReactor.Success(input)
     end
@@ -18,7 +18,7 @@ end
 
 class ApiInnerReactor < RubyReactor::Reactor
   step :inner_step do
-    run { |args| Success(args[:val] + 1) }
+    run { |args| Success(args.val + 1) }
   end
 end
 
@@ -29,6 +29,6 @@ class ApiComposeTestReactor < RubyReactor::Reactor
 
   step :final_step do
     argument :res, result(:sub_reactor)
-    run { |args| Success(args[:res] * 2) }
+    run { |args| Success(args.res * 2) }
   end
 end

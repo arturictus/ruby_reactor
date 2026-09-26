@@ -3,8 +3,8 @@
 module RubyReactor
   class ReserveInventory < RubyReactor::Step
     def run
-      order = inputs[:order]
-      fail_at = inputs[:fail_at]
+      order = inputs.order
+      fail_at = inputs.fail_at
 
       if fail_at == :reserve_inventory
         Failure({
@@ -49,18 +49,18 @@ module RubyReactor
       argument :order_id, input(:order_id)
       argument :fail_at, input(:fail_at)
       run do |args, _context|
-        if args[:fail_at] == :get_order
+        if args.fail_at == :get_order
           # Handle compensation logic
           Failure("Failure triggered for get_order")
         else
-          Success({ id: args[:order_id], amount: 100.0, currency: "USD" })
+          Success({ id: args.order_id, amount: 100.0, currency: "USD" })
         end
       end
 
       undo do |error, context|
         puts "Undo get_order due to error: #{error}"
         # Simulate compensation logic
-        Success("Compensated for order #{context[:order_id]}")
+        Success("Compensated for order #{context.order_id}")
       end
     end
 
@@ -74,11 +74,11 @@ module RubyReactor
       argument :inventory, result(:reserve_inventory)
       argument :fail_at, input(:fail_at)
       run do |args, _context|
-        if args[:fail_at] == :authorize_payment
+        if args.fail_at == :authorize_payment
           Failure("Failure triggered for authorize_payment")
         else
           # Simulate payment authorization
-          Success({ id: args[:order][:id], status: "authorized", amount: args[:order][:amount] })
+          Success({ id: args.order[:id], status: "authorized", amount: args.order[:amount] })
         end
       end
 
@@ -86,7 +86,7 @@ module RubyReactor
       undo do |error, context|
         puts "Undo authorize_payment due to error: #{error}"
         # Simulate compensation logic
-        Success("Undo payment authorization for order #{context[:order][:id]}")
+        Success("Undo payment authorization for order #{context.order[:id]}")
       end
 
       compensate do |reason, args, _context|
@@ -99,10 +99,10 @@ module RubyReactor
       argument :payment, result(:authorize_payment)
       argument :fail_at, input(:fail_at)
       run do |args, _context|
-        raise "Simulated failure in capture_payment" if args[:fail_at] == :capture_payment
+        raise "Simulated failure in capture_payment" if args.fail_at == :capture_payment
 
         # Simulate payment capture
-        Success({ id: args[:payment][:id], status: "captured", amount: args[:payment][:amount] })
+        Success({ id: args.payment[:id], status: "captured", amount: args.payment[:amount] })
       end
 
       compensate do |error, args, _context|
@@ -115,7 +115,7 @@ module RubyReactor
       argument :payment, result(:authorize_payment)
       argument :fail_at, input(:fail_at)
       run do |args, _context|
-        if args[:fail_at] == :fulfill_order
+        if args.fail_at == :fulfill_order
           Failure("Failed to fulfill_order")
         else
           Success({ id: "fulfill_order", status: "done" })

@@ -31,8 +31,8 @@ end
 class ExtractCSVStep < RubyReactor::Step
   def run
     # Simulate CSV extraction (in real scenario, would read from file)
-    # file_path would be used: File.read(inputs[:file_path])
-    users = inputs[:csv_data] || []
+    # file_path would be used: File.read(inputs.file_path)
+    users = inputs.csv_data || []
 
     stats = {
       total_count: users.length,
@@ -48,7 +48,7 @@ end
 
 class DataQualityCheckStep < RubyReactor::Step
   def run
-    raw_data = inputs[:raw_data]
+    raw_data = inputs.raw_data
     users = raw_data[:users]
 
     quality_issues = analyze_quality(users)
@@ -90,7 +90,7 @@ end
 
 class LoadToDatabaseStep < RubyReactor::Step
   def run
-    users = inputs[:users]
+    users = inputs.users
 
     # Simulate batch insertion
     batches = users.each_slice(1000).to_a
@@ -109,14 +109,14 @@ class LoadToDatabaseStep < RubyReactor::Step
   def compensate
     # Cleanup on failure - simulate removing inserted data
     # In real scenario: delete from database where email in user_emails
-    # users = inputs[:users]
+    # users = inputs.users
     Success()
   end
 end
 
 class LoadToSearchIndexStep < RubyReactor::Step
   def run
-    users = inputs[:users]
+    users = inputs.users
 
     # Simulate bulk indexing
     indexed = users.length
@@ -129,7 +129,7 @@ end
 
 class GenerateProcessingReportStep < RubyReactor::Step
   def run
-    results = inputs[:results]
+    results = inputs.results
 
     report = {
       successful_count: results[:successful].length,
@@ -173,7 +173,7 @@ class UserETLReactor < RubyReactor::Reactor
       argument :rules, input(:rules)
 
       run do |args, _context|
-        user = args[:user]
+        user = args.user
         cleaned = {
           id: user["id"],
           email: user["email"]&.downcase&.strip || "",
@@ -193,7 +193,7 @@ class UserETLReactor < RubyReactor::Reactor
       argument :clean_user, result(:clean_user)
 
       run do |args, _context|
-        user = args[:clean_user]
+        user = args.clean_user
         profile = DataPipelineHelpers.simulate_external_api_call(user[:email])
 
         if profile
@@ -216,7 +216,7 @@ class UserETLReactor < RubyReactor::Reactor
       argument :user, result(:enrich_user)
 
       run do |args, _context|
-        user = args[:user]
+        user = args.user
         errors = []
 
         errors << "Name too short" if user[:name].length < 2
@@ -241,8 +241,8 @@ class UserETLReactor < RubyReactor::Reactor
     argument :source_stats, result(:extract_data, [:stats])
 
     run do |args, _context|
-      users = args[:transformed_users]
-      stats = args[:source_stats]
+      users = args.transformed_users
+      stats = args.source_stats
 
       # Separate successful and failed transformations
       # In inline execution, all results are values (no Result wrappers)
