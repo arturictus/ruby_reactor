@@ -36,7 +36,7 @@ class MultipleInterruptsReactor < RubyReactor::Reactor
       context.reactor_class.trace << :complete_transaction
       Success({
                 status: "completed",
-                approvals: [args[:approval_one], args[:approval_two]]
+                approvals: [args.approval_one, args.approval_two]
               })
     end
   end

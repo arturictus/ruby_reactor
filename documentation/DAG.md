@@ -373,8 +373,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :reserve_inventory do
     argument :order, result(:validate_order)
-    run do |args, _context|
-      reserve_inventory_logic(args[:order])
+    run do |inputs, _context|
+      reserve_inventory_logic(inputs.order)
     end
 
     compensate do
@@ -385,8 +385,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :process_payment do
     argument :inventory_result, result(:reserve_inventory)
-    run do |args, _context|
-      process_payment_logic(args[:inventory_result])
+    run do |inputs, _context|
+      process_payment_logic(inputs.inventory_result)
     end
 
     compensate do
@@ -397,8 +397,8 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :confirm_order do
     argument :payment_result, result(:process_payment)
-    run do |args, _context|
-      confirm_order_logic(args[:payment_result])
+    run do |inputs, _context|
+      confirm_order_logic(inputs.payment_result)
     end
   end
 end
@@ -423,23 +423,23 @@ class ComplexWorkflowReactor < RubyReactor::Reactor
   step :process_data do
     argument :validation_result, result(:validate_input)
     argument :permissions_result, result(:check_permissions)
-    run do |args, _context|
-      process_data_logic(args[:validation_result], args[:permissions_result])
+    run do |inputs, _context|
+      process_data_logic(inputs.validation_result, inputs.permissions_result)
     end
   end
 
   # Level 3 - Parallel steps depending on level 2
   step :send_notification do
     argument :data_result, result(:process_data)
-    run do |args, _context|
-      send_notification_logic(args[:data_result])
+    run do |inputs, _context|
+      send_notification_logic(inputs.data_result)
     end
   end
 
   step :update_audit_log do
     argument :data_result, result(:process_data)
-    run do |args, _context|
-      update_audit_log_logic(args[:data_result])
+    run do |inputs, _context|
+      update_audit_log_logic(inputs.data_result)
     end
   end
 
@@ -447,8 +447,8 @@ class ComplexWorkflowReactor < RubyReactor::Reactor
   step :cleanup do
     argument :notification_result, result(:send_notification)
     argument :audit_result, result(:update_audit_log)
-    run do |args, _context|
-      cleanup_logic(args[:notification_result], args[:audit_result])
+    run do |inputs, _context|
+      cleanup_logic(inputs.notification_result, inputs.audit_result)
     end
   end
 end

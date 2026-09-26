@@ -15,7 +15,7 @@ RSpec.describe "Step contract wiring", type: :reactor do
       input :bio, :string, optional: true
 
       define_method(:run) do
-        sink << inputs
+        sink << inputs.to_h
         Success(inputs)
       end
     end)
@@ -69,7 +69,7 @@ RSpec.describe "Step contract wiring", type: :reactor do
         input :email
         step :greet do
           run do |args, _|
-            sink << args
+            sink << args.to_h
             RubyReactor.Success(args)
           end
         end
@@ -113,7 +113,7 @@ RSpec.describe "Step contract wiring", type: :reactor do
       step :charge do
         inputs { input :amount, :integer }
         run do |args, _|
-          sink << args
+          sink << args.to_h
           RubyReactor.Success(args)
         end
       end
@@ -192,7 +192,7 @@ RSpec.describe "Step contract wiring", type: :reactor do
 
     # Without the inferred wiring the mock would receive every reactor input.
     subject = test_reactor(reactor, { name: "Ada", email: "a@b.c", extra: 1 })
-              .mock_step(:profile) { |args, _ctx| RubyReactor.Success(args.merge(mocked: true)) }
+              .mock_step(:profile) { |args, _ctx| RubyReactor.Success(args.to_h.merge(mocked: true)) }
 
     expect(subject).to be_success
     expect(subject.result.value).to eq(name: "Ada", email: "a@b.c", mocked: true)

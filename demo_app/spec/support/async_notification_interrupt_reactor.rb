@@ -17,16 +17,16 @@ class AsyncNotificationInterruptReactor < RubyReactor::Reactor
     run do |args, context|
       context.reactor_class.trace << :send_notifications
       # Simulate sending notifications
-      # args[:user_id] is the value directly because retrieve_context returns { user_id: 123 }
+      # args.user_id is the value directly because retrieve_context returns { user_id: 123 }
       # Wait, retrieve_context returns Success({ user_id: 123 }).
       # result(:retrieve_context) resolves to { user_id: 123 }.
-      # argument :user_id, result(:retrieve_context) means args[:user_id] = { user_id: 123 }
+      # argument :user_id, result(:retrieve_context) means args.user_id = { user_id: 123 }
       # We probably want a transform or access the value properly.
 
       # Let's fix the argument source to grab the specific key or fix the interpolation.
       # Ideally: argument :user_id, result(:retrieve_context), transform: ->(res) { res[:user_id] }
 
-      Success("notifications_sent_to_#{args[:user_id][:user_id]}")
+      Success("notifications_sent_to_#{args.user_id[:user_id]}")
     end
   end
 
@@ -44,7 +44,7 @@ class AsyncNotificationInterruptReactor < RubyReactor::Reactor
 
     run do |args, context|
       context.reactor_class.trace << :process_approval
-      Success("processed_#{args[:approval_payload][:status]}_after_#{args[:notification_status]}")
+      Success("processed_#{args.approval_payload[:status]}_after_#{args.notification_status}")
     end
   end
 

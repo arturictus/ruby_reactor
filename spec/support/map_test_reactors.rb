@@ -10,7 +10,7 @@ module MapTestReactors
 
     step :double do
       argument :number, input(:number)
-      run { |args, _| RubyReactor::Success(args[:number] * 2) }
+      run { |args, _| RubyReactor::Success(args.number * 2) }
     end
 
     returns :double
@@ -63,7 +63,7 @@ module MapTestReactors
 
     step :total do
       argument :doubled, result(:doubled_numbers)
-      run { |args, _| RubyReactor::Success(args[:doubled].map(&:value).sum) }
+      run { |args, _| RubyReactor::Success(args.doubled.map(&:value).sum) }
     end
 
     returns :total

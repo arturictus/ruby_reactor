@@ -15,7 +15,7 @@ RSpec.describe "Map Infinite Loop Prevention", type: :reactor do
       step :record do
         argument :item, input(:item)
         run do |args|
-          Success(args[:item])
+          Success(args.item)
         end
       end
 

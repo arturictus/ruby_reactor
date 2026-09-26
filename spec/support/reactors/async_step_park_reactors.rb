@@ -21,7 +21,7 @@ class AspOrderedStep < RubyReactor::Step
   with_lock { |a| "asp:lock:#{a[:run_id]}" }
 
   def run
-    AspSupport.redis.rpush(AspSupport.log_key(inputs[:run_id]), "ordered")
+    AspSupport.redis.rpush(AspSupport.log_key(inputs.run_id), "ordered")
     Success(:ordered)
   end
 end
@@ -38,7 +38,7 @@ class AspReactor < RubyReactor::Reactor
   step :progress do
     argument :run_id, input(:run_id)
     run do |args|
-      AspSupport.redis.rpush(AspSupport.log_key(args[:run_id]), "progress")
+      AspSupport.redis.rpush(AspSupport.log_key(args.run_id), "progress")
       RubyReactor.Success(:progressed)
     end
   end

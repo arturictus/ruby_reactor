@@ -94,7 +94,7 @@ RSpec.describe "Step retries: a step class declares its own policy" do
 
       define_method(:run) do
         counter << 1
-        Success(inputs[:amount])
+        Success(inputs.amount)
       end
     end
     reactor_class = Class.new(RubyReactor::Reactor) do

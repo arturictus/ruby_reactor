@@ -8,7 +8,7 @@ class RateLimitBurstDemoReactor < RubyReactor::Reactor
     run do |args|
       attempts = 4.times.map do |i|
         begin
-          result = RateLimitBurstDemoReactor.run_rate_limit_demo(account_id: args[:account_id], hold_seconds: 0)
+          result = RateLimitBurstDemoReactor.run_rate_limit_demo(account_id: args.account_id, hold_seconds: 0)
           { attempt: i + 1, status: :allowed, success: result.success? }
         rescue RubyReactor::RateLimit::ExceededError => e
           {
@@ -21,8 +21,8 @@ class RateLimitBurstDemoReactor < RubyReactor::Reactor
         end
       end
 
-      puts "[EXECUTION] RateLimitBurstDemoReactor - burst complete for #{args[:account_id]}"
-      Success(account_id: args[:account_id], attempts: attempts)
+      puts "[EXECUTION] RateLimitBurstDemoReactor - burst complete for #{args.account_id}"
+      Success(account_id: args.account_id, attempts: attempts)
     end
   end
 

@@ -90,11 +90,11 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :process_payment do
-    run { |args, _ctx| process_payment_logic(args) }
+    run { |inputs, _ctx| process_payment_logic(inputs) }
   end
 
   step :update_inventory do
-    run { |args, _ctx| update_inventory_logic(args) }
+    run { |inputs, _ctx| update_inventory_logic(inputs) }
   end
 
   # :validate_order is the LAST step to run in the calling process.
@@ -188,19 +188,19 @@ class SignupReactor < RubyReactor::Reactor
 
   async_step :send_email do
     argument :to, input(:email)
-    run { |args| Mailer.welcome(args[:to]).deliver_now; Success(:sent) }
+    run { |inputs| Mailer.welcome(inputs.to).deliver_now; Success(:sent) }
   end
 
   # Does NOT wait for :send_email — it has no dependency on it.
   step :record_signup do
     argument :email, input(:email)
-    run { |args| Success(Signup.create!(email: args[:email])) }
+    run { |inputs| Success(Signup.create!(email: inputs.email)) }
   end
 
   # DOES wait, because it reads the result.
   step :confirm_delivery do
     argument :delivery, result(:send_email)
-    run { |args| Success("confirmed #{args[:delivery]}") }
+    run { |inputs| Success("confirmed #{inputs.delivery}") }
   end
 end
 ```
@@ -228,11 +228,11 @@ unbounded wait.
 ```ruby
 step :confirm_delivery do
   argument :delivery, result(:send_email)
-  run do |args|
-    if args[:delivery].is_a?(RubyReactor::Failure)
-      Failure(args[:delivery].error)  # opt in: this fails the reactor and compensates
+  run do |inputs|
+    if inputs.delivery.is_a?(RubyReactor::Failure)
+      Failure(inputs.delivery.error)  # opt in: this fails the reactor and compensates
     else
-      Success(args[:delivery])
+      Success(inputs.delivery)
     end
   end
 end
@@ -281,8 +281,8 @@ class SignupReactor < RubyReactor::Reactor
 
   step :verify do
     argument :account, result(:provision_account)   # blocks until the child is terminal
-    run do |args|
-      args[:account].success? ? Success(args[:account].value) : Failure(args[:account].error)
+    run do |inputs|
+      inputs.account.success? ? Success(inputs.account.value) : Failure(inputs.account.error)
     end
   end
 end

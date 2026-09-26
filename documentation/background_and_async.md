@@ -103,11 +103,11 @@ class OrderProcessingReactor < RubyReactor::Reactor
   end
 
   step :process_payment do
-    run { |args, _ctx| process_payment_logic(args) }
+    run { |inputs, _ctx| process_payment_logic(inputs) }
   end
 
   step :update_inventory do
-    run { |args, _ctx| update_inventory_logic(args) }
+    run { |inputs, _ctx| update_inventory_logic(inputs) }
   end
 
   # :validate_order is the LAST step to run in the calling process.
@@ -213,19 +213,19 @@ class SignupReactor < RubyReactor::Reactor
 
   async_step :send_email do
     argument :to, input(:email)
-    run { |args| Mailer.welcome(args[:to]).deliver_now; Success(:sent) }
+    run { |inputs| Mailer.welcome(inputs.to).deliver_now; Success(:sent) }
   end
 
   # Does NOT wait for :send_email — it has no dependency on it.
   step :record_signup do
     argument :email, input(:email)
-    run { |args| Success(Signup.create!(email: args[:email])) }
+    run { |inputs| Success(Signup.create!(email: inputs.email)) }
   end
 
   # DOES wait, because it reads the result.
   step :confirm_delivery do
     argument :delivery, result(:send_email)
-    run { |args| Success("confirmed #{args[:delivery]}") }
+    run { |inputs| Success("confirmed #{inputs.delivery}") }
   end
 end
 ```
@@ -265,11 +265,11 @@ it takes one of two forms depending on where the reader runs:
 ```ruby
 step :confirm_delivery do
   argument :delivery, result(:send_email)
-  run do |args|
+  run do |inputs|
     # opt in: fail! here fails the reactor and compensates
-    fail!(args[:delivery].error) if args[:delivery].is_a?(RubyReactor::Failure)
+    fail!(inputs.delivery.error) if inputs.delivery.is_a?(RubyReactor::Failure)
 
-    Success(args[:delivery])
+    Success(inputs.delivery)
   end
 end
 ```
@@ -342,8 +342,8 @@ class SignupReactor < RubyReactor::Reactor
 
   step :verify do
     argument :account, result(:provision_account)   # waits until the child is terminal
-    run do |args|
-      args[:account].success? ? Success(args[:account].value) : Failure(args[:account].error)
+    run do |inputs|
+      inputs.account.success? ? Success(inputs.account.value) : Failure(inputs.account.error)
     end
   end
 end
@@ -496,17 +496,17 @@ class PaymentProcessingReactor < RubyReactor::Reactor
 
   step :validate_payment do
     retries max_attempts: 3, backoff: :exponential, base_delay: 1.second
-    run { |args, _ctx| validate_payment_logic(args) }
+    run { |inputs, _ctx| validate_payment_logic(inputs) }
   end
 
   step :charge_card do
     retries max_attempts: 5, backoff: :linear, base_delay: 5.seconds
-    run { |args, _ctx| charge_card_logic(args) }
+    run { |inputs, _ctx| charge_card_logic(inputs) }
   end
 
   step :update_records do
     # No retry - critical step
-    run { |args, _ctx| update_records_logic(args) }
+    run { |inputs, _ctx| update_records_logic(inputs) }
   end
 end
 ```
@@ -529,7 +529,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :process_payment do
     argument :order, result(:validate_order)
-    run { |args, _ctx| process_payment_logic(args[:order]) }
+    run { |inputs, _ctx| process_payment_logic(inputs.order) }
 
     undo do |result, _args, _ctx|
       # Runs in worker when a LATER step fails
@@ -537,20 +537,20 @@ class OrderProcessingReactor < RubyReactor::Reactor
       Success()
     end
 
-    compensate do |error, args, _ctx|
+    compensate do |error, inputs, _ctx|
       # Runs in worker if THIS step fails
-      AuditService.log_payment_failure(args[:order].id, error.message)
+      AuditService.log_payment_failure(inputs.order.id, error.message)
       Success()
     end
   end
 
   step :update_inventory do
     argument :order, result(:validate_order)
-    run { |args, _ctx| update_inventory_logic(args[:order]) }
+    run { |inputs, _ctx| update_inventory_logic(inputs.order) }
 
-    compensate do |_error, args, _ctx|
+    compensate do |_error, inputs, _ctx|
       # Runs in worker on failure
-      InventoryService.restore(args[:order])
+      InventoryService.restore(inputs.order)
       Success()
     end
   end

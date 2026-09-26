@@ -56,12 +56,12 @@ RSpec.describe "Map Fail Fast Behavior" do
           run do |args|
             # Resolve class by name to log reliably
             clazz = Object.const_get(class_name)
-            clazz.log "RUN #{args[:item]}"
+            clazz.log "RUN #{args.item}"
 
-            if args[:item] == "fail"
+            if args.item == "fail"
               RubyReactor.Failure("Simulated Failure")
             else
-              RubyReactor.Success(args[:item])
+              RubyReactor.Success(args.item)
             end
           end
         end

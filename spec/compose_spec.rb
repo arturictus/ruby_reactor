@@ -8,7 +8,7 @@ RSpec.describe "Compose" do
 
     step :validate_id do
       argument :id, input(:id)
-      run { |args, _context| RubyReactor::Success(args[:id]) }
+      run { |args, _context| RubyReactor::Success(args.id) }
     end
 
     # We want to support this syntax:
@@ -31,7 +31,7 @@ RSpec.describe "Compose" do
         argument :id, input(:id)
         retries max_attempts: 3
         run do |args, _context|
-          raise "Failed to get linkedin" if args[:id] == "fail"
+          raise "Failed to get linkedin" if args.id == "fail"
 
           RubyReactor::Success({ profile: "linkedin_profile" })
         end
@@ -67,7 +67,7 @@ RSpec.describe "Compose" do
 
       step :validate_id do
         argument :id, input(:id)
-        run { |args| RubyReactor::Success(args[:id]) }
+        run { |args| RubyReactor::Success(args.id) }
       end
 
       compose :update_user_profile do
@@ -77,7 +77,7 @@ RSpec.describe "Compose" do
           argument :id, input(:id)
           retries max_attempts: 3
           run do |args, _context|
-            raise "Failed to get linkedin" if args[:id] == "fail"
+            raise "Failed to get linkedin" if args.id == "fail"
 
             RubyReactor::Success({ profile: "linkedin_profile" })
           end
@@ -167,7 +167,7 @@ RSpec.describe "Compose" do
           argument :fail_at, input(:fail_at)
           wait_for :reserve
           run do |args, _context|
-            args[:fail_at] == "child" ? RubyReactor::Failure("child failed") : RubyReactor::Success()
+            args.fail_at == "child" ? RubyReactor::Failure("child failed") : RubyReactor::Success()
           end
         end
       end)
@@ -183,7 +183,7 @@ RSpec.describe "Compose" do
           argument :fail_at, input(:fail_at)
           wait_for :child
           run do |args, _context|
-            args[:fail_at] == "parent" ? RubyReactor::Failure("parent failed") : RubyReactor::Success()
+            args.fail_at == "parent" ? RubyReactor::Failure("parent failed") : RubyReactor::Success()
           end
         end
       end)

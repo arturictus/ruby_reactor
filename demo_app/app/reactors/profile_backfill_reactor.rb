@@ -13,12 +13,12 @@ class ProfileBackfillReactor < RubyReactor::Reactor
     argument :fail_at, input(:fail_at)
 
     run do |args|
-      if args[:fail_at]&.to_sym == :backfill
-        Rails.logger.warn "ProfileBackfillReactor: backfill failed for #{args[:user_id]}"
+      if args.fail_at&.to_sym == :backfill
+        Rails.logger.warn "ProfileBackfillReactor: backfill failed for #{args.user_id}"
         Failure("Backfill service unavailable")
       else
-        Rails.logger.info "ProfileBackfillReactor: backfilling profile for #{args[:user_id]}"
-        Success({ backfilled: args[:user_id] })
+        Rails.logger.info "ProfileBackfillReactor: backfilling profile for #{args.user_id}"
+        Success({ backfilled: args.user_id })
       end
     end
   end

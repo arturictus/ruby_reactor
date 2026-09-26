@@ -54,9 +54,9 @@ class LedgerTransactionReactor < RubyReactor::Reactor
       nonce = context.private_data[:ordered_lock][:nonce] ||
               context.private_data["ordered_lock"]["nonce"]
 
-      Ledger.append(args[:account_id], { nonce: nonce, **args[:transaction] })
+      Ledger.append(args.account_id, { nonce: nonce, **args.transaction })
 
-      Success(account_id: args[:account_id], nonce: nonce, applied: args[:transaction])
+      Success(account_id: args.account_id, nonce: nonce, applied: args.transaction)
     end
   end
 

@@ -60,10 +60,10 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     argument :currency, input(:currency)
     argument :card_token, input(:card_token)
 
-    run do |args, _context|
-      amount = args[:amount]
-      currency = args[:currency]
-      card_token = args[:card_token]
+    run do |inputs, _context|
+      amount = inputs.amount
+      currency = inputs.currency
+      card_token = inputs.card_token
 
       Success({ validated_amount: amount, validated_currency: currency })
     end
@@ -76,9 +76,9 @@ class PaymentProcessingReactor < RubyReactor::Reactor
 
     retries max_attempts: 2, backoff: :fixed, base_delay: 30.seconds
 
-    run do |args, _context|
-      amount = args[:amount]
-      card_token = args[:card_token]
+    run do |inputs, _context|
+      amount = inputs.amount
+      card_token = inputs.card_token
 
       fraud_score = FraudDetectionService.analyze(
         amount: amount,
@@ -102,10 +102,10 @@ class PaymentProcessingReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 5.seconds
 
-    run do |args, _context|
-      amount = args[:amount]
-      currency = args[:currency]
-      card_token = args[:card_token]
+    run do |inputs, _context|
+      amount = inputs.amount
+      currency = inputs.currency
+      card_token = inputs.card_token
 
       auth_result = PaymentGateway.pre_authorize(
         amount: amount,
@@ -118,8 +118,8 @@ class PaymentProcessingReactor < RubyReactor::Reactor
       Success({ auth_id: auth_result.id, auth_amount: amount })
     end
 
-    undo do |args, _context|
-      auth_id = args[:fraud_data][:auth_id] || args[:auth_id]
+    undo do |result, _inputs, _context|
+      auth_id = result[:auth_id]
       # Void the pre-authorization
       PaymentGateway.void_authorization(auth_id) if auth_id
     end
@@ -131,10 +131,10 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     # Final charge - critical operation
     retries max_attempts: 3, backoff: :fixed, base_delay: 60.seconds
 
-    run do |args, _context|
-      auth_id = args[:auth_data][:auth_id]
-      amount = args[:auth_data][:auth_amount]
-      currency = args[:currency]
+    run do |inputs, _context|
+      auth_id = inputs.auth_data[:auth_id]
+      amount = inputs.auth_data[:auth_amount]
+      currency = inputs.currency
 
       charge_result = PaymentGateway.charge(
         auth_id: auth_id,
@@ -147,8 +147,8 @@ class PaymentProcessingReactor < RubyReactor::Reactor
       Success({ charge_id: charge_result.id, charged_amount: amount })
     end
 
-    undo do |args, _context|
-      charge_id = args[:auth_data][:charge_id] || args[:charge_id]
+    undo do |result, _inputs, _context|
+      charge_id = result[:charge_id]
       # Refund the charge
       PaymentGateway.refund(charge_id) if charge_id
     end
@@ -161,12 +161,12 @@ class PaymentProcessingReactor < RubyReactor::Reactor
     argument :currency, input(:currency)
     argument :card_token, input(:card_token)
 
-    run do |args, _context|
-      charge_id = args[:charge_data][:charge_id]
-      amount = args[:amount]
-      currency = args[:currency]
-      card_token = args[:card_token]
-      fraud_score = args[:fraud_data][:fraud_score]
+    run do |inputs, _context|
+      charge_id = inputs.charge_data[:charge_id]
+      amount = inputs.amount
+      currency = inputs.currency
+      card_token = inputs.card_token
+      fraud_score = inputs.fraud_data[:fraud_score]
 
       transaction = PaymentTransaction.create!(
         charge_id: charge_id,
@@ -181,8 +181,8 @@ class PaymentProcessingReactor < RubyReactor::Reactor
       { transaction_id: transaction.id }
     end
 
-    compensate do |args, _context|
-      transaction_id = args[:charge_data][:transaction_id] || args[:transaction_id]
+    compensate do |_error, inputs, _context|
+      transaction_id = inputs.charge_data[:transaction_id]
       # Mark transaction as failed/refunded
       PaymentTransaction.find_by(id: transaction_id)&.update!(status: :refunded)
     end
@@ -195,10 +195,10 @@ class PaymentProcessingReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :linear, base_delay: 10.seconds
 
-    run do |args, _context|
-      transaction_id = args[:transaction_data][:transaction_id]
-      amount = args[:amount]
-      currency = args[:currency]
+    run do |inputs, _context|
+      transaction_id = inputs.transaction_data[:transaction_id]
+      amount = inputs.amount
+      currency = inputs.currency
 
       transaction = PaymentTransaction.find(transaction_id)
       customer = transaction.customer
@@ -231,8 +231,8 @@ class MultiAttemptPaymentReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 10.seconds
 
-    run do |args, _context|
-      order = args[:order]
+    run do |inputs, _context|
+      order = inputs.order
 
       result = process_payment_with_card(order, order.primary_card)
       if result.success?
@@ -249,9 +249,9 @@ class MultiAttemptPaymentReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 10.seconds
 
-    run do |args, _context|
-      order = args[:order]
-      primary_card_failed = args[:primary_attempt][:primary_card_failed]
+    run do |inputs, _context|
+      order = inputs.order
+      primary_card_failed = inputs.primary_attempt[:primary_card_failed]
 
       return { skipped: true } unless primary_card_failed
 
@@ -267,9 +267,9 @@ class MultiAttemptPaymentReactor < RubyReactor::Reactor
   step :process_successful_payment do
     argument :attempt_result, result(:attempt_backup_card)
 
-    run do |args, _context|
-      payment_result = args[:attempt_result][:payment_result]
-      card_used = args[:attempt_result][:card_used]
+    run do |inputs, _context|
+      payment_result = inputs.attempt_result[:payment_result]
+      card_used = inputs.attempt_result[:card_used]
 
       # Record successful payment
       PaymentRecord.create!(
@@ -307,8 +307,8 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
   step :validate_subscription do
     argument :subscription_id, input(:subscription_id)
 
-    run do |args, _context|
-      subscription_id = args[:subscription_id]
+    run do |inputs, _context|
+      subscription_id = inputs.subscription_id
 
       subscription = Subscription.find(subscription_id)
       raise "Subscription not found" unless subscription
@@ -323,8 +323,8 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 1.hour
 
-    run do |args, _context|
-      subscription = args[:validation_data][:subscription]
+    run do |inputs, _context|
+      subscription = inputs.validation_data[:subscription]
 
       # Calculate prorated amount for billing period
       proration = BillingService.calculate_proration(subscription)
@@ -338,10 +338,10 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 1.hour
 
-    run do |args, _context|
-      subscription = args[:validation_data][:subscription]
-      proration_amount = args[:proration_data][:proration_amount]
-      billing_period = args[:proration_data][:billing_period]
+    run do |inputs, _context|
+      subscription = inputs.validation_data[:subscription]
+      proration_amount = inputs.proration_data[:proration_amount]
+      billing_period = inputs.proration_data[:billing_period]
 
       charge_result = PaymentGateway.charge_subscription(
         customer_id: subscription.customer.stripe_id,
@@ -354,8 +354,8 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
       { charge_id: charge_result.id }
     end
 
-    compensate do |args, _context|
-      charge_id = args[:validation_data][:charge_id] || args[:charge_id]
+    compensate do |_error, inputs, _context|
+      charge_id = inputs.validation_data[:charge_id]
       # Refund the subscription charge
       PaymentGateway.refund_subscription_charge(charge_id) if charge_id
     end
@@ -366,10 +366,10 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
     argument :proration_data, result(:calculate_proration)
     argument :charge_data, result(:charge_subscription)
 
-    run do |args, _context|
-      subscription = args[:validation_data][:subscription]
-      charge_id = args[:charge_data][:charge_id]
-      billing_period = args[:proration_data][:billing_period]
+    run do |inputs, _context|
+      subscription = inputs.validation_data[:subscription]
+      charge_id = inputs.charge_data[:charge_id]
+      billing_period = inputs.proration_data[:billing_period]
 
       BillingRecord.create!(
         subscription: subscription,
@@ -412,8 +412,8 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 1.hour
 
-    run do |args, _context|
-      subscription = args[:validation_data][:subscription]
+    run do |inputs, _context|
+      subscription = inputs.validation_data[:subscription]
 
       # Calculate prorated amount for billing period
       proration = BillingService.calculate_proration(subscription)
@@ -427,10 +427,10 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 1.hour
 
-    run do |args, _context|
-      subscription = args[:validation_data][:subscription]
-      proration_amount = args[:proration_data][:proration_amount]
-      billing_period = args[:proration_data][:billing_period]
+    run do |inputs, _context|
+      subscription = inputs.validation_data[:subscription]
+      proration_amount = inputs.proration_data[:proration_amount]
+      billing_period = inputs.proration_data[:billing_period]
 
       charge_result = PaymentGateway.charge_subscription(
         customer_id: subscription.customer.stripe_id,
@@ -443,8 +443,8 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
       { charge_id: charge_result.id }
     end
 
-    compensate do |args, _context|
-      charge_id = args[:validation_data][:charge_id] || args[:charge_id]
+    compensate do |_error, inputs, _context|
+      charge_id = inputs.validation_data[:charge_id]
       # Refund the subscription charge
       PaymentGateway.refund_subscription_charge(charge_id) if charge_id
     end
@@ -455,10 +455,10 @@ class SubscriptionPaymentReactor < RubyReactor::Reactor
     argument :proration_data, result(:calculate_proration)
     argument :charge_data, result(:charge_subscription)
 
-    run do |args, _context|
-      subscription = args[:validation_data][:subscription]
-      charge_id = args[:charge_data][:charge_id]
-      billing_period = args[:proration_data][:billing_period]
+    run do |inputs, _context|
+      subscription = inputs.validation_data[:subscription]
+      charge_id = inputs.charge_data[:charge_id]
+      billing_period = inputs.proration_data[:billing_period]
 
       BillingRecord.create!(
         subscription: subscription,

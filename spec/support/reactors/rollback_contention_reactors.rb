@@ -48,7 +48,7 @@ module RbcRecordingCharge
   end
 
   def undo
-    RbcSupport.record(inputs[:run_id], "undo:#{inputs[:account_id]}")
+    RbcSupport.record(inputs.run_id, "undo:#{inputs.account_id}")
     Success(:refunded)
   end
 end
@@ -113,7 +113,7 @@ module RbcReactorShape
         argument :hold_seconds, input(:hold_seconds)
         wait_for :charge
         run do |args|
-          RbcSupport.hold(primitive, "rbc:acct:#{args[:account_id]}", args[:hold_seconds])
+          RbcSupport.hold(primitive, "rbc:acct:#{args.account_id}", args.hold_seconds)
           raise "contend failed after taking the key"
         end
       end
@@ -181,7 +181,7 @@ class RbcComposedParentReactor < RubyReactor::Reactor
     argument :account_id, input(:account_id)
     wait_for :child
     run do |args|
-      RbcSupport.hold(:lock, "rbc:acct:#{args[:account_id]}", 3)
+      RbcSupport.hold(:lock, "rbc:acct:#{args.account_id}", 3)
       raise "contend failed after taking the key"
     end
   end

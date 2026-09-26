@@ -762,14 +762,15 @@ module RubyReactor
       # callable a mock block can invoke.
       def original_impl_for(step_config_orig, target_step)
         if step_config_orig.has_run_block?
-          step_config_orig.run_block
+          # A mock may hand `original` a plain Hash (`args.to_h.merge(...)`).
+          ->(args, ctx) { step_config_orig.run_block.call(step_config_orig.wrap_inputs(args), ctx) }
         elsif step_config_orig.has_impl?
           impl = step_config_orig.impl
 
           if impl.respond_to?(:run_without_coordination)
             ->(args, ctx) { impl.run_without_coordination(args, ctx) }
           else
-            ->(args, ctx) { impl.run(args, ctx) }
+            ->(args, ctx) { impl.run(args.to_h, ctx) }
           end
         else
           ->(_, _) { raise "No implementation found for #{target_step}" }

@@ -40,7 +40,7 @@ Every action (`run`, `compensate`, `undo`) runs on a **fresh instance built just
 ```ruby
 class ReserveInventoryStep < RubyReactor::Step
   def run
-    order = inputs[:order]
+    order = inputs.order
     # Business logic for inventory reservation
     reservation_id = InventoryService.reserve(order[:items])
     Success({
@@ -107,16 +107,41 @@ end
 
 The full lifecycle for a class step, in order: contract enforcement (`enforce_contract!`) → coordination (acquire, in the fixed order documented in [Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination)) → the instance is built → `run` executes → signals (`success!`/`fail!`/`skip!`/`halt!`) are translated. Coordination lives INSIDE `Step.run`, so `MyStep.run(args)` — the "call it directly in a unit spec" entry point above — is protected exactly the same way a reactor-dispatched call is: a contended direct call raises rather than silently running unprotected. Retries are not: a direct call runs once — only a reactor retries a step (see [Retry Configuration](retry_configuration.md#direct-calls-run-once)). See [Step-Scoped Coordination](locks_and_semaphores.md#step-scoped-coordination) for the full acquisition order, contention behavior, and re-entrancy rules.
 
+### Reading inputs
+
+Step code (`run`, `undo`, `compensate`, in class steps and inline blocks) reads its inputs by method: `inputs.order_id`. `inputs` is a frozen, read-only object, not a Hash, and it has no `[]`.
+
+```ruby
+class ValidateOrderStep < RubyReactor::Step
+  input :order_guid, :integer
+  input :note, optional: true
+
+  def run
+    inputs.order_guid # the value
+    inputs.note       # nil: optional and not supplied
+    inputs.order_id   # raises RubyReactor::Error::UndeclaredInputError
+  end
+end
+```
+
+- **Readable names.** A step with a contract (`input` declarations, or an inline `inputs do ... end` block) reads its declared names. A step without one reads the keys it was given (its `argument`s, or the reactor's inputs for an unwired inline step).
+- **Unknown names fail loudly.** Any other name raises `RubyReactor::Error::UndeclaredInputError` on that line: `ValidateOrderStep has no input :order_id. Declared inputs: :order_guid, :note.` It is never retried, since a typo fails the same way on every attempt. In `undo`/`compensate` it is reported as a rollback failure.
+- **As a whole.** `inputs.to_h` returns the supplied values (symbol keys, readable names only), so an optional input that wasn't supplied is left out. `Service.call(**inputs)` and `hash.merge(inputs)` work too. Use `inputs.to_h` for any other Hash method (`each`, `slice`, comparing with a Hash). `inputs.inspect` redacts `redact: true` inputs.
+- **Returning inputs.** `Success(inputs)` stores `inputs.to_h`. An `inputs` nested inside a result (`Success(order: inputs)`) is not converted: write `Success(order: inputs.to_h)`.
+- **Reserved names.** `input :method` (or any name the object already answers, such as `class`, `hash`, `send`, `to_h`) raises `Error::ValidationError` when the step is defined, because `inputs.method` couldn't reach it.
+
+Everything outside step code keeps the plain Hash: lock and semaphore key procs (`with_lock { |args| ... }`), `validate_inputs`, map `source` blocks, `where`/`guard`, middleware and error payloads.
+
 ### Inline step definition
 
-For quick prototypes or trivial steps, define logic inline inside the reactor. Unlike a class step's zero-arg instance methods, an inline `run` block always receives two positional arguments: the resolved arguments hash and the execution context. Declare inputs with `argument :name, source`:
+For quick prototypes or trivial steps, define logic inline inside the reactor. Unlike a class step's zero-arg instance methods, an inline `run` block always receives two positional arguments: the step's `inputs` (see [Reading inputs](#reading-inputs)) and the execution context. Declare inputs with `argument :name, source`:
 
 ```ruby
 step :validate_order do
   argument :order_id, input(:order_id)
 
-  run do |args, _context|
-    order = Order.find(args[:order_id])
+  run do |inputs, _context|
+    order = Order.find(inputs.order_id)
     return Failure("Order not found") unless order
     Success({ order: order })
   end
@@ -146,8 +171,8 @@ Inline blocks support `compensate` and `undo` the same way class steps do — us
 The [validate_order example above](#inline-step-definition) written with the helper:
 
 ```ruby
-run do |args, _context|
-  order = Order.find(args[:order_id])
+run do |inputs, _context|
+  order = Order.find(inputs.order_id)
   fail!("Order not found") unless order
   Success({ order: order })
 end
@@ -157,7 +182,7 @@ They are not limited to a single guard clause at the top of `run` — a chain of
 
 ```ruby
 def run
-  order = Order.find_by(id: inputs[:order_id])
+  order = Order.find_by(id: inputs.order_id)
   fail!("Order not found") unless order
   fail!("Order already processed") if order.processed?
   fail!("Order cancelled") if order.cancelled?
@@ -175,8 +200,8 @@ def run
 end
 
 def check_eligibility!
-  fail!("underage") if inputs[:user].age < 18
-  fail!("suspended") if inputs[:user].suspended?
+  fail!("underage") if inputs.user.age < 18
+  fail!("suspended") if inputs.user.suspended?
 end
 ```
 
@@ -214,13 +239,13 @@ end
 
 class ProcessPaymentStep < RubyReactor::Step
   def run
-    process_payment_for_order(inputs[:order])
+    process_payment_for_order(inputs.order)
   end
 end
 
 class SendConfirmationStep < RubyReactor::Step
   def run
-    payment_result = inputs[:payment_result]
+    payment_result = inputs.payment_result
     send_confirmation_email(payment_result[:order], payment_result[:payment_id])
   end
 end
@@ -276,12 +301,12 @@ When a step fails, execution stops and compensation begins:
 ```ruby
 class ProcessPaymentStep < RubyReactor::Step
   def run
-    PaymentService.charge(inputs[:amount], inputs[:token])
+    PaymentService.charge(inputs.amount, inputs.token)
   end
 
   def compensate
     # Best-effort cleanup specific to this step's failure
-    AuditService.log_payment_failure(inputs[:token], reason.message)
+    AuditService.log_payment_failure(inputs.token, reason.message)
   end
 end
 
@@ -350,7 +375,7 @@ class ReserveInventoryStep < RubyReactor::Step
   input :product_id, :string
   retries max_attempts: 5, backoff: :fixed, base_delay: 2 # 2 seconds
 
-  def run = Success(InventoryService.reserve(inputs[:product_id]))
+  def run = Success(InventoryService.reserve(inputs.product_id))
 end
 ```
 
@@ -505,8 +530,8 @@ step :validate_order do
   argument :order_id, input(:order_id)
   argument :customer_id, input(:customer_id)
 
-  run do |args, _context|
-    order = Order.find_by(id: args[:order_id], customer_id: args[:customer_id])
+  run do |inputs, _context|
+    order = Order.find_by(id: inputs.order_id, customer_id: inputs.customer_id)
     Success({ order: order })
   end
 end
@@ -514,14 +539,14 @@ end
 step :process_payment do
   argument :order, result(:validate_order, :order)
 
-  run do |args, _context|
-    payment = PaymentService.charge(args[:order].total, args[:order].card_token)
+  run do |inputs, _context|
+    payment = PaymentService.charge(inputs.order.total, inputs.order.card_token)
     Success({ payment_id: payment.id })
   end
 end
 ```
 
-If a step declares no `argument`s, the reactor's raw inputs hash is passed as `args`.
+If a step declares no `argument`s, it receives the reactor's inputs.
 
 ## Undo
 
@@ -539,7 +564,7 @@ Unlike compensation which only runs for the failing step, undo is triggered duri
 ```ruby
 class ReserveInventoryStep < RubyReactor::Step
   def run
-    reservation_id = InventoryService.reserve(inputs[:items])
+    reservation_id = InventoryService.reserve(inputs.items)
     Success(reservation_id: reservation_id)
   end
 
@@ -569,9 +594,9 @@ An inline `undo do |result, arguments, context| ... end` block still receives th
 step :complex_operation do
   argument :input, input(:payload)
 
-  run do |args, _ctx|
+  run do |inputs, _ctx|
     # Complex operation that modifies external state
-    record = create_record(args[:input])
+    record = create_record(inputs.input)
     notification = send_notification(record)
     Success({ record_id: record.id, notification_id: notification.id })
   end
@@ -609,7 +634,7 @@ Compensation runs immediately when a step fails, before the broader rollback pro
 ```ruby
 class ReserveInventoryStep < RubyReactor::Step
   def run
-    reservation_id = InventoryService.reserve(inputs[:items])
+    reservation_id = InventoryService.reserve(inputs.items)
     Success(reservation_id: reservation_id)
   end
 
@@ -640,15 +665,15 @@ step :process_payment do
   argument :order, result(:validate_order)
   argument :payment_method, input(:payment_method)
 
-  run do |args, _ctx|
+  run do |inputs, _ctx|
     # Payment processing logic that might fail
-    PaymentService.charge(args[:order].total, args[:payment_method])
+    PaymentService.charge(inputs.order.total, inputs.payment_method)
   end
 
   compensate do |error, arguments, context|
     # Handle payment processing failure
-    order = arguments[:order]
-    payment_method = arguments[:payment_method]
+    order = arguments.order
+    payment_method = arguments.payment_method
 
     # Log the failure for audit purposes
     AuditService.log_payment_failure(order.id, error.message)
@@ -669,19 +694,19 @@ Alongside `Success` and `Failure`, a step can return **`Halt`** — a clean stop
 # Class step
 class SyncProfileStep < RubyReactor::Step
   def run
-    return Halt(reason: "user_opted_out") if inputs[:user].opted_out?
+    return Halt(reason: "user_opted_out") if inputs.user.opted_out?
 
-    Success(synced: ProfileService.sync(inputs[:user]))
+    Success(synced: ProfileService.sync(inputs.user))
   end
 end
 
 # Inline block — identical helper
 step :sync_profile do
   argument :user, input(:user)
-  run do |args, _ctx|
-    next Halt(reason: "user_opted_out") if args[:user].opted_out?
+  run do |inputs, _ctx|
+    next Halt(reason: "user_opted_out") if inputs.user.opted_out?
 
-    Success(synced: ProfileService.sync(args[:user]))
+    Success(synced: ProfileService.sync(inputs.user))
   end
 end
 ```
@@ -707,16 +732,16 @@ Where `Halt` stops the whole reactor, **`Skipped`** marks just one step as skipp
 ```ruby
 step :maybe_sync do
   argument :user, result(:fetch_user)
-  run do |args, _ctx|
-    next Skipped(args[:user]) if args[:user].already_synced?
+  run do |inputs, _ctx|
+    next Skipped(inputs.user) if inputs.user.already_synced?
 
-    Success(sync!(args[:user]))
+    Success(sync!(inputs.user))
   end
 end
 
 step :notify do
   argument :user, result(:maybe_sync)  # receives the user either way
-  run { |args, _ctx| Success(mail(args[:user])) }
+  run { |inputs, _ctx| Success(mail(inputs.user)) }
 end
 ```
 

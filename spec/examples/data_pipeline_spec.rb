@@ -102,7 +102,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir", type: :reactor do
 
         step :double do
           argument :val, input(:number)
-          run { |args, _| RubyReactor::Success(args[:val] * 2) }
+          run { |args, _| RubyReactor::Success(args.val * 2) }
         end
 
         returns :double
@@ -128,7 +128,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir", type: :reactor do
 
         step :process do
           argument :val, input(:number)
-          run { |args, _| RubyReactor::Success(args[:val] * 3) }
+          run { |args, _| RubyReactor::Success(args.val * 3) }
         end
 
         returns :process
@@ -162,8 +162,8 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir", type: :reactor do
           argument :data, input(:region_data)
 
           run do |args, _|
-            region = args[:data][:region]
-            total = args[:data][:sales].sum
+            region = args.data[:region]
+            total = args.data[:sales].sum
             RubyReactor::Success({ region: region, total: total })
           end
         end
@@ -215,10 +215,10 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir", type: :reactor do
 
           run do |args, _|
             # Simulate error on specific value
-            if args[:val] == "error"
+            if args.val == "error"
               RubyReactor::Failure("Processing failed for item")
             else
-              RubyReactor::Success(args[:val].upcase)
+              RubyReactor::Success(args.val.upcase)
             end
           end
         end
@@ -261,7 +261,7 @@ RSpec.describe "Data Pipeline - Feature Parity with Elixir", type: :reactor do
 
         step :double do
           argument :val, input(:number)
-          run { |args, _| RubyReactor::Success(args[:val] * 2) }
+          run { |args, _| RubyReactor::Success(args.val * 2) }
         end
 
         returns :double

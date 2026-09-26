@@ -25,6 +25,11 @@ module RubyReactor
       def input(name, type = nil, optional: false, default: nil, redact: false, validate: nil, **predicates, &block)
         # rubocop:enable Metrics/ParameterLists
         check_dry_validation_available!
+        if Step::Inputs.public_method_defined?(name)
+          raise Error::ValidationError,
+                "input :#{name} is reserved: step code reads inputs as `inputs.#{name}`, and `#{name}` is already " \
+                "a method there. Rename the input."
+        end
         unless default.nil? || optional
           raise Error::ValidationError,
                 "input :#{name} declares `default:` but is required; a default only applies to an " \

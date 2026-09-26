@@ -23,7 +23,7 @@ class ChargeStep < RubyReactor::Step
   end
 
   def run
-    outcome = LegacyChargeService.new(inputs[:user_id]).call
+    outcome = LegacyChargeService.new(inputs.user_id).call
     outcome.success? ? Success(charge_id: outcome.id) : Failure(outcome.error)
   end
 
@@ -36,7 +36,7 @@ end
 # Forces a rollback on demand, to prove ChargeStep#undo runs.
 class ForceFailStep < RubyReactor::Step
   def run
-    fail!("forced failure to demonstrate rollback") if inputs[:fail]
+    fail!("forced failure to demonstrate rollback") if inputs.fail
 
     Success(:ok)
   end

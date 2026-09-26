@@ -27,7 +27,7 @@ class StepLockAuditStep < RubyReactor::Step
   input :account_id, :string
 
   def run
-    StepLockDemoLog.record(step: :audit, account_id: inputs[:account_id], at: Time.current.iso8601(3))
+    StepLockDemoLog.record(step: :audit, account_id: inputs.account_id, at: Time.current.iso8601(3))
     Success(audited: true)
   end
 end
@@ -39,16 +39,16 @@ class StepLockChargeStep < RubyReactor::Step
   with_lock(wait: 2) { |args| "demo:acct:#{args[:account_id]}" }
 
   def run
-    StepLockDemoLog.record(step: :charge, phase: :run, account_id: inputs[:account_id],
+    StepLockDemoLog.record(step: :charge, phase: :run, account_id: inputs.account_id,
                                                     at: Time.current.iso8601(3))
-    Success(charged: true, account_id: inputs[:account_id])
+    Success(charged: true, account_id: inputs.account_id)
   end
 
   # Exercised when :charge ITSELF fails (not used by the demo's
   # `fail_after_charge` scenario, which fails a LATER step instead — kept
   # here so the class demonstrates both rollback paths (contract §6)).
   def compensate
-    StepLockDemoLog.record(step: :charge, phase: :compensate, account_id: inputs[:account_id],
+    StepLockDemoLog.record(step: :charge, phase: :compensate, account_id: inputs.account_id,
                                                     at: Time.current.iso8601(3))
     Success()
   end
@@ -57,7 +57,7 @@ class StepLockChargeStep < RubyReactor::Step
   # :notify fails, and this runs to roll :charge back — under :charge's OWN
   # lock, re-acquired for the duration of the undo (contract §6).
   def undo
-    StepLockDemoLog.record(step: :charge, phase: :undo, account_id: inputs[:account_id],
+    StepLockDemoLog.record(step: :charge, phase: :undo, account_id: inputs.account_id,
                                                     at: Time.current.iso8601(3))
     Success()
   end
@@ -69,11 +69,11 @@ class StepLockNotifyStep < RubyReactor::Step
   input :fail_after_charge, optional: true
 
   def run
-    if inputs[:fail_after_charge]
+    if inputs.fail_after_charge
       return Failure("forced failure after charge, to demonstrate compensation under the step's own lock")
     end
 
-    StepLockDemoLog.record(step: :notify, account_id: inputs[:account_id], at: Time.current.iso8601(3))
+    StepLockDemoLog.record(step: :notify, account_id: inputs.account_id, at: Time.current.iso8601(3))
     Success(notified: true)
   end
 end

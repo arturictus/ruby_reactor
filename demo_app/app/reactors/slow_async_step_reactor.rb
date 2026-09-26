@@ -15,10 +15,10 @@ class SlowAsyncStepReactor < RubyReactor::Reactor
     argument :sleep_seconds, input(:sleep_seconds)
 
     run do |args|
-      Rails.logger.info "SlowAsyncStepReactor: starting a #{args[:sleep_seconds]}s task for #{args[:job_id]}"
-      sleep args[:sleep_seconds]
-      Rails.logger.info "SlowAsyncStepReactor: task for #{args[:job_id]} finished"
-      Success({ job_id: args[:job_id], finished_at: Time.current.iso8601 })
+      Rails.logger.info "SlowAsyncStepReactor: starting a #{args.sleep_seconds}s task for #{args.job_id}"
+      sleep args.sleep_seconds
+      Rails.logger.info "SlowAsyncStepReactor: task for #{args.job_id} finished"
+      Success({ job_id: args.job_id, finished_at: Time.current.iso8601 })
     end
   end
 
@@ -26,7 +26,7 @@ class SlowAsyncStepReactor < RubyReactor::Reactor
     argument :job_id, input(:job_id)
 
     run do |args|
-      Rails.logger.info "SlowAsyncStepReactor: acknowledged #{args[:job_id]} without waiting on the slow task"
+      Rails.logger.info "SlowAsyncStepReactor: acknowledged #{args.job_id} without waiting on the slow task"
       Success(:acknowledged)
     end
   end

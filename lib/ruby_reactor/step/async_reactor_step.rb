@@ -15,6 +15,10 @@ module RubyReactor
     # ordered-lock nonce at ENQUEUE time (so ordering matches caller order), and
     # persist before enqueueing (F2).
     class AsyncReactorStep < RubyReactor::Step
+      # Untyped, so no validation: declared only so `inputs.x` can read them.
+      input :async_reactor_class
+      input :argument_mappings, optional: true
+
       class << self
         # Exclusive keys this EXECUTION currently holds, read from the root
         # context's registry. Shared by the `async_reactor` dispatch check
@@ -54,8 +58,8 @@ module RubyReactor
       end
 
       def run
-        child_class = inputs[:async_reactor_class]
-        child_inputs = build_child_inputs(inputs[:argument_mappings] || {})
+        child_class = inputs.async_reactor_class
+        child_inputs = build_child_inputs(inputs.argument_mappings || {})
 
         # A dispatch-time failure fails the DISPATCHING step, i.e. normal saga
         # handling in the parent. That is deliberately outside the

@@ -64,11 +64,8 @@ RSpec.describe "Step input contract declaration" do
   end
 
   describe "declares_inputs?" do
-    it "is false for a plain step and for the internal step classes" do
+    it "is false for a plain step" do
       expect(step_class.declares_inputs?).to be(false)
-      expect(RubyReactor::Step::MapStep.declares_inputs?).to be(false)
-      expect(RubyReactor::Step::ComposeStep.declares_inputs?).to be(false)
-      expect(RubyReactor::Step::AsyncReactorStep.declares_inputs?).to be(false)
     end
 
     it "is true once an input is declared" do

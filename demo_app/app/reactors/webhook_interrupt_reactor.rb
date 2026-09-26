@@ -5,7 +5,7 @@ class WebhookInterruptReactor < RubyReactor::Reactor
   step :background_step_before do
     argument :fail_at, input(:fail_at)
     run do |args, _|
-      if args[:fail_at] == :background_step_before
+      if args.fail_at == :background_step_before
         raise "Failure triggered for background_step_before"
       else
         Success("Background step before completed")
@@ -17,12 +17,12 @@ class WebhookInterruptReactor < RubyReactor::Reactor
     argument :provider_id, input(:provider_id)
     argument :fail_at, input(:fail_at)
     run do |args, _|
-      if args[:fail_at] == :initiate_request
+      if args.fail_at == :initiate_request
         raise "Failure triggered for initiate_request"
       else
         # Simulate sending a request to an external provider
         # They will call us back with this ID
-        external_id = "req_#{args[:provider_id]}_#{SecureRandom.hex(4)}"
+        external_id = "req_#{args.provider_id}_#{SecureRandom.hex(4)}"
         Success(external_id)
       end
     end
@@ -48,9 +48,9 @@ class WebhookInterruptReactor < RubyReactor::Reactor
     argument :fail_at, input(:fail_at)
     
     run do |args, _|
-      if args[:fail_at] == :process_response
+      if args.fail_at == :process_response
         raise "Failure triggered for process_response"
-      elsif args[:webhook_data]["status"] == "approved"
+      elsif args.webhook_data["status"] == "approved"
         Success("Request successfully approved via webhook")
       else
         Failure("Request rejected via webhook")
@@ -62,7 +62,7 @@ class WebhookInterruptReactor < RubyReactor::Reactor
     argument :webhook_data, result(:wait_for_webhook)
     argument :fail_at, input(:fail_at)
     run do |args, _|
-      if args[:fail_at] == :background_step_after
+      if args.fail_at == :background_step_after
         raise "Failure triggered for background_step_after"
       else
         Success("Background step after completed")

@@ -20,7 +20,7 @@ RSpec.describe "map fan-out followed by a background cut point" do
 
     step :double do
       argument :number, input(:number)
-      run { |args, _ctx| RubyReactor.Success(args[:number] * 2) }
+      run { |args, _ctx| RubyReactor.Success(args.number * 2) }
     end
 
     returns :double

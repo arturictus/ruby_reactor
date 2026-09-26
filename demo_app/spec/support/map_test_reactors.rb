@@ -12,7 +12,7 @@ module MapTestReactors
       argument :number, input(:number)
       run { |args, _| 
         puts "RUNNING -----------"
-        RubyReactor::Success(args[:number] * 2) 
+        RubyReactor::Success(args.number * 2) 
       }
     end
 

@@ -388,8 +388,9 @@ module RubyReactor
   end
 
   # Global helper methods
+  # A step returning its own inputs (`Success(inputs)`) stores the Hash.
   def self.Success(value = nil)
-    Success.new(value)
+    Success.new(value.is_a?(Step::Inputs) ? value.to_h : value)
   end
 
   def self.Failure(error, **kwargs)

@@ -6,12 +6,12 @@ class FormInterruptReactor < RubyReactor::Reactor
     argument :user_name, input(:user_name)
     argument :fail_at, input(:fail_at)
     run do |args, _|
-      if args[:fail_at] == :prepare_application
+      if args.fail_at == :prepare_application
         raise "Failure triggered for prepare_application"
       else
         Success({
           application_id: SecureRandom.hex(6),
-          name: args[:user_name],
+          name: args.user_name,
           timestamp: Time.now
         })
       end
@@ -21,7 +21,7 @@ class FormInterruptReactor < RubyReactor::Reactor
   step :background_step_before do
     argument :fail_at, input(:fail_at)
     run do |args, _|
-      if args[:fail_at] == :background_step_before
+      if args.fail_at == :background_step_before
         raise "Failure triggered for background_step_before"
       else
         Success("Background step before completed")
@@ -74,11 +74,11 @@ class FormInterruptReactor < RubyReactor::Reactor
     argument :fail_at, input(:fail_at)
 
     run do |args, _|
-      if args[:fail_at] == :finalize_application
+      if args.fail_at == :finalize_application
         raise "Failure triggered for finalize_application"
       else
-        final_record = args[:application].merge(
-          additional_info: args[:user_input][:bio],
+        final_record = args.application.merge(
+          additional_info: args.user_input[:bio],
           status: "complete"
         )
         Success(final_record)
@@ -90,7 +90,7 @@ class FormInterruptReactor < RubyReactor::Reactor
     argument :user_input, result(:wait_for_user_input)
     argument :fail_at, input(:fail_at)
     run do |args, _|
-      if args[:fail_at] == :background_step_after
+      if args.fail_at == :background_step_after
         raise "Failure triggered for background_step_after"
       else
         Success("Background step after completed")

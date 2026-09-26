@@ -21,7 +21,7 @@ RSpec.describe "Map with Dynamic Source" do
 
         step :transform do
           argument :val, input(:item)
-          run { |args, _| RubyReactor::Success(args[:val] + 1) }
+          run { |args, _| RubyReactor::Success(args.val + 1) }
         end
 
         returns :transform
@@ -48,7 +48,7 @@ RSpec.describe "Map with Dynamic Source" do
         step :generate_range do
           argument :start, input(:start_range)
           argument :finish, input(:end_range)
-          run { |args, _| RubyReactor::Success((args[:start]..args[:finish]).to_a) }
+          run { |args, _| RubyReactor::Success((args.start..args.finish).to_a) }
         end
 
         map :doubled_range do
@@ -63,7 +63,7 @@ RSpec.describe "Map with Dynamic Source" do
 
           step :double do
             argument :val, input(:number)
-            run { |args, _| RubyReactor::Success(args[:val] * 2) }
+            run { |args, _| RubyReactor::Success(args.val * 2) }
           end
 
           returns :double

@@ -12,12 +12,12 @@ class AccountProvisioningReactor < RubyReactor::Reactor
     argument :fail_at, input(:fail_at)
 
     run do |args|
-      if args[:fail_at]&.to_sym == :provision
-        Rails.logger.warn "AccountProvisioningReactor: provisioning declined for #{args[:user_id]}"
+      if args.fail_at&.to_sym == :provision
+        Rails.logger.warn "AccountProvisioningReactor: provisioning declined for #{args.user_id}"
         Failure("Provisioning service declined the request")
       else
-        Rails.logger.info "AccountProvisioningReactor: provisioning account for #{args[:user_id]}"
-        Success({ account_id: "acct-#{args[:user_id]}" })
+        Rails.logger.info "AccountProvisioningReactor: provisioning account for #{args.user_id}"
+        Success({ account_id: "acct-#{args.user_id}" })
       end
     end
   end

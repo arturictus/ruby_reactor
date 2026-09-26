@@ -4,9 +4,9 @@ require "spec_helper"
 
 class MiddlewareTestStep < RubyReactor::Step
   def run
-    raise "step failed" if inputs[:should_fail]
+    raise "step failed" if inputs.should_fail
 
-    Success(inputs[:value].to_i * 2)
+    Success(inputs.value.to_i * 2)
   end
 end
 

@@ -2,8 +2,8 @@
 
 class ReserveInventory < RubyReactor::Step
   def run
-    order = inputs[:order]
-    fail_at = inputs[:fail_at]
+    order = inputs.order
+    fail_at = inputs.fail_at
 
     if fail_at == :reserve_inventory
       Failure({

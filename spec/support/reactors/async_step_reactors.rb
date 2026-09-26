@@ -25,8 +25,8 @@ class AsyncStepSiblingReactor < RubyReactor::Reactor
   async_step :send_email do
     argument :to, input(:email)
     run do |args|
-      AsyncStepFixtures.record([:send_email, args[:to]])
-      RubyReactor.Success("sent:#{args[:to]}")
+      AsyncStepFixtures.record([:send_email, args.to])
+      RubyReactor.Success("sent:#{args.to}")
     end
   end
 
@@ -43,14 +43,14 @@ class AsyncStepReaderReactor < RubyReactor::Reactor
 
   async_step :send_email do
     argument :to, input(:email)
-    run { |args| RubyReactor.Success({ delivered_to: args[:to] }) }
+    run { |args| RubyReactor.Success({ delivered_to: args.to }) }
   end
 
   step :check_email do
     argument :email, result(:send_email)
     run do |args|
-      AsyncStepFixtures.record([:check_email, args[:email]])
-      RubyReactor.Success(args[:email])
+      AsyncStepFixtures.record([:check_email, args.email])
+      RubyReactor.Success(args.email)
     end
   end
 
@@ -115,8 +115,8 @@ class AsyncStepFailingWithReaderReactor < RubyReactor::Reactor
   step :inspect_risky do
     argument :outcome, result(:risky)
     run do |args|
-      AsyncStepFixtures.record([:inspect_risky, args[:outcome].class.name])
-      args[:outcome].is_a?(RubyReactor::Failure) ? RubyReactor.Failure(args[:outcome].error) : RubyReactor.Success(:ok)
+      AsyncStepFixtures.record([:inspect_risky, args.outcome.class.name])
+      args.outcome.is_a?(RubyReactor::Failure) ? RubyReactor.Failure(args.outcome.error) : RubyReactor.Success(:ok)
     end
   end
 end
@@ -130,7 +130,7 @@ class AsyncStepNeverCompletesReactor < RubyReactor::Reactor
 
   step :reader do
     argument :value, result(:never)
-    run { |args| RubyReactor.Success(args[:value]) }
+    run { |args| RubyReactor.Success(args.value) }
   end
 end
 

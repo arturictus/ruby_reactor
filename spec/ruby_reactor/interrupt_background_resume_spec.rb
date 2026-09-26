@@ -7,7 +7,7 @@ class BackgroundResumeInterruptReactor < RubyReactor::Reactor
 
   step :prepare do
     argument :user_id, input(:user_id)
-    run { |args| Success("prepared-#{args[:user_id]}") }
+    run { |args| Success("prepared-#{args.user_id}") }
   end
 
   interrupt :wait_for_webhook, resume: :background do
@@ -21,7 +21,7 @@ class BackgroundResumeInterruptReactor < RubyReactor::Reactor
 
   step :finalize do
     argument :webhook, result(:wait_for_webhook)
-    run { |args| Success("finalized-#{args[:webhook][:status]}") }
+    run { |args| Success("finalized-#{args.webhook[:status]}") }
   end
 end
 

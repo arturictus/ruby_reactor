@@ -13,10 +13,10 @@ RSpec.describe "Map element returning Skipped" do
       step :process do
         argument :val, input(:item)
         run do |args, _|
-          if args[:val] == "skip_me"
+          if args.val == "skip_me"
             RubyReactor::Skipped("was_skipped")
           else
-            RubyReactor::Success(args[:val].upcase)
+            RubyReactor::Success(args.val.upcase)
           end
         end
       end

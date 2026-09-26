@@ -12,7 +12,7 @@ class ParkChildStep < RubyReactor::Step
   with_lock { |a| "park:acct:#{a[:account_id]}" }
 
   def run
-    Success(inputs[:account_id])
+    Success(inputs.account_id)
   end
 end
 
@@ -110,7 +110,7 @@ class ParkFetchStep < RubyReactor::Step
   input :run_id
 
   def run
-    Success("fetched:#{inputs[:run_id]}")
+    Success("fetched:#{inputs.run_id}")
   end
 end
 
@@ -125,7 +125,7 @@ class ParkAsyncReaderChild < RubyReactor::Reactor
 
   step :read do
     argument :fetched, result(:fetch)
-    run { |args| RubyReactor.Success(args[:fetched]) }
+    run { |args| RubyReactor.Success(args.fetched) }
   end
 
   returns :read
@@ -191,7 +191,7 @@ class ParkLockedChildReactor < RubyReactor::Reactor
 
   step :work do
     argument :run_id, input(:run_id)
-    run { |args| RubyReactor.Success("child:#{args[:run_id]}") }
+    run { |args| RubyReactor.Success("child:#{args.run_id}") }
   end
 
   returns :work
@@ -208,7 +208,7 @@ class ParkLockedChildParentReactor < RubyReactor::Reactor
   # to roll back. Its undo records itself in a Redis list.
   step :reserve do
     argument :run_id, input(:run_id)
-    run { |args| RubyReactor.Success(args[:run_id]) }
+    run { |args| RubyReactor.Success(args.run_id) }
     undo do |run_id, _args, _context|
       ParkSupport.redis.rpush(ParkSupport.undo_log_key(run_id), "reserve")
       RubyReactor.Success()
@@ -229,7 +229,7 @@ class ParkMapElementReactor < RubyReactor::Reactor
 
   step :double do
     argument :n, input(:n)
-    run { |args| RubyReactor.Success(args[:n] * 2) }
+    run { |args| RubyReactor.Success(args.n * 2) }
   end
 
   returns :double

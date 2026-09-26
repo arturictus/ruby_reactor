@@ -28,8 +28,8 @@ class UserTransformationReactor < RubyReactor::Reactor
     # Define steps to run for each element
     step :normalize do
       argument :user, input(:user)
-      run do |args, _|
-        user = args[:user]
+      run do |inputs, _|
+        user = inputs.user
         Success({
           name: user[:name].strip,
           email: user[:email].downcase
@@ -59,7 +59,7 @@ map :process_orders do
 
   step :charge_card do
     argument :order, input(:order)
-    run { PaymentService.charge(args[:order]) }
+    run { |inputs| PaymentService.charge(inputs.order) }
   end
 
   returns :charge_card
@@ -177,9 +177,9 @@ map :reliable_processing do
     # Retry up to 3 times with exponential backoff
     retries max_attempts: 3, backoff: :exponential, base_delay: 1.second
 
-    run do |args, _|
+    run do |inputs, _|
       # If this raises or returns Failure, it will be retried
-      HttpClient.get(args[:url])
+      HttpClient.get(inputs.url)
     end
   end
 

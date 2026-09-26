@@ -89,7 +89,7 @@ class RefundOrderReactor < RubyReactor::Reactor
 
   step :refund do
     argument :order_id, input(:order_id)
-    run { |args| PaymentGateway.refund(args[:order_id]) }
+    run { |inputs| PaymentGateway.refund(inputs.order_id) }
   end
 end
 ```
@@ -176,7 +176,7 @@ class GeocodeReactor < RubyReactor::Reactor
 
   step :geocode do
     argument :address, input(:address)
-    run { |args| Geocoder.lookup(args[:address]) }
+    run { |inputs| Geocoder.lookup(inputs.address) }
   end
 end
 ```
@@ -223,7 +223,7 @@ class ChargeReactor < RubyReactor::Reactor
 
   step :charge do
     argument :account_id, input(:account_id)
-    run { |args| Stripe.charge(args[:account_id]) }
+    run { |inputs| Stripe.charge(inputs.account_id) }
   end
 end
 ```
@@ -279,7 +279,7 @@ class ChargeReactor < RubyReactor::Reactor
 
   step :charge do
     argument :account_id, input(:account_id)
-    run { |args| Stripe.charge(args[:account_id]) }
+    run { |inputs| Stripe.charge(inputs.account_id) }
   end
 end
 
@@ -290,7 +290,7 @@ class RefundReactor < RubyReactor::Reactor
 
   step :refund do
     argument :charge_id, input(:charge_id)
-    run { |args| Stripe.refund(args[:charge_id]) }
+    run { |inputs| Stripe.refund(inputs.charge_id) }
   end
 end
 ```
@@ -346,7 +346,7 @@ class MonthlyBillingReactor < RubyReactor::Reactor
 
   step :build do
     argument :org_id, input(:org_id)
-    run { |args| Billing.generate(args[:org_id]) }
+    run { |inputs| Billing.generate(inputs.org_id) }
   end
 end
 ```
@@ -440,22 +440,22 @@ class SyncSubscriberReactor < RubyReactor::Reactor
 
   step :fetch_user do
     argument :user_id, input(:user_id)
-    run { |args| User.find(args[:user_id]) }
+    run { |inputs| User.find(inputs.user_id) }
   end
 
   step :ensure_active do
     argument :user, result(:fetch_user)
-    run do |args, _ctx|
+    run do |inputs, _ctx|
       # Nothing to do — bail out, but keep the user-fetch we already did.
-      next Halt(reason: "user_opted_out") if args[:user].opted_out?
+      next Halt(reason: "user_opted_out") if inputs.user.opted_out?
 
-      Success(args[:user])
+      Success(inputs.user)
     end
   end
 
   step :push_to_mailing_list do
     argument :user, result(:ensure_active)
-    run { |args| Mailchimp.subscribe(args[:user]) }
+    run { |inputs| Mailchimp.subscribe(inputs.user) }
   end
 end
 
@@ -507,7 +507,7 @@ class ApplyTransactionReactor < RubyReactor::Reactor
 
   step :apply do
     argument :transaction, input(:transaction)
-    run { |args| Ledger.apply(args[:transaction]) }
+    run { |inputs| Ledger.apply(inputs.transaction) }
   end
 end
 
@@ -618,7 +618,7 @@ class ApplyTransactionReactor < RubyReactor::Reactor
   with_ordered_lock(poison_pill_timeout: 300) { |i| "txs:#{i[:account_id]}" } # strict: true by default
   step :apply do
     argument :tx, input(:transaction)
-    run { |args| Ledger.apply(args[:tx]) } # raising/Failure poisons the chain
+    run { |inputs| Ledger.apply(inputs.tx) } # raising/Failure poisons the chain
   end
 end
 ```
@@ -729,7 +729,7 @@ step :charge do
   with_lock { |args| "acct:#{args[:account_id]}" }
 
   argument :account_id, input(:account_id)
-  run { |args, _| charge!(args) }
+  run { |inputs, _| charge!(inputs) }
 end
 ```
 
@@ -872,8 +872,8 @@ class ChargeStep < RubyReactor::Step
   # Forward: fail fast (`wait: 0`). Rollback: wait up to 5 s for the key.
   with_lock(ttl: 60, rollback_wait: 5) { |args| "acct:#{args[:account_id]}" }
 
-  def run = Success(charge!(inputs[:account_id]))
-  def undo = Success(refund!(inputs[:account_id]))
+  def run = Success(charge!(inputs.account_id))
+  def undo = Success(refund!(inputs.account_id))
 end
 ```
 

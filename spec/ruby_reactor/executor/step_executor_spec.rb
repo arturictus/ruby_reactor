@@ -12,7 +12,7 @@ RSpec.describe RubyReactor::Executor::StepExecutor do
           argument :arg1, input(:value)
 
           run do |args, _context|
-            Success(args[:arg1])
+            Success(args.arg1)
           end
         end
 

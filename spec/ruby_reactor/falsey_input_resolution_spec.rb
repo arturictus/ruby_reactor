@@ -14,8 +14,8 @@ RSpec.describe "Falsey input resolution" do
       step :use_flag do
         argument :flag, input(:flag)
         run do |args, _ctx|
-          sink << args[:flag]
-          RubyReactor.Success(args[:flag])
+          sink << args.flag
+          RubyReactor.Success(args.flag)
         end
       end
     end
@@ -37,8 +37,8 @@ RSpec.describe "Falsey input resolution" do
       sink = received
       step_class = Class.new(RubyReactor::Step) do
         define_method(:run) do
-          sink << inputs[:flag]
-          Success(inputs[:flag])
+          sink << inputs.flag
+          Success(inputs.flag)
         end
       end
       stub_const("ReceivesFlag", step_class)
@@ -66,8 +66,8 @@ RSpec.describe "Falsey input resolution" do
         step :second do
           argument :flag, result(:first)
           run do |args, _ctx|
-            sink << args[:flag]
-            RubyReactor.Success(args[:flag])
+            sink << args.flag
+            RubyReactor.Success(args.flag)
           end
         end
       end
@@ -92,7 +92,7 @@ RSpec.describe "Falsey input resolution" do
           argument :deep, input(:config, %i[a notify])
           argument :flag, result(:first, :flag)
           run do |args, _ctx|
-            sink << args
+            sink << args.to_h
             RubyReactor.Success(args)
           end
         end

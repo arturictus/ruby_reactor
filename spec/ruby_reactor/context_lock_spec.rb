@@ -16,7 +16,7 @@ class CtxLockReactor < RubyReactor::Reactor
     argument :n, input(:n)
     run do |args, _ctx|
       CtxLockReactor.runs += 1
-      RubyReactor.Success(args[:n])
+      RubyReactor.Success(args.n)
     end
   end
 end

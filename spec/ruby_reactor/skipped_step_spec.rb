@@ -11,7 +11,7 @@ RSpec.describe "Skipped step result" do
 
       step :notify do
         argument :user, result(:maybe_sync)
-        run { |args, _ctx| Success("notified:#{args[:user]}") }
+        run { |args, _ctx| Success("notified:#{args.user}") }
       end
 
       returns :notify
@@ -30,7 +30,7 @@ RSpec.describe "Skipped step result" do
 
       step :notify do
         argument :user, result(:maybe_sync)
-        run { |args, _ctx| Success(args[:user].inspect) }
+        run { |args, _ctx| Success(args.user.inspect) }
       end
 
       returns :notify

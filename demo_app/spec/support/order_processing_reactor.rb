@@ -31,23 +31,23 @@ module RubyReactor
       argument :order_id, input(:order_id)
       argument :fail_at, input(:fail_at)
       run do |args, _context|
-        puts "[EXECUTION] RUN validate_order - order_id: #{args[:order_id]}"
-        if args[:fail_at]&.to_sym == :validate_order
+        puts "[EXECUTION] RUN validate_order - order_id: #{args.order_id}"
+        if args.fail_at&.to_sym == :validate_order
           Failure("Failure triggered for validate_order")
         else
-          Success({ id: args[:order_id], amount: 100.0, currency: "USD" })
+          Success({ id: args.order_id, amount: 100.0, currency: "USD" })
         end
       end
 
       compensate do |_reason, args, _context|
-        puts "[EXECUTION] COMPENSATE validate_order - order_id: #{args[:order_id]}"
+        puts "[EXECUTION] COMPENSATE validate_order - order_id: #{args.order_id}"
         Success("Compensation failed for validate_order")
       end
 
       undo do |_error, context|
-        puts "[EXECUTION] UNDO validate_order - order_id: #{context[:order_id]}"
+        puts "[EXECUTION] UNDO validate_order - order_id: #{context.order_id}"
         # Simulate compensation logic
-        Success("Compensated for order #{context[:order_id]}")
+        Success("Compensated for order #{context.order_id}")
       end
     end
 
@@ -58,26 +58,26 @@ module RubyReactor
       argument :fail_at, input(:fail_at)
       argument :success_at_retry, input(:success_at_retry)
       run do |args, context|
-        puts "[EXECUTION] RUN check_inventory - product_id: #{args[:product_id]}, " \
-             "quantity: #{args[:quantity]}, attempt: #{context.retry_context.attempts_for_step(:check_inventory) + 1}"
-        if args[:fail_at]&.to_sym == :check_inventory &&
-           (args[:success_at_retry].nil? ||
-            context.retry_context.attempts_for_step(:check_inventory) < args[:success_at_retry])
+        puts "[EXECUTION] RUN check_inventory - product_id: #{args.product_id}, " \
+             "quantity: #{args.quantity}, attempt: #{context.retry_context.attempts_for_step(:check_inventory) + 1}"
+        if args.fail_at&.to_sym == :check_inventory &&
+           (args.success_at_retry.nil? ||
+            context.retry_context.attempts_for_step(:check_inventory) < args.success_at_retry)
           Failure("Failure triggered for check_inventory")
         else
           # Simulate inventory check
-          Success({ product_id: args[:product_id], available: true, requested_quantity: args[:quantity] })
+          Success({ product_id: args.product_id, available: true, requested_quantity: args.quantity })
         end
       end
 
       undo do |_error, context|
-        puts "[EXECUTION] UNDO check_inventory - product_id: #{context[:product_id]}"
+        puts "[EXECUTION] UNDO check_inventory - product_id: #{context.product_id}"
         # Simulate compensation logic
-        Success("Compensated inventory check for product #{context[:product_id]}")
+        Success("Compensated inventory check for product #{context.product_id}")
       end
 
       compensate do |_reason, args, _context|
-        puts "[EXECUTION] COMPENSATE check_inventory - product_id: #{args[:product_id]}"
+        puts "[EXECUTION] COMPENSATE check_inventory - product_id: #{args.product_id}"
         Success("Compensation failed for check_inventory")
       end
     end
@@ -88,32 +88,32 @@ module RubyReactor
       argument :fail_at, input(:fail_at)
       argument :success_at_retry, input(:success_at_retry)
       run do |args, context|
-        puts "[EXECUTION] RUN reserve_inventory - product_id: #{args[:inventory][:product_id]}, " \
-             "quantity: #{args[:inventory][:requested_quantity]}, " \
+        puts "[EXECUTION] RUN reserve_inventory - product_id: #{args.inventory[:product_id]}, " \
+             "quantity: #{args.inventory[:requested_quantity]}, " \
              "attempt: #{context.retry_context.attempts_for_step(:reserve_inventory) + 1}, " \
-             "inline_async: #{context.inline_async_execution}, fail_at: #{args[:fail_at].inspect}, " \
-             "success_at_retry: #{args[:success_at_retry].inspect}, " \
-             "check: #{args[:fail_at]&.to_sym == :reserve_inventory}, " \
+             "inline_async: #{context.inline_async_execution}, fail_at: #{args.fail_at.inspect}, " \
+             "success_at_retry: #{args.success_at_retry.inspect}, " \
+             "check: #{args.fail_at&.to_sym == :reserve_inventory}, " \
              "attempts: #{context.retry_context.attempts_for_step(:reserve_inventory)}"
-        if args[:fail_at]&.to_sym == :reserve_inventory &&
-           (args[:success_at_retry].nil? ||
-            context.retry_context.attempts_for_step(:reserve_inventory) < args[:success_at_retry])
+        if args.fail_at&.to_sym == :reserve_inventory &&
+           (args.success_at_retry.nil? ||
+            context.retry_context.attempts_for_step(:reserve_inventory) < args.success_at_retry)
           Failure("Failure triggered for reserve_inventory")
         else
           # Simulate inventory reservation
-          Success({ product_id: args[:inventory][:product_id], status: "reserved",
-                    quantity: args[:inventory][:requested_quantity] })
+          Success({ product_id: args.inventory[:product_id], status: "reserved",
+                    quantity: args.inventory[:requested_quantity] })
         end
       end
 
       undo do |_error, context|
-        puts "[EXECUTION] UNDO reserve_inventory - product_id: #{context[:inventory][:product_id]}"
+        puts "[EXECUTION] UNDO reserve_inventory - product_id: #{context.inventory[:product_id]}"
         # Simulate compensation logic
-        Success("Released reserved inventory for product #{context[:inventory][:product_id]}")
+        Success("Released reserved inventory for product #{context.inventory[:product_id]}")
       end
 
       compensate do |_reason, args, _context|
-        puts "[EXECUTION] COMPENSATE reserve_inventory - product_id: #{args[:inventory][:product_id]}"
+        puts "[EXECUTION] COMPENSATE reserve_inventory - product_id: #{args.inventory[:product_id]}"
         Success("Compensation failed for reserve_inventory")
       end
     end
@@ -126,19 +126,19 @@ module RubyReactor
       argument :inventory, result(:reserve_inventory)
 
       run do |args, _context|
-        puts "[EXECUTION] RUN process_payment - order_id: #{args[:order][:id]}, amount: #{args[:amount]}"
-        if args[:fail_at]&.to_sym == :process_payment
+        puts "[EXECUTION] RUN process_payment - order_id: #{args.order[:id]}, amount: #{args.amount}"
+        if args.fail_at&.to_sym == :process_payment
           Failure("Failure triggered for process_payment")
         else
           # Simulate payment processing
-          Success({ order_id: args[:order][:id], status: "paid", amount: args[:amount] })
+          Success({ order_id: args.order[:id], status: "paid", amount: args.amount })
         end
       end
 
       undo do |_error, context|
-        puts "[EXECUTION] UNDO process_payment - order_id: #{context[:order][:id]}"
+        puts "[EXECUTION] UNDO process_payment - order_id: #{context.order[:id]}"
         # Simulate compensation logic
-        Success("Refunded payment for order #{context[:order][:id]}")
+        Success("Refunded payment for order #{context.order[:id]}")
       end
     end
   end

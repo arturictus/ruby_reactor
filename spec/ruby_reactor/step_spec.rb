@@ -14,7 +14,7 @@ RSpec.describe RubyReactor::Step do
         input :n, :integer
 
         def run
-          Success(seen_n: inputs[:n], seen_context: context)
+          Success(seen_n: inputs.n, seen_context: context)
         end
       end
 

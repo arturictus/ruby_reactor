@@ -8,12 +8,12 @@ RSpec.describe "Skipped step execution trace", type: :reactor do
 
     step :maybe_sync do
       argument :should_skip, input(:should_skip)
-      run { |args, _ctx| args[:should_skip] ? Skipped("cached") : Success("fresh") }
+      run { |args, _ctx| args.should_skip ? Skipped("cached") : Success("fresh") }
     end
 
     step :notify do
       argument :value, result(:maybe_sync)
-      run { |args, _ctx| Success("notified:#{args[:value]}") }
+      run { |args, _ctx| Success("notified:#{args.value}") }
     end
 
     returns :notify
@@ -25,12 +25,12 @@ RSpec.describe "Skipped step execution trace", type: :reactor do
 
     step :maybe_sync do
       argument :should_skip, input(:should_skip)
-      run { |args, _ctx| args[:should_skip] ? Skipped("cached") : Success("fresh") }
+      run { |args, _ctx| args.should_skip ? Skipped("cached") : Success("fresh") }
     end
 
     step :notify do
       argument :value, result(:maybe_sync)
-      run { |args, _ctx| Success("notified:#{args[:value]}") }
+      run { |args, _ctx| Success("notified:#{args.value}") }
     end
 
     returns :notify

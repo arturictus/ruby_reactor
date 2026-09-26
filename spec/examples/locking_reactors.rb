@@ -148,7 +148,7 @@ class StepSkipReactor < RubyReactor::Reactor
 
     run do |args|
       SkippedStepCounters.second_ran += 1
-      if args[:should_skip]
+      if args.should_skip
         RubyReactor.Halt(reason: "no work to do")
       else
         RubyReactor.Success(:second_done)
@@ -187,8 +187,8 @@ class OrderedReactor < RubyReactor::Reactor
   step :process do
     argument :thing, input(:thing)
     run do |args|
-      OrderedLockCounters.runs << args[:thing]
-      RubyReactor.Success(thing: args[:thing])
+      OrderedLockCounters.runs << args.thing
+      RubyReactor.Success(thing: args.thing)
     end
   end
 end
@@ -222,8 +222,8 @@ class SyncOrderedReactor < RubyReactor::Reactor
   step :process do
     argument :thing, input(:thing)
     run do |args|
-      OrderedLockCounters.runs << args[:thing]
-      RubyReactor.Success(thing: args[:thing])
+      OrderedLockCounters.runs << args.thing
+      RubyReactor.Success(thing: args.thing)
     end
   end
 end
@@ -240,13 +240,13 @@ class StrictOrderedReactor < RubyReactor::Reactor
     argument :thing, input(:thing)
     argument :fail, input(:fail)
     run do |args|
-      OrderedLockCounters.runs << args[:thing]
-      if args[:fail]
+      OrderedLockCounters.runs << args.thing
+      if args.fail
         # Non-retryable so the Failure is terminal on the first attempt and the
         # ordered-lock cursor advances (with `failed: true`) right away.
-        RubyReactor.Failure(StandardError.new("boom on #{args[:thing]}"), retryable: false)
+        RubyReactor.Failure(StandardError.new("boom on #{args.thing}"), retryable: false)
       else
-        RubyReactor.Success(thing: args[:thing])
+        RubyReactor.Success(thing: args.thing)
       end
     end
   end
@@ -264,11 +264,11 @@ class NonStrictOrderedReactor < RubyReactor::Reactor
     argument :thing, input(:thing)
     argument :fail, input(:fail)
     run do |args|
-      OrderedLockCounters.runs << args[:thing]
-      if args[:fail]
-        RubyReactor.Failure(StandardError.new("boom on #{args[:thing]}"), retryable: false)
+      OrderedLockCounters.runs << args.thing
+      if args.fail
+        RubyReactor.Failure(StandardError.new("boom on #{args.thing}"), retryable: false)
       else
-        RubyReactor.Success(thing: args[:thing])
+        RubyReactor.Success(thing: args.thing)
       end
     end
   end
@@ -284,7 +284,7 @@ class OrderedLockWithLockReactor < RubyReactor::Reactor
 
   step :process do
     argument :thing, input(:thing)
-    run { |args| RubyReactor.Success(thing: args[:thing]) }
+    run { |args| RubyReactor.Success(thing: args.thing) }
   end
 end
 

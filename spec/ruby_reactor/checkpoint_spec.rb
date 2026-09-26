@@ -11,7 +11,7 @@ class CkChildReactor < RubyReactor::Reactor
   input :n
   step :double do
     argument :n, input(:n)
-    run { |a, _| RubyReactor.Success(a[:n] * 2) }
+    run { |a, _| RubyReactor.Success(a.n * 2) }
   end
 end
 
@@ -19,7 +19,7 @@ class CkParentReactor < RubyReactor::Reactor
   input :n
   step :prep do
     argument :n, input(:n)
-    run { |a, _| RubyReactor.Success(a[:n] + 1) }
+    run { |a, _| RubyReactor.Success(a.n + 1) }
   end
   compose :child, CkChildReactor do
     argument :n, result(:prep)
@@ -30,15 +30,15 @@ class CkThreeStepReactor < RubyReactor::Reactor
   input :n
   step :a do
     argument :n, input(:n)
-    run { |args, _| RubyReactor.Success(args[:n] + 1) }
+    run { |args, _| RubyReactor.Success(args.n + 1) }
   end
   step :b do
     argument :a, result(:a)
-    run { |args, _| RubyReactor.Success(args[:a] + 1) }
+    run { |args, _| RubyReactor.Success(args.a + 1) }
   end
   step :c do
     argument :b, result(:b)
-    run { |args, _| RubyReactor.Success(args[:b] + 1) }
+    run { |args, _| RubyReactor.Success(args.b + 1) }
   end
 end
 

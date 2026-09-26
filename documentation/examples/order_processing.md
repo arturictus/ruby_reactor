@@ -44,7 +44,7 @@ graph TD
 ```ruby
 class ValidateOrderStep < RubyReactor::Step
   def run
-    order = Order.find_by(id: inputs[:order_id])
+    order = Order.find_by(id: inputs.order_id)
     fail!("Order not found") unless order
     fail!("Order already processed") if order.processed?
     fail!("Order cancelled") if order.cancelled?
@@ -55,7 +55,7 @@ end
 
 class ReserveInventoryStep < RubyReactor::Step
   def run
-    reservation_id = InventoryService.reserve_items(inputs[:order].items)
+    reservation_id = InventoryService.reserve_items(inputs.order.items)
     fail!("Inventory reservation failed") unless reservation_id
 
     Success(reservation_id: reservation_id)
@@ -69,7 +69,7 @@ end
 
 class ProcessPaymentStep < RubyReactor::Step
   def run
-    order = inputs[:order]
+    order = inputs.order
     payment_result = PaymentService.charge(
       amount: order.total,
       currency: order.currency,
@@ -102,10 +102,10 @@ class OrderProcessingReactor < RubyReactor::Reactor
   step :check_inventory do
     argument :order, result(:validate_order, :order)
 
-    run do |args, _ctx|
+    run do |inputs, _ctx|
       unavailable_items = []
 
-      args[:order].items.each do |item|
+      inputs.order.items.each do |item|
         product = Product.find(item.product_id)
         if product.inventory_count < item.quantity
           unavailable_items << {
@@ -141,15 +141,15 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :exponential, base_delay: 2.seconds
 
-    run do |args, _ctx|
-      success = InventoryService.confirm_reservation(args[:reservation_id])
+    run do |inputs, _ctx|
+      success = InventoryService.confirm_reservation(inputs.reservation_id)
       fail!("Inventory update failed") unless success
 
       Success({ inventory_updated: true })
     end
 
-    undo do |_result, args, _ctx|
-      InventoryService.restore_from_reservation(args[:reservation_id]) if args[:reservation_id]
+    undo do |_result, inputs, _ctx|
+      InventoryService.restore_from_reservation(inputs.reservation_id) if inputs.reservation_id
       Success()
     end
   end
@@ -158,10 +158,10 @@ class OrderProcessingReactor < RubyReactor::Reactor
     argument :order, result(:validate_order, :order)
     argument :payment_id, result(:process_payment, :payment_id)
 
-    run do |args, _ctx|
-      args[:order].update!(
+    run do |inputs, _ctx|
+      inputs.order.update!(
         status: :completed,
-        payment_id: args[:payment_id],
+        payment_id: inputs.payment_id,
         processed_at: Time.current
       )
 
@@ -175,11 +175,11 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
     retries max_attempts: 3, backoff: :linear, base_delay: 10.seconds
 
-    run do |args, _ctx|
+    run do |inputs, _ctx|
       email_result = EmailService.send_order_confirmation(
-        to: args[:order].customer.email,
-        order: args[:order],
-        payment_id: args[:payment_id]
+        to: inputs.order.customer.email,
+        order: inputs.order,
+        payment_id: inputs.payment_id
       )
 
       fail!("Confirmation email failed") unless email_result.success?
@@ -335,11 +335,11 @@ class PartialOrderProcessingReactor < OrderProcessingReactor
   step :check_inventory do
     argument :order, result(:validate_order, :order)
 
-    run do |args, _ctx|
-      available_items, unavailable_items = partition_available_items(args[:order].items)
+    run do |inputs, _ctx|
+      available_items, unavailable_items = partition_available_items(inputs.order.items)
 
       if available_items.any? && unavailable_items.any?
-        partial_order = create_partial_order(args[:order], available_items)
+        partial_order = create_partial_order(inputs.order, available_items)
         Success({ partial_order: partial_order, unavailable_items: unavailable_items })
       elsif available_items.empty?
         Failure("No items available")
@@ -362,8 +362,8 @@ class OrderCancellationReactor < RubyReactor::Reactor
   step :load_order do
     argument :order_id, input(:order_id)
 
-    run do |args, _ctx|
-      order = Order.find_by(id: args[:order_id])
+    run do |inputs, _ctx|
+      order = Order.find_by(id: inputs.order_id)
       fail!("Order not found") unless order
       Success({ order: order })
     end
@@ -372,8 +372,8 @@ class OrderCancellationReactor < RubyReactor::Reactor
   step :cancel_order do
     argument :order, result(:load_order, :order)
 
-    run do |args, _ctx|
-      order = args[:order]
+    run do |inputs, _ctx|
+      order = inputs.order
       # Only cancel if not already completed
       if order.completed?
         PaymentService.refund(order.payment_id)

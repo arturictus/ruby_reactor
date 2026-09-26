@@ -5,9 +5,9 @@ require "spec_helper"
 RSpec.describe MultipleRequestsReactor, type: :reactor do
   subject(:reactor) do
     test_reactor(described_class, inputs)
-      .mock_step(:call_service_1) { |args| RubyReactor::Success(args[:request_id]) }
-      .mock_step(:call_service_2) { |args| RubyReactor::Success(args[:request_id]) }
-      .mock_step(:call_service_3) { |args| RubyReactor::Success(args[:request_id]) }
+      .mock_step(:call_service_1) { |args| RubyReactor::Success(args.request_id) }
+      .mock_step(:call_service_2) { |args| RubyReactor::Success(args.request_id) }
+      .mock_step(:call_service_3) { |args| RubyReactor::Success(args.request_id) }
   end
 
   context "when valid inputs" do

@@ -145,16 +145,16 @@ class ComplexReactor < RubyReactor::Reactor
   step :check_inventory do
     argument :order, result(:validate_order)
 
-    run do |args, _context|
-      check_inventory_for_order(args[:order])
+    run do |inputs, _context|
+      check_inventory_for_order(inputs.order)
     end
   end
 
   step :process_payment do
     argument :order, result(:check_inventory)
 
-    run do |args, _context|
-      process_payment_for_order(args[:order])
+    run do |inputs, _context|
+      process_payment_for_order(inputs.order)
     end
   end
 end

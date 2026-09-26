@@ -11,8 +11,8 @@ class SemaphoreDemoReactor < RubyReactor::Reactor
   step :validate_request do
     argument :request_id, input(:request_id)
     run do |args|
-      puts "[EXECUTION] SemaphoreDemoReactor.validate_request (async worker) - request_id: #{args[:request_id]}"
-      Success(validated: true, request_id: args[:request_id])
+      puts "[EXECUTION] SemaphoreDemoReactor.validate_request (async worker) - request_id: #{args.request_id}"
+      Success(validated: true, request_id: args.request_id)
     end
   end
 
@@ -21,18 +21,18 @@ class SemaphoreDemoReactor < RubyReactor::Reactor
     argument :hold_seconds, input(:hold_seconds)
     wait_for :validate_request
     run do |args|
-      hold = args[:hold_seconds] || 10
-      puts "[EXECUTION] SemaphoreDemoReactor.call_payment_gateway (async worker) - request_id: #{args[:request_id]}, holding slot for #{hold}s"
+      hold = args.hold_seconds || 10
+      puts "[EXECUTION] SemaphoreDemoReactor.call_payment_gateway (async worker) - request_id: #{args.request_id}, holding slot for #{hold}s"
       sleep hold
-      Success(charged: true, request_id: args[:request_id], held_for: hold)
+      Success(charged: true, request_id: args.request_id, held_for: hold)
     end
   end
 
   step :record_transaction do
     argument :charge, result(:call_payment_gateway)
     run do |args|
-      puts "[EXECUTION] SemaphoreDemoReactor.record_transaction (async worker) - charge: #{args[:charge]}"
-      Success(recorded: true, charge: args[:charge])
+      puts "[EXECUTION] SemaphoreDemoReactor.record_transaction (async worker) - charge: #{args.charge}"
+      Success(recorded: true, charge: args.charge)
     end
   end
 

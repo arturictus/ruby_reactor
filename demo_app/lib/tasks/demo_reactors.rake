@@ -239,7 +239,7 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input] do
     puts "excuting all reactors"
   end
 
@@ -829,6 +829,45 @@ namespace :demo do
       puts "✅ SUCCESS: a step with no `retries` runs once"
     else
       puts "❌ FAIL: expected notify attempts=1 success?=false"
+    end
+  end
+
+  desc "UndeclaredInputDemoReactor — a typo'd `inputs.order_id` raises UndeclaredInputError on its own line, never retried"
+  task undeclared_input: [:environment, :flush_redis] do
+    # Touching the reactor loads the whole file (step classes and the log).
+    UndeclaredInputDemoReactor
+
+    puts "\n=== 1. Declared inputs read by method ==="
+    UndeclaredInputDemoLog.reset!
+    r1 = UndeclaredInputDemoReactor.run(order_guid: 42, mode: "ok")
+    if r1.success? && r1.value == { charged: 42 }
+      puts "✅ SUCCESS: #{r1.value.inspect}"
+    else
+      puts "❌ FAIL: expected success with { charged: 42 }, got #{r1.inspect}"
+    end
+
+    puts "\n=== 2. Typo in run: fails on that line, once, despite `retries max_attempts: 3` ==="
+    UndeclaredInputDemoLog.reset!
+    r2 = UndeclaredInputDemoReactor.run(order_guid: 42, mode: "typo_in_run")
+    puts "  error: #{r2.error}" if r2.failure?
+    puts "  attempts=#{UndeclaredInputDemoLog.validate_attempts} released=#{UndeclaredInputDemoLog.released}"
+    if r2.failure? && r2.exception_class == "RubyReactor::Error::UndeclaredInputError" &&
+       UndeclaredInputDemoLog.validate_attempts == 1 && UndeclaredInputDemoLog.released
+      puts "✅ SUCCESS: UndeclaredInputError, one attempt, the held seat was released"
+    else
+      puts "❌ FAIL: expected UndeclaredInputError after 1 attempt with the seat released"
+    end
+
+    puts "\n=== 3. Typo in compensate: reported as a rollback failure ==="
+    UndeclaredInputDemoLog.reset!
+    r3 = UndeclaredInputDemoReactor.run(order_guid: 42, mode: "typo_in_compensate")
+    failures = r3.failure? ? r3.rollback_failures : []
+    failures.each { |f| puts "  rollback failure: :#{f[:step]} #{f[:kind]} — #{f[:message]}" }
+    if failures.any? { |f| f[:step].to_s == "charge" && f[:message].to_s.include?("no input :order_id") } &&
+       UndeclaredInputDemoLog.released
+      puts "✅ SUCCESS: the compensate typo is named, and the rest of the rollback still ran"
+    else
+      puts "❌ FAIL: expected a rollback failure for :charge naming :order_id"
     end
   end
 end

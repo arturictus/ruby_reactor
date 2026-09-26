@@ -9,7 +9,7 @@ You can define a composed reactor inline using a block. This is useful for group
 ```ruby
 class ValidateUserStep < RubyReactor::Step
   def run
-    User.find(inputs[:user_id])
+    User.find(inputs.user_id)
   end
 end
 
@@ -60,13 +60,13 @@ You can also compose an existing reactor class. This is ideal for reusable workf
 ```ruby
 class UpdateBioStep < RubyReactor::Step
   def run
-    User.update_bio(inputs[:user_id], inputs[:bio])
+    User.update_bio(inputs.user_id, inputs.bio)
   end
 end
 
 class UpdateAvatarStep < RubyReactor::Step
   def run
-    User.update_avatar(inputs[:user_id], inputs[:avatar])
+    User.update_avatar(inputs.user_id, inputs.avatar)
   end
 end
 
@@ -169,11 +169,11 @@ step :final_step do
   # Get the complete result hash from the composed reactor
   argument :payment_result, result(:process_payment)
   
-  run { |args| 
-    # args[:payment_result] contains the full hash: 
+  run { |inputs| 
+    # inputs.payment_result contains the full hash: 
     # { authorize_payment: ..., capture_payment: ... }
     # 
-    # args[:payment_status] contains just the capture_payment result
+    # inputs.payment_status contains just the capture_payment result
   }
 end
 ```

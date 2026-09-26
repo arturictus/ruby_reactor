@@ -9,7 +9,7 @@ RSpec.describe "Map Inline Execution" do
 
       step :double do
         argument :number, input(:number)
-        run { |args, _| RubyReactor::Success(args[:number] * 2) }
+        run { |args, _| RubyReactor::Success(args.number * 2) }
       end
 
       returns :double
@@ -39,7 +39,7 @@ RSpec.describe "Map Inline Execution" do
 
         step :double do
           argument :val, input(:number)
-          run { |args, _| RubyReactor::Success(args[:val] * 2) }
+          run { |args, _| RubyReactor::Success(args.val * 2) }
         end
 
         returns :double
@@ -58,7 +58,7 @@ RSpec.describe "Map Inline Execution" do
 
         step :double do
           argument :val, input(:number)
-          run { |args, _| RubyReactor::Success(args[:val] * 2) }
+          run { |args, _| RubyReactor::Success(args.val * 2) }
         end
 
         returns :double
@@ -112,7 +112,7 @@ RSpec.describe "Map Inline Execution" do
 
           step :double do
             argument :value, input(:number)
-            run { |args, _| RubyReactor::Success(args[:value] * 2) }
+            run { |args, _| RubyReactor::Success(args.value * 2) }
           end
 
           returns :double
@@ -159,7 +159,7 @@ RSpec.describe "Map Inline Execution" do
 
           step :double do
             argument :val, input(:number)
-            run { |args, _| RubyReactor::Success(args[:val] * 2) }
+            run { |args, _| RubyReactor::Success(args.val * 2) }
           end
 
           returns :double
@@ -184,7 +184,7 @@ RSpec.describe "Map Inline Execution" do
         step :generate_numbers do
           argument :ids, input(:ids)
           argument :multiplier, input(:multiplier)
-          run { |args, _| RubyReactor::Success(args[:ids].map { |id| id * args[:multiplier] }) }
+          run { |args, _| RubyReactor::Success(args.ids.map { |id| id * args.multiplier }) }
         end
 
         map :doubled_numbers do
@@ -196,7 +196,7 @@ RSpec.describe "Map Inline Execution" do
           step :double do
             argument :val, input(:number)
             argument :multiplier, input(:multiplier)
-            run { |args, _| RubyReactor::Success(args[:val] * args[:multiplier]) }
+            run { |args, _| RubyReactor::Success(args.val * args.multiplier) }
           end
 
           returns :double
@@ -204,12 +204,12 @@ RSpec.describe "Map Inline Execution" do
 
         step :sum_doubles do
           argument :doubled_numbers, result(:doubled_numbers)
-          run { |args, _| RubyReactor::Success(args[:doubled_numbers].sum) }
+          run { |args, _| RubyReactor::Success(args.doubled_numbers.sum) }
         end
 
         step :filter_evens do
           argument :doubled_numbers, result(:doubled_numbers)
-          run { |args, _| RubyReactor::Success(args[:doubled_numbers].select(&:even?)) }
+          run { |args, _| RubyReactor::Success(args.doubled_numbers.select(&:even?)) }
         end
       end
     end

@@ -23,8 +23,8 @@ class AsyncChildSucceedsReactor < RubyReactor::Reactor
   step :create do
     argument :user_id, input(:user_id)
     run do |args|
-      AsyncReactorFixtures.log << [:child_create, args[:user_id]]
-      RubyReactor.Success({ account_id: "acct-#{args[:user_id]}" })
+      AsyncReactorFixtures.log << [:child_create, args.user_id]
+      RubyReactor.Success({ account_id: "acct-#{args.user_id}" })
     end
   end
 
@@ -48,7 +48,7 @@ class AsyncChildRequiringEmailReactor < RubyReactor::Reactor
 
   step :notify do
     argument :email, input(:email)
-    run { |args| RubyReactor.Success(args[:email]) }
+    run { |args| RubyReactor.Success(args.email) }
   end
 end
 
@@ -85,8 +85,8 @@ class AsyncReactorAwaitedReactor < RubyReactor::Reactor
   step :verify_all do
     argument :account, result(:create_account)
     run do |args|
-      AsyncReactorFixtures.log << [:verify_all, args[:account].class.name]
-      args[:account].success? ? RubyReactor.Success(args[:account].value) : RubyReactor.Failure(args[:account].error)
+      AsyncReactorFixtures.log << [:verify_all, args.account.class.name]
+      args.account.success? ? RubyReactor.Success(args.account.value) : RubyReactor.Failure(args.account.error)
     end
   end
 
@@ -118,8 +118,8 @@ class AsyncReactorAwaitedFailingReactor < RubyReactor::Reactor
     argument :setup, result(:setup)
     argument :profile, result(:create_profile)
     run do |args|
-      AsyncReactorFixtures.log << [:verify, args[:profile].class.name]
-      args[:profile].success? ? RubyReactor.Success(:ok) : RubyReactor.Failure(args[:profile].error)
+      AsyncReactorFixtures.log << [:verify, args.profile.class.name]
+      args.profile.success? ? RubyReactor.Success(:ok) : RubyReactor.Failure(args.profile.error)
     end
   end
 end
@@ -239,7 +239,7 @@ class AsyncReactorPausingChildParentReactor < RubyReactor::Reactor
 
   step :reader do
     argument :outcome, result(:child)
-    run { |args| RubyReactor.Success(args[:outcome]) }
+    run { |args| RubyReactor.Success(args.outcome) }
   end
 end
 
@@ -254,7 +254,7 @@ class AsyncSlowChildReactor < RubyReactor::Reactor
     argument :user_id, input(:user_id)
     run do |args|
       sleep 8
-      RubyReactor.Success({ done: args[:user_id] })
+      RubyReactor.Success({ done: args.user_id })
     end
   end
 
@@ -276,7 +276,7 @@ class AsyncParkingParentReactor < RubyReactor::Reactor
   step :verify do
     argument :child, result(:slow_child)
     run do |args|
-      args[:child].success? ? RubyReactor.Success(args[:child].value) : RubyReactor.Failure(args[:child].error)
+      args.child.success? ? RubyReactor.Success(args.child.value) : RubyReactor.Failure(args.child.error)
     end
   end
 

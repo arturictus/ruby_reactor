@@ -7,7 +7,7 @@ require "sidekiq/testing"
 # Define inline test steps and reactors
 class TelemetrySimpleStep < RubyReactor::Step
   def run
-    Success(inputs[:value].to_i * 2)
+    Success(inputs.value.to_i * 2)
   end
 end
 
@@ -130,7 +130,7 @@ class TelemetryMapElementReactor < RubyReactor::Reactor
   input :item
   step :process_item do
     run do |inputs|
-      RubyReactor.Success(inputs[:item].to_i * 2)
+      RubyReactor.Success(inputs.item.to_i * 2)
     end
   end
 end
@@ -167,7 +167,7 @@ class TelemetryAsyncStepReactor < RubyReactor::Reactor
   input :value
   step :async_step do
     run do |args, _context|
-      RubyReactor.Success(args[:value].to_i + 10)
+      RubyReactor.Success(args.value.to_i + 10)
     end
   end
 
@@ -219,10 +219,10 @@ class TelemetryAsyncMapRetryElement < RubyReactor::Reactor
     retries max_attempts: 5, base_delay: 0
     run do |args, context|
       attempt = context.retry_context.attempts_for_step(:el_step)
-      if attempt < args[:fail_until]
+      if attempt < args.fail_until
         RubyReactor.Failure("map element attempt #{attempt} failed")
       else
-        RubyReactor.Success(args[:val].to_i * 10)
+        RubyReactor.Success(args.val.to_i * 10)
       end
     end
   end

@@ -22,6 +22,31 @@ end
 
 Steps are the individual units of work within a reactor. Each step has a name and implementation.
 
+### Reading inputs
+
+Step code (`run`, `undo`, `compensate`, in class steps and inline blocks) reads its inputs by method: `inputs.order_id`. `inputs` is a frozen, read-only object, not a Hash, and it has no `[]`.
+
+```ruby
+class ValidateOrderStep < RubyReactor::Step
+  input :order_guid, :integer
+  input :note, optional: true
+
+  def run
+    inputs.order_guid # the value
+    inputs.note       # nil: optional and not supplied
+    inputs.order_id   # raises RubyReactor::Error::UndeclaredInputError
+  end
+end
+```
+
+- **Readable names.** A step with a contract (`input` declarations, or an inline `inputs do ... end` block) reads its declared names. A step without one reads the keys it was given (its `argument`s, or the reactor's inputs for an unwired inline step).
+- **Unknown names fail loudly.** Any other name raises `RubyReactor::Error::UndeclaredInputError` on that line: `ValidateOrderStep has no input :order_id. Declared inputs: :order_guid, :note.` It is never retried, since a typo fails the same way on every attempt. In `undo`/`compensate` it is reported as a rollback failure.
+- **As a whole.** `inputs.to_h` returns the supplied values (symbol keys, readable names only), so an optional input that wasn't supplied is left out. `Service.call(**inputs)` and `hash.merge(inputs)` work too. Use `inputs.to_h` for any other Hash method (`each`, `slice`, comparing with a Hash). `inputs.inspect` redacts `redact: true` inputs.
+- **Returning inputs.** `Success(inputs)` stores `inputs.to_h`. An `inputs` nested inside a result (`Success(order: inputs)`) is not converted: write `Success(order: inputs.to_h)`.
+- **Reserved names.** `input :method` (or any name the object already answers, such as `class`, `hash`, `send`, `to_h`) raises `Error::ValidationError` when the step is defined, because `inputs.method` couldn't reach it.
+
+Everything outside step code keeps the plain Hash: lock and semaphore key procs (`with_lock { |args| ... }`), `validate_inputs`, map `source` blocks, `where`/`guard`, middleware and error payloads.
+
 ### Inline Step Definition
 
 ```ruby
@@ -42,7 +67,7 @@ For complex steps with compensation and undo logic, or for better testability an
 ```ruby
 class ReserveInventoryStep < RubyReactor::Step
   def run
-    order = inputs[:order]
+    order = inputs.order
     # Business logic for inventory reservation
     reservation_id = InventoryService.reserve(order[:items])
     Success({
@@ -121,15 +146,15 @@ end
 
 step :process_payment do
   argument :order, result(:validate_order)
-  run do |args, _context|
-    process_payment_for_order(args[:order])
+  run do |inputs, _context|
+    process_payment_for_order(inputs.order)
   end
 end
 
 step :send_confirmation do
   argument :payment_result, result(:process_payment)
-  run do |args, _context|
-    payment_result = args[:payment_result]
+  run do |inputs, _context|
+    payment_result = inputs.payment_result
     send_confirmation_email(payment_result[:order], payment_result[:payment_id])
   end
 end
@@ -243,7 +268,7 @@ class ReserveInventoryStep < RubyReactor::Step
   input :product_id, :string
   retries max_attempts: 5, backoff: :fixed, base_delay: 2 # 2 seconds
 
-  def run = Success(InventoryService.reserve(inputs[:product_id]))
+  def run = Success(InventoryService.reserve(inputs.product_id))
 end
 ```
 
@@ -399,9 +424,9 @@ end
 step :process_payment do
   argument :order_data, result(:validate_order)
 
-  run do |args, _context|
+  run do |inputs, _context|
     # Access results from previous steps
-    order = args[:order_data][:order]
+    order = inputs.order_data[:order]
     payment = PaymentService.charge(order.total, order.card_token)
     Success({ payment_id: payment.id })
   end
@@ -521,8 +546,8 @@ step :process_payment do
 
   compensate do |error, arguments, context|
     # Handle payment processing failure
-    order = arguments[:order]
-    payment_method = arguments[:payment_method]
+    order = arguments.order
+    payment_method = arguments.payment_method
 
     # Log the failure for audit purposes
     AuditService.log_payment_failure(order.id, error.message)

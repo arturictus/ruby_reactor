@@ -19,7 +19,7 @@ RSpec.describe "Nested Reactor Helpers" do
     context "with composed steps" do
       it "mocks inner step of a composed reactor" do
         reactor.composed(:child2).mock_step(:async_step) do |args, _ctx|
-          RubyReactor::Success("mocked_#{args[:id]}")
+          RubyReactor::Success("mocked_#{args.id}")
         end
 
         expect(reactor).to be_success
@@ -40,10 +40,10 @@ RSpec.describe "Nested Reactor Helpers" do
         # rubocop:disable Style/MultilineBlockChain -- this chained block-scoping is the DSL under test
         reactor
           .composed(:child1) do |child|
-            child.mock_step(:async_step) { |args, _ctx| RubyReactor::Success("mocked1_#{args[:id]}") }
+            child.mock_step(:async_step) { |args, _ctx| RubyReactor::Success("mocked1_#{args.id}") }
           end
           .composed(:child2) do |child|
-            child.mock_step(:async_step) { |args, _ctx| RubyReactor::Success("mocked2_#{args[:id]}") }
+            child.mock_step(:async_step) { |args, _ctx| RubyReactor::Success("mocked2_#{args.id}") }
           end
         # rubocop:enable Style/MultilineBlockChain
 
@@ -54,7 +54,7 @@ RSpec.describe "Nested Reactor Helpers" do
 
       it "stays usable directly as a subject after a non-block scoped chain" do
         subject = reactor.composed(:child2).mock_step(:async_step) do |args, _ctx|
-          RubyReactor::Success("mocked_#{args[:id]}")
+          RubyReactor::Success("mocked_#{args.id}")
         end
 
         expect(subject).to be_success
@@ -62,7 +62,7 @@ RSpec.describe "Nested Reactor Helpers" do
 
       it "mocks two inner steps of the same composed reactor without leaking scope to the parent" do
         reactor.composed(:child2)
-               .mock_step(:async_step) { |args, _ctx| RubyReactor::Success("mocked_#{args[:id]}") }
+               .mock_step(:async_step) { |args, _ctx| RubyReactor::Success("mocked_#{args.id}") }
                .mock_step(:other_step) { |_args, _ctx| RubyReactor::Success("also_mocked") }
 
         expect(reactor).to be_success
@@ -107,7 +107,7 @@ RSpec.describe "Nested Reactor Helpers" do
 
     it "mocks inner step of a map reactor" do
       reactor.map(:process_list).mock_step(:transform) do |args, ctx, original|
-        if args[:value] == 2
+        if args.value == 2
           RubyReactor::Success(999) # Mock specific value
         else
           original.call(args, ctx)

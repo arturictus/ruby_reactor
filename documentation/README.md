@@ -38,13 +38,13 @@ require 'ruby_reactor'
 
 class ValidateOrderStep < RubyReactor::Step
   def run
-    Success(Order.find(inputs[:order_id]))
+    Success(Order.find(inputs.order_id))
   end
 end
 
 class ProcessPaymentStep < RubyReactor::Step
   def run
-    Success(PaymentService.charge(inputs[:order]))
+    Success(PaymentService.charge(inputs.order))
   end
 end
 
@@ -61,7 +61,7 @@ class OrderProcessingReactor < RubyReactor::Reactor
 
   step :send_confirmation do
     argument :order, result(:validate_order)
-    run { |args, _ctx| Success(EmailService.send(args[:order])) }
+    run { |inputs, _ctx| Success(EmailService.send(inputs.order)) }
   end
 
   returns :process_payment

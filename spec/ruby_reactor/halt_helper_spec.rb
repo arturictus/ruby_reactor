@@ -11,7 +11,7 @@ RSpec.describe "Halt helper parity" do
     let(:step_class) do
       Class.new(RubyReactor::Step) do
         def run
-          inputs[:skip] ? Halt(reason: "class_step") : Success(:done)
+          inputs.skip ? Halt(reason: "class_step") : Success(:done)
         end
       end
     end
@@ -35,7 +35,7 @@ RSpec.describe "Halt helper parity" do
 
         step :only do
           argument :skip, input(:skip)
-          run { |args, _ctx| args[:skip] ? Halt(reason: "inline_block") : Success(:done) }
+          run { |args, _ctx| args.skip ? Halt(reason: "inline_block") : Success(:done) }
         end
 
         returns :only

@@ -34,10 +34,10 @@ RSpec.describe UserEtlReactor, type: :reactor do
 
     it "still completes successfully with zero counts" do
       reactor.mock_step(:process_results) do |args, _ctx, _orig|
-        users = args[:transformed_users]
+        users = args.transformed_users
         RubyReactor::Success(
           successful: users, failed: [],
-          source_count: args[:source_stats][:total_count],
+          source_count: args.source_stats[:total_count],
           success_rate: 0.0
         )
       end

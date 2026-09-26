@@ -21,12 +21,12 @@ class AsyncReactorDemoReactor < RubyReactor::Reactor
     argument :user_id, input(:user_id)
 
     run do |args|
-      Rails.logger.info "AsyncReactorDemoReactor: reserved a provisioning seat for #{args[:user_id]}"
+      Rails.logger.info "AsyncReactorDemoReactor: reserved a provisioning seat for #{args.user_id}"
       Success(:reserved)
     end
 
     undo do |_result, args, _ctx|
-      Rails.logger.warn "AsyncReactorDemoReactor: releasing provisioning seat for #{args[:user_id]}"
+      Rails.logger.warn "AsyncReactorDemoReactor: releasing provisioning seat for #{args.user_id}"
       Success()
     end
   end
@@ -50,12 +50,12 @@ class AsyncReactorDemoReactor < RubyReactor::Reactor
     argument :account, result(:provision_account)
 
     run do |args|
-      if args[:account].success?
-        Success("Provisioned #{args[:account].value[:account_id]}")
+      if args.account.success?
+        Success("Provisioned #{args.account.value[:account_id]}")
       else
         # Opting in: turning the child's failure into this reactor's failure is
         # what triggers compensation of the steps above.
-        Failure(args[:account].error)
+        Failure(args.account.error)
       end
     end
   end

@@ -73,7 +73,7 @@ class SiteNestedAsyncReactor < RubyReactor::Reactor
     argument :account_id, input(:account_id)
     run do |args, ctx|
       SITE_COUNTS[:outer_body] += 1
-      SiteNestedInnerStep.run({ account_id: args[:account_id] }, ctx)
+      SiteNestedInnerStep.run({ account_id: args.account_id }, ctx)
     end
   end
 

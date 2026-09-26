@@ -14,7 +14,7 @@ class EtlReactor < RubyReactor::Reactor
     argument :orders, result(:fetch_pending_orders)
 
     run do |args, _|
-      transformed = args[:orders].map do |order|
+      transformed = args.orders.map do |order|
         {
           id: order.id,
           original_total: order.total,
@@ -32,7 +32,7 @@ class EtlReactor < RubyReactor::Reactor
 
     run do |args, _|
       count = 0
-      args[:data].each do |item|
+      args.data.each do |item|
         Order.find(item[:id]).update!(
           total: item[:final_total],
           status: "processed"

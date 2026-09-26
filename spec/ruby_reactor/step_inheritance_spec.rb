@@ -14,7 +14,7 @@ RSpec.describe "Step contract inheritance across subclasses" do
     stub_const("ChildStep", Class.new(BaseStep) do
       input :b, :integer
 
-      def run = Success(sum: inputs[:a] + inputs[:b])
+      def run = Success(sum: inputs.a + inputs.b)
     end)
   end
 

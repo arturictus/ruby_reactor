@@ -7,7 +7,7 @@ RSpec.describe RubyReactor::RSpec::TestSubject, "#mock_step", type: :reactor do
   class MockingTestReactor < RubyReactor::Reactor
     class AddOneStep < RubyReactor::Step
       def run
-        Success(value: inputs[:value] + 1)
+        Success(value: inputs.value + 1)
       end
     end
 
@@ -15,7 +15,7 @@ RSpec.describe RubyReactor::RSpec::TestSubject, "#mock_step", type: :reactor do
 
     step :step_one do
       run do |args, _context|
-        RubyReactor::Success(value: args[:value] * 2)
+        RubyReactor::Success(value: args.value * 2)
       end
     end
 
@@ -105,7 +105,7 @@ RSpec.describe RubyReactor::RSpec::TestSubject, "#mock_step", type: :reactor do
     before do
       test_subject.mock_step(:step_one) do |args, context, original|
         # Change input to 50
-        modified_args = args.merge(value: 50)
+        modified_args = args.to_h.merge(value: 50)
         original.call(modified_args, context)
       end
     end
