@@ -29,3 +29,5 @@ demo_app/.pi/.gitignore
 demo_app/.pi/config.json
 
 log/sidekiq-live.*
+*.gem
+.DS_Store

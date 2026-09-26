@@ -345,7 +345,7 @@ module RubyReactor
       }
     end
 
-    ROLLBACK_FAILURE_SYMBOLS = %i[step kind reason].freeze
+    ROLLBACK_FAILURE_SYMBOLS = %i[step kind reason map_step].freeze
     private_constant :ROLLBACK_FAILURE_SYMBOLS
 
     # A stored failure comes back with string keys (and, through plain JSON,

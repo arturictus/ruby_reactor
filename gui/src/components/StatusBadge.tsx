@@ -1,4 +1,4 @@
-import { Activity, Clock, AlertCircle, CheckCircle2, SkipForward, OctagonMinus } from 'lucide-react';
+import { Activity, Clock, AlertCircle, AlertTriangle, CheckCircle2, SkipForward, OctagonMinus } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export default function StatusBadge({ status }: { status: string }) {
@@ -9,6 +9,8 @@ export default function StatusBadge({ status }: { status: string }) {
     halted: "bg-slate-700/50 text-slate-300 border-slate-600/50",
     failed: "bg-rose-500/10 text-rose-400 border-rose-500/20 shadow-[0_0_10px_rgba(244,63,94,0.15)]",
     cancelled: "bg-slate-800 text-slate-400 border-slate-700",
+    // Not `failed`: no rollback ran, completed work awaits a manual undo.
+    aborted: "bg-orange-500/10 text-orange-400 border-orange-500/20",
     paused: "bg-amber-500/10 text-amber-400 border-amber-500/20",
   }[status] || "bg-slate-800 text-slate-400 border-slate-700";
 
@@ -19,6 +21,7 @@ export default function StatusBadge({ status }: { status: string }) {
     halted: <OctagonMinus className="w-3 h-3" />,
     failed: <AlertCircle className="w-3 h-3" />,
     cancelled: <Clock className="w-3 h-3" />,
+    aborted: <AlertTriangle className="w-3 h-3" />,
     paused: <Clock className="w-3 h-3" />,
   }[status];
 

@@ -237,11 +237,15 @@ module RubyReactor
       end
 
       def warn_deprecation(site, message)
+        warn_definition(site, "DEPRECATION:", "#{message} Removal no earlier than the next MAJOR.")
+      end
+
+      # A definition-time warning, printed once per declaration site.
+      def warn_definition(site, prefix, message)
         location = "#{site.path}:#{site.lineno}"
         return unless StepBuilder.deprecation_sites.add?(location)
 
-        warn "[RubyReactor] DEPRECATION: #{location} #{reactor_label} #{message} " \
-             "Removal no earlier than the next MAJOR."
+        warn ["[RubyReactor]", prefix, location, reactor_label, message].compact.join(" ")
       end
 
       def owned_contract
@@ -358,6 +362,51 @@ module RubyReactor
         input_contract ? input_contract.enforce!(args) : args
       end
 
+      # The step's `argument` wiring resolved against `context`: each source,
+      # then its `transform`. The one copy every process uses (StepExecutor,
+      # StepWorker). Any raise becomes an `ArgumentResolutionError`, a
+      # never-started failure attributed to this step (008 R-06) — except a
+      # park signal (a worker waiting on an async result), which is not a failure.
+      def resolve_arguments(context)
+        arguments.to_h do |arg_name, arg_config|
+          value = arg_config[:source].resolve(context)
+          value = arg_config[:transform].call(value) if arg_config[:transform]
+          [arg_name, value]
+        end
+      rescue Error::ExecutionParked
+        raise
+      rescue StandardError => e
+        raise never_started(Error::ArgumentResolutionError, "could not resolve its arguments", e)
+      end
+
+      # Rollback dispatch, the same wherever the step rolls back
+      # (CompensationManager, StepWorker): the inline block, else the class
+      # step, else Skipped — nothing defined, rollback continues. Coordination,
+      # trace and middleware stay with the caller.
+      def call_compensate(error, arguments, context)
+        catch(StepSignals::TAG) do
+          if compensate_block
+            compensate_block.call(error, wrap_inputs(arguments), context)
+          elsif has_impl?
+            impl.compensate(error, arguments, context)
+          else
+            RubyReactor.Skipped()
+          end
+        end
+      end
+
+      def call_undo(result_value, arguments, context)
+        catch(StepSignals::TAG) do
+          if undo_block
+            undo_block.call(result_value, wrap_inputs(arguments), context)
+          elsif has_impl?
+            impl.undo(result_value, arguments, context)
+          else
+            RubyReactor.Skipped()
+          end
+        end
+      end
+
       # The step's work as a reactor runs it. Coordination is NOT taken here:
       # the caller (StepExecutor / StepWorker) takes this config's effective
       # declarations — inline and class alike — in one fixed order around it.
@@ -379,6 +428,14 @@ module RubyReactor
       # clears the marker to run the whole reactor in one process.
       def async_dispatch?
         !@async_dispatch.nil?
+      end
+
+      # Whether a success of this step is recorded for undo. `async_step` /
+      # `async_reactor` dispatches are independent units of work with their
+      # own compensation flows: the parent rolling back must not "undo" a
+      # dispatch whose unit runs (and may still succeed) elsewhere (008 R-10).
+      def rollback_tracked?
+        !async_dispatch?
       end
 
       def has_impl?
@@ -406,10 +463,20 @@ module RubyReactor
       def should_run?(context)
         @conditions.all? { |condition| condition.call(context) } &&
           @guards.all? { |guard| guard.call(context) }
+      rescue StandardError => e
+        raise never_started(Error::ConditionError, "could not evaluate its `where`/`guard`", e)
       end
 
       def interrupt?
         false
+      end
+
+      private
+
+      def never_started(error_class, what, cause)
+        error = error_class.new("Step '#{name}' #{what}: #{cause.message}", step: name, original_error: cause)
+        error.set_backtrace(cause.backtrace)
+        error
       end
     end
   end

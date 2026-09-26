@@ -62,12 +62,20 @@ module RubyReactor
           @compensation_manager.rollback_completed_steps
           build_validation_failure(error)
         when Error::Base
-          # Other errors need rollback
+          # Other errors need rollback. A `CompensationError` names the step
+          # whose compensation failed.
           @compensation_manager.rollback_completed_steps
-          RubyReactor.Failure("Execution error: #{error.message}", exception_class: error.class.name)
+          RubyReactor.Failure("Execution error: #{error.message}", exception_class: error.class.name,
+                                                                   step_name: error.step || @context.current_step,
+                                                                   reactor_name: @context.reactor_class&.name)
         else
-          # Unknown errors - don't rollback as they may not be reactor-related
-          RubyReactor.Failure("Execution failed: #{error.message}", exception_class: error.class.name)
+          # Any other StandardError after completed work (a checkpoint write,
+          # a hook) still leaves a partial saga: roll it back like any failure
+          # (Constitution II, 008 R-07) and name the step that was executing.
+          @compensation_manager.rollback_completed_steps
+          RubyReactor.Failure("Execution failed: #{error.message}", exception_class: error.class.name,
+                                                                    step_name: @context.current_step,
+                                                                    reactor_name: @context.reactor_class&.name)
         end
       end
 
@@ -130,20 +138,12 @@ module RubyReactor
       def handle_success(step_config, result, resolved_arguments)
         validate_step_output(step_config, result.value, resolved_arguments)
         @step_results[step_config.name] = result
-        # `async_step` / `async_reactor` dispatches are independent units of
-        # work with their own compensation flows — the parent rolling back must
-        # not "undo" a dispatch whose unit runs (and may still succeed)
-        # elsewhere. They never enter the parent's undo stack.
-        unless async_unit?(step_config)
+        if step_config.rollback_tracked?
           @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments,
                                                     result: result })
         end
         @context.set_result(step_config.name, result.value)
         @dependency_graph.complete_step(step_config.name)
-      end
-
-      def async_unit?(step_config)
-        step_config.respond_to?(:async_dispatch?) && step_config.async_dispatch?
       end
 
       # A composed child's Failure carries the child's own rollback failures;
@@ -254,9 +254,15 @@ module RubyReactor
       def resolve_exception_class(original_error, error)
         # A step's own contention is reported by its cause (Lock::AcquisitionError, ...).
         original_error = original_error.original if original_error.is_a?(StepCoordination::Contended)
+        # Argument/condition failures report their cause's class (008 R-06).
+        return original_error.exception_class if never_started_wrapper?(original_error)
         return original_error.class.name if original_error
 
         error.respond_to?(:exception_class) ? error.exception_class : nil
+      end
+
+      def never_started_wrapper?(error)
+        error.is_a?(Error::ArgumentResolutionError) || error.is_a?(Error::ConditionError)
       end
 
       def validate_step_output(step_config, value, resolved_arguments = {})

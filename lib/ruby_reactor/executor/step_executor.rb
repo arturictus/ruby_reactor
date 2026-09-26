@@ -80,12 +80,18 @@ module RubyReactor
         # it, not this one. (`async_reactor` still resolves here: its resolved
         # values are the child's INPUTS, needed at dispatch.)
         deferred_body = step_config.async_dispatch == :step || handoff_at?(step_config, :before)
-        resolved_arguments = deferred_body ? {} : resolve_arguments(step_config)
+        resolved_arguments, resolution_error = resolve_before_start(step_config, deferred_body)
 
         @middlewares.on(:start_step, step_config.name, resolved_arguments, @context)
         completed = false
         begin
-          result = if step_config.interrupt?
+          # A step whose arguments could not be resolved fails like any step
+          # (`:failed_step`, attribution) but never started: the result
+          # handler undoes the completed steps and does not compensate it.
+          result = if resolution_error
+                     @result_handler.handle_step_result(step_config,
+                                                        pre_body_failure(step_config, resolution_error), {})
+                   elsif step_config.interrupt?
                      handle_interrupt_step(step_config)
                    elsif step_config.async_dispatch == :step
                      dispatch_async_step(step_config)
@@ -119,6 +125,16 @@ module RubyReactor
       end
 
       private
+
+      # `[arguments, nil]`, or `[{}, ArgumentResolutionError]` for the caller
+      # to fail the step with once its `:start_step` has fired.
+      def resolve_before_start(step_config, deferred_body)
+        return [{}, nil] if deferred_body
+
+        [step_config.resolve_arguments(@context), nil]
+      rescue Error::ArgumentResolutionError => e
+        [{}, e]
+      end
 
       # The reactor's single hand-off point, `{ mode: :after|:before, step: }`.
       # Nil for a reactor that never declares `background`.
@@ -175,7 +191,7 @@ module RubyReactor
       end
 
       def execute_step_with_retry(step_config, resolved_arguments = nil)
-        resolved_arguments ||= resolve_arguments(step_config)
+        resolved_arguments ||= step_config.resolve_arguments(@context)
         result = @retry_manager.execute_with_retry(step_config, @reactor_class) do
           safe_execute_step_sync(step_config, resolved_arguments)
         end
@@ -188,7 +204,7 @@ module RubyReactor
       end
 
       def safe_execute_step_sync(step_config, resolved_arguments = nil)
-        resolved_arguments ||= resolve_arguments(step_config)
+        resolved_arguments ||= step_config.resolve_arguments(@context)
         execute_step_sync_without_result_handling(step_config, resolved_arguments)
       rescue Error::InputValidationError => e
         # Validation failures are not retryable and must surface as a structured
@@ -216,10 +232,11 @@ module RubyReactor
       rescue Error::ExecutionParked
         @context.retry_context.decrement_attempt_for_step(step_config.name)
         raise
+      # Arguments or `where`/`guard` raised: the body never started. Not
+      # retried (the same inputs fail the same way), never compensated.
+      rescue Error::ArgumentResolutionError, Error::ConditionError => e
+        pre_body_failure(step_config, e)
       rescue StandardError => e
-        # Identify redacted inputs
-        redact_inputs = @reactor_class.inputs.select { |_, config| config[:redact] }.keys
-
         RubyReactor::Failure(
           e,
           step_name: step_config.name,
@@ -228,6 +245,16 @@ module RubyReactor
           reactor_name: @reactor_class.name,
           step_arguments: resolved_arguments
         )
+      end
+
+      def pre_body_failure(step_config, error)
+        RubyReactor::Failure(error, step_name: step_config.name, reactor_name: @reactor_class.name,
+                                    inputs: @context.inputs, redact_inputs: redact_inputs, step_arguments: {},
+                                    retryable: false, exception_class: error.exception_class)
+      end
+
+      def redact_inputs
+        @reactor_class.inputs.select { |_, config| config[:redact] }.keys
       end
 
       # Contention (US3). Synchronously there is no queue to park into: the
@@ -322,7 +349,7 @@ module RubyReactor
           end
 
           # Resolve arguments
-          resolved_arguments ||= resolve_arguments(step_config)
+          resolved_arguments ||= step_config.resolve_arguments(@context)
 
           # Validate arguments if validator is defined
           validate_step_arguments(step_config, resolved_arguments)
@@ -345,7 +372,7 @@ module RubyReactor
           end
 
           # Resolve arguments
-          resolved_arguments ||= resolve_arguments(step_config)
+          resolved_arguments ||= step_config.resolve_arguments(@context)
 
           yield resolved_arguments if block_given?
 
@@ -433,22 +460,6 @@ module RubyReactor
         error.step_name = step_config.name
         error.step_arguments = resolved_arguments
         raise error
-      end
-
-      def resolve_arguments(step_config)
-        resolved = {}
-
-        step_config.arguments.each do |arg_name, arg_config|
-          source = arg_config[:source]
-          transform = arg_config[:transform]
-
-          value = source.resolve(@context)
-          value = transform.call(value) if transform
-
-          resolved[arg_name] = value
-        end
-
-        resolved
       end
 
       def run_step_implementation(step_config, arguments)

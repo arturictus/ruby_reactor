@@ -22,7 +22,8 @@ module RubyReactor
 
         if @strict_ordering
           count.times do |i|
-            yield self[i]
+            raw = raw_at(i)
+            yield raw && wrap_result(raw) unless skipped?(raw)
           end
         else
           offset = 0
@@ -37,7 +38,7 @@ module RubyReactor
 
             break if results.empty?
 
-            results.each { |result| yield wrap_result(result) }
+            results.each { |result| yield wrap_result(result) unless skipped?(result) }
 
             offset += results.size
             break if results.size < @batch_size
@@ -59,21 +60,15 @@ module RubyReactor
         !empty?
       end
 
+      # nil for an index a fail-fast map skipped (never started).
       def [](index)
         index += count if index.negative?
         return nil if index.negative? || index >= count
 
-        results = @storage.retrieve_map_results_batch(
-          @map_id,
-          @reactor_class_name,
-          offset: index,
-          limit: 1,
-          strict_ordering: @strict_ordering
-        )
+        raw = raw_at(index)
+        return nil if raw.nil? || skipped?(raw)
 
-        return nil if results.empty?
-
-        wrap_result(results.first)
+        wrap_result(raw)
       end
 
       def first
@@ -93,6 +88,17 @@ module RubyReactor
       end
 
       private
+
+      def raw_at(index)
+        @storage.retrieve_map_results_batch(@map_id, @reactor_class_name, offset: index, limit: 1,
+                                                                          strict_ordering: @strict_ordering).first
+      end
+
+      # A `_skipped` slot settles an index a fail-fast map never ran (R-04).
+      # Such a map is never collected as a success, so no consumer sees one.
+      def skipped?(result)
+        result.is_a?(Hash) && result.key?("_skipped")
+      end
 
       def wrap_result(result)
         if result.is_a?(Hash) && result.key?("_error")

@@ -56,8 +56,9 @@ module RubyReactor
 
         # Idempotency: if the parent already recorded this map step's result, a
         # prior collector already resumed it. Re-resuming would double-execute the
-        # steps after the map. Skip.
-        return if parent_context.intermediate_results.key?(step_name.to_sym)
+        # steps after the map. Skip. A parent already finished (a prior
+        # collector applied this map's failure) must not be rolled back twice.
+        return if parent_context.intermediate_results.key?(step_name.to_sym) || parent_context.finished?
 
         # Check if all tasks are completed
         metadata = storage.retrieve_map_metadata(map_id, parent_reactor_class_name)
@@ -65,17 +66,20 @@ module RubyReactor
 
         results_count = storage.count_map_results(map_id, parent_reactor_class_name)
 
-        # Not done yet, requeue or wait?
-        # Actually Collector currently assumes we only call it when we expect completion or check progress
-        # Since map_offset tracks dispatching progress and might exceed count due to batching reservation,
-        # we must strictly check against the total count of elements.
-        # Check for fail_fast failure FIRST
+        # Completion is judged against the total count of elements, not
+        # map_offset (which batching reservation can push past it).
+        #
+        # A fail-fast failure is applied only once every index has settled
+        # (a result, `_error`, `_halt` or `_skipped` slot), so the map's
+        # compensate sees every element that completed — including ones still
+        # in flight when the failure happened (R-04). Until then the last
+        # element to settle, or the map sweeper, re-triggers this collector.
+        return if results_count < total_count
+
         if (failed_context_id = storage.retrieve_map_failed_context_id(map_id, parent_reactor_class_name))
           handle_failure(failed_context_id, metadata, storage, parent_context, step_name)
           return
         end
-
-        return if results_count < total_count
 
         # Retrieve results lazily
         results = RubyReactor::Map::ResultEnumerator.new(

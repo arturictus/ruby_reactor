@@ -239,9 +239,13 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability] do
     puts "excuting all reactors"
   end
+
+  desc "Reliable rollback across constructs: map, compose retry, argument failure, async_step compensate"
+  task rollback_reliability: [:environment, :flush_redis, :map_rollback, :compose_retry, :failure_rollback,
+                              :async_step_compensate]
 
   def report_demo_result(result)
     if result.is_a?(RubyReactor::DispatchResult)
@@ -253,6 +257,92 @@ namespace :demo do
     else
       err_msg = result.respond_to?(:error) ? result.error : result.inspect
       puts "❌ FAILED: #{err_msg}"
+    end
+  end
+
+  desc "ArgumentFailureDemoReactor — an argument transform raises after :reserve; :reserve is undone, " \
+       ":charge is not compensated, the failure names :charge"
+  task failure_rollback: [:environment, :flush_redis] do
+    puts "\n>>> Running ArgumentFailureDemoReactor(sku: 'sku-1', price: 'abc') [transform raises]"
+    ArgumentFailureDemoReactor.reset!
+    result = ArgumentFailureDemoReactor.run(sku: "sku-1", price: "abc")
+    puts "   log: #{ArgumentFailureDemoReactor.log.inspect}"
+    puts "   failure step_name=#{result.step_name.inspect} exception_class=#{result.exception_class.inspect}"
+    if result.failure? && result.step_name.to_s == "charge" &&
+       ArgumentFailureDemoReactor.log == ["reserve sku-1", "release sku-1"]
+      puts "✅ SUCCESS: reservation released, :charge named and not compensated"
+    else
+      puts "❌ FAIL: expected the reservation released and the failure attributed to :charge"
+    end
+
+    puts "\n>>> Running ArgumentFailureDemoReactor(sku: 'sku-1', price: '12.50') [success]"
+    ArgumentFailureDemoReactor.reset!
+    report_demo_result(ArgumentFailureDemoReactor.run(sku: "sku-1", price: "12.50"))
+  end
+
+  desc "ComposeRetryDemoReactor — compose `retries` re-run the whole child: the seat is reserved on both attempts"
+  task compose_retry: [:environment, :flush_redis] do
+    puts "\n>>> Running ComposeRetryDemoReactor(seat: '12A') [first confirmation fails, compose retries]"
+    ComposeRetryDemoReactor.reset!
+    result = ComposeRetryDemoReactor.run(seat: "12A")
+    ComposeRetryDemoReactor.log.each { |line| puts "   #{line}" }
+    reserves = ComposeRetryDemoReactor.log.count { |l| l.start_with?("reserve") }
+    puts "   reserve ran #{reserves} times; result=#{result.success? ? result.value.inspect : result.error}"
+    if result.success? && reserves == 2 && result.value == { confirmed: "res_12A_2" }
+      puts "✅ SUCCESS: the retry started a fresh child and the result comes from attempt 2"
+    else
+      puts "❌ FAIL: expected reserve to run twice and the result to come from attempt 2"
+    end
+  end
+
+  desc "MapRefundDemoReactor — a map rolls back the elements it charged, on an element failure and on a later failure"
+  task map_rollback: [:environment, :flush_redis] do
+    orders = [{ id: "o1", amount_cents: 1000 }, { id: "o2", amount_cents: 2000 }, { id: "o3", amount_cents: 3000 }]
+    scenarios = [
+      ["order o3's charge fails", { orders: orders, fail_order_id: "o3" }, %w[o2 o1]],
+      ["every order charged, then :notify fails", { orders: orders, fail_after_map: true }, %w[o3 o2 o1]]
+    ]
+
+    scenarios.each do |label, inputs, expected_refunds|
+      puts "\n>>> Running MapRefundDemoReactor [#{label}]"
+      MapRefundDemoReactor.reset!
+      result = MapRefundDemoReactor.run(inputs)
+      puts "   charges: #{MapRefundDemoReactor.charges.inspect}"
+      puts "   refunds: #{MapRefundDemoReactor.refunds.inspect}"
+      puts "   failure at step=#{result.step_name.inspect}" if result.failure?
+      if result.failure? && MapRefundDemoReactor.refunds == expected_refunds
+        puts "✅ SUCCESS: every charged order was refunded, highest index first"
+      else
+        puts "❌ FAIL: expected refunds #{expected_refunds.inspect}"
+      end
+    end
+  end
+
+  desc "AsyncStepCompensateDemoReactor — an async_step compensates itself once, in its own job, after its last attempt"
+  task async_step_compensate: [:environment, :flush_redis] do
+    puts "\n>>> Running AsyncStepCompensateDemoReactor(user_id: 'u1') [:notify always fails, retries 2]"
+    result = AsyncStepCompensateDemoReactor.run(user_id: "u1")
+    puts "   parent: #{result.success? ? "completed" : result.error}"
+
+    # The unit runs in a Sidekiq worker (demo-sidekiq); wait for its record.
+    storage = RubyReactor.configuration.storage_adapter
+    record = nil
+    60.times do
+      record = storage.retrieve_step_result(result.execution_id, :notify, "AsyncStepCompensateDemoReactor")
+      break if record && record["status"] == "completed"
+
+      sleep 0.5
+    end
+
+    if record && record["status"] == "completed"
+      puts "   unit attempts=#{record["attempts"]} compensation=#{record["compensation"].inspect}"
+      if record.dig("compensation", "status") == "completed"
+        puts "✅ SUCCESS: the unit compensated itself after its last attempt"
+      else
+        puts "❌ FAIL: expected compensation.status = completed"
+      end
+    else
+      puts "❌ FAIL: the unit did not finish within 30s — is demo-sidekiq running?"
     end
   end
 

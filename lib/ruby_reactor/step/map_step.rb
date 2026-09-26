@@ -3,6 +3,11 @@
 module RubyReactor
   class Step
     class MapStep < RubyReactor::Step
+      # Seconds a rollback waits for an element's liveness lock. The last
+      # element to settle triggers the collector before its own job releases
+      # that lock, so a short wait covers the gap.
+      ELEMENT_LOCK_WAIT = 2
+
       # Untyped, so no validation: declared only so `inputs.x` can read them.
       input :source
       input :mapped_reactor_class
@@ -26,10 +31,33 @@ module RubyReactor
         end
       end
 
+      # Compensating a failed map and undoing a completed one are the same work,
+      # as for compose: replay the undo stack of every element that COMPLETED
+      # (a failed element already rolled itself back; a halted or skipped one
+      # did nothing to undo), highest index first. Elements are found through
+      # the index both modes write, so nothing per element lives in the parent
+      # (008 R-02). Runs only once every element has settled (R-04), from the
+      # execution that owns the map, so it is the elements' only writer.
+      #
+      # ponytail: serial, in the process that detected the failure, so rollback
+      # time is linear in the number of completed elements. Fan the rollback
+      # out per element if that ever outgrows one job.
       def compensate
-        # TODO: Implement compensation for map steps
-        RubyReactor.Success()
+        step_name = context.current_step
+        map_id = "#{context.context_id}:#{step_name}"
+        failures = []
+
+        completed_elements(map_id, failures).each do |index, element_context|
+          tag = { map_step: step_name.to_sym, element_index: index }
+          failures.concat(rollback_element(map_id, index, element_context).map { |entry| entry.merge(tag) })
+        end
+
+        return RubyReactor.Success() if failures.empty?
+
+        RubyReactor.Failure("map :#{step_name} rollback incomplete", rollback_failures: failures)
       end
+
+      alias undo compensate
 
       class << self
         def build_mapped_inputs(mappings, context, element)
@@ -78,6 +106,76 @@ module RubyReactor
       end
 
       private
+
+      # Read from the map step's static declaration, not from the undo record,
+      # which a fan-out map leaves empty (R-03).
+      def element_class
+        context.reactor_class.steps[context.current_step].arguments[:mapped_reactor_class][:source].value
+      end
+
+      # `[[index, context], ...]` for every completed element, highest index
+      # first. An indexed element whose row is gone (expired past
+      # `context_ttl`) is reported, never skipped silently; its index lived in
+      # that row.
+      def completed_elements(map_id, failures)
+        storage = RubyReactor.configuration.storage_adapter
+        storage_name = RubyReactor.reactor_storage_name(element_class)
+        # A parked or retried fan-out element registers its id again.
+        ids = storage.retrieve_map_element_context_ids(map_id, context.reactor_class.name).uniq
+
+        elements = ids.filter_map do |id|
+          data = storage.retrieve_context(id, storage_name)
+          unless data
+            failures << element_unavailable(id)
+            next
+          end
+
+          element_context = RubyReactor::Context.deserialize_from_retry(data)
+          next unless element_context.status.to_s == "completed"
+
+          meta = element_context.map_metadata || {}
+          [(meta[:index] || meta["index"]).to_i, element_context]
+        end
+        elements.sort_by { |index, _| -index }
+      end
+
+      def element_unavailable(id)
+        step_name = context.current_step.to_sym
+        { step: step_name, kind: :undo, key: nil, reason: :context_unavailable, map_step: step_name,
+          element_index: nil, message: "element context #{id} expired before rollback" }
+      end
+
+      # The element's own undo stack, replayed as `ComposeStep` replays its
+      # child's, under the element's liveness lock: a held lock after the map
+      # settled is a live duplicate delivery, which is left alone and reported.
+      def rollback_element(map_id, index, element_context)
+        lock = acquire_element_lock(map_id, index)
+        return [element_in_flight(index)] if lock == :held
+
+        executor = RubyReactor::Executor.new(element_class, {}, element_context)
+        executor.undo_all
+        executor.save_context
+        executor.compensation_manager.rollback_failures
+      ensure
+        lock.release if lock.respond_to?(:release)
+      end
+
+      def acquire_element_lock(map_id, index)
+        return nil if RubyReactor::Map::ElementExecutor.inline_testing_mode?
+
+        config = RubyReactor.configuration
+        lock = RubyReactor::Lock.new("map_element:#{map_id}:#{index}",
+                                     owner: SecureRandom.uuid, ttl: config.context_lock_ttl, wait: ELEMENT_LOCK_WAIT)
+        lock.acquire
+        lock
+      rescue RubyReactor::Lock::AcquisitionError
+        :held
+      end
+
+      def element_in_flight(index)
+        { step: context.current_step.to_sym, kind: :undo, key: nil, reason: :element_in_flight,
+          message: "map element #{index} was still running at rollback time" }
+      end
 
       # Fans out anywhere except inside a map element: an element's result and
       # the map's completion counter are tracked by its own ElementExecutor job,

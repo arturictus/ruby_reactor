@@ -164,7 +164,7 @@ You can control how the pipeline reacts to failures using the `fail_fast` option
 
 ### Fail Fast (Default)
 
-By default (`fail_fast true`), the entire map operation fails immediately if any single element fails.
+By default (`fail_fast true`), the map fails as soon as any single element fails: no new element starts after the failure.
 
 ```ruby
 map :strict_processing do
@@ -174,9 +174,41 @@ map :strict_processing do
 end
 ```
 
+In fan-out mode, elements already running when the failure happens finish first. The map reports its failure only once every element has settled, so its failure latency grows to the slowest element in flight. Elements that had not started are marked skipped and never run.
+
+### Rollback
+
+A map rolls back like a composed reactor. The elements that **completed** are rolled back by replaying each element's own step `undo`s, newest step first, **highest element index first**. There is no map-level rollback DSL: the `undo` blocks you already write on the element reactor's steps are the element's rollback. This happens:
+
+- **When the map fails** (an element fails with `fail_fast`, or the `collect` block raises): every element that completed is rolled back, then the steps before the map are undone. The failing element already rolled itself back (its failing step compensated, its earlier steps undone).
+- **When a later step fails, or the run is undone manually** (`Reactor.undo(id)`): every completed element is rolled back at the map's position in the parent's reverse-completion order.
+
+The same holds in inline and fan-out mode, whatever order the element jobs ran in.
+
+```ruby
+map :charge_orders, ChargeOrderReactor do   # ChargeOrderReactor's :charge step declares `undo` (a refund)
+  source input(:orders)
+  argument :order, element(:charge_orders)
+  fan_out
+end
+
+step :notify do
+  wait_for :charge_orders
+  # If this fails, every order :charge_orders charged is refunded, then earlier steps are undone.
+end
+```
+
+Things to know:
+
+- **Make element `undo`s idempotent.** They can run after the map succeeded, on a later failure or on a manual undo, and a failure elsewhere must not leave a half-refund.
+- **Rollback failures are reported per element.** An element whose undo fails does not stop the others. Its entry in `Failure#rollback_failures` carries `map_step:` and `element_index:`.
+- **`context_ttl` is the rollback horizon.** Each element's rollback reads its stored context. If it expired before the rollback, the element is reported with `reason: :context_unavailable` (and `element_index: nil`, since the index lived in the expired row), never skipped silently.
+- **A duplicate still running is left alone.** If an element's job is still live when the rollback reaches it (a duplicate delivery), it is reported with `reason: :element_in_flight`.
+- **Rollback is serial**, in the process that detected the failure, so it takes time proportional to the number of completed elements.
+
 ### Collecting Results (Successes & Failures)
 
-If you want to process all elements regardless of failures, set `fail_fast false`. The map step returns a `ResultEnumerator` that allows you to easily separate successful executions from failures.
+If you want to process all elements regardless of failures, set `fail_fast false`. The map step returns a `ResultEnumerator` that allows you to easily separate successful executions from failures. Each failed element rolls itself back; if a later step fails, the successful elements are rolled back as described in [Rollback](#rollback), and the failed ones are not rolled back twice.
 
 ```ruby
 map :resilient_processing do

@@ -56,6 +56,10 @@ module RubyReactor
         raise NotImplementedError
       end
 
+      def decrement_map_counter_by(map_id, amount, reactor_class_name)
+        raise NotImplementedError
+      end
+
       def subscribe(channel, &block)
         raise NotImplementedError
       end

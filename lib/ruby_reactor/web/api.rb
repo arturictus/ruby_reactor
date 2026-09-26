@@ -173,7 +173,7 @@ module RubyReactor
 
       def self.reactor_status(data)
         status = data[:status].to_s == "skipped" ? "halted" : data[:status].to_s
-        return status if %w[failed paused completed running halted pending].include?(status)
+        return status if %w[failed paused completed running halted pending aborted].include?(status)
         return "cancelled" if data[:cancelled]
         return "running" if data[:current_step]
         return "completed" if execution_evidence?(data)

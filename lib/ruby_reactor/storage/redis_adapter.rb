@@ -133,6 +133,15 @@ module RubyReactor
         @redis.decr(key)
       end
 
+      # Settles `amount` indices at once (a fail-fast dispatcher claiming the
+      # ones it never dispatched). Returns the count left.
+      def decrement_map_counter_by(map_id, amount, reactor_class_name)
+        key = map_counter_key(map_id, reactor_class_name)
+        left = @redis.decrby(key, amount)
+        @redis.expire(key, durability_ttl)
+        left
+      end
+
       def set_last_queued_index(map_id, index, reactor_class_name)
         key = map_last_queued_index_key(map_id, reactor_class_name)
         @redis.set(key, index, ex: durability_ttl)

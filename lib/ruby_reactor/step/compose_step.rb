@@ -9,7 +9,7 @@ module RubyReactor
 
       def run
         step_name = context.current_step
-        composed_data = context.composed_contexts[step_name]
+        composed_data = discard_failed_attempt(step_name, context.composed_contexts[step_name])
         child_context = prepare_child_context(composed_data)
 
         # Store the child context in composed_contexts BEFORE execution
@@ -34,7 +34,10 @@ module RubyReactor
         return RubyReactor.Success() unless composed_data && composed_data[:context]
 
         child_context = composed_data[:context]
-        executor = RubyReactor::Executor.new(inputs.composed_reactor_class, {}, child_context)
+        # The child's own class: it survives serialization, while a Class in a
+        # stored undo record's arguments comes back as its name (a compose
+        # inside a map element is rolled back from its stored row).
+        executor = RubyReactor::Executor.new(child_context.reactor_class, {}, child_context)
         executor.undo_all
         executor.save_context
 
@@ -47,6 +50,29 @@ module RubyReactor
       alias undo compensate
 
       private
+
+      # A stored child that FAILED is a previous attempt of a retry: it already
+      # rolled itself back, so resuming it would count its undone steps as
+      # completed (008 R-05). Start a fresh child instead, and keep the
+      # discarded attempt — with any rollback it could not complete — visible
+      # in the parent's trace. Any other stored child (running, paused, parked)
+      # is a resume, not a retry, and continues where it stopped (FR-011).
+      def discard_failed_attempt(step_name, composed_data)
+        old = composed_data && composed_data[:context]
+        return composed_data unless old && old.status.to_s == "failed"
+
+        context.append_execution_trace(
+          { type: :compose_attempt_discarded, step: step_name, child_context_id: old.context_id,
+            rollback_failures: attempt_rollback_failures(old.failure_reason), timestamp: Time.now }
+        )
+        nil
+      end
+
+      def attempt_rollback_failures(reason)
+        return reason.rollback_failures if reason.respond_to?(:rollback_failures)
+
+        (reason.is_a?(Hash) && Utils::FetchIndifferent.call(reason, :rollback_failures)) || []
+      end
 
       def build_composed_inputs(mappings)
         built = {}

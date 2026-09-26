@@ -318,9 +318,40 @@ class PaymentReactor < RubyReactor::Reactor
 end
 ```
 
+### The Rollback Rule
+
+One rule decides what a failure rolls back, for every construct:
+
+1. A construct that **completed** is tracked for undo — except an async unit (`async_step`,
+   `async_reactor`), which is independent of its parent by design.
+2. The failing construct is **compensated** if its work started. It is **not** compensated if it
+   never started: its own lock/semaphore was contended, its coordination key could not be resolved,
+   an `async_reactor` dispatch was refused, its arguments could not be resolved
+   (`ArgumentResolutionError`), its `where`/`guard` raised (`ConditionError`), or its arguments or
+   inputs were invalid.
+3. Then every tracked construct is **undone**, newest first.
+4. A compensate or undo that fails does not stop the rest; it is listed in
+   `Failure#rollback_failures`.
+5. `Halt` stops without rollback. A `Skipped` step is never undone.
+6. A process-level exception (not a `StandardError`) runs no rollback. A run in the caller's
+   process is stored `aborted`, and `Reactor.undo(id)` rolls it back later; a run in a worker is
+   redelivered.
+
+Each construct says what compensate and undo mean for itself:
+
+| Construct | compensate (its own failure) | undo (a later failure, or a manual undo) |
+| --- | --- | --- |
+| `step` | its `compensate` (inline block, else the step class's, else skipped) | its `undo` (same order) |
+| `compose` | the child already rolled itself back, so nothing is left to do | replay the child's completed steps' `undo`s, newest first |
+| `compose` with `retries` | each retry after a failed attempt starts a **fresh** child | only the final attempt's child is undone |
+| `map` (inline and `fan_out`) | roll back every **completed** element (its steps' `undo`s), highest index first; the failed element already rolled itself back | the same, for every completed element |
+| `async_step` | not tracked by the parent; the **unit** compensates itself once, in its own job, after its final attempt fails | none: an inline `undo` is rejected at definition time |
+| `async_reactor` | not tracked by the parent; the child rolls itself back | none |
+
 ### Compensation Order
 
-Compensation runs in reverse order of successful steps:
+Compensation runs in reverse order of successful steps. A composed reactor or a map is one of
+those steps; undoing it replays its child's (or each completed element's) own undos:
 
 ```mermaid
 graph TD

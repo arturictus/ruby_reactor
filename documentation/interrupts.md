@@ -161,6 +161,13 @@ ReportReactor.undo("uuid-123")
 ReportReactor.cancel(id: "uuid-123", reason: "User cancelled")
 ```
 
+`undo` works the same way on an **aborted** execution. A run in the caller's process that is cut
+short by a process-level exception (a signal, out of memory, any `Exception` that is not a
+`StandardError`) runs no rollback code: the exception reaches the caller unchanged, and the run is
+stored with status `aborted` and its completed steps still outstanding. No worker or sweeper resumes
+it. `ReportReactor.undo(id)` rolls it back and marks it cancelled. A run inside a worker is not
+marked: its job is redelivered and resumes from its last checkpoint.
+
 ## Common Use Cases
 
 ### Human Approvals

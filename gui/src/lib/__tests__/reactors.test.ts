@@ -89,6 +89,8 @@ describe('matchesStatusFilter', () => {
     expect(matchesStatusFilter('failed', 'success')).toBe(false);
     expect(matchesStatusFilter('failed', 'errors')).toBe(true);
     expect(matchesStatusFilter('cancelled', 'errors')).toBe(true);
+    expect(matchesStatusFilter('aborted', 'errors')).toBe(true);
+    expect(matchesStatusFilter('aborted', 'aborted')).toBe(true);
     expect(matchesStatusFilter('paused', 'running')).toBe(true);
   });
 

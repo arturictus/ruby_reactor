@@ -83,6 +83,11 @@ module RubyReactor
                                   parent_context)
           failure_response = nil
           begin
+            # The map failed in its element jobs, so no executor compensated it:
+            # roll back its completed elements (every index has settled, R-04)
+            # before the parent's own rollback, as the inline path does.
+            executor.compensation_manager.compensate(parent_context.reactor_class.steps[step_name_sym],
+                                                     final_result.error, {})
             failure_response = executor.result_handler.handle_execution_error(error)
             # Manually update context status since we're not running executor loop
             executor.send(:update_context_status, failure_response)
@@ -95,6 +100,11 @@ module RubyReactor
           store_parent(parent_context, storage)
         else
           parent_context.set_result(step_name_sym, final_result.value)
+          # A completed fan-out map is tracked for undo like any step (R-03).
+          # The record stays empty: `MapStep#undo` finds its elements through
+          # the map's element index, so the parent does not grow per element.
+          parent_context.undo_stack << { step: parent_context.reactor_class.steps[step_name_sym], arguments: {},
+                                         result: RubyReactor.Success(nil) }
 
           # Manually update execution trace to reflect completion
           # This is necessary because resume_execution continues from the NEXT step

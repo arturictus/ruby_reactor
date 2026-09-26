@@ -182,6 +182,15 @@ end
 
 4. **Shared Context**: All composed reactors share access to the parent reactor's inputs and results of previous steps and can be configured with different retry strategies.
 
+5. **Retries re-run the whole child**: `retries` on a `compose` retries the **whole** child. A failed attempt has already rolled itself back (its steps' `undo`s ran), so the next attempt starts a **fresh** child from the first step, with fresh retry budgets for the child's own steps. Child steps that declare no `undo` therefore run again: that is what a retry means. Only the final attempt belongs to the parent: its result is the compose result, and a later parent failure undoes only its steps. Each discarded attempt stays visible in the parent's execution trace as a `compose_attempt_discarded` entry (`step`, `child_context_id`, and any `rollback_failures` of that attempt), so an incomplete rollback of an earlier attempt is not hidden by a later success. A child that was only *parked* (lock contention, a wait on a background result) is resumed, not retried: steps it completed before the park do not run again.
+
+   ```ruby
+   compose :reserve_and_confirm, ReservationReactor do
+     argument :order_id, input(:order_id)
+     retries max_attempts: 3, backoff: :exponential, base_delay: 1
+   end
+   ```
+
 ### `async_reactor` vs `compose`
 
 Both run a nested reactor. They differ in exactly one thing that then determines
@@ -193,6 +202,7 @@ control.
 | Where the child runs | inline, in this process, synchronously | its own job, concurrently |
 | Result availability | immediately, as the step's own result | via `result(:name)`, which waits (bounded) |
 | Compensation | fully linked — a child failure rolls the parent back | **not** linked; opt in by reading the result and returning `Failure` |
+| `retries` | each attempt starts a fresh child; only the final attempt is undone later | the child's own steps retry inside its job |
 | Lock reentrancy | yes — same logical thread of control, so the child re-enters the parent's lock | never — the two run concurrently, so sharing an owner would break mutual exclusion |
 | Failure with no reader | impossible; the parent always sees it | the parent completes unaffected |
 

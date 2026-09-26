@@ -13,7 +13,7 @@ A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor impleme
 
 Building complex business transactions often results in spaghetti code or brittle "god classes." Ruby Reactor solves this by implementing the **Saga Pattern** in a lightweight, developer-friendly package. It lets you define workflows as clear, dependency-driven steps without the boilerplate of heavy enterprise frameworks.
 
-The key value is **Reliability**: if any part of your workflow fails, Ruby Reactor automatically triggers compensation logic to undo previous steps, ensuring your system never ends up in a corrupted half-state. Whether you're coordinating microservices or monolith modules, you get atomic-like consistency with background processing built-in.
+The key value is **Reliability**: if any part of your workflow fails with an error, Ruby Reactor automatically triggers compensation logic to undo previous steps, ensuring your system never ends up in a corrupted half-state. A process-level exception (a signal, out of memory) runs no rollback code; the run is recorded as `aborted` so a manual `undo` can roll it back. Whether you're coordinating microservices or monolith modules, you get atomic-like consistency with background processing built-in.
 
 ## Features
 
@@ -22,7 +22,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 - **Async Steps & Reactors**: `async_step` and `async_reactor` dispatch independent units of work while the reactor keeps running; steps that read their result wait for it.
 - **Map & Parallel Execution**: Iterate over collections in parallel with the `map` step, distributing work across multiple workers.
 - **Retries**: per-step retry policies (declared on the step class or step block) with exponential, linear, or fixed backoff.
-- **Compensation**: Automatic rollback of completed steps when a failure occurs.
+- **Compensation**: Automatic rollback of completed steps when any error occurs after them, including a raising argument transform or `where` condition.
 - **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
 - **Distributed Locks, Semaphores, Rate Limits, Periods & Ordered Locks**: Coordinate across processes with Redis-backed primitives — exclusive locks for at-most-one-runner, semaphores for capacity caps, fixed-window rate limits for external APIs (single or multi-window like "3/sec AND 100/min"), `with_period` to dedup reactors to once per calendar bucket, and `with_ordered_lock` for strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Background jobs snooze on contention with smart `retry_after` instead of consuming retry budget.
@@ -32,7 +32,7 @@ The key value is **Reliability**: if any part of your workflow fails, Ruby React
 | Feature                  | Ruby Reactor | dry-transaction | Trailblazer | Custom Sidekiq Jobs |
 |--------------------------|--------------|-----------------|-------------|---------------------|
 | DAG/Parallel execution   | Yes          | No              | Limited     | Manual              |
-| Auto compensation/undo   | Yes          | No              | Manual      | Manual              |
+| Auto compensation/undo   | Yes (steps, compose, map; async units roll back on their own) | No | Manual | Manual |
 | Interrupts (pause/resume)| Yes          | No              | No          | Manual              |
 | Locks / sem / rate / per | Yes          | No              | No          | Manual              |
 | Built-in web dashboard   | Yes          | No              | No          | No                  |
@@ -544,10 +544,14 @@ time. On success the reader gets the raw value; on failure it gets the
 
 **Compensation is opt-in.** If a dispatched step fails and nothing reads its
 result, the reactor is not compensated — it was dispatched precisely so the
-reactor would not depend on it. A reader that returns `Failure` triggers
-compensation normally. The independence cuts both ways: async dispatches never
-enter the parent's undo stack, so a parent rolling back for its own reasons
-never "undoes" a unit that runs (and may still succeed) elsewhere.
+reactor would not depend on it. The unit's own `compensate` does run: once, in
+the unit's job, after its final attempt fails, recorded on the unit's record as
+`compensation`. A reader that returns `Failure` compensates itself and undoes the
+reactor's completed steps; the unit is not compensated again. The independence
+cuts both ways: async dispatches never enter the parent's undo stack, so a
+parent rolling back for its own reasons never "undoes" a unit that runs (and may
+still succeed) elsewhere. An inline `undo` on an `async_step` would never run, so
+it raises at class-definition time (a step class's `undo` is warned about).
 
 #### `async_reactor`: a whole nested reactor, running independently
 
@@ -892,6 +896,14 @@ end
 A `fan_out` map is a **hand-off point**: the reactor stops at the map (the caller gets a `DispatchResult`), every element runs as its own background job, and once all outcomes are collected the reactor resumes in a worker with the steps after the map. It fans out the same way when the reactor is already running in a worker (e.g. `background all: true`).
 
 By using `fan_out` with `batch_size`, the system applies **Back Pressure** to efficiently manage resources. [Read more about Back Pressure & Resource Management](documentation/data_pipelines.md#back-pressure--resource-management).
+
+**Rollback.** A map rolls back like a composed reactor, with no map-level rollback DSL: the `undo`s
+already declared on the element reactor's steps are each element's rollback. When the map fails
+(an element fails under `fail_fast`, or `collect` raises), and when a later step fails or the run is
+undone manually, every element that completed is rolled back, highest index first, in inline and
+fan-out mode alike. A fail-fast fan-out map lets elements already in flight finish before it reports
+the failure. Make element `undo`s idempotent. See
+[Rollback](documentation/data_pipelines.md#rollback).
 
 `batch_size` is optional: with `fan_out` alone, RubyReactor fans out one worker per element (defaulting the batch size to the full source size) and aggregates the outcomes into a `ResultEnumerator` — convenient for small collections, but with no back pressure. See [`fan_out` Without `batch_size`](documentation/data_pipelines.md#fan_out-without-batch_size).
 
@@ -1306,7 +1318,7 @@ end
 
 ### Error Handling and Compensation
 
-When a step fails, RubyReactor automatically undoes completed steps in reverse order, compensate only runs in the failing step and backwalks the executed steps undo blocks:
+When a step fails, RubyReactor automatically undoes completed steps in reverse order, compensate only runs in the failing step and backwalks the executed steps undo blocks. Composed reactors and maps are completed steps too: undoing one replays its child's (or each completed element's) own step `undo`s:
 
 ```ruby
 class TransactionReactor < RubyReactor::Reactor
@@ -1408,8 +1420,28 @@ result.rollback_failures
 ```
 
 `reason` is `:coordination_unavailable`, `:returned_failure`, or `:raised`; `kind`
-is `:undo` or `:compensate`. See
+is `:undo` or `:compensate`. An entry from a map element's rollback also carries
+`map_step:` and `element_index:`, and a map reports an element it could not roll
+back with `reason: :context_unavailable` (its stored context expired) or
+`:element_in_flight` (a duplicate of it was still running). See
 [Step Rollback](documentation/locks_and_semaphores.md#step-rollback).
+
+Every error after a completed step rolls back, not only a step body's failure.
+An `argument` source, `transform` or result path that raises fails that step
+with `RubyReactor::Error::ArgumentResolutionError`, and a raising `where`/`guard`
+with `RubyReactor::Error::ConditionError`. Neither step is compensated (its body
+never started) nor retried; completed steps are undone. The Failure names the
+step, and `exception_class` reports the original error's class:
+
+```ruby
+result.step_name        # => :charge
+result.exception_class  # => "ArgumentError"
+```
+
+A process-level exception (not a `StandardError`) reaches the caller unchanged
+and runs no rollback code. A run in the caller's process is stored with status
+`aborted`, its completed work still outstanding; `MyReactor.undo(id)` rolls it
+back. A run in a worker is redelivered instead.
 
 ### Using Pre-defined Schemas
 

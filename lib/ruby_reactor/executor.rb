@@ -157,6 +157,9 @@ module RubyReactor
       update_context_status(@result)
       completed = true
       @result
+    rescue Exception # rubocop:disable Lint/RescueException
+      mark_aborted
+      raise
     ensure
       release_locks unless @parked
       leave_ordered_lock_scope
@@ -274,6 +277,9 @@ module RubyReactor
       update_context_status(@result)
       completed = true
       @result
+    rescue Exception # rubocop:disable Lint/RescueException
+      mark_aborted
+      raise
     ensure
       release_locks unless @parked
       @acquired_context_lock&.release
@@ -286,6 +292,15 @@ module RubyReactor
 
     def undo_all
       @compensation_manager.rollback_completed_steps
+    end
+
+    # A process-level exception (a signal, out of memory, a custom
+    # `Exception`) — 008 R-08. Running user rollback code now is unsafe, so
+    # none runs: a run in the caller's process is recorded `aborted`, with its
+    # undo stack kept, for a manual `Reactor#undo`; the `ensure` persists it,
+    # best effort. A worker run stays `running` and its job is redelivered.
+    def mark_aborted
+      @context.status = :aborted unless @context.inline_async_execution
     end
 
     def undo_stack

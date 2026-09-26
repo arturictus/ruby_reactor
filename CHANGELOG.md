@@ -4,6 +4,31 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **An `async_step`'s `compensate` runs, in the unit's own job, when its final attempt fails.**
+  Before, `compensate`/`undo` blocks on an `async_step` were accepted and never ran. Now the unit
+  compensates itself once, after its last retry, whether or not any step reads its result —
+  never for a retried attempt, a halt, or a body that never started. The outcome is recorded on
+  the unit's Step Result Record as `compensation: { status, rollback_failures, completed_at }`,
+  and the compensation middleware events fire in the unit's job. A reader that surfaces the
+  failure no longer leads to a second compensation of the unit.
+  See *Migration notes: reliable rollback* below.
+
+* **An inline `undo` inside `async_step` raises `RubyReactor::Error::ValidationError` at class
+  definition.** An independent async unit is never undone, so the block could never run. A step
+  class that defines `undo` and is used with `async_step` prints a definition-time warning
+  instead (the same class may be reused by ordinary steps, where its `undo` runs).
+  See *Migration notes: reliable rollback* below.
+* **A map rolls back the elements that completed.** When a map fails (an element fails under
+  `fail_fast`, or `collect` raises), and when a later step fails or the run is undone manually,
+  every completed element is rolled back by replaying its own step `undo`s, highest index first —
+  in inline and fan-out mode, whatever order the element jobs ran in. Before, completed elements
+  were never rolled back. A fail-fast fan-out map now waits for elements already in flight before
+  it reports its failure, and settles the elements it never started as skipped (which also stops
+  the map sweeper re-dispatching them). An element rollback that does not complete is listed in
+  `Failure#rollback_failures` with `map_step:` and `element_index:`; an element whose context
+  expired is reported with `reason: :context_unavailable`, and a still-running duplicate with
+  `reason: :element_in_flight`.
+  See *Migration notes: reliable rollback* below.
 * **`RubyReactor::Step` is now a base class, not a mixin.** `include RubyReactor::Step` on a
   plain class with `def self.run(arguments, context)` is gone — no compatibility shim, no dual
   authoring style. A step subclasses `RubyReactor::Step` and writes `run` (and optionally
@@ -78,8 +103,87 @@
   `RubyReactor.Failure`, and a hash error needs braces, `Failure({ code: 1 })`, because a braceless
   `Failure(code: 1)` is now read as options.
 
+
+### Migration notes: reliable rollback
+
+Every breaking or shape-changing item of the rollback work, with what to change.
+
+1. **Map element `undo`s now run** (breaking, behavior). They run when the map fails, when a later
+   step fails, and on a manual `Reactor.undo(id)`. Make them idempotent.
+
+   ```ruby
+   # Before: this undo never ran for a map element; charges stayed on a failure.
+   # After: it refunds each charged element, highest index first. Guard against a double refund.
+   class ChargeStep < RubyReactor::Step
+     def undo
+       Payments.refund(result[:charge_id]) unless Payments.refunded?(result[:charge_id])
+       Success()
+     end
+   end
+   ```
+
+2. **An `async_step`'s `compensate` now runs in the unit's job** (breaking, behavior), once, after
+   its final attempt fails, whether or not a reader exists. Move reader-only cleanup into the
+   reader.
+
+   ```ruby
+   # Before: never ran.
+   async_step :notify, NotifyStep do
+     compensate { |error, inputs, _ctx| Audit.undelivered(inputs.user_id, error) }
+   end
+   # After: runs in the unit's job after the last retry; the outcome is on the unit's record
+   # as `compensation`. Cleanup that should run only when a reader fails the reactor:
+   step :confirm do
+     argument :delivery, result(:notify)
+     run { |inputs, _ctx| inputs.delivery.is_a?(RubyReactor::Failure) ? Failure("undelivered") : Success() }
+     compensate { |_error, _inputs, _ctx| Support.open_ticket }
+   end
+   ```
+
+3. **An inline `undo` inside `async_step` raises at class definition** (breaking, API).
+
+   ```ruby
+   # Before: accepted, never ran.
+   async_step(:notify) { run { ... }; undo { ... } }
+   # After: raises RubyReactor::Error::ValidationError. Use the unit's `compensate`, a reader's
+   # `compensate`, or an `async_reactor` child whose steps declare `undo`.
+   async_reactor :notify, NotifyReactor   # NotifyReactor's steps declare `undo`
+   ```
+
+4. **`compose` retries re-run the whole child** (fix). Child steps with no `undo` run again on
+   each retry.
+
+   ```ruby
+   # Before: attempt 2 resumed the child and skipped :reserve, already undone by attempt 1.
+   # After: attempt 2 runs :reserve again. Give it an `undo` (or make it idempotent).
+   compose(:booking, BookingReactor) { retries max_attempts: 2 }
+   ```
+
+5. **Argument, condition and unknown errors roll back and carry `step_name`** (fix). The Failure's
+   shape changes on these paths.
+
+   ```ruby
+   # Before: "Execution failed: invalid value for Float(): 'abc'", step_name nil, nothing undone.
+   # After: "Step 'charge' failed: Step 'charge' could not resolve its arguments: …",
+   #        step_name :charge, exception_class "ArgumentError", completed steps undone.
+   result.step_name        # => :charge
+   result.exception_class  # => "ArgumentError"
+   ```
+
+6. **New `aborted` status** (additive). Dashboards and status filters gain a value; an `aborted`
+   run needs `MyReactor.undo(id)` to roll back.
+
+7. **`rollback_failures` entries may carry `map_step:` / `element_index:`** and the reasons
+   `:context_unavailable` / `:element_in_flight` (additive).
+
 ### Features
 
+* **`aborted` execution status.** A run in the caller's process that a process-level exception
+  (not a `StandardError`: a signal, out of memory, a custom `Exception`) cuts short runs no
+  rollback code: the exception reaches the caller unchanged, and the run is stored as `aborted`
+  with its completed work outstanding. Workers and the sweeper never resume it; `Reactor.undo(id)`
+  rolls it back. The dashboard and web API show and filter it, next to `failed`. A worker run is
+  unchanged (its job is redelivered).
 * **Step-scoped coordination.** Steps can declare `with_lock`, `with_semaphore`, `with_rate_limit`,
   `with_period`, and `with_ordered_lock` — the same macros as the reactor form, keyed on the step's
   own resolved arguments instead of the reactor's inputs — so one step of a workflow can be
@@ -140,6 +244,24 @@
 
 ### Bug Fixes
 
+* A `compose` with `retries` re-runs the whole child on each attempt. Before, the retry resumed
+  the failed attempt's child and counted its already-undone steps as completed, so the compose
+  could succeed on a result that had been rolled back, and a later failure undid only part of the
+  child. Now each attempt after a failed one starts a fresh child (fresh retry budgets for its
+  steps), and only the final attempt is undone by a later failure. **Note:** child steps without
+  an `undo` now run again on a retry. Each discarded attempt is kept in the parent's execution
+  trace as `type: :compose_attempt_discarded`, with any rollback it could not complete. A child
+  that parked (contention, a background-result wait) still resumes instead of re-running.
+* Every error after a completed step now rolls back, and the failure names its step. An `argument`
+  source, `transform` or result path that raises fails the step with
+  `RubyReactor::Error::ArgumentResolutionError`, and a raising `where`/`guard` with
+  `RubyReactor::Error::ConditionError`: completed steps are undone, the step is neither compensated
+  (its body never started) nor retried, and the Failure carries `step_name`, `reactor_name` and the
+  original `exception_class`. Before, an argument error rolled nothing back and carried no step,
+  and a raising condition compensated a step that never ran. The same holds in a worker (an
+  `async_step` unit, a `background` hand-off). Any other `StandardError` raised outside a step
+  body ("Execution failed: …") now rolls back completed steps too, and a failure whose
+  compensation raised ("Execution error: …") carries `step_name`.
 * A supplied `false` reactor input or step result no longer resolves to `nil`.
   `Context#get_input`, `Context#get_result` and `Template::Result#fetch` now check whether the key
   exists instead of whether the value is truthy. Code that relied on `false` arriving as `nil`
