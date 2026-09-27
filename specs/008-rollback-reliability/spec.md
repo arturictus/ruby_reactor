@@ -41,7 +41,7 @@ wrong and are corrected here:
 | A nested reactor must never be retried as a whole by its parent | `retries` on a `compose` started a fresh child per attempt | `retries` on a `compose` or an `async_reactor` is rejected. The child's own steps declare their retries. This closes F-02 by removing the path (007 option O-02-c) |
 | `where`/`guard` are an old implementation that may be stale | kept, with raising conditions made "never started" | removed from the DSL. A step that should not run returns `Skipped` from its body. This closes F-06 by removing the path |
 | All errors raised by reactor code must roll back | only standard errors rolled back. Every other exception marked the run aborted | every exception raised by reactor code rolls back. Only process-termination exceptions skip rollback |
-| `Skipped` can mean "not required" or "already done" | a `Skipped` step was never undone, and it also suppressed an `after:` hand-off and a period mark | `Skipped` is only an instrumentation mark: in every effect it is a `Success`, rollback included (FR-029, FR-030) |
+| `Skipped` can mean "not required" or "already done" | a `Skipped` step was never undone, and it also suppressed an `after:` hand-off and a period mark | `Skipped` is an instrumentation mark that never changes execution; a skipped step is still never undone (FR-029, FR-030) |
 
 **Readers**: reactor authors, who need to predict what gets rolled back, and RubyReactor
 maintainers, who need to change rollback behavior safely.
@@ -73,11 +73,11 @@ maintainers, who need to change rollback behavior safely.
   FR-028).
 - Q: Is a `Skipped` step undone? → A: *(first defaulted to "no"; superseded by the review answer
   below)*.
-- Q (review 2026-09-27): What does `Skipped` change? → A: Nothing. `Skipped` is only an
+- Q (review 2026-09-27): What does `Skipped` change? → A: Nothing in execution. `Skipped` is an
   instrumentation mark, so an engineer reviewing the execution can see the step did not need to
-  run. In every effect it is the same as `Success`: the run continues, a `background` hand-off
-  happens as for a completed step, a period bucket is marked, and the step is enrolled for undo
-  (FR-029, FR-030).
+  run: the run continues, a `background` hand-off happens as for a completed step, and a period
+  bucket is marked (FR-030). Rollback is the exception: a skipped step is never undone (FR-029;
+  briefly changed to "undone like Success", then reverted the same day).
 - Q (review 2026-09-27): Cap a stored failure's backtrace? → A: Yes (FR-031).
 - Q (review 2026-09-27): What must happen when a resume arrives while the reactor is compensating?
   → A: The resume fails; a resume is accepted only by a reactor paused at an interrupt step
@@ -288,8 +288,8 @@ to return `Skipped` from its body and check that the reactor continues past it.
    class is defined, **Then** the definition is rejected with a message naming the step and saying
    to return `Skipped` from the step body instead.
 2. **Given** a step whose body returns `Skipped`, **When** the reactor runs, **Then** everything
-   happens exactly as for `Success` (value, hand-off, period mark, undo on a later failure), and
-   only the execution trace records the skip.
+   happens exactly as for `Success` (value, hand-off, period mark), the execution trace records
+   the skip, and a later failure does not undo it.
 3. **Given** the README and `./documentation`, **When** a reader looks for `where`, `guard` or the
    condition error, **Then** the only mentions are in the migration note.
 
@@ -329,9 +329,8 @@ to return `Skipped` from its body and check that the reactor continues past it.
   unchanged.
 - **Process-termination exception in a worker**: the job is redelivered and resumes from its last
   checkpoint. Unchanged.
-- **A step that returns `Skipped`, then a later step fails**: its `undo` runs with the skipped
-  value, as for any `Success` (FR-029). The library's own skips (`with_period`, `with_ordered_lock`)
-  are `Skipped` too, so their `undo` runs with a nil value.
+- **A step that returns `Skipped`, then a later step fails**: it is not undone (FR-029). The same
+  holds for the library's own skips (`with_period`, `with_ordered_lock`).
 - **`background after: :x` where `:x` returns `Halt`**: the run halts; nothing is handed off.
 
 ## Requirements *(mandatory)*
@@ -448,9 +447,9 @@ to return `Skipped` from its body and check that the reactor continues past it.
 - **FR-028**: A `compensate` or `undo` that raises any exception other than a process-termination
   exception MUST be recorded as a rollback failure for its step, and the remaining rollback MUST
   continue.
-- **FR-029** *(revised 2026-09-27)*: `Skipped` MUST have every effect `Success` has. It is only an
-  instrumentation mark (execution trace, `skipped?`, telemetry). A `Skipped` step MUST be enrolled
-  for undo, and a later failure MUST run its `undo` with the skipped value.
+- **FR-029** *(revised 2026-09-27)*: `Skipped` is an instrumentation mark (execution trace,
+  `skipped?`, telemetry) and MUST NOT change execution. A `Skipped` step MUST NOT be undone or
+  compensated: it had nothing to do.
 - **FR-030**: A `background after: :x` hand-off MUST fire when `:x` returns `Skipped`, and MUST NOT
   fire when `:x` returns `Halt`. A `with_period` step whose body returns `Skipped` MUST mark its
   bucket.
@@ -478,8 +477,8 @@ to return `Skipped` from its body and check that the reactor continues past it.
   rollback.
 - **Aborted execution**: an inline execution cut short by a process-termination exception. Its
   completed work is still outstanding, and it can be found and undone manually.
-- **Skipped step**: a step whose body returned `Skipped`. A `Success` in every effect, undo
-  included; only the trace marks it (FR-029).
+- **Skipped step**: a step whose body returned `Skipped`. The run continues as for a `Success`;
+  the trace marks it, and it is never undone (FR-029).
 
 ## Success Criteria *(mandatory)*
 

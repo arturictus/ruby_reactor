@@ -116,11 +116,14 @@ module RubyReactor
         result
       end
 
-      # A step returned `RubyReactor.Skipped(...)`: in every effect the same as
-      # a Success — recorded, pushed for undo, continued from. `Skipped` is only
-      # an instrumentation mark, so the trace entry is the one difference.
+      # A step returned `RubyReactor.Skipped(...)`: the run continues exactly as
+      # for a Success (value, hand-off, period mark), but the step is NOT pushed
+      # for undo — it had nothing to do, so there is nothing to revert (008 R-19).
       def handle_skipped(step_config, result, resolved_arguments)
-        handle_success(step_config, result, resolved_arguments)
+        validate_step_output(step_config, result.value, resolved_arguments)
+        @step_results[step_config.name] = result
+        @context.set_result(step_config.name, result.value)
+        @dependency_graph.complete_step(step_config.name)
         @context.append_execution_trace(
           {
             type: :skipped,

@@ -684,7 +684,7 @@ expect(test_reactor(SyncReactor, foo: 1)).to be_halted.at_step(:second)         
 
 ### The `Skipped` result
 
-`RubyReactor::Skipped` marks one step skipped; in every effect it is a `Success` (its value flows to dependants, and a later failure runs its `undo`) — only the trace records the mark. Use `be_skipped` to assert that a specific step was skipped — it reads the execution trace, not the run's terminal result, since a run containing skipped steps still completes as a plain `Success`:
+`RubyReactor::Skipped` marks one step skipped; the run continues exactly as for a `Success` (its value flows to dependants), the step is never undone, and the trace records the mark. Use `be_skipped` to assert that a specific step was skipped — it reads the execution trace, not the run's terminal result, since a run containing skipped steps still completes as a plain `Success`:
 
 ```ruby
 expect(test_reactor(SyncReactor, foo: 1)).to be_skipped.at_step(:maybe_sync)

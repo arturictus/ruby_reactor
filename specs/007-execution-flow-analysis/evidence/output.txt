@@ -1,4 +1,4 @@
-# Execution-flow probes — 2026-09-27T22:00:29Z — ruby_reactor 0.8.3 (4a0ea4bb)
+# Execution-flow probes — 2026-09-27T22:26:31Z — ruby_reactor 0.8.3 (7a8f4a67)
 
 == S-plain-01  a → b(returns Failure) → c   [inline]
 expected: run:a run:b compensate:b undo:a => failure(b)
@@ -28,8 +28,8 @@ observed: run:a run:b => halt
 MATCH
 
 == S-plain-06  a → b(Skipped) → c(fails)   [inline]
-expected: run:a run:b run:c compensate:c undo:b undo:a => failure(c)
-observed: run:a run:b run:c compensate:c undo:b undo:a => failure(c)
+expected: run:a run:b run:c compensate:c undo:a => failure(c)
+observed: run:a run:b run:c compensate:c undo:a => failure(c)
 MATCH
 
 == S-plain-07  a → b(argument transform raises StandardError)   [inline]
@@ -198,7 +198,7 @@ MATCH
 == S-async-08  a → async_step u → r reads u; unit never finishes in time   [inline parent + drained StepWorker (after)]
 expected: run:a undo:a run:u compensate:u => failure(r)
 observed: run:a undo:a run:u compensate:u => failure(r)
-note: error=Step 'r' failed: Step 'r' could not resolve its arguments: Timed out after 2s waiting for async completion on 'rr:done:8145e15f-3092-4aef-887f-037f2344dbd6:u'. The dispatched work never reached a terminal state within `RubyReactor.configuration.async_wait_timeout` — check that a worker is running and consuming the queue, or raise the timeout if this unit is legitimately slower.
+note: error=Step 'r' failed: Step 'r' could not resolve its arguments: Timed out after 2s waiting for async completion on 'rr:done:fe2a937e-53ea-4b93-8864-79c4cd29f3d4:u'. The dispatched work never reached a terminal state within `RubyReactor.configuration.async_wait_timeout` — check that a worker is running and consuming the queue, or raise the timeout if this unit is legitimately slower.
 MATCH
 
 == S-bg-01  background all: a → b → c(fails)   [worker]

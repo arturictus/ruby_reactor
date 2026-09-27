@@ -16,8 +16,8 @@ step `x`.
    error, argument/type validation.
 3. Then every tracked construct is **undone**, newest first.
 4. A compensate or undo that fails does not stop the rest. It is listed in `rollback_failures`.
-5. `Halt` stops without rollback. `Skipped` is a `Success` in every effect (tracked and undone
-   like one); it only marks the trace.
+5. `Halt` stops without rollback. `Skipped` never changes execution and is never undone; it
+   marks the trace.
 6. Every exception counts as a failure under rules 2–4, standard or not, except an interruption
    (`SignalException`, `SystemExit`, `NoMemoryError`, an enclosing timeout). An interruption runs no
    rollback. An execution in the caller's process is marked `aborted`, keeping only the entries not

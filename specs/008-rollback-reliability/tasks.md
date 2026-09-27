@@ -978,6 +978,11 @@ paused at an interrupt (FR-032).
   paused-only resume, migration note 5 on validation/coordination before the body skips).
 - [X] T128 Re-run the full suite, rubocop, the 007 harness and the Docker demo suite.
 - [X] T129 Sync spec.md (FR-029 revised, FR-030–FR-032), research R-19/R-20, contracts.
+- [X] T130 [US6] Revert undo enrollment of `Skipped` (user direction: skipped steps do not undo):
+  `lib/ruby_reactor/executor/result_handler.rb` `handle_skipped`, the `Skipped` comment in
+  `lib/ruby_reactor.rb`, `spec/ruby_reactor/rollback/removed_dsl_spec.rb`,
+  `spec/ruby_reactor/skipped_rollback_spec.rb`, probe S-plain-06, README, `documentation/`,
+  CHANGELOG (drop the "`Skipped` steps are undone" migration note), 007 INV-05/R5, 008 artifacts.
 
 ---
 

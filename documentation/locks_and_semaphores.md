@@ -903,7 +903,7 @@ The list is always an Array (empty when every rollback completed), is included i
 
 ### `with_period` skips the step, not the reactor
 
-Reactor-level `with_period` halts the whole reactor when the bucket is marked. At step level that would kill a workflow over one deduplicated step, so instead **the step is skipped** (`RubyReactor.Skipped(reason: :period, ...)`) and the following steps run normally — a `Skipped` step behaves exactly as it does anywhere else: like a `Success`, including its `undo` on a later failure (see [The `Halt` result](#the-halt-result) for the contrast with reactor-level halting). A body that returns `Skipped` marks the bucket just as a `Success` does.
+Reactor-level `with_period` halts the whole reactor when the bucket is marked. At step level that would kill a workflow over one deduplicated step, so instead **the step is skipped** (`RubyReactor.Skipped(reason: :period, ...)`) and the following steps run normally — a `Skipped` step behaves exactly as it does anywhere else: the run continues, and the step is never undone (see [The `Halt` result](#the-halt-result) for the contrast with reactor-level halting). A body that returns `Skipped` marks the bucket just as a `Success` does.
 
 ### The ordered-lock arrival caveat
 

@@ -60,9 +60,9 @@ body. It applies to `step`, `async_step` and `interrupt` blocks.
 
 ### `Skipped`: meaning defined (R-17)
 
-`Skipped` is only an instrumentation mark. In every effect it is a `Success`: enrolled for undo (a
-later failure runs its `undo` with the skipped value), a `background after:` hand-off fires, and a
-`with_period` bucket is marked. (Before: never undone, no `after:` hand-off, no period mark.)
+`Skipped` is an instrumentation mark and never changes execution: a `background after:` hand-off
+fires and a `with_period` bucket is marked, as for a `Success` (before: neither). A skipped step is
+never undone (unchanged).
 
 ## 2. Errors (`RubyReactor::Error`)
 

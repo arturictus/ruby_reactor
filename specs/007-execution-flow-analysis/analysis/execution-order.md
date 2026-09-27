@@ -27,8 +27,9 @@ One mechanism does all rollback: the **undo stack** of the reactor execution tha
 ```mermaid
 flowchart TD
   S[Step reaches a result] --> K{Kind}
-  K -->|Success or Skipped| P[Push step, args, result on undo stack<br/>unless async unit]
+  K -->|Success| P[Push step, args, result on undo stack<br/>unless async unit / Skipped]
   P --> N[Next ready step]
+  K -->|Skipped| N
   K -->|Halt| H[Stop. No rollback]
   K -->|Failure after retries| NS{Body never started?<br/>own contention / key error /<br/>dispatch refused / argument error}
   NS -->|yes| U
@@ -45,7 +46,7 @@ Rules, each confirmed on plain steps:
 | R2 | On failure the failing step's **compensate runs first**, then **every completed step's undo, newest first** (reverse completion order, also across DAG branches). No later step runs. | `[R: lib/ruby_reactor/executor/compensation_manager.rb:35]` `[R: …/compensation_manager.rb:69]` `[O: S-plain-01, S-plain-02, S-plain-09]` |
 | R3 | A step whose own coordination was never acquired (contention, key error, refused dispatch) is **not** compensated. Earlier steps are still undone. | `[R: …/compensation_manager.rb:11, :44]` `[O: S-lock-03, S-edge-01]` |
 | R4 | A compensate or undo that returns `Failure` or raises does **not** stop the rollback. It is listed on `Failure#rollback_failures`. A compensate failure also turns the final error into `CompensationError` ("Execution error: …", no `step_name`). | `[R: …/compensation_manager.rb:57, :202]` `[O: S-plain-03, S-plain-04, S-compose-07]` |
-| R5 | `Halt` stops without rollback. *Changed in 008 (R-19):* `Skipped` is only an instrumentation mark, so a `Skipped` step is pushed and undone like a `Success`. | `[R: …/result_handler.rb handle_skipped]` `[O: S-plain-05, S-plain-06]` |
+| R5 | `Halt` stops without rollback. `Skipped` steps are never pushed, so they are never undone. *Since 008 (R-19)* `Skipped` changes nothing else: an `after:` hand-off and a period mark treat it as a completed step. | `[R: …/result_handler.rb handle_skipped]` `[O: S-plain-05, S-plain-06]` |
 | R6 | Async units (`async_step`, `async_reactor`) are **never pushed**: the parent never undoes them. *Changed in 008:* the step says so itself (`StepConfig#rollback_tracked?` is false for async units); the coordinator has no async special case. | `[R: lib/ruby_reactor/dsl/step_builder.rb rollback_tracked?]` `[O: S-async-03, S-async-06]` |
 | R7 | *Changed in 008.* Every exception after completed work rolls back, `StandardError` or not (R-16). An argument source/transform/result path that raises (`ArgumentResolutionError`) is a never-started failure: the step is not compensated, completed steps are undone. Any other exception outside a step body rolls back too, attributed to the executing step. Only an interruption (signal, exit, out of memory, enclosing timeout) runs no rollback: a caller-process run is stored `aborted` for a manual `Reactor.undo(id)`; a worker run stays `running` and is redelivered. (`where`/`guard` were removed, R-15.) | `[R: lib/ruby_reactor/error/rescuable.rb]` `[R: lib/ruby_reactor/executor.rb mark_aborted]` `[O: S-plain-07, S-edge-03, S-edge-03b]` |
 | R8 | Rollback runs in whichever process detects the failure: the caller (inline), the reactor worker, the map collector, or (for units) nobody. | §2 |
@@ -233,7 +234,7 @@ not probed, with the reason given.
 | S-plain-03 | a → b | b fails, its compensate fails | inline | run:a run:b compensate:b undo:a ⇒ failure(b) (CompensationError) *(changed in 008)* | — (reported: b/compensate) | [O: S-plain-03] |
 | S-plain-04 | a → b → c | c fails, b's undo raises | inline | run:a run:b run:c compensate:c undo:b undo:a ⇒ failure(c) | b's effect, if its undo failed (reported) | [O: S-plain-04] |
 | S-plain-05 | a → b → c | b returns Halt | inline | run:a run:b ⇒ halt | a, b (by design) | [O: S-plain-05] |
-| S-plain-06 | a → b(Skipped) → c | c fails | inline | run:a run:b run:c compensate:c undo:b undo:a ⇒ failure(c) *(changed in 008, R-19)* | — | [O: S-plain-06] |
+| S-plain-06 | a → b(Skipped) → c | c fails | inline | run:a run:b run:c compensate:c undo:a ⇒ failure(c) | — | [O: S-plain-06] |
 | S-plain-07 | a → b | b's argument transform raises | inline | run:a undo:a ⇒ failure(b) *(changed in 008)* | — | [O: S-plain-07] |
 | S-plain-08 | a → b | b's output fails `validate_output` | inline | run:a run:b compensate:b undo:a ⇒ failure(b) | — | [O: S-plain-08] |
 | S-plain-09 | a, b → c → d | d fails | inline | run:a run:b run:c run:d compensate:d undo:c undo:b undo:a ⇒ failure(d) | — | [O: S-plain-09] |

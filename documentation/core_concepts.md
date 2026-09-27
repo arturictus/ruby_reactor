@@ -331,9 +331,8 @@ One rule decides what a failure rolls back, for every construct:
 3. Then every tracked construct is **undone**, newest first.
 4. A compensate or undo that fails does not stop the rest; it is listed in
    `Failure#rollback_failures`.
-5. `Halt` stops without rollback. A `Skipped` step is a `Success` in every effect, so it is
-   tracked and undone like one; `Skipped` only marks the trace
-   ([Skipping a single step](#skipping-a-single-step)).
+5. `Halt` stops without rollback. A `Skipped` step is never undone: it had nothing to do. It
+   does not otherwise change execution ([Skipping a single step](#skipping-a-single-step)).
 6. Every exception raised by reactor code is a failure under rules 2–4, whether or not it is a
    `StandardError` (`NotImplementedError`, `SystemStackError`, a custom `Exception` subclass). Only
    an interruption (a signal such as `Interrupt`, `SystemExit`, `NoMemoryError`, an enclosing
@@ -783,13 +782,13 @@ end
 
 - The value behaves exactly like a `Success` value: it's stored as the step's result, and dependants read it via `result(:step)` without knowing it was skipped.
 - The reactor continues; the run's overall status is `:completed`, never `:halted`.
-- `Skipped` is only an **instrumentation mark**: in every effect it is a `Success`. It is enrolled for rollback, so a later failure runs its `undo` with the skipped value — write the `undo` so it does nothing when there is nothing to revert. A `background after:` hand-off and a `with_period` bucket treat it as a completed step.
-- The mark is there so an engineer reviewing the execution can see the step did not need to run.
+- `Skipped` is an **instrumentation mark**: it never changes how the run executes. A `background after:` hand-off and a `with_period` bucket treat it as a completed step. The mark is there so an engineer reviewing the execution can see the step did not need to run.
+- The step is **not** enrolled for rollback: it had nothing to do, so a later failure never undoes it.
 - A `{ type: :skipped, step:, reason: }` entry is appended to the execution trace so dashboards and tests can still see it happened.
 
 `Skipped` is a `Success` subclass too: `result.success?` is `true`; check `result.skipped?` to distinguish it, or use the one-line `skip!(value)` helper.
 
-**The boundary that matters:** `Skipped` changes nothing about how the run executes or rolls back; it only tells the reader that the step had nothing to do. Its `undo` runs on a later failure like any successful step's.
+**The boundary that matters:** `Skipped` means *nothing happened*. If a step's `run` produced a real side effect before deciding to bail, return `Success` and declare an `undo` instead — `Skipped` steps are never rolled back, so a side effect hidden behind one would leak on a later failure.
 
 ## Validation
 

@@ -641,11 +641,11 @@ did not enroll it for undo, `StepExecutor#handoff_after?` did not hand off after
 `StepCoordination#plain_success?` did not mark a period bucket for it. `handoff_after?` also let a
 `Halt` through (probed: `background after: :x` + `Halt` returned a `DispatchResult`).
 
-**Decision** (the review's rule, "`Skipped` is in every effect the same as `Success`"):
-`handle_skipped` calls `handle_success` and only adds the trace entry; `handoff_after?` excludes
-`Halt` instead of `Skipped`; the period mark treats `Skipped` like `Success`. The library's own
-skips (period, ordered lock) come from gates outside the period mark, so they never mark a bucket,
-but they are enrolled for undo like any `Skipped`.
+**Decision** (the review's rule: `Skipped` shouldn't modify execution; skipped steps do not undo):
+`handoff_after?` excludes `Halt` instead of `Skipped`; the period mark treats `Skipped` like
+`Success`; `handle_skipped` still does not enroll the step for undo. The library's own skips
+(period, ordered lock) come from gates outside the period mark, so they never mark a bucket.
+(Enrolling `Skipped` for undo was tried and reverted the same day, at the user's direction.)
 
 ## R-20 · Cap a stored failure's backtrace (FR-031)
 

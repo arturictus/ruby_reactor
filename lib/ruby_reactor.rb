@@ -103,10 +103,11 @@ module RubyReactor
     undef_method :skipped?
   end
 
-  # Marks a single step as skipped: an instrumentation mark only (008 R-17).
-  # In every effect it is a Success — the value flows to dependants via
-  # `result(:step)`, the run continues, and the step is enrolled for undo —
-  # except `skipped?` is true and the trace records it.
+  # Marks a single step as skipped: an instrumentation mark (008 R-19). The
+  # run continues exactly as for a Success — the value flows to dependants via
+  # `result(:step)`, hand-offs and period marks happen — except `skipped?` is
+  # true, the trace records it, and the step is not enrolled for undo (it had
+  # nothing to do, so there is nothing to revert).
   class Skipped < Success
     # Sentinel distinguishing "no value argument given" (the old Halt call
     # shape reused this class's name) from an explicit `Skipped(nil)`.

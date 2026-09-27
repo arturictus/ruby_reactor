@@ -13,12 +13,11 @@
   raises `RubyReactor::Error::DeprecatedDslError` at class definition. A step that should not run
   returns `Skipped(value)` (or calls `skip!(value)`) from its body.
   See *Migration notes: reliable rollback* below.
-* **`Skipped` is a `Success` in every effect, rollback included.** It is only an instrumentation
-  mark (the trace records it; `skipped?` is true). A step that returns `Skipped` is now enrolled
-  for undo, so a later failure runs its `undo` with the skipped value; a `background after:` step
-  that returns `Skipped` hands off like any completed step; and a `with_period` step whose body
-  returns `Skipped` marks its bucket. This also applies to the steps the library itself skips
-  (`with_period`, `with_ordered_lock`). See *Migration notes: reliable rollback* below.
+* **`Skipped` no longer changes execution.** It is an instrumentation mark (the trace records it;
+  `skipped?` is true): a `background after:` step that returns `Skipped` now hands the rest of
+  the run off like any completed step (before, the rest ran in the calling process), and a
+  `with_period` step whose body returns `Skipped` marks its bucket. A skipped step is still never
+  undone.
 * **An exception that is not a `StandardError` fails the step and rolls back.** A
   `NotImplementedError`, a `LoadError`, a `SystemStackError` or a custom `Exception` subclass
   raised by reactor code (a step body, an argument transform, a `compensate`/`undo`, a key proc, a
@@ -208,26 +207,7 @@ Every breaking or shape-changing item of the rollback work, with what to change.
    end
    ```
 
-6. **`Skipped` steps are undone** (breaking, behavior). `Skipped` has every effect of `Success`,
-   so a later failure runs the step's `undo` with the skipped value. Make such `undo`s a no-op for
-   a skipped value.
-
-   ```ruby
-   class SyncUserStep < RubyReactor::Step
-     def run
-       return Skipped(nil) if inputs.user.already_synced?
-       Success(Sync.push(inputs.user))
-     end
-
-     def undo
-       return Success() if result.nil? # skipped: nothing to revert
-       Sync.revoke(result)
-       Success()
-     end
-   end
-   ```
-
-7. **Non-`StandardError` exceptions from reactor code roll back** (breaking, behavior). They no
+6. **Non-`StandardError` exceptions from reactor code roll back** (breaking, behavior). They no
    longer propagate out of `Reactor.run`; check the returned `Failure` instead. A test assertion
    error raised inside a step body (an RSpec expectation, a strict double) now surfaces as the
    step's `Failure`, so assert on the result.
@@ -240,7 +220,7 @@ Every breaking or shape-changing item of the rollback work, with what to change.
    result.exception_class  # => "NotImplementedError"
    ```
 
-8. **Argument and unknown errors roll back and carry `step_name`** (fix). The Failure's
+7. **Argument and unknown errors roll back and carry `step_name`** (fix). The Failure's
    shape changes on these paths.
 
    ```ruby
@@ -251,11 +231,11 @@ Every breaking or shape-changing item of the rollback work, with what to change.
    result.exception_class  # => "ArgumentError"
    ```
 
-9. **New `aborted` status** (additive), only for runs in the caller's process cut short by an
+8. **New `aborted` status** (additive), only for runs in the caller's process cut short by an
    interruption. Dashboards and status filters gain a value; an `aborted` run needs
    `MyReactor.undo(id)` to roll back.
 
-10. **`rollback_failures` entries may carry `map_step:` / `element_index:`** and the reasons
+9. **`rollback_failures` entries may carry `map_step:` / `element_index:`** and the reasons
    `:context_unavailable` / `:element_in_flight` (additive).
 
 ### Features

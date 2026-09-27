@@ -237,7 +237,7 @@ Whichever style you use, a step's `run` returns one of four signals — all expo
 - **`Success(value)`** — step succeeded; `value` flows to dependent steps.
 - **`Failure(error)`** — step failed; the reactor rolls back completed steps (compensate/undo).
 - **`Halt(reason:)`** — clean halt: stop the reactor, keep partial progress, **no rollback**. See [Halting a reactor cleanly](documentation/core_concepts.md#halting-a-reactor-cleanly).
-- **`Skipped(value)`** — mark this one step skipped. In every effect it is a `Success` — `value` flows to dependants, the run continues, and a later failure runs its `undo`; only the execution trace marks it skipped. See [Skipping a single step](documentation/core_concepts.md#skipping-a-single-step).
+- **`Skipped(value)`** — mark this one step skipped. The run continues exactly as for `Success` — `value` flows to dependants — and the step is never undone; the execution trace marks it skipped. See [Skipping a single step](documentation/core_concepts.md#skipping-a-single-step).
 
 One-line helpers end a step immediately from any call depth: `success!(value)`, `fail!(error, retry: true)`, `halt!(reason:)`, `skip!(value)` — equivalent to `return`ing the matching signal, usable in `run`, `compensate`, and `undo` bodies.
 
@@ -854,7 +854,7 @@ step :ensure_active do
 end
 ```
 
-To mark a *single* step as having had nothing to do — the rest of the workflow runs as usual — return `Skipped(value)` instead. `Skipped` is only an instrumentation mark, so an engineer reviewing the execution can see the step did not need to run. In every effect it is a `Success`: the value flows to dependants, a `background` hand-off and a `with_period` bucket treat it as a completed step, and a later failure runs its `undo` (write the `undo` so it does nothing for a skipped value). (`where`/`guard` were removed; skipping from the body is the only way.)
+To mark a *single* step as having had nothing to do — the rest of the workflow runs as usual — return `Skipped(value)` instead. `Skipped` is only an instrumentation mark, so an engineer reviewing the execution can see the step did not need to run. It never changes how the run executes: the value flows to dependants, and a `background` hand-off and a `with_period` bucket treat it as a completed step. A skipped step had nothing to do, so it is never undone. (`where`/`guard` were removed; skipping from the body is the only way.)
 
 ```ruby
 step :maybe_sync do
