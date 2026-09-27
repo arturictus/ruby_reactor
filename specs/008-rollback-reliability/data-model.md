@@ -10,8 +10,7 @@ These are the records and state this feature adds or changes. The existing shape
 
 | Operation | Returns / raises | Notes |
 | --- | --- | --- |
-| `resolve_arguments(context)` | `Hash` of resolved arguments. Raises `Error::ArgumentResolutionError` on any `StandardError`, except `Error::ExecutionParked` and its subclasses, which propagate | Replaces `StepExecutor#resolve_arguments` and `StepWorker#resolve_arguments` |
-| `should_run?(context)` | `true`/`false`. Raises `Error::ConditionError` when a `where`/`guard` raises | Same predicate as today |
+| `resolve_arguments(context)` | `Hash` of resolved arguments. Raises `Error::ArgumentResolutionError` on any `Error::Rescuable` exception (R-16), except `Error::ExecutionParked` and its subclasses, which propagate | Replaces `StepExecutor#resolve_arguments` and `StepWorker#resolve_arguments` |
 | `call_body(arguments, context)` | step result (exists) | unchanged |
 | `call_compensate(error, arguments, context)` | step result | Dispatch order: inline block, then impl `.compensate`, then `Skipped`. Moved out of `CompensationManager` |
 | `call_undo(result_value, arguments, context)` | step result | Dispatch order: inline block, then impl `.undo`, then `Skipped` |
@@ -25,10 +24,9 @@ Coordination re-take, trace entries, middleware events and `rollback_failures` s
 | Class | Parent | Attributes | Retryable |
 | --- | --- | --- | --- |
 | `Error::ArgumentResolutionError` | `Error::Base` | `step`, `original_error`, `exception_class` (the cause's class name), `message` | no |
-| `Error::ConditionError` | `Error::Base` | same | no |
-
 `CompensationManager::NEVER_STARTED_ERROR_CLASSES` becomes `Contended`, `KeyError`,
-`DispatchRefused`, `ArgumentResolutionError`, `ConditionError`.
+`DispatchRefused`, `ArgumentResolutionError`. (`ConditionError` was removed with `where`/`guard`,
+R-15.)
 
 **Rule**: a failure whose error is in this set is not compensated, and the completed steps are
 undone.
@@ -38,13 +36,14 @@ undone.
 | Status | Meaning | Set by | Terminal for `Worker`? | Swept? |
 | --- | --- | --- | --- | --- |
 | `pending`, `running`, `paused`, `completed`, `failed`, `halted`, `cancelled` | unchanged | unchanged | unchanged | only `running` |
-| **`aborted`** (new) | An execution in the caller's process was cut short by a non-`StandardError` exception. Its completed work is still outstanding, and `undo_stack` is kept | `Executor#execute`/`#resume_execution` `rescue Exception`, when `!inline_async_execution` | not resumed forward (only a manual undo applies) | no |
+| **`aborted`** (new) | An execution in the caller's process was cut short by an interruption (R-16: signal, exit, out of memory, enclosing timeout). Its completed work is still outstanding, and `undo_stack` keeps exactly the entries not yet undone | `Executor#execute`/`#resume_execution` `rescue Exception` (reached only by interruptions), when `!inline_async_execution` | not resumed forward (only a manual undo applies) | no |
 
 State transitions:
 
 ```text
-running --(non-StandardError, caller process)--> aborted --(Reactor#undo)--> cancelled
-running --(non-StandardError, worker)----------> running (job redelivered, unchanged)
+running --(interruption, caller process)--> aborted --(Reactor#undo)--> cancelled
+running --(interruption, worker)----------> running (job redelivered, unchanged)
+running --(any other exception)-----------> failed (rolled back, like any step failure)
 ```
 
 ## 4. Undo record (context `undo_stack` entry)
@@ -96,15 +95,10 @@ These are the existing keys: `step`, `kind` (`:compensate`/`:undo`), `key`, `rea
 
 Entries from an element's own steps keep `step:`, the element step's name.
 
-## 7. Trace entry: discarded compose attempt (R-05)
+## 7. Trace entry: discarded compose attempt (removed, R-14)
 
-This entry is appended to the **parent** context's `execution_trace` when `ComposeStep#run` starts a
-fresh child because the stored child context is `failed`.
-
-```text
-{ type: :compose_attempt_discarded, step: <compose step name>, child_context_id: <old id>,
-  rollback_failures: [<entries from the old child>], timestamp: }
-```
+The `compose_attempt_discarded` entry R-05 added is removed. A compose is never retried, so there
+are no discarded attempts.
 
 ## 8. Async step record: compensation (R-09)
 
@@ -128,6 +122,18 @@ Every failure returned on these paths carries `reactor_name`, `step_name` (when 
 executing), redacted `inputs` and a reason. `exception_class` is the original cause's class:
 
 - argument resolution
-- a raising condition
-- an unknown `StandardError`
+- any other `Error::Rescuable` exception, standard or not (R-16)
 - a failed compensation (`CompensationError`)
+
+## 10. Exception classes (R-16)
+
+| Class | Rolls back? | Outcome |
+| --- | --- | --- |
+| `Error::Rescuable` (any `Exception` except the four below) | yes | failure returned, step compensated if its body started, completed steps undone |
+| `SignalException` (incl. `Interrupt`, `Sidekiq::Shutdown`), `SystemExit`, `NoMemoryError`, `Timeout::ExitException` | no | re-raised unchanged. A caller-process run is stored `aborted`; a worker job is redelivered |
+
+## 11. Undo stack during rollback (R-16)
+
+`rollback_completed_steps` pops each entry after its undo returns (a failed undo is still popped and
+recorded in `rollback_failures`, as before). The stored stack of an aborted run is therefore the set
+of entries still to undo, newest last.

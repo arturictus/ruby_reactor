@@ -13,7 +13,7 @@ A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor impleme
 
 Building complex business transactions often results in spaghetti code or brittle "god classes." Ruby Reactor solves this by implementing the **Saga Pattern** in a lightweight, developer-friendly package. It lets you define workflows as clear, dependency-driven steps without the boilerplate of heavy enterprise frameworks.
 
-The key value is **Reliability**: if any part of your workflow fails with an error, Ruby Reactor automatically triggers compensation logic to undo previous steps, ensuring your system never ends up in a corrupted half-state. A process-level exception (a signal, out of memory) runs no rollback code; the run is recorded as `aborted` so a manual `undo` can roll it back. Whether you're coordinating microservices or monolith modules, you get atomic-like consistency with background processing built-in.
+The key value is **Reliability**: if any part of your workflow fails with an error, Ruby Reactor automatically triggers compensation logic to undo previous steps, ensuring your system never ends up in a corrupted half-state. Only an interruption (a signal, an exit, out of memory) runs no rollback code; the run is recorded as `aborted` so a manual `undo` can roll it back. Whether you're coordinating microservices or monolith modules, you get atomic-like consistency with background processing built-in.
 
 ## Features
 
@@ -22,7 +22,7 @@ The key value is **Reliability**: if any part of your workflow fails with an err
 - **Async Steps & Reactors**: `async_step` and `async_reactor` dispatch independent units of work while the reactor keeps running; steps that read their result wait for it.
 - **Map & Parallel Execution**: Iterate over collections in parallel with the `map` step, distributing work across multiple workers.
 - **Retries**: per-step retry policies (declared on the step class or step block) with exponential, linear, or fixed backoff.
-- **Compensation**: Automatic rollback of completed steps when any error occurs after them, including a raising argument transform or `where` condition.
+- **Compensation**: Automatic rollback of completed steps when any error occurs after them, including a raising argument transform or an exception that is not a `StandardError`.
 - **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
 - **Distributed Locks, Semaphores, Rate Limits, Periods & Ordered Locks**: Coordinate across processes with Redis-backed primitives — exclusive locks for at-most-one-runner, semaphores for capacity caps, fixed-window rate limits for external APIs (single or multi-window like "3/sec AND 100/min"), `with_period` to dedup reactors to once per calendar bucket, and `with_ordered_lock` for strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Background jobs snooze on contention with smart `retry_after` instead of consuming retry budget.
@@ -237,7 +237,7 @@ Whichever style you use, a step's `run` returns one of four signals — all expo
 - **`Success(value)`** — step succeeded; `value` flows to dependent steps.
 - **`Failure(error)`** — step failed; the reactor rolls back completed steps (compensate/undo).
 - **`Halt(reason:)`** — clean halt: stop the reactor, keep partial progress, **no rollback**. See [Halting a reactor cleanly](documentation/core_concepts.md#halting-a-reactor-cleanly).
-- **`Skipped(value)`** — mark this one step skipped; the reactor continues and `value` flows to dependants exactly like `Success`. See [Skipping a single step](documentation/core_concepts.md#skipping-a-single-step).
+- **`Skipped(value)`** — mark this one step skipped. In every effect it is a `Success` — `value` flows to dependants, the run continues, and a later failure runs its `undo`; only the execution trace marks it skipped. See [Skipping a single step](documentation/core_concepts.md#skipping-a-single-step).
 
 One-line helpers end a step immediately from any call depth: `success!(value)`, `fail!(error, retry: true)`, `halt!(reason:)`, `skip!(value)` — equivalent to `return`ing the matching signal, usable in `run`, `compensate`, and `undo` bodies.
 
@@ -854,7 +854,7 @@ step :ensure_active do
 end
 ```
 
-To skip a *single* step while the reactor continues — the step did nothing, but the rest of the workflow should still run — return `Skipped(value)` instead. The value flows to dependants exactly like a `Success` value, and the step is not enrolled for rollback:
+To mark a *single* step as having had nothing to do — the rest of the workflow runs as usual — return `Skipped(value)` instead. `Skipped` is only an instrumentation mark, so an engineer reviewing the execution can see the step did not need to run. In every effect it is a `Success`: the value flows to dependants, a `background` hand-off and a `with_period` bucket treat it as a completed step, and a later failure runs its `undo` (write the `undo` so it does nothing for a skipped value). (`where`/`guard` were removed; skipping from the body is the only way.)
 
 ```ruby
 step :maybe_sync do
@@ -1428,9 +1428,8 @@ back with `reason: :context_unavailable` (its stored context expired) or
 
 Every error after a completed step rolls back, not only a step body's failure.
 An `argument` source, `transform` or result path that raises fails that step
-with `RubyReactor::Error::ArgumentResolutionError`, and a raising `where`/`guard`
-with `RubyReactor::Error::ConditionError`. Neither step is compensated (its body
-never started) nor retried; completed steps are undone. The Failure names the
+with `RubyReactor::Error::ArgumentResolutionError`. The step is not compensated
+(its body never started) nor retried; completed steps are undone. The Failure names the
 step, and `exception_class` reports the original error's class:
 
 ```ruby
@@ -1438,9 +1437,14 @@ result.step_name        # => :charge
 result.exception_class  # => "ArgumentError"
 ```
 
-A process-level exception (not a `StandardError`) reaches the caller unchanged
-and runs no rollback code. A run in the caller's process is stored with status
-`aborted`, its completed work still outstanding; `MyReactor.undo(id)` rolls it
+That holds for every exception, not only a `StandardError`: a step class that
+never implemented `run` (`NotImplementedError`) or a custom `Exception` subclass
+fails its step and rolls back the same way, and `exception_class` names it.
+
+Only an interruption (a signal such as `Interrupt`, `SystemExit`, `NoMemoryError`,
+or an enclosing `Timeout.timeout`) reaches the caller unchanged and runs no
+rollback code. A run in the caller's process is stored with status `aborted`,
+the steps not yet undone still outstanding; `MyReactor.undo(id)` rolls them
 back. A run in a worker is redelivered instead.
 
 ### Using Pre-defined Schemas

@@ -245,7 +245,7 @@ graph TD
 Every step in the chain is rolled back by its own definition: a plain step runs its `undo`, a
 composed reactor replays its child's undos, and a `map` rolls back every element that completed
 (highest index first). The chain also runs for failures outside a step body, such as an argument
-transform or a `where` condition that raises. Async units (`async_step`, `async_reactor`) are not
+transform that raises. Async units (`async_step`, `async_reactor`) are not
 part of the chain: they are independent, and a failed `async_step` compensates itself in its own
 job.
 

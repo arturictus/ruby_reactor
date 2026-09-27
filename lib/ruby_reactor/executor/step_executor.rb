@@ -146,23 +146,20 @@ module RubyReactor
       end
 
       # Hand-off is keyed to REACHING the named step, not to where the
-      # declaration sits in the class body. A step whose `where`/guard says it
-      # must not run never triggers it — the hand-off only ever relocates work
-      # that is actually going to happen. Inside the worker the whole thing is
+      # declaration sits in the class body. Inside the worker the whole thing is
       # suppressed (`inline_async_execution`) so it cannot re-trigger.
       def handoff_at?(step_config, mode)
         point = background_handoff
-        return false unless point && point[:mode] == mode && point[:step] == step_config.name
-        return false if @context.inline_async_execution
-
-        step_config.should_run?(@context)
+        point && point[:mode] == mode && point[:step] == step_config.name && !@context.inline_async_execution
       end
 
-      # Post-execution trigger for `after:`. Only a plain continue-Success means
-      # the named step actually completed here — a Failure, Skipped, interrupt,
-      # queued retry or an already-async result each own the flow instead.
+      # Post-execution trigger for `after:`. Only a result the run continues
+      # from hands off: a Success, or a Skipped, which is only an
+      # instrumentation mark and never changes execution. A Halt stops the run,
+      # and a Failure, interrupt, queued retry or already-async result each own
+      # the flow instead.
       def handoff_after?(step_config, result)
-        return false unless result.is_a?(RubyReactor::Success) && !result.is_a?(RubyReactor::Skipped)
+        return false unless result.is_a?(RubyReactor::Success) && !result.is_a?(RubyReactor::Halt)
 
         handoff_at?(step_config, :after)
       end
@@ -232,11 +229,12 @@ module RubyReactor
       rescue Error::ExecutionParked
         @context.retry_context.decrement_attempt_for_step(step_config.name)
         raise
-      # Arguments or `where`/`guard` raised: the body never started. Not
-      # retried (the same inputs fail the same way), never compensated.
-      rescue Error::ArgumentResolutionError, Error::ConditionError => e
+      # Arguments raised: the body never started. Not retried (the same
+      # inputs fail the same way), never compensated.
+      rescue Error::ArgumentResolutionError => e
         pre_body_failure(step_config, e)
-      rescue StandardError => e
+      # Any other exception, standard or not, is this step's failure (008 R-16).
+      rescue Error::Rescuable => e
         RubyReactor::Failure(
           e,
           step_name: step_config.name,
@@ -342,12 +340,6 @@ module RubyReactor
 
       def execute_step_sync(step_config, resolved_arguments = nil)
         @context.with_step(step_config.name) do
-          # Check conditions and guards
-          unless step_config.should_run?(@context)
-            @dependency_graph.complete_step(step_config.name)
-            return RubyReactor.Success(nil)
-          end
-
           # Resolve arguments
           resolved_arguments ||= step_config.resolve_arguments(@context)
 
@@ -365,12 +357,6 @@ module RubyReactor
       # Execute step without handling the result (used during retries)
       def execute_step_sync_without_result_handling(step_config, resolved_arguments = nil)
         @context.with_step(step_config.name) do
-          # Check conditions and guards
-          unless step_config.should_run?(@context)
-            @dependency_graph.complete_step(step_config.name)
-            return RubyReactor.Success(nil)
-          end
-
           # Resolve arguments
           resolved_arguments ||= step_config.resolve_arguments(@context)
 

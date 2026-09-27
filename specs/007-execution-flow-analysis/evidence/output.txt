@@ -1,4 +1,4 @@
-# Execution-flow probes — 2026-09-26T22:15:56Z — ruby_reactor 0.8.3 (13a5f5da)
+# Execution-flow probes — 2026-09-27T22:00:29Z — ruby_reactor 0.8.3 (4a0ea4bb)
 
 == S-plain-01  a → b(returns Failure) → c   [inline]
 expected: run:a run:b compensate:b undo:a => failure(b)
@@ -28,8 +28,8 @@ observed: run:a run:b => halt
 MATCH
 
 == S-plain-06  a → b(Skipped) → c(fails)   [inline]
-expected: run:a run:b run:c compensate:c undo:a => failure(c)
-observed: run:a run:b run:c compensate:c undo:a => failure(c)
+expected: run:a run:b run:c compensate:c undo:b undo:a => failure(c)
+observed: run:a run:b run:c compensate:c undo:b undo:a => failure(c)
 MATCH
 
 == S-plain-07  a → b(argument transform raises StandardError)   [inline]
@@ -68,15 +68,14 @@ expected: run:a run:outer.o1 run:inner.i1 run:inner.i2 compensate:inner.i2 undo:
 observed: run:a run:outer.o1 run:inner.i1 run:inner.i2 compensate:inner.i2 undo:inner.i1 undo:outer.o1 undo:a => failure(outer)
 MATCH
 
-== S-compose-05  compose(c1 → c2 fails once), compose retries max_attempts: 2   [inline]
-expected: run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 retry:child#1 run:child.c1 run:child.c2 => success
-observed: run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 retry:child#1 run:child.c1 run:child.c2 => success
-note: child result c1 still visible after its undo: {c1: "child.c1-value", c2: "child.c2-value"}
+== S-compose-05  compose(c1 → c2 fails once) declaring compose-level retries   [inline]
+expected: => raised(RubyReactor::Error::DeprecatedDslError)
+observed: => raised(RubyReactor::Error::DeprecatedDslError)
 MATCH
 
-== S-compose-05b  compose(c1 → c2 fails once, retried) → b(fails)   [inline]
-expected: run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 retry:child#1 run:child.c1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 => failure(b)
-observed: run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 retry:child#1 run:child.c1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 => failure(b)
+== S-compose-05b  compose(c1 → c2 fails once, retried by the child) → b(fails)   [inline]
+expected: run:child.c1 run:child.c2 retry:c2#1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 => failure(b)
+observed: run:child.c1 run:child.c2 retry:c2#1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 => failure(b)
 MATCH
 
 == S-compose-06  background all: a → compose(c1 → c2) → b(fails)   [worker]
@@ -199,7 +198,7 @@ MATCH
 == S-async-08  a → async_step u → r reads u; unit never finishes in time   [inline parent + drained StepWorker (after)]
 expected: run:a undo:a run:u compensate:u => failure(r)
 observed: run:a undo:a run:u compensate:u => failure(r)
-note: error=Step 'r' failed: Step 'r' could not resolve its arguments: Timed out after 2s waiting for async completion on 'rr:done:a81b2e50-0d7e-4a7a-87a4-fd3233eb14e0:u'. The dispatched work never reached a terminal state within `RubyReactor.configuration.async_wait_timeout` — check that a worker is running and consuming the queue, or raise the timeout if this unit is legitimately slower.
+note: error=Step 'r' failed: Step 'r' could not resolve its arguments: Timed out after 2s waiting for async completion on 'rr:done:8145e15f-3092-4aef-887f-037f2344dbd6:u'. The dispatched work never reached a terminal state within `RubyReactor.configuration.async_wait_timeout` — check that a worker is running and consuming the queue, or raise the timeout if this unit is legitimately slower.
 MATCH
 
 == S-bg-01  background all: a → b → c(fails)   [worker]
@@ -306,14 +305,19 @@ observed: run:a run:b crash run:b run:c => success
 MATCH
 
 == S-edge-03  a → b(raises a non-StandardError Exception)   [inline]
-expected: run:a run:b => raised(P::Crash)
-observed: run:a run:b => raised(P::Crash)
+expected: run:a run:b compensate:b undo:a => failure(b)
+observed: run:a run:b compensate:b undo:a => failure(b)
+MATCH
+
+== S-edge-03b  a → b(interrupted: raises Interrupt)   [inline]
+expected: run:a run:b => raised(Interrupt)
+observed: run:a run:b => raised(Interrupt)
 note: stored status=aborted
 MATCH
 
-== S-edge-04  a → b(where-condition raises)   [inline]
-expected: run:a undo:a => failure(b)
-observed: run:a undo:a => failure(b)
+== S-edge-04  a → b(declares a where-condition)   [inline]
+expected: => raised(RubyReactor::Error::DeprecatedDslError)
+observed: => raised(RubyReactor::Error::DeprecatedDslError)
 MATCH
 
 == S-edge-05  a → b(argument type check fails)   [inline]
@@ -326,4 +330,4 @@ expected: => failure(?)
 observed: => failure(?)
 MATCH
 
-63 scenarios, 63 match, 0 mismatch
+64 scenarios, 64 match, 0 mismatch

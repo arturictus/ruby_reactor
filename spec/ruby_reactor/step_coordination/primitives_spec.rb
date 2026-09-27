@@ -122,6 +122,15 @@ RSpec.describe "step-scoped semaphore, rate limit, and period", :step_coordinati
       expect("period:#{bucket_key}").not_to be_period_marked.for(:hour)
     end
 
+    it "marks the bucket when the body returns Skipped: it is only an instrumentation mark" do
+      bucket_key = unique_id
+
+      first = PeriodReactor.run(run_id: step_coord_run_id, bucket_key: bucket_key, skip_body: true)
+      expect(first).to be_a(RubyReactor::Success)
+
+      expect("period:#{bucket_key}").to be_period_marked.for(:hour)
+    end
+
     it "closes the race between two threads racing a fresh bucket: exactly one body execution (D3 " \
        "step 6)" do
       run_id = step_coord_run_id

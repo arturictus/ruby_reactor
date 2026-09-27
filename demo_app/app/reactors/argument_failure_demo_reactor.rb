@@ -1,11 +1,14 @@
 # frozen_string_literal: true
 
-# Demonstrates rollback on a failure outside any step body: :reserve succeeds,
-# then :charge's argument `transform:` raises on a price it cannot parse.
+# Demonstrates that every exception after a completed step rolls back:
 #
-#   - :reserve is undone (the seat is released);
-#   - :charge is NOT compensated: its body never started;
-#   - the failure names :charge, with the original error's class.
+#   price "abc": :charge's argument `transform:` raises (ArgumentError), so its
+#     body never starts: :reserve is undone, :charge is NOT compensated.
+#   sku "legacy": :charge's body raises NotImplementedError, which is not a
+#     StandardError: it is still :charge's failure, so :charge is compensated
+#     and :reserve is undone.
+#
+# Either way the failure names :charge, with the original error's class.
 #
 # Log helpers live on the reactor: Zeitwerk only autoloads the constant
 # matching this file's name.
@@ -24,9 +27,12 @@ class ArgumentFailureReserveStep < RubyReactor::Step
 end
 
 class ArgumentFailureChargeStep < RubyReactor::Step
+  input :sku, :string
   input :amount_cents, :integer
 
   def run
+    raise NotImplementedError, "legacy gateway" if inputs.sku == "legacy"
+
     ArgumentFailureDemoReactor.log << "charge #{inputs.amount_cents}"
     Success(charged_cents: inputs.amount_cents)
   end
@@ -57,6 +63,7 @@ class ArgumentFailureDemoReactor < RubyReactor::Reactor
   end
 
   step :charge, ArgumentFailureChargeStep do
+    argument :sku, input(:sku)
     argument :amount_cents, input(:price), transform: PRICE_TO_CENTS
     wait_for :reserve
   end

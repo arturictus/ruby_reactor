@@ -34,6 +34,14 @@ RSpec.describe "Failure Reporting" do
       expect(failure.exception_class).to eq("CustomError")
     end
 
+    it "caps a very deep backtrace, so a stack overflow does not bloat the stored context" do
+      failure = RubyReactor::Failure.new(SystemStackError.new("stack level too deep"),
+                                         backtrace: Array.new(12_000) { |i| "/app/recursion.rb:#{i}" })
+
+      expect(failure.backtrace.size).to eq(RubyReactor::Failure::MAX_BACKTRACE_FRAMES + 1)
+      expect(failure.backtrace.last).to eq("... 11900 more frames")
+    end
+
     it "is nil for string errors by default" do
       failure = RubyReactor::Failure.new("error")
       expect(failure.exception_class).to be_nil

@@ -48,7 +48,9 @@ module P
     pstep :b, after: :a do
       run do |_inputs, _ctx|
         Probe.rec("run:b")
-        raise Crash, "worker killed" if (Probe.counters[:crash] += 1) == 1
+        # A killed worker is an interruption (Sidekiq::Shutdown < Interrupt);
+        # any other exception would be b's own failure and roll back (008 R-16).
+        raise Interrupt, "worker killed" if (Probe.counters[:crash] += 1) == 1
 
         RubyReactor.Success("b")
       end
@@ -66,9 +68,14 @@ module P
     end
   end
 
-  class Edge04 < Base
+  class Edge03b < Base
     pstep :a
-    pstep(:b, after: :a) { where { |_ctx| raise "where boom" } }
+    pstep :b, after: :a do
+      run do |_inputs, _ctx|
+        Probe.rec("run:b")
+        raise Interrupt, "signal"
+      end
+    end
   end
 
   class Edge05 < Base
@@ -133,7 +140,7 @@ Probe.scenario "S-edge-02", "background all: a → b(worker crashes once) → c;
   job = RubyReactor::Adapters::Sidekiq::Worker.jobs.first.dup
   begin
     Probe.drain
-  rescue P::Crash
+  rescue Interrupt
     Probe.rec("crash")
   end
   RubyReactor::Adapters::Sidekiq::Worker.new.perform(*job["args"])
@@ -142,18 +149,29 @@ Probe.scenario "S-edge-02", "background all: a → b(worker crashes once) → c;
 end
 
 Probe.scenario "S-edge-03", "a → b(raises a non-StandardError Exception)",
-               mode: :inline, expected: %w[run:a run:b => raised(P::Crash)] do
-  reactor = P::Edge03.new
-  reactor.run({})
-rescue P::Crash
-  stored = RubyReactor.configuration.storage_adapter.retrieve_context(reactor.context.context_id, "P::Edge03")
-  Probe.note("stored status=#{stored["status"]}") # 008 R-08: aborted, awaiting a manual undo
-  "raised(P::Crash)"
+               mode: :inline, expected: %w[run:a run:b compensate:b undo:a => failure(b)] do
+  P::Edge03.run({}) # 008 R-16: the step's own failure, rolled back
 end
 
-Probe.scenario "S-edge-04", "a → b(where-condition raises)",
-               mode: :inline, expected: %w[run:a undo:a => failure(b)] do
-  P::Edge04.run({})
+Probe.scenario "S-edge-03b", "a → b(interrupted: raises Interrupt)",
+               mode: :inline, expected: %w[run:a run:b => raised(Interrupt)] do
+  reactor = P::Edge03b.new
+  reactor.run({})
+rescue Interrupt
+  stored = RubyReactor.configuration.storage_adapter.retrieve_context(reactor.context.context_id, "P::Edge03b")
+  Probe.note("stored status=#{stored["status"]}") # 008 R-08/R-16: aborted, awaiting a manual undo
+  "raised(Interrupt)"
+end
+
+Probe.scenario "S-edge-04", "a → b(declares a where-condition)",
+               mode: :inline, expected: %w[=> raised(RubyReactor::Error::DeprecatedDslError)] do
+  # 008 R-15: `where`/`guard` are removed, so the class cannot be defined.
+  Class.new(P::Base) do
+    pstep :a
+    pstep(:b, after: :a) { where { |_ctx| true } }
+  end
+rescue RubyReactor::Error::DeprecatedDslError
+  "raised(RubyReactor::Error::DeprecatedDslError)"
 end
 
 Probe.scenario "S-edge-05", "a → b(argument type check fails)",

@@ -156,9 +156,12 @@ In a linear chain the two coincide. **In a DAG they do not** — if `:audit` and
 
 - The trigger is **reaching the named step**, not the declaration's lexical
   position — put `background` anywhere in the class body.
-- A step skipped by a `where` / `guard` never triggers the hand-off; the run
-  simply completes in the calling process. No step is stranded, because the
-  hand-off only ever relocates work that has not run yet.
+- `Skipped` never changes the hand-off: it is only an instrumentation mark.
+  `before: :x` hands off on reaching `:x` whatever its body will return, and
+  `after: :x` hands off once `:x` returns `Success` or `Skipped`. A step that
+  returns `Halt` stops the run instead, so nothing is handed off. No step is
+  stranded, because the hand-off only ever relocates work that has not run
+  yet.
 - In a DAG, any independent step that became ready and executed before the
   trigger fired has already run locally. Everything not yet executed at the
   trigger moment moves to the worker.

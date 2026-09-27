@@ -71,12 +71,15 @@ module P
     pstep :c2, after: :c1, fail_times: 1
   end
 
-  class Compose05 < Base
-    compose(:child, ChildFailsOnce) { retries max_attempts: 2, base_delay: 0 }
+  # 008 R-14: the child retries its own step; a compose cannot declare retries.
+  class ChildRetriesOnce < Base
+    tag "child"
+    pstep :c1
+    pstep :c2, after: :c1, fail_times: 1, retries: { max_attempts: 2, base_delay: 0 }
   end
 
   class Compose05b < Base
-    compose(:child, ChildFailsOnce) { retries max_attempts: 2, base_delay: 0 }
+    compose :child, ChildRetriesOnce
     pstep :b, after: :child, fail: true
   end
 
@@ -144,20 +147,18 @@ Probe.scenario "S-compose-04", "a → compose outer(o1 → compose inner(i1 → 
   P::Compose04.run({})
 end
 
-Probe.scenario "S-compose-05", "compose(c1 → c2 fails once), compose retries max_attempts: 2",
-               mode: :inline,
-               expected: %w[run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 retry:child#1
-                            run:child.c1 run:child.c2 => success] do
-  result = P::Compose05.run({})
-  Probe.note("child result c1 still visible after its undo: #{result.value[:child].inspect}") if result.success?
-  result
+Probe.scenario "S-compose-05", "compose(c1 → c2 fails once) declaring compose-level retries",
+               mode: :inline, expected: %w[=> raised(RubyReactor::Error::DeprecatedDslError)] do
+  # 008 R-14: a parent never retries a nested reactor as a whole.
+  Class.new(P::Base) { compose(:child, P::ChildFailsOnce) { retries max_attempts: 2, base_delay: 0 } }
+rescue RubyReactor::Error::DeprecatedDslError
+  "raised(RubyReactor::Error::DeprecatedDslError)"
 end
 
-Probe.scenario "S-compose-05b", "compose(c1 → c2 fails once, retried) → b(fails)",
+Probe.scenario "S-compose-05b", "compose(c1 → c2 fails once, retried by the child) → b(fails)",
                mode: :inline,
-               expected: %w[run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 retry:child#1
-                            run:child.c1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 =>
-                            failure(b)] do
+               expected: %w[run:child.c1 run:child.c2 retry:c2#1 run:child.c2 run:b compensate:b undo:child.c2
+                            undo:child.c1 => failure(b)] do
   P::Compose05b.run({})
 end
 

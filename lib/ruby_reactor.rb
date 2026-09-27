@@ -103,10 +103,10 @@ module RubyReactor
     undef_method :skipped?
   end
 
-  # Marks a single step as skipped while the reactor continues. Behaves
-  # exactly like Success — the value flows to dependants via `result(:step)` —
-  # except `skipped?` is true and the step is not enrolled for rollback
-  # (nothing happened, so there is nothing to undo).
+  # Marks a single step as skipped: an instrumentation mark only (008 R-17).
+  # In every effect it is a Success — the value flows to dependants via
+  # `result(:step)`, the run continues, and the step is enrolled for undo —
+  # except `skipped?` is true and the trace records it.
   class Skipped < Success
     # Sentinel distinguishing "no value argument given" (the old Halt call
     # shape reused this class's name) from an explicit `Skipped(nil)`.
@@ -133,6 +133,10 @@ module RubyReactor
   end
 
   class Failure
+    # A stack overflow's backtrace runs to thousands of frames; the Failure is
+    # stored with the context, so keep the frames that locate the cause.
+    MAX_BACKTRACE_FRAMES = 100
+
     attr_reader :error, :retryable, :step_name, :inputs, :backtrace, :reactor_name, :step_arguments, :exception_class,
                 :file_path, :line_number, :code_snippet, :validation_errors, :rollback_failures
 
@@ -173,7 +177,7 @@ module RubyReactor
       @inputs = inputs
       @step_arguments = step_arguments
       raw_backtrace ||= backtrace || (@error.respond_to?(:backtrace) ? @error.backtrace : caller)
-      @backtrace = filter_backtrace(raw_backtrace)
+      @backtrace = cap_backtrace(filter_backtrace(raw_backtrace))
       @redact_inputs = redact_inputs
       @exception_class = exception_class || (@error.is_a?(Exception) ? @error.class.name : nil)
       @file_path = file_path
@@ -292,6 +296,12 @@ module RubyReactor
 
       msg << "Backtrace:"
       msg << backtrace.take(10).map { |line| "  #{line}" }.join("\n")
+    end
+
+    def cap_backtrace(backtrace)
+      return backtrace if backtrace.nil? || backtrace.size <= MAX_BACKTRACE_FRAMES
+
+      backtrace.first(MAX_BACKTRACE_FRAMES) << "... #{backtrace.size - MAX_BACKTRACE_FRAMES} more frames"
     end
 
     def filter_backtrace(backtrace)

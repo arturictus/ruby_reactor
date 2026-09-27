@@ -150,20 +150,6 @@ RSpec.describe "step-scoped `with_lock`", :step_coordination do
     end
   end
 
-  describe "a step suppressed by `where` (FR-012)" do
-    it "leaves no lock and emits no :lock_acquired" do
-      mw, events = capture_middleware
-      RubyReactor.configuration.middlewares = [mw]
-      account_id = unique_account_id
-
-      result = GuardedLockedChargeReactor.run(run_id: step_coord_run_id, account_id: account_id)
-
-      expect(result).to be_a(RubyReactor::Success)
-      expect(events.map(&:first)).not_to include(:lock_acquired)
-      expect("acct:#{account_id}").not_to be_locked
-    end
-  end
-
   describe "auto_extend keeps a short ttl from expiring under the held lock (FR-013)" do
     it "keeps a contending wait:0 caller in contention for the whole body" do
       run_id = step_coord_run_id

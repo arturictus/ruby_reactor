@@ -98,8 +98,9 @@ Probe.scenario "S-plain-05", "a → b(Halt) → c",
   P::Plain05.run({})
 end
 
+# 008 R-19: `Skipped` is only an instrumentation mark — undone like a Success.
 Probe.scenario "S-plain-06", "a → b(Skipped) → c(fails)",
-               mode: :inline, expected: %w[run:a run:b run:c compensate:c undo:a => failure(c)] do
+               mode: :inline, expected: %w[run:a run:b run:c compensate:c undo:b undo:a => failure(c)] do
   P::Plain06.run({})
 end
 

@@ -88,13 +88,13 @@ module RubyReactor
       log(:error, "failed", error: "#{e.class}: #{e.message}")
       complete(RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name, retryable: false),
                context)
-    # Arguments or `where`/`guard` raised: the body never started, so it is
-    # neither retried nor compensated (008 R-06).
-    rescue Error::ArgumentResolutionError, Error::ConditionError => e
+    # Arguments raised: the body never started, so it is neither retried nor
+    # compensated (008 R-06).
+    rescue Error::ArgumentResolutionError => e
       log(:error, "failed", error: "#{e.class}: #{e.message}")
       complete(RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name, retryable: false,
                                       exception_class: e.exception_class), context)
-    rescue StandardError => e
+    rescue Error::Rescuable => e
       # The unit's failure belongs in its record, where a reader can see it.
       # Raising instead would hand the job to the backend's retry machinery to
       # fail identically N more times while every reader waits out its timeout.
@@ -244,16 +244,6 @@ module RubyReactor
     end
 
     def run_step(context, step_config)
-      # A suppressed step never coordinates (FR-012) — decided before the
-      # arguments are validated or any hold is taken, exactly as
-      # `StepExecutor#execute_step_sync` orders it. `complete` persists the
-      # nil result, so the reader sees the same skipped unit a same-process
-      # step would produce.
-      unless step_config.should_run?(context)
-        log(:info, "skipped")
-        return RubyReactor.Success(nil)
-      end
-
       arguments = step_config.resolve_arguments(context)
       # Reactor-side `argument`/`validate_args` rules gate the step BEFORE its
       # coordination is acquired, exactly as `StepExecutor#execute_step_sync`
@@ -370,7 +360,7 @@ module RubyReactor
                              retryable: false)
     rescue Executor::StepCoordination::Contended, Executor::StepCoordination::KeyError
       raise
-    rescue StandardError => e
+    rescue Error::Rescuable => e
       RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name)
     end
 

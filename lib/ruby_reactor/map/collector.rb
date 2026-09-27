@@ -118,7 +118,7 @@ module RubyReactor
             # Pass Enumerator to collect block
             collected = collect_block.call(results)
             RubyReactor::Success(collected)
-          rescue StandardError => e
+          rescue RubyReactor::Error::Rescuable => e
             RubyReactor.configuration.logger.error("Map collect block raised: #{e.message}")
             RubyReactor.configuration.logger.error(e.backtrace.join("\n")) if e.backtrace
             RubyReactor::Failure(e)

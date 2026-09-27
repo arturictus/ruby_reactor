@@ -153,6 +153,14 @@ module RubyReactor
               "Cannot resume: reactor has been cancelled (Reason: #{@context.cancellation_reason})"
       end
 
+      # Only a reactor paused at an interrupt takes a resume (008 FR-032): one
+      # that is executing or rolling back (`running`), finished, or `aborted`
+      # must not be run forward from its stored state.
+      unless @context.status.to_s == "paused"
+        raise Error::ValidationError,
+              "Cannot resume: the reactor is #{@context.status}, not paused at an interrupt"
+      end
+
       validate_continue_step!(step_name)
 
       if (failure = validate_continue_payload(payload, step_name))
@@ -169,6 +177,11 @@ module RubyReactor
       if step_config.respond_to?(:background_resume?) && step_config.background_resume?
         return @result = enqueue_background_resume
       end
+
+      # Claim the resume before running it, so a `continue` that arrives while
+      # this one executes or rolls back reads `running` and fails (FR-032).
+      @context.status = :running
+      save_context
 
       # Resume execution
       executor = Executor.new(self.class, {}, @context)

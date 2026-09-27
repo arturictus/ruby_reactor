@@ -74,7 +74,11 @@ class OspRetryReactor < RubyReactor::Reactor
   returns :ordered
 end
 
-# An abnormal (non-StandardError) exit from inside the ordered position.
+# Not a StandardError, not an interruption: the step's own failure (008 R-16).
+class OspCrash < Exception; end # rubocop:disable Lint/InheritException
+
+# An interruption (NoMemoryError), or a non-StandardError failure, from inside
+# the ordered position.
 class OspAbortStep < RubyReactor::Step
   input :run_id
   input :abort, optional: true
@@ -82,6 +86,7 @@ class OspAbortStep < RubyReactor::Step
   with_ordered_lock(strict: true, poison_pill_timeout: 30) { |a| "osp:abort:#{a[:run_id]}" }
 
   def run
+    raise OspCrash, "simulated crash" if inputs.abort == "crash"
     raise NoMemoryError, "simulated abnormal exit" if inputs.abort
 
     Success(:done)

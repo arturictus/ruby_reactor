@@ -1,14 +1,14 @@
 # frozen_string_literal: true
 
-# Demonstrates `retries` on a `compose`: the child reserves a seat (with an
-# `undo`) and then confirms it; the first confirmation fails.
+# Demonstrates retries inside a composed child: the child reserves a seat
+# (with an `undo`) and then confirms it; the first confirmation fails.
 #
-#   attempt 1: reserve -> confirm fails -> the child releases the seat
-#   attempt 2: a FRESH child: reserve again -> confirm succeeds
+#   reserve -> confirm fails -> confirm retried (by the child) -> succeeds
 #
-# The seat is reserved on both attempts: a retry never counts rolled-back work
-# as done. Log helpers live on the parent reactor: Zeitwerk only autoloads the
-# constant matching this file's name.
+# The seat is reserved once. A parent never retries a nested reactor as a
+# whole (`retries` on a `compose` raises): the flaky step declares its own
+# `retries`. Log helpers live on the parent reactor: Zeitwerk only autoloads
+# the constant matching this file's name.
 class ComposeRetryReserveStep < RubyReactor::Step
   input :seat, :string
 
@@ -25,6 +25,8 @@ end
 
 class ComposeRetryConfirmStep < RubyReactor::Step
   input :reservation, :hash
+
+  retries max_attempts: 2, base_delay: 0
 
   def run
     ComposeRetryDemoReactor.confirm_calls += 1
@@ -71,7 +73,6 @@ class ComposeRetryDemoReactor < RubyReactor::Reactor
 
   compose :reservation, ComposeRetryReservationReactor do
     argument :seat, input(:seat)
-    retries max_attempts: 2, base_delay: 0
   end
 
   returns :reservation

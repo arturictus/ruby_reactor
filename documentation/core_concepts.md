@@ -130,7 +130,7 @@ end
 - **Returning inputs.** `Success(inputs)` stores `inputs.to_h`. An `inputs` nested inside a result (`Success(order: inputs)`) is not converted: write `Success(order: inputs.to_h)`.
 - **Reserved names.** `input :method` (or any name the object already answers, such as `class`, `hash`, `send`, `to_h`) raises `Error::ValidationError` when the step is defined, because `inputs.method` couldn't reach it.
 
-Everything outside step code keeps the plain Hash: lock and semaphore key procs (`with_lock { |args| ... }`), `validate_inputs`, map `source` blocks, `where`/`guard`, middleware and error payloads.
+Everything outside step code keeps the plain Hash: lock and semaphore key procs (`with_lock { |args| ... }`), `validate_inputs`, map `source` blocks, middleware and error payloads.
 
 ### Inline step definition
 
@@ -327,15 +327,20 @@ One rule decides what a failure rolls back, for every construct:
 2. The failing construct is **compensated** if its work started. It is **not** compensated if it
    never started: its own lock/semaphore was contended, its coordination key could not be resolved,
    an `async_reactor` dispatch was refused, its arguments could not be resolved
-   (`ArgumentResolutionError`), its `where`/`guard` raised (`ConditionError`), or its arguments or
-   inputs were invalid.
+   (`ArgumentResolutionError`), or its arguments or inputs were invalid.
 3. Then every tracked construct is **undone**, newest first.
 4. A compensate or undo that fails does not stop the rest; it is listed in
    `Failure#rollback_failures`.
-5. `Halt` stops without rollback. A `Skipped` step is never undone.
-6. A process-level exception (not a `StandardError`) runs no rollback. A run in the caller's
-   process is stored `aborted`, and `Reactor.undo(id)` rolls it back later; a run in a worker is
-   redelivered.
+5. `Halt` stops without rollback. A `Skipped` step is a `Success` in every effect, so it is
+   tracked and undone like one; `Skipped` only marks the trace
+   ([Skipping a single step](#skipping-a-single-step)).
+6. Every exception raised by reactor code is a failure under rules 2–4, whether or not it is a
+   `StandardError` (`NotImplementedError`, `SystemStackError`, a custom `Exception` subclass). Only
+   an interruption (a signal such as `Interrupt`, `SystemExit`, `NoMemoryError`, an enclosing
+   `Timeout.timeout`) runs no rollback. A run in the caller's process is then stored `aborted`
+   with the steps not yet undone, and `Reactor.undo(id)` rolls it back later; a run in a worker
+   is redelivered.
+7. A nested reactor (`compose`, `async_reactor`) is never retried as a whole. Only steps retry.
 
 Each construct says what compensate and undo mean for itself:
 
@@ -778,12 +783,13 @@ end
 
 - The value behaves exactly like a `Success` value: it's stored as the step's result, and dependants read it via `result(:step)` without knowing it was skipped.
 - The reactor continues; the run's overall status is `:completed`, never `:halted`.
-- The step is **not** enrolled for rollback — a later failure walks past it without compensation, because nothing happened.
+- `Skipped` is only an **instrumentation mark**: in every effect it is a `Success`. It is enrolled for rollback, so a later failure runs its `undo` with the skipped value — write the `undo` so it does nothing when there is nothing to revert. A `background after:` hand-off and a `with_period` bucket treat it as a completed step.
+- The mark is there so an engineer reviewing the execution can see the step did not need to run.
 - A `{ type: :skipped, step:, reason: }` entry is appended to the execution trace so dashboards and tests can still see it happened.
 
 `Skipped` is a `Success` subclass too: `result.success?` is `true`; check `result.skipped?` to distinguish it, or use the one-line `skip!(value)` helper.
 
-**The boundary that matters:** `Skipped` means *nothing happened*. If a step's `run` produced a real side effect before deciding to bail, return `Success` and declare an `undo` instead — `Skipped` steps are never rolled back, so a side effect hidden behind one would leak on a later failure.
+**The boundary that matters:** `Skipped` changes nothing about how the run executes or rolls back; it only tells the reader that the step had nothing to do. Its `undo` runs on a later failure like any successful step's.
 
 ## Validation
 

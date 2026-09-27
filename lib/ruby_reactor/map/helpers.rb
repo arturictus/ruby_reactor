@@ -41,7 +41,7 @@ module RubyReactor
           begin
             collected = collect_block.call(results)
             RubyReactor::Success(collected)
-          rescue StandardError => e
+          rescue RubyReactor::Error::Rescuable => e
             RubyReactor::Failure(e)
           end
         else

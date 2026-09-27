@@ -14,7 +14,7 @@ whether the DSL makes it **visible**. Documentation only: no library, test-suite
   reading), retries (inline, worker, element, unit), and every failure kind in
   [execution-order.md §1](execution-order.md#failure-kinds--path).
 - **Evidence**: 63 probe scenarios run against real Redis through the real worker bodies
-  (Sidekiq fake mode + drain; `inline!` only where labelled). **63/63 match** the sequences quoted
+  (Sidekiq fake mode + drain; `inline!` only where labelled). **64/64 match** the sequences quoted
   in this report. Re-run: [../quickstart.md](../quickstart.md).
 - **Out of scope**: the ActiveJob backend is not probed separately (its adapters delegate to the
   same shared bodies). Neither are rate limits and periods beyond their "never re-taken for rollback"

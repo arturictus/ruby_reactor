@@ -4,7 +4,7 @@ module RubyReactor
   class Executor
     class CompensationManager
       # Raised ONLY before the step's body: by its own coordination, or while
-      # resolving its arguments or evaluating its `where`/`guard` (008 R-06).
+      # resolving its arguments (008 R-06).
       # A coordination error raised from inside a body (a nested direct
       # `Step.run`) arrives as `StepCoordination::NestedCoordinationError`, and
       # a bare `Lock::AcquisitionError` etc. may come from a nested
@@ -13,8 +13,7 @@ module RubyReactor
         RubyReactor::Executor::StepCoordination::Contended,
         RubyReactor::Executor::StepCoordination::KeyError,
         RubyReactor::Executor::StepCoordination::DispatchRefused,
-        RubyReactor::Error::ArgumentResolutionError,
-        RubyReactor::Error::ConditionError
+        RubyReactor::Error::ArgumentResolutionError
       ].freeze
 
       def initialize(context)
@@ -75,15 +74,19 @@ module RubyReactor
         compensate_step(step_config, error, arguments)
       end
 
+      # Newest first. Each entry leaves the stack only once its undo returned,
+      # so an interruption mid-rollback leaves exactly the entries still to
+      # undo — the interrupted one included — for a manual undo (008 R-16).
       def rollback_completed_steps
-        undo_stack.reverse_each do |step_info|
+        until undo_stack.empty?
+          step_info = undo_stack.last
           result = @context.with_step(step_info[:step].name) do
             undo_step(step_info[:step], step_info[:result], step_info[:arguments])
           end
+          undo_stack.pop
           @undo_trace << { type: :undo, step: step_info[:step].name, result: result,
                            arguments: step_info[:arguments] }
         end
-        undo_stack.clear
       end
 
       private
@@ -161,7 +164,7 @@ module RubyReactor
           end
 
           compensate_result
-        rescue StandardError => e
+        rescue Error::Rescuable => e
           record_rollback_failure(step_config.name, :compensate, e)
           middlewares.on(:failed_compensation, step_config.name, e, @context)
           # A raise is a compensation failure like a returned Failure: the
@@ -197,7 +200,7 @@ module RubyReactor
           end
 
           undo_result
-        rescue StandardError => e
+        rescue Error::Rescuable => e
           record_rollback_failure(step_config.name, :undo, e)
           middlewares.on(:failed_undo, step_config.name, e, @context)
           # Log undo failure but don't halt the rollback process

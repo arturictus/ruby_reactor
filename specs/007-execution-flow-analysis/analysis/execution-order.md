@@ -5,7 +5,7 @@ construct RubyReactor offers. Baseline commit `faf90e8d` (ruby_reactor 0.8.3 + #
 
 **Updated for 008 (Reliable Rollback Across Constructs).** Rows and rules marked *changed in 008*
 describe the behavior after [specs/008-rollback-reliability](../../008-rollback-reliability/spec.md);
-the text they replace is kept in git history. The transcript was re-run: 63 scenarios, 63 match.
+the text they replace is kept in git history. The transcript was re-run: 64 scenarios, 64 match (S-edge-03b added by the 2026-09-27 revision).
 Line references `[R: …]` in unchanged rows still point at the baseline.
 
 Labels: `[R: file:line]` = read in source · `[O: S-…]` = observed, see
@@ -27,11 +27,10 @@ One mechanism does all rollback: the **undo stack** of the reactor execution tha
 ```mermaid
 flowchart TD
   S[Step reaches a result] --> K{Kind}
-  K -->|Success| P[Push step, args, result on undo stack<br/>unless async unit / Skipped]
+  K -->|Success or Skipped| P[Push step, args, result on undo stack<br/>unless async unit]
   P --> N[Next ready step]
-  K -->|Skipped| N
   K -->|Halt| H[Stop. No rollback]
-  K -->|Failure after retries| NS{Body never started?<br/>own contention / key error /<br/>dispatch refused / argument or<br/>condition error}
+  K -->|Failure after retries| NS{Body never started?<br/>own contention / key error /<br/>dispatch refused / argument error}
   NS -->|yes| U
   NS -->|no| C[compensate failing step]
   C --> U[Undo stack, newest first:<br/>undo each completed step]
@@ -46,9 +45,9 @@ Rules, each confirmed on plain steps:
 | R2 | On failure the failing step's **compensate runs first**, then **every completed step's undo, newest first** (reverse completion order, also across DAG branches). No later step runs. | `[R: lib/ruby_reactor/executor/compensation_manager.rb:35]` `[R: …/compensation_manager.rb:69]` `[O: S-plain-01, S-plain-02, S-plain-09]` |
 | R3 | A step whose own coordination was never acquired (contention, key error, refused dispatch) is **not** compensated. Earlier steps are still undone. | `[R: …/compensation_manager.rb:11, :44]` `[O: S-lock-03, S-edge-01]` |
 | R4 | A compensate or undo that returns `Failure` or raises does **not** stop the rollback. It is listed on `Failure#rollback_failures`. A compensate failure also turns the final error into `CompensationError` ("Execution error: …", no `step_name`). | `[R: …/compensation_manager.rb:57, :202]` `[O: S-plain-03, S-plain-04, S-compose-07]` |
-| R5 | `Halt` stops without rollback. `Skipped` steps are never pushed, so they are never undone. | `[R: …/result_handler.rb:97, :114]` `[O: S-plain-05, S-plain-06]` |
+| R5 | `Halt` stops without rollback. *Changed in 008 (R-19):* `Skipped` is only an instrumentation mark, so a `Skipped` step is pushed and undone like a `Success`. | `[R: …/result_handler.rb handle_skipped]` `[O: S-plain-05, S-plain-06]` |
 | R6 | Async units (`async_step`, `async_reactor`) are **never pushed**: the parent never undoes them. *Changed in 008:* the step says so itself (`StepConfig#rollback_tracked?` is false for async units); the coordinator has no async special case. | `[R: lib/ruby_reactor/dsl/step_builder.rb rollback_tracked?]` `[O: S-async-03, S-async-06]` |
-| R7 | *Changed in 008.* Every `StandardError` after completed work rolls back. An argument source/transform/result path that raises (`ArgumentResolutionError`) or a raising `where`/`guard` (`ConditionError`) is a never-started failure: the step is not compensated, completed steps are undone. Any other `StandardError` outside a step body rolls back too, attributed to the executing step. A non-`StandardError` exception runs no rollback: a caller-process run is stored `aborted` for a manual `Reactor.undo(id)`; a worker run stays `running` and is redelivered. | `[R: lib/ruby_reactor/executor/result_handler.rb build_execution_failure]` `[R: lib/ruby_reactor/executor.rb mark_aborted]` `[O: S-plain-07, S-edge-03, S-edge-04]` |
+| R7 | *Changed in 008.* Every exception after completed work rolls back, `StandardError` or not (R-16). An argument source/transform/result path that raises (`ArgumentResolutionError`) is a never-started failure: the step is not compensated, completed steps are undone. Any other exception outside a step body rolls back too, attributed to the executing step. Only an interruption (signal, exit, out of memory, enclosing timeout) runs no rollback: a caller-process run is stored `aborted` for a manual `Reactor.undo(id)`; a worker run stays `running` and is redelivered. (`where`/`guard` were removed, R-15.) | `[R: lib/ruby_reactor/error/rescuable.rb]` `[R: lib/ruby_reactor/executor.rb mark_aborted]` `[O: S-plain-07, S-edge-03, S-edge-03b]` |
 | R8 | Rollback runs in whichever process detects the failure: the caller (inline), the reactor worker, the map collector, or (for units) nobody. | §2 |
 
 ### Failure kinds → path
@@ -59,10 +58,10 @@ Rules, each confirmed on plain steps:
 | Retries exhausted | body, last attempt | yes, **once** | yes | `[O: S-retry-01, S-retry-04, S-bg-03]` |
 | `validate_output` fails | after body | yes (side effect exists) | yes | `[R: …/result_handler.rb:277]` `[O: S-plain-08]` |
 | Step input/argument validation fails | before body | no | yes | `[O: S-edge-05]` |
-| `where`/`guard` block raises (*changed in 008*) | before body | no (never started, `ConditionError`) | yes | `[O: S-edge-04]` |
 | Argument source/transform/result path raises `StandardError` (*changed in 008*) | before body | no (never started, `ArgumentResolutionError`) | yes; failure names the step | `[O: S-plain-07]` |
 | Any other `StandardError` outside a step body (*changed in 008*) | executor | — | yes; failure names the executing step | `spec/ruby_reactor/rollback/failure_rollback_spec.rb` |
-| Non-`StandardError` exception in body (*changed in 008*) | body | no | no rollback code runs; the exception propagates unchanged; a caller-process run is stored **`aborted`**, and `Reactor.undo(id)` rolls it back | `[O: S-edge-03]` `spec/ruby_reactor/rollback/aborted_execution_spec.rb` |
+| Non-`StandardError` exception in body, not an interruption (`NotImplementedError`, custom `Exception`; *changed in 008*) | body | yes | yes; failure names the step and the original class | `[O: S-edge-03]` `spec/ruby_reactor/rollback/failure_rollback_spec.rb` |
+| Interruption in body (signal incl. `Interrupt`, `SystemExit`, `NoMemoryError`, enclosing timeout; *changed in 008*) | body | no | no rollback code runs; the exception propagates unchanged; a caller-process run is stored **`aborted`** with the entries not yet undone, and `Reactor.undo(id)` rolls it back | `[O: S-edge-03b]` `spec/ruby_reactor/rollback/aborted_execution_spec.rb` |
 | Own lock/semaphore contended (inline) | before body | no | yes | `[O: S-lock-03]` |
 | Own contention past `lock_snooze_max_attempts` (worker) | before body | no | yes | `[O: S-edge-01]` |
 | Reader's `result(:unit)` wait times out | argument resolution | no (never started; *changed in 008:* wrapped as the reader's `ArgumentResolutionError`, so the failure names the reader) | yes | `[O: S-async-08]` |
@@ -83,7 +82,8 @@ Rules, each confirmed on plain steps:
 1. Resolve arguments (`result(...)`, `input(...)`, transforms). This is **outside** the step's
    rescue `[R: lib/ruby_reactor/executor/step_executor.rb:83]`.
 2. Retry loop `[R: lib/ruby_reactor/executor/retry_manager.rb:11]`. Each attempt runs
-   `where/guard → argument validation → step coordination (lock, semaphore, rate limit…) → body`.
+   `argument validation → step coordination (lock, semaphore, rate limit…) → body` (`where`/`guard`
+   were removed in 008).
 3. Result handling: Success pushes onto the undo stack. Failure (after the last attempt) runs rollback (§1).
 4. **Rollback hooks**: `compensate` (this step failing), `undo` (a later step failing).
 5. **Locks**: a step-level lock is held only around the body. Rollback re-takes it (§4).
@@ -103,8 +103,8 @@ Rules, each confirmed on plain steps:
    `compensate`, the same method) replays the **child's** undo stack newest-first
    `[R: …/compose_step.rb:31, :47]`.
 4. **Rollback hooks**: none declarable. `ComposeBuilder` has no `compensate`/`undo`
-   `[R: lib/ruby_reactor/dsl/compose_builder.rb:60]`. `retries` is available
-   `[R: …/compose_builder.rb:7]` and, *since 008*, re-runs the whole child `[O: S-compose-05]`.
+   `[R: lib/ruby_reactor/dsl/compose_builder.rb:60]`. *Since 008*, `retries` on a compose is rejected
+   at definition time: the child's own steps retry `[O: S-compose-05, S-compose-05b]`.
 5. **Locks**: the child re-enters the parent's reactor lock (same root owner, counted) and hands it
    back without releasing the parent's hold `[O: S-lock-06]`.
 
@@ -117,7 +117,7 @@ it can resume one after that context rolled back:
 | `Map::Collector` → parent `resume_execution` | no: it resumes the parent before any rollback, and skips a finished parent |
 | `Map::ElementExecutor` requeue (retry / park) | no: it requeues before the element rolls back |
 | `Reactor#continue` (interrupt) | no: after an undo the context is `cancelled` |
-| `ComposeStep#run` on a retry | was **yes** at the baseline; fixed in 008 (a failed child is replaced by a fresh one) |
+| `ComposeStep#run` on a retry | was **yes** at the baseline; removed in 008: a compose cannot be retried (R-14) |
 
 ### 2.3 `map`, inline (default)
 
@@ -233,7 +233,7 @@ not probed, with the reason given.
 | S-plain-03 | a → b | b fails, its compensate fails | inline | run:a run:b compensate:b undo:a ⇒ failure(b) (CompensationError) *(changed in 008)* | — (reported: b/compensate) | [O: S-plain-03] |
 | S-plain-04 | a → b → c | c fails, b's undo raises | inline | run:a run:b run:c compensate:c undo:b undo:a ⇒ failure(c) | b's effect, if its undo failed (reported) | [O: S-plain-04] |
 | S-plain-05 | a → b → c | b returns Halt | inline | run:a run:b ⇒ halt | a, b (by design) | [O: S-plain-05] |
-| S-plain-06 | a → b(Skipped) → c | c fails | inline | run:a run:b run:c compensate:c undo:a ⇒ failure(c) | — | [O: S-plain-06] |
+| S-plain-06 | a → b(Skipped) → c | c fails | inline | run:a run:b run:c compensate:c undo:b undo:a ⇒ failure(c) *(changed in 008, R-19)* | — | [O: S-plain-06] |
 | S-plain-07 | a → b | b's argument transform raises | inline | run:a undo:a ⇒ failure(b) *(changed in 008)* | — | [O: S-plain-07] |
 | S-plain-08 | a → b | b's output fails `validate_output` | inline | run:a run:b compensate:b undo:a ⇒ failure(b) | — | [O: S-plain-08] |
 | S-plain-09 | a, b → c → d | d fails | inline | run:a run:b run:c run:d compensate:d undo:c undo:b undo:a ⇒ failure(d) | — | [O: S-plain-09] |
@@ -246,8 +246,8 @@ not probed, with the reason given.
 | S-compose-02 | a → compose(c1 → c2) → b | b (after child) | inline | run:a run:child.c1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 undo:a ⇒ failure(b) | — | [O: S-compose-02] |
 | S-compose-03 | compose x(x1 → x2) → compose y(y1 → y2) | y2 | inline | run:x.x1 run:x.x2 run:y.y1 run:y.y2 compensate:y.y2 undo:y.y1 undo:x.x2 undo:x.x1 ⇒ failure(y) | — | [O: S-compose-03] |
 | S-compose-04 | a → compose outer(o1 → compose inner(i1 → i2)) | i2 (depth 2) | inline | run:a run:outer.o1 run:inner.i1 run:inner.i2 compensate:inner.i2 undo:inner.i1 undo:outer.o1 undo:a ⇒ failure(outer) | — | [O: S-compose-04] |
-| S-compose-05 | compose(c1 → c2) with `retries max_attempts: 2` | c2 fails once | inline | run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 retry:child#1 run:child.c1 run:child.c2 ⇒ success *(changed in 008)* | — (a fresh child per attempt) | [O: S-compose-05] |
-| S-compose-05b | as 05, then → b | b after the retried compose | inline | … retry:child#1 run:child.c1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 ⇒ failure(b) *(changed in 008)* | — | [O: S-compose-05b] |
+| S-compose-05 | compose(c1 → c2) declaring `retries max_attempts: 2` | class definition | inline | ⇒ `DeprecatedDslError` *(changed in 008, R-14)* | — | [O: S-compose-05] |
+| S-compose-05b | compose(c1 → c2 with its own `retries`) → b | c2 fails once, then b fails | inline | run:child.c1 run:child.c2 retry:c2#1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 ⇒ failure(b) *(changed in 008)* | — | [O: S-compose-05b] |
 | S-compose-06 | `background all:` a → compose(c1 → c2) → b | b | worker | same as S-compose-02 | — | [O: S-compose-06] |
 | S-compose-07 | a → compose(c1(undo raises) → c2) | c2 | inline | run:a run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 undo:a ⇒ failure(child) | c1's effect (reported: c1/undo, flattened into parent) | [O: S-compose-07] |
 | S-compose-08 | a → compose(c1 → c2) → b | c2 returns **Halt** | inline | run:a run:child.c1 run:child.c2 **run:b** ⇒ success | — (the child's halt does not stop the parent) | [O: S-compose-08] |
@@ -317,8 +317,9 @@ Element reactor: `e1 → e2`, both with compensate/undo. Element `i == 2` fails 
 | S-intr-04 | completed a → b, reactor lock | `Reactor.undo(id)` while rk held by another owner | inline | … undo:b undo:a ⇒ cancelled | — (undo ran **outside** the reactor lock) | [O: S-intr-04] |
 | S-edge-01 | `all:` a → b(step lock held elsewhere) | contention ceiling | worker | run:a undo:a ⇒ failure(b) | — | [O: S-edge-01] |
 | S-edge-02 | `all:` a → b → c | worker crash in b | worker, redelivered | run:a run:b ✖ run:b run:c ⇒ success | b's first partial run (at-least-once) | [O: S-edge-02] |
-| S-edge-03 | a → b | b raises `Exception` | inline | run:a run:b ⇒ exception raised to caller; stored status `aborted` *(changed in 008)* | **a**, until a manual `Reactor.undo(id)` | [O: S-edge-03] |
-| S-edge-04 | a → b | b's `where` raises | inline | run:a undo:a ⇒ failure(b) *(changed in 008)* | — (b never ran, not compensated) | [O: S-edge-04] |
+| S-edge-03 | a → b | b raises a custom `Exception` | inline | run:a run:b compensate:b undo:a ⇒ failure(b) *(changed in 008, R-16)* | — | [O: S-edge-03] |
+| S-edge-03b | a → b | b raises `Interrupt` | inline | run:a run:b ⇒ exception raised to caller; stored status `aborted` *(new in 008)* | **a**, until a manual `Reactor.undo(id)` | [O: S-edge-03b] |
+| S-edge-04 | a → b | b declares `where` | inline | ⇒ `DeprecatedDslError` at class definition *(changed in 008, R-15)* | — | [O: S-edge-04] |
 | S-edge-05 | a → b | b input type invalid | inline | run:a undo:a ⇒ failure(b) | — | [O: S-edge-05] |
 | S-edge-06 | reactor input invalid | before start | inline | ⇒ failure | — | [O: S-edge-06] |
 
@@ -352,6 +353,6 @@ the undo with that execution. It does not guarantee the resource is still as the
 | Map element, inline | `sleep` in place, element after element | per element, once | `[O: S-map-10]` |
 | Map element, fan_out | element job re-enqueued, other elements interleave | per element, once | `[O: S-map-09]` |
 | `async_step` | loop **inside** the StepWorker job, no retry middleware event | **never** (unit rollback hooks do not run) | `[R: lib/ruby_reactor/step_worker.rb:275-289]` `[O: S-async-07]` |
-| `compose` (`retries` on the compose) | the **child is resumed**, not restarted: steps undone during the failed attempt count as completed | child rolled back on each failed attempt, then only the retried step re-runs | `[R: lib/ruby_reactor/step/compose_step.rb:97]` `[O: S-compose-05, S-compose-05b]` |
+| `compose` | *since 008*, `retries` on the compose is rejected at definition time; the child's own steps retry inside the child (baseline: the child was resumed with its undone steps counted as completed) | as for the child's steps | `[O: S-compose-05, S-compose-05b]` |
 | `fail!(…, retry: false)` | not retried | once | `[O: S-retry-02]` |
 | Successful retry | — | none (no compensate for the failed attempts) | `[O: S-retry-03, S-bg-04]` |

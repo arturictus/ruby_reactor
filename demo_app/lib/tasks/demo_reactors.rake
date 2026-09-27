@@ -260,8 +260,8 @@ namespace :demo do
     end
   end
 
-  desc "ArgumentFailureDemoReactor — an argument transform raises after :reserve; :reserve is undone, " \
-       ":charge is not compensated, the failure names :charge"
+  desc "ArgumentFailureDemoReactor — an argument transform raises, or :charge raises NotImplementedError, " \
+       "after :reserve; :reserve is undone either way and the failure names :charge"
   task failure_rollback: [:environment, :flush_redis] do
     puts "\n>>> Running ArgumentFailureDemoReactor(sku: 'sku-1', price: 'abc') [transform raises]"
     ArgumentFailureDemoReactor.reset!
@@ -275,23 +275,37 @@ namespace :demo do
       puts "❌ FAIL: expected the reservation released and the failure attributed to :charge"
     end
 
+    puts "\n>>> Running ArgumentFailureDemoReactor(sku: 'legacy', price: '12.50') [body raises NotImplementedError]"
+    ArgumentFailureDemoReactor.reset!
+    result = ArgumentFailureDemoReactor.run(sku: "legacy", price: "12.50")
+    puts "   log: #{ArgumentFailureDemoReactor.log.inspect}"
+    puts "   failure step_name=#{result.step_name.inspect} exception_class=#{result.exception_class.inspect}"
+    if result.failure? && result.exception_class == "NotImplementedError" &&
+       ArgumentFailureDemoReactor.log == ["reserve legacy", "compensate charge", "release legacy"]
+      puts "✅ SUCCESS: a non-StandardError still rolled back: :charge compensated, reservation released"
+    else
+      puts "❌ FAIL: expected :charge compensated and the reservation released"
+    end
+
     puts "\n>>> Running ArgumentFailureDemoReactor(sku: 'sku-1', price: '12.50') [success]"
     ArgumentFailureDemoReactor.reset!
     report_demo_result(ArgumentFailureDemoReactor.run(sku: "sku-1", price: "12.50"))
   end
 
-  desc "ComposeRetryDemoReactor — compose `retries` re-run the whole child: the seat is reserved on both attempts"
+  desc "ComposeRetryDemoReactor — a composed child retries its own flaky step; the parent never re-runs the child"
   task compose_retry: [:environment, :flush_redis] do
-    puts "\n>>> Running ComposeRetryDemoReactor(seat: '12A') [first confirmation fails, compose retries]"
+    puts "\n>>> Running ComposeRetryDemoReactor(seat: '12A') [first confirmation fails, the child retries it]"
     ComposeRetryDemoReactor.reset!
     result = ComposeRetryDemoReactor.run(seat: "12A")
     ComposeRetryDemoReactor.log.each { |line| puts "   #{line}" }
     reserves = ComposeRetryDemoReactor.log.count { |l| l.start_with?("reserve") }
-    puts "   reserve ran #{reserves} times; result=#{result.success? ? result.value.inspect : result.error}"
-    if result.success? && reserves == 2 && result.value == { confirmed: "res_12A_2" }
-      puts "✅ SUCCESS: the retry started a fresh child and the result comes from attempt 2"
+    confirms = ComposeRetryDemoReactor.confirm_calls
+    puts "   reserve ran #{reserves} time(s), confirm #{confirms} time(s); " \
+         "result=#{result.success? ? result.value.inspect : result.error}"
+    if result.success? && reserves == 1 && confirms == 2 && result.value == { confirmed: "res_12A_1" }
+      puts "✅ SUCCESS: confirm retried inside the child; reserve ran once"
     else
-      puts "❌ FAIL: expected reserve to run twice and the result to come from attempt 2"
+      puts "❌ FAIL: expected reserve once, confirm twice, and a confirmed reservation"
     end
   end
 

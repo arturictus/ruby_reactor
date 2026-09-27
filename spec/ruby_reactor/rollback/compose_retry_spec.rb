@@ -2,55 +2,39 @@
 
 require "spec_helper"
 
-# US2 (F-02): a compose retry after a failed attempt starts a fresh child; a
-# park/resume still resumes.
+# US2 (F-02, 008 R-14): a parent never retries a nested reactor as a whole.
+# The child retries its own steps; a park/resume still resumes.
 module ComposeRetrySpec
-  # c1 returns how many times it has run, so a result can say which attempt it came from.
-  COUNTED_C1 = proc do
-    run do |_inputs, _ctx|
-      RollbackRecorder.record("run:child.c1")
-      RubyReactor.Success(RollbackRecorder.counters["c1 runs"] += 1)
-    end
-  end
-
-  class ChildFailsOnce < RollbackRecorder::Reactor
+  class Child < RollbackRecorder::Reactor
     tag "child"
-    recording_step(:c1, &COUNTED_C1)
-    recording_step :c2, after: :c1, fail: 1
+    recording_step :c1
   end
 
-  class Retried < RollbackRecorder::Reactor
-    compose(:child, ChildFailsOnce) { retries max_attempts: 2, base_delay: 0 }
-  end
-
-  class RetriedThenFails < RollbackRecorder::Reactor
-    compose(:child, ChildFailsOnce) { retries max_attempts: 2, base_delay: 0 }
-    recording_step :b, after: :child, fail: true
-  end
-
-  class ChildInnerRetries < RollbackRecorder::Reactor
+  class ChildRetriesOnce < RollbackRecorder::Reactor
     tag "child"
+    recording_step :c1
+    recording_step(:c2, after: :c1, fail: 1) { retries max_attempts: 2, base_delay: 0 }
+  end
+
+  class ChildRetriesExhausted < RollbackRecorder::Reactor
+    tag "child"
+    input :from_a
     recording_step :c1
     recording_step(:c2, after: :c1, fail: true) { retries max_attempts: 2, base_delay: 0 }
   end
 
-  class RetriedInnerRetries < RollbackRecorder::Reactor
-    compose(:child, ChildInnerRetries) { retries max_attempts: 2, base_delay: 0 }
+  class RetriesInChild < RollbackRecorder::Reactor
+    compose :child, ChildRetriesOnce
   end
 
-  class ChildUndoFails < RollbackRecorder::Reactor
-    tag "child"
-    recording_step :c1, undo_fails: true
-    recording_step :c2, after: :c1, fail: 1
+  class RetriesInChildThenFails < RollbackRecorder::Reactor
+    compose :child, ChildRetriesOnce
+    recording_step :b, after: :child, fail: true
   end
 
-  class RetriedUndoFails < RollbackRecorder::Reactor
-    compose(:child, ChildUndoFails) { retries max_attempts: 2, base_delay: 0 }
-  end
-
-  class RetriedInWorker < RollbackRecorder::Reactor
-    background all: true
-    compose(:child, ChildFailsOnce) { retries max_attempts: 2, base_delay: 0 }
+  class ChildExhausted < RollbackRecorder::Reactor
+    recording_step :a
+    compose(:child, ChildRetriesExhausted) { argument :from_a, result(:a) }
   end
 
   class ParkingStep < RubyReactor::Step
@@ -77,69 +61,57 @@ module ComposeRetrySpec
   class ParkingParent < RollbackRecorder::Reactor
     background all: true
     input :key
-    compose(:child, ParkingChild) do
-      argument :key, input(:key)
-      retries max_attempts: 2, base_delay: 0
-    end
+    compose(:child, ParkingChild) { argument :key, input(:key) }
   end
 end
 
-RSpec.describe "retrying a composed reactor" do
-  let(:storage) { RubyReactor.configuration.storage_adapter }
+RSpec.describe "a nested reactor is never retried as a whole" do
   let(:worker_class) { RubyReactor::Adapters::Sidekiq::Worker }
 
-  def run_reactor(reactor_class, inputs = {})
-    reactor = reactor_class.new
-    [reactor.run(inputs), reactor.context]
+  it "rejects `retries` on a compose (class form)" do
+    expect { Class.new(RubyReactor::Reactor) { compose(:child, ComposeRetrySpec::Child) { retries max_attempts: 2 } } }
+      .to raise_error(RubyReactor::Error::DeprecatedDslError, /:child\b.*own steps/m)
   end
 
-  it "re-runs the whole child from a fresh start (S-compose-05)" do
-    result, = run_reactor(ComposeRetrySpec::Retried)
+  it "rejects `retries` in an inline compose block" do
+    expect do
+      Class.new(RubyReactor::Reactor) do
+        compose :child do
+          retries max_attempts: 2
+          step(:c1) { run { |_args, _ctx| RubyReactor.Success(1) } }
+        end
+      end
+    end.to raise_error(RubyReactor::Error::DeprecatedDslError, /:child\b.*own steps/m)
+  end
 
-    expect(RollbackRecorder.log).to eq(
-      %w[run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 run:child.c1 run:child.c2]
-    )
+  it "rejects `retries` on an async_reactor" do
+    expect { Class.new(RubyReactor::Reactor) { async_reactor(:child, ComposeRetrySpec::Child) { retries max_attempts: 2 } } }
+      .to raise_error(RubyReactor::Error::DeprecatedDslError, /:child\b.*own steps/m)
+  end
+
+  it "lets the child retry its own step without re-running the others (S-compose-05b)" do
+    result = ComposeRetrySpec::RetriesInChild.run({})
+
     expect(result).to be_success
-    expect(result.value[:child][:c1]).to eq(2)
+    expect(RollbackRecorder.log).to eq(%w[run:child.c1 run:child.c2 run:child.c2])
   end
 
-  it "undoes the final attempt's child steps on a later failure (S-compose-05b)" do
-    result, = run_reactor(ComposeRetrySpec::RetriedThenFails)
+  it "undoes each child step exactly once on a later parent failure" do
+    result = ComposeRetrySpec::RetriesInChildThenFails.run({})
 
+    expect(result).to be_failure
     expect(RollbackRecorder.log).to eq(
-      %w[run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 run:child.c1 run:child.c2
-         run:b compensate:b undo:child.c2 undo:child.c1]
+      %w[run:child.c1 run:child.c2 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1]
     )
-    expect(result.step_name).to eq(:b)
   end
 
-  it "gives the fresh child a fresh retry budget for its own steps" do
-    run_reactor(ComposeRetrySpec::RetriedInnerRetries)
+  it "fails the compose, without running the child again, once the child's retries run out" do
+    result = ComposeRetrySpec::ChildExhausted.run({})
 
-    expect(RollbackRecorder.log.count("run:child.c2")).to eq(4)
-    expect(RollbackRecorder.log.count("run:child.c1")).to eq(2)
-  end
-
-  it "keeps the discarded attempt, and its incomplete rollback, in the parent's trace" do
-    _result, context = run_reactor(ComposeRetrySpec::RetriedUndoFails)
-
-    discarded = context.execution_trace.select { |e| e[:type] == :compose_attempt_discarded }
-    expect(discarded.size).to eq(1)
-    expect(discarded.first[:step]).to eq(:child)
-    expect(discarded.first[:child_context_id]).not_to eq(context.composed_contexts[:child][:context].context_id)
-    expect(storage.retrieve_context(discarded.first[:child_context_id], "ComposeRetrySpec::ChildUndoFails")["status"])
-      .to eq("failed")
-    expect(discarded.first[:rollback_failures].map { |f| f[:step] }).to eq([:c1])
-  end
-
-  it "re-runs the child when the retry is requeued to a worker" do
-    id = ComposeRetrySpec::RetriedInWorker.run({}).execution_id
-    RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs
-
+    expect(result).to be_failure
     expect(RollbackRecorder.log).to eq(
-      %w[run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 run:child.c1 run:child.c2]
+      %w[run:a run:child.c1 run:child.c2 run:child.c2 compensate:child.c2 undo:child.c1 undo:a]
     )
-    expect(ComposeRetrySpec::RetriedInWorker.find(id).context.status.to_s).to eq("completed")
   end
 
   it "resumes, not retries, a child that parked after c1 completed" do

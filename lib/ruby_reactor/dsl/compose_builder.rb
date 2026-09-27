@@ -4,7 +4,6 @@ module RubyReactor
   module Dsl
     class ComposeBuilder
       include RubyReactor::Dsl::TemplateHelpers
-      include RubyReactor::Dsl::Retryable
 
       attr_accessor :name, :composed_reactor_class, :argument_mappings
 
@@ -21,7 +20,6 @@ module RubyReactor
         end
         @reactor = reactor
         @argument_mappings = {}
-        @retry_config = nil
       end
 
       def argument(composed_input_name, source)
@@ -45,6 +43,17 @@ module RubyReactor
         )
       end
 
+      # A parent never retries a nested reactor as a whole (008 R-14): the
+      # child owns its steps' retries. Kept as a stub to name the replacement.
+      def retries(*)
+        raise RubyReactor::Error::DeprecatedDslError.new(
+          "`retries` on a `compose` has been removed: a parent never retries a nested " \
+          "reactor as a whole. Declare `retries` on :#{@name}'s child reactor's own steps " \
+          "(`retries max_attempts: 3` in the step block or the step class); the child retries them itself.",
+          step: @name
+        )
+      end
+
       def build
         warn_if_child_has_ordered_lock!
         dependencies = extract_dependencies_from_mappings
@@ -59,12 +68,9 @@ module RubyReactor
           run_block: nil,
           compensate_block: nil,
           undo_block: nil,
-          conditions: [],
-          guards: [],
           dependencies: dependencies,
           args_validator: nil,
-          output_validator: nil,
-          retry_config: @retry_config
+          output_validator: nil
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)

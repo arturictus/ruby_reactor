@@ -258,7 +258,7 @@ module RubyReactor
           begin
             # Collect block receives Result objects when fail_fast is false, values when true
             return RubyReactor::Success(collect_block.call(results))
-          rescue StandardError => e
+          rescue RubyReactor::Error::Rescuable => e
             return RubyReactor::Failure(e)
           end
         end

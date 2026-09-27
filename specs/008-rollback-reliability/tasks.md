@@ -13,14 +13,16 @@ description: "Task list for 008 Reliable Rollback Across Constructs"
 **Tests**: REQUIRED. Constitution III (test-first, real Redis) and spec FR-027. In every story,
 write the spec tasks first and confirm they FAIL on the current code before implementing.
 
-**Organization**: tasks are grouped by user story (spec.md US1–US5). Research decisions are cited
+**Organization**: tasks are grouped by user story (spec.md US1–US6). Phases 1–8 (T001–T079) are
+the first implementation, done. Phases 9–13 (T080–T121) are the 2026-09-27 revision after the PR #65
+review (research R-14–R-18). Research decisions are cited
 as `R-nn`, data-model sections as `DM §n`, contracts as `RS §n` (rollback-semantics.md) and
 `API §n` (api-surface.md).
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: can run in parallel (different files, no dependency on an incomplete task)
-- **[Story]**: US1–US5 from spec.md
+- **[Story]**: US1–US6 from spec.md
 
 ## Path Conventions
 
@@ -649,6 +651,336 @@ matching RS §3 rows S-async-02 and S-async-07.
 
 ---
 
+## Phase 9: Revision — User Story 2: a nested reactor is never retried as a whole (Priority: P1)
+
+**Goal**: `retries` on `compose`/`async_reactor` raises at class definition. The fresh-child code is
+deleted. A child retries its own steps (R-14, FR-009–FR-012, API §1, RS §1 rule 7).
+
+**Independent Test**: `bundle exec rspec spec/ruby_reactor/rollback/compose_retry_spec.rb spec/ruby_reactor/step_retries`,
+matching RS §3 rows S-compose-05 and S-compose-05b.
+
+### Tests for User Story 2 (revision) ⚠️ write first, confirm they FAIL
+
+- [X] T080 [P] [US2] Rewrite `spec/ruby_reactor/rollback/compose_retry_spec.rb`. Change the describe
+  text to "a nested reactor is never retried as a whole". Delete the examples "re-runs the whole
+  child from a fresh start", "undoes the final attempt's child steps on a later failure", "gives the
+  fresh child a fresh retry budget", "keeps the discarded attempt … in the parent's trace" and
+  "re-runs the child when the retry is requeued to a worker", with any fixtures only they use. Keep
+  "resumes, not retries, a child that parked after c1 completed". Add:
+  - (a) `Class.new(RubyReactor::Reactor) { compose(:child, Child) { retries max_attempts: 2 } }`
+    raises `RubyReactor::Error::DeprecatedDslError` matching `/:child/` and `/own steps/`.
+  - (b) An inline compose block (`compose :child do retries max_attempts: 2; step(:c1) { … } end`)
+    raises the same.
+  - (c) `async_reactor(:child, Child) { retries max_attempts: 2 }` raises the same.
+  - (d) Child `c1 → c2`, where `c2` declares `retries max_attempts: 2, base_delay: 0` and fails on its
+    first call only: the recorded sequence is `run:child.c1 run:child.c2 run:child.c2` (c1 once) and
+    the result is a success.
+  - (e) The same child plus a parent step `b` that fails: `… run:b compensate:b undo:child.c2
+    undo:child.c1`, and each `undo:` appears exactly once.
+  - (f) `c2` always fails (its retries run out): the child undoes `c1`, the compose fails, the
+    parent's earlier step is undone, and `run:child.c1` appears exactly once.
+- [X] T081 [P] [US2] In `spec/ruby_reactor/step_retries/declaration_spec.rb` (~lines 69-84), change
+  "validates `retries` in a compose block" and "validates `retries` in an async_reactor block" so
+  they expect `RubyReactor::Error::DeprecatedDslError` for any `retries` call, including a valid one.
+  Rename them "rejects `retries` in a … block".
+
+### Implementation for User Story 2 (revision)
+
+- [X] T082 [US2] In `lib/ruby_reactor/dsl/compose_builder.rb`: remove `include RubyReactor::Dsl::Retryable`,
+  `@retry_config = nil` and the `retry_config: @retry_config` build key. Add a `retries(*)` stub
+  next to `async(*)` that raises `RubyReactor::Error::DeprecatedDslError.new(message, step: @name)`.
+  Message: "`retries` on a `compose` has been removed: a parent never retries a nested reactor as a
+  whole. Declare `retries` on the child reactor's own steps (e.g. `step :x do retries max_attempts: 3
+  … end`, or `retries` in the step class); the child retries them itself." Add a short comment
+  citing 008 R-14.
+- [X] T083 [P] [US2] Do the same in `lib/ruby_reactor/dsl/async_reactor_builder.rb`, with "`retries` on
+  an `async_reactor`" in the message.
+- [X] T084 [US2] In `lib/ruby_reactor/step/compose_step.rb`: delete `discard_failed_attempt` and
+  `attempt_rollback_failures`, and restore `composed_data = context.composed_contexts[step_name]` in
+  `run`. `grep -rn compose_attempt_discarded lib gui/src spec` must return nothing.
+- [X] T085 [US2] Run `spec/ruby_reactor/rollback/compose_retry_spec.rb`,
+  `spec/ruby_reactor/step_retries/`, `spec/compose_spec.rb`,
+  `spec/nested_reactor_inline_execution_spec.rb` and `spec/ruby_reactor/step_coordination/park_spec.rb`.
+  All must be green.
+
+### Documentation & demo for User Story 2 (revision)
+
+- [X] T086 [P] [US2] Update `documentation/composition.md`:
+  - The inline example (~line 33): move `retries max_attempts: 3` from the compose block into the
+    `step :update_bio` block, with the comment "retries belong on the child's steps".
+  - Point 5 (~185-194): rewrite as "**No whole-child retries**": a parent never retries a nested
+    reactor; `retries` on a `compose` raises at definition time; declare `retries` on the child's
+    steps; a parked child is resumed, not re-run. Replace the example to show `retries` inside a
+    child step.
+  - The compose vs `async_reactor` table (~205): the `retries` row reads "not allowed: declare it on
+    the child's own steps" in both columns.
+- [X] T087 [P] [US2] In `demo_app/app/reactors/compose_retry_demo_reactor.rb`, remove `retries` from
+  the `compose :reservation` block and declare `retries max_attempts: 2, base_delay: 0` at class level
+  in `ComposeRetryConfirmStep`. Update the file's header comment: `confirm` retries inside the child,
+  `reserve` runs once.
+- [X] T088 [US2] Update `demo:compose_retry` in `demo_app/lib/tasks/demo_reactors.rake` (~line 284) to
+  print that `reserve` ran once and `confirm` twice, then the result.
+- [X] T089 [P] [US2] Update `demo_app/spec/reactors/compose_retry_demo_reactor_spec.rb` (shipped
+  matchers only): success, `reserve` logged once, `confirm` called twice.
+- [X] T090 [P] [US2] In `CHANGELOG.md` Unreleased: delete the Bug Fixes entry "A `compose` with
+  `retries` re-runs the whole child…" (~line 247) and replace migration note 4 (~153-160) with a
+  BREAKING entry: "`retries` on `compose`/`async_reactor` raises
+  `RubyReactor::Error::DeprecatedDslError`". Before/after snippet: `compose(:booking,
+  BookingReactor) { retries max_attempts: 2 }` → `retries max_attempts: 2` inside the child step
+  (or its class) that can fail transiently.
+
+**Checkpoint**: US2 revision works on its own.
+
+---
+
+## Phase 10: Revision — User Story 6: one way to skip a step (Priority: P2)
+
+**Goal**: `where`/`guard` are removed, and `ConditionError` with them. `Skipped` is documented as
+"this run caused no effect" (R-15, R-17, FR-014, FR-029, API §1).
+
+**Independent Test**: `bundle exec rspec spec/ruby_reactor/rollback/removed_dsl_spec.rb`, and
+`grep -rn "ConditionError\|should_run?\|@conditions\|@guards" lib` returns nothing.
+
+### Tests for User Story 6 ⚠️ write first, confirm they FAIL
+
+- [X] T091 [P] [US6] Create `spec/ruby_reactor/rollback/removed_dsl_spec.rb`:
+  - (a) For each of `step :s do … end`, `async_step :s do … end` and `interrupt :s do … end`, and for
+    each of `where { true }` and `guard { true }`: defining the reactor raises
+    `RubyReactor::Error::DeprecatedDslError` matching `/:s/` and `/Skipped/`.
+  - (b) A step whose body returns `Skipped(:v)` lets the next step run and read `:v` through
+    `result(:s)`, and a later failure does not undo it (FR-029).
+- [X] T092 [US6] Delete the tests that only exercise conditions, with the fixtures only they use:
+  - `spec/ruby_reactor/rollback/failure_rollback_spec.rb`: `WhereRaises`, `GuardRaises`,
+    `RetriedWhereRaises` and the three condition examples (~lines 90-110). Update the header comment.
+  - `spec/ruby_reactor/step_contract_enforcement_spec.rb`: "does not validate a step whose where is
+    false" (~297).
+  - `spec/ruby_reactor/step_retries/class_policy_spec.rb`: "makes no attempt when the step is
+    skipped by `where`" (~112).
+  - `spec/ruby_reactor/step_coordination/lock_spec.rb`: the "a step suppressed by `where` (FR-012)"
+    describe (~153), and `GuardedLockedChargeReactor` in `spec/support/reactors/step_coordination_reactors.rb`.
+  - `spec/ruby_reactor/step_coordination/single_site_spec.rb`: the "an async_step suppressed by its
+    guard" describe (~289), and `GuardedAsyncStep`, `GuardedAsyncReactor` and `ASYNC_GUARD_FLAG`
+    in `spec/support/reactors/step_coordination_reactors.rb`.
+  - `spec/ruby_reactor/dsl/reactor_background_spec.rb`: "never fires when the named step is skipped
+    by a guard" (~118), and `BackgroundSkippedTriggerReactor` in `spec/support/reactors/background_reactors.rb`.
+
+### Implementation for User Story 6
+
+- [X] T093 [US6] In `lib/ruby_reactor/dsl/step_builder.rb`:
+  - Remove `:conditions, :guards` from the builder's `attr_accessor` and `StepConfig`'s `attr_reader`,
+    `@conditions = []`/`@guards` initialization, the `conditions:`/`guards:` build keys and config
+    reads, and `StepConfig#should_run?`.
+  - Replace `where`/`guard` with `where(*)`/`guard(*)` stubs raising
+    `RubyReactor::Error::DeprecatedDslError.new(message, step: @name)`. Message: "`where`/`guard` have
+    been removed. To skip :<name>, return `Skipped(value)` (or call `skip!(value)`) from its `run`
+    body; the reactor continues with that value." Cite 008 R-15 in a comment.
+- [X] T094 [P] [US6] Remove the `conditions:`/`guards:` keys from `lib/ruby_reactor/dsl/interrupt_builder.rb`,
+  `compose_builder.rb`, `map_builder.rb` and `async_reactor_builder.rb`, and from `InterruptStepConfig`
+  if it reads them.
+- [X] T095 [US6] In `lib/ruby_reactor/executor/step_executor.rb`: remove the two `should_run?` early
+  returns (`execute_step_sync`, `execute_step_sync_without_result_handling`). In `handoff_at?`,
+  return `true` after the mode/step/`inline_async_execution` checks, and update its comment (the
+  hand-off fires whenever the named step is reached). Drop `Error::ConditionError` from the rescue
+  (~237) and fix its comment.
+- [X] T096 [US6] In `lib/ruby_reactor/step_worker.rb`: remove the suppression block at the top of
+  `run_step` (~246-255), and drop `Error::ConditionError` from the rescue (~93) and its comment.
+- [X] T097 [US6] Delete `lib/ruby_reactor/error/condition_error.rb` (Zeitwerk loads errors, so there is
+  no require to remove). Remove it from `NEVER_STARTED_ERROR_CLASSES` in
+  `lib/ruby_reactor/executor/compensation_manager.rb`, and from `never_started_wrapper?` in
+  `lib/ruby_reactor/executor/result_handler.rb` (only `ArgumentResolutionError` stays; fix the
+  "Argument/condition" comment). `grep -rn "ConditionError\|should_run?" lib spec` must return nothing.
+- [X] T098 [US6] Run `removed_dsl_spec.rb`, `failure_rollback_spec.rb`, `reactor_background_spec.rb`,
+  `step_coordination/`, `step_contract_enforcement_spec.rb`, `step_retries/` and every
+  `spec/**/*interrupt*_spec.rb`. All must be green.
+
+### Documentation & demo for User Story 6
+
+- [X] T099 [P] [US6] Remove `where`/`guard`/`ConditionError` from the docs:
+  `documentation/background_and_async.md` (~159, the "skipped by a `where`/`guard`" bullet),
+  `documentation/DAG.md` (~248, "or a `where` condition that raises"),
+  `documentation/locks_and_semaphores.md` (~780, the `where`/`guard` clause),
+  `documentation/core_concepts.md` (Rollback Rule item 2), and `README.md` (~1432).
+- [X] T100 [P] [US6] Document `Skipped` for rollback (R-17, FR-029) in `documentation/core_concepts.md`
+  ("Skipping a single step", and Rollback Rule item 5) and `README.md` (~857). Wording: `Skipped`
+  means "this run caused no effect for this step", so it is never compensated or undone. A step
+  that finds its effect already in place and owned by this workflow (for example, a redelivered run
+  whose earlier attempt created it) returns `Success(value)` so its `undo` runs on rollback.
+- [X] T101 [P] [US6] In `CHANGELOG.md` Unreleased: remove every `ConditionError` mention (~257) and add
+  a BREAKING entry "`where`/`guard` removed". Snippet: `where { |ctx| ctx.get_input(:enabled) }` →
+  `run { |args, ctx| next Skipped(nil) unless ctx.get_input(:enabled); … }`. Note that a
+  `background before:` hand-off at that step now always fires.
+- [X] T102 [US6] Demo check (Constitution VI, FR-025): `demo_app/app/reactors/signal_demo_reactor.rb`,
+  its rake task and `demo_app/spec/reactors/signal_demo_reactor_spec.rb` already show a step
+  returning `Skipped`. Confirm with `grep -n "Skipped\|skip!"`. Confirm no demo file uses `where`/`guard`
+  (`grep -rnE "\b(where|guard)\s*(\{|do)" demo_app`).
+
+**Checkpoint**: US6 works on its own.
+
+---
+
+## Phase 11: Revision — User Story 3: every exception rolls back except interruptions (Priority: P1)
+
+**Goal**: every exception raised by reactor code, standard or not, fails the step and rolls back.
+Only interruptions (`SignalException`, `SystemExit`, `NoMemoryError`, `Timeout::ExitException`)
+skip rollback and mark an inline run `aborted`. An interruption mid-rollback leaves only the entries
+not yet undone (R-16, FR-013, FR-016, FR-018, FR-028, DM §3/§10/§11).
+
+**Independent Test**: `bundle exec rspec spec/ruby_reactor/rollback/failure_rollback_spec.rb spec/ruby_reactor/rollback/aborted_execution_spec.rb`,
+matching RS §3 rows S-edge-03 and S-edge-03b.
+
+### Tests for User Story 3 (revision) ⚠️ write first, confirm they FAIL
+
+- [X] T103 [P] [US3] Add to `spec/ruby_reactor/rollback/failure_rollback_spec.rb` (define
+  `class Crash < Exception; end` in the spec module; add `# rubocop:disable Lint/InheritException`
+  if needed). Each on `a → b`:
+  - (a) `b`'s body raises `Crash`: `run:a run:b compensate:b undo:a`, a `Failure` is returned (no
+    raise), `step_name == :b`, `exception_class == "…Crash"`.
+  - (b) `b` is a step class with no `run` (so `NotImplementedError`): `a` undone, failure names `b`,
+    `exception_class == "NotImplementedError"`.
+  - (c) `b`'s body raises `SystemStackError`: rolled back the same way.
+  - (d) `b`'s argument transform raises `Crash`: `run:a undo:a`, `b` not compensated,
+    `exception_class` names `Crash`.
+  - (e) FR-028: `a → b → c`, `c` fails, `b`'s undo raises `Crash`: `a` is still undone, and
+    `rollback_failures` has one entry for `b` with `kind: :undo`.
+  - (f) FR-028: `b` fails and its compensate raises `Crash`: `a` is still undone, and the failure
+    names `b`.
+- [X] T104 [P] [US3] Rework `spec/ruby_reactor/rollback/aborted_execution_spec.rb`:
+  - Change the `Crashes` fixture to `raise Interrupt` (keep the exception-identity assertion) and
+    the describe text to "a run cut short by an interruption".
+  - Add: `SystemExit` raised by a body also aborts (re-raised, status `aborted`).
+  - Add: `Timeout.timeout(0.05) { reactor.run(...) }` around a body that sleeps 1s raises
+    `Timeout::Error` to the caller, and the stored run is `aborted`.
+  - Add: interruption during rollback. `a → b → c`, `c` fails, `b`'s undo raises `Interrupt`: the
+    `Interrupt` reaches the caller, and the stored undo stack holds `a` and `b` but not `c`'s
+    entry. A manual `Reactor#undo` then records `undo:b undo:a` and nothing else.
+
+### Implementation for User Story 3 (revision)
+
+- [X] T105 [US3] Create `lib/ruby_reactor/error/rescuable.rb`: `module RubyReactor::Error::Rescuable`
+  with `def self.===(exception)`. It is true for any `Exception` that is not an interruption. The
+  interruptions are `SignalException`, `SystemExit`, `NoMemoryError`, and `::Timeout::ExitException`
+  when it is defined (check with `defined?` at call time, since `timeout` may load later). Add a
+  comment citing 008 R-16: why these four, and that the rest is reactor code's own failure.
+- [X] T106 [US3] Replace `rescue StandardError` with `rescue Error::Rescuable` (qualified as each
+  file's namespace requires) at the user-code sites. Keep every more specific rescue before it,
+  unchanged:
+  - `lib/ruby_reactor/dsl/step_builder.rb` `resolve_arguments`
+  - `lib/ruby_reactor/executor/step_executor.rb` `safe_execute_step_sync`
+  - `lib/ruby_reactor/executor/compensation_manager.rb` `compensate_step` and `undo_step`
+  - `lib/ruby_reactor/executor.rb` `execute` and `resume_execution`
+  - `lib/ruby_reactor/step_worker.rb` `perform` (~97) and the body call (~373)
+  - `lib/ruby_reactor/executor/step_coordination.rb` `resolve_key` (~102)
+  - `lib/ruby_reactor/step/map_step.rb` `process_results` (~261)
+  - `lib/ruby_reactor/map/collector.rb` (~100, ~121)
+  - `lib/ruby_reactor/map/helpers.rb` `apply_collect_block` (~44)
+- [X] T107 [US3] In `lib/ruby_reactor/executor.rb`, update the `mark_aborted` comment and the two
+  `rescue Exception` comments: only interruptions reach them now (R-16).
+- [X] T108 [US3] In `lib/ruby_reactor/executor/compensation_manager.rb` `rollback_completed_steps`,
+  undo newest first and pop each entry only after its `undo_step` returns (`until undo_stack.empty?`
+  over `undo_stack.last`, then `undo_stack.pop`), instead of `reverse_each` plus `clear`. Comment:
+  an interruption leaves exactly the entries not yet undone for a manual undo (R-16).
+- [X] T109 [US3] Run `failure_rollback_spec.rb`, `aborted_execution_spec.rb`, `spec/ruby_reactor/rollback/`,
+  `spec/ruby_reactor/executor/` and `spec/ruby_reactor/map/`. All must be green.
+
+### Documentation & demo for User Story 3 (revision)
+
+- [X] T110 [P] [US3] Docs: `documentation/interrupts.md` (~165): `aborted` only for interruptions
+  (signal, exit, out of memory, an enclosing timeout); any other exception, standard or not, rolls
+  back. `documentation/core_concepts.md` Rollback Rule: add the exception rule (RS §1 rule 6).
+  `README.md` (~1432): "Every exception after a completed step rolls back, standard or not, except
+  interruptions", with `NotImplementedError` and a custom `Exception` as examples.
+- [X] T111 [P] [US3] `CHANGELOG.md` Unreleased: rewrite the `aborted` entries (~173, ~181) to say
+  interruptions only, and add a BREAKING entry: exceptions that are not `StandardError` (except
+  interruptions) now fail the step and roll back instead of propagating out of `Reactor.run`. Note
+  that a test assertion error raised inside a step body now surfaces as the step's `Failure`.
+- [X] T112 [US3] Demo (FR-025): in `demo_app/app/reactors/argument_failure_demo_reactor.rb`, give
+  `ArgumentFailureChargeStep` an `argument :sku` input and make its `run` raise
+  `NotImplementedError, "legacy gateway"` when `sku == "legacy"`. Update the header comment: the
+  transform case is not compensated, the `NotImplementedError` case is compensated, and both undo
+  `reserve`. In `demo:failure_rollback` (`demo_app/lib/tasks/demo_reactors.rake` ~265), run both
+  cases and print each log and failure (`step_name`, `exception_class`).
+- [X] T113 [P] [US3] Extend `demo_app/spec/reactors/argument_failure_demo_reactor_spec.rb` (shipped
+  matchers only) with the `legacy` case: `be_failure`, `reserve` released, charge compensated,
+  `exception_class == "NotImplementedError"`.
+
+**Checkpoint**: US3 revision works on its own.
+
+---
+
+## Phase 12: Revision — User Story 5: harness and 007 references
+
+- [X] T114 [US5] In `specs/007-execution-flow-analysis/evidence/probes/02_compose.rb`:
+  - Move `Compose05` inside the S-compose-05 scenario block, and expect
+    `=> raised(RubyReactor::Error::DeprecatedDslError)` (rescue it and return that label, as S-edge-03
+    does).
+  - Change `Compose05b` to use a child whose `c2` declares `retries: { max_attempts: 2, base_delay: 0 }`
+    with `fail_times: 1`, and no compose-level retries. Expected (RS §3): `run:child.c1 run:child.c2
+    retry:c2#1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 => failure(b)`. Update
+    both scenario titles.
+- [X] T115 [US5] In `specs/007-execution-flow-analysis/evidence/probes/07_interrupts_manual.rb`:
+  - S-edge-03 (`Crash < Exception`) expects `run:a run:b compensate:b undo:a => failure(b)`.
+  - Add S-edge-03b: `b` raises `Interrupt`, expecting `run:a run:b => raised(Interrupt)`, with a note
+    of the stored status (`aborted`).
+  - Move `Edge04` inside S-edge-04's block and expect `=> raised(RubyReactor::Error::DeprecatedDslError)`.
+    Then run `bundle exec ruby specs/007-execution-flow-analysis/evidence/run.rb | tee specs/007-execution-flow-analysis/evidence/output.txt`:
+    `64 scenarios, 64 match, 0 mismatch`, and `git diff` on the probes touches only those scenarios.
+- [X] T116 [P] [US5] Update `specs/007-execution-flow-analysis/analysis/invariants.md` rows INV-06, 07 and
+  13 (RS §4), and the failure-kinds table in `execution-order.md` (non-`StandardError` rows, and the
+  compose-retry row of the R-05 audit table: it is now rejected at definition time).
+
+---
+
+## Phase 13: Revision — Polish & cross-cutting
+
+- [X] T117 Documentation consistency pass (SC-007, SC-011): `grep -rnE "\bwhere\b|\bguard\b|ConditionError"
+  README.md documentation` and a search for `retries` inside a `compose`/`async_reactor` must hit
+  only migration notes or unrelated prose (the English word "where", the deadlock guard). Also check
+  that `aborted` is described as interruptions-only everywhere.
+- [X] T118 Consolidate `CHANGELOG.md`: the Unreleased "Migration notes" block lists every R-12
+  breaking row, including the three revision rows, each with a before/after snippet. No entry
+  still describes compose retries re-running the child, `ConditionError`, or `aborted` for every
+  non-standard exception.
+- [X] T119 Run `bundle exec rubocop` and `bundle exec rspec` (full suite, alone), then
+  `bundle exec rspec spec/ruby_reactor/rollback --tag slow`. Fix every spec that relied on a
+  non-`StandardError` propagating out of a step body (plan Risks).
+- [X] T120 Demo acceptance per [quickstart.md](quickstart.md) §5 (isolated compose project): run
+  `bin/rails demo:rollback_reliability` and the four rollback demo specs, then the whole demo spec
+  suite.
+- [X] T121 Run [quickstart.md](quickstart.md) §1–§6 end to end and record the results
+  (SC-001..SC-011) for the PR.
+
+---
+
+## Phase 14: Review follow-ups (2026-09-27, after `/speckit-review`)
+
+Review answers: `Skipped` is only an instrumentation mark and has every effect of `Success`
+(FR-029, FR-030, R-19); cap stored backtraces (FR-031, R-20); a resume is accepted only while
+paused at an interrupt (FR-032).
+
+- [X] T122 [US6] Specs first: `spec/ruby_reactor/dsl/reactor_background_spec.rb` (an `after:` step
+  returning `Skipped` hands off; one returning `Halt` does not), `spec/ruby_reactor/step_coordination/primitives_spec.rb`
+  (a body `Skipped` marks the period bucket), `spec/ruby_reactor/rollback/removed_dsl_spec.rb` and
+  `spec/ruby_reactor/skipped_rollback_spec.rb` (a `Skipped` step is undone like a `Success`).
+- [X] T123 [US6] `lib/ruby_reactor/executor/result_handler.rb` `handle_skipped` goes through
+  `handle_success` (undo enrollment) and only adds the trace entry; `lib/ruby_reactor/executor/step_executor.rb`
+  `handoff_after?` excludes `Halt` instead of `Skipped`; `lib/ruby_reactor/executor/step_coordination.rb`
+  marks the period for a body `Skipped` and clears contention state on any `Error::Rescuable`.
+- [X] T124 [P] [US6] Docs: README (signals list, "Skipping a single step"), `documentation/core_concepts.md`,
+  `documentation/background_and_async.md` (hand-off bullet), `documentation/locks_and_semaphores.md`
+  (acquisition order, period), `documentation/testing.md`; `lib/ruby_reactor.rb` `Skipped` comment.
+- [X] T125 [P] [US3] `lib/ruby_reactor.rb` `Failure::MAX_BACKTRACE_FRAMES = 100`, with a spec in
+  `spec/ruby_reactor/failure_reporting_spec.rb`.
+- [X] T126 [US3] Spec first, `spec/ruby_reactor/rollback/resume_guard_spec.rb` (resume during
+  compensation fails; resume of an aborted run fails); then `lib/ruby_reactor/reactor.rb` `continue`
+  rejects a non-`paused` run and persists `running` before executing.
+- [X] T127 [P] Docs: `documentation/interrupts.md` (paused-only resume); `CHANGELOG.md` (breaking
+  `Skipped` undo with migration note, `after:` hand-off and `Halt`, period mark, backtrace cap,
+  paused-only resume, migration note 5 on validation/coordination before the body skips).
+- [X] T128 Re-run the full suite, rubocop, the 007 harness and the Docker demo suite.
+- [X] T129 Sync spec.md (FR-029 revised, FR-030–FR-032), research R-19/R-20, contracts.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -659,6 +991,8 @@ matching RS §3 rows S-async-02 and S-async-07.
 - **US5**: T067/T068 depend only on Foundational. T069–T072 depend on US1–US4 (the harness and
   docs describe their final behavior).
 - **Polish (T073–T079)**: after all stories.
+- **Revision (T080–T121)**: after T079. Phases 9 (US2), 10 (US6) and 11 (US3) are independent of each
+  other, except for the shared files listed below. Phase 12 needs 9–11. Phase 13 comes last.
 
 ### Shared-file ordering (tasks without [P] across stories)
 
@@ -671,7 +1005,12 @@ editing:
 - `lib/ruby_reactor/dsl/step_builder.rb`: T004, T007, T039, T058, T068
 - `lib/ruby_reactor/step_worker.rb`: T006, T043, T057
 - `lib/ruby_reactor/executor/compensation_manager.rb`: T008, T040
-- `lib/ruby_reactor/executor/result_handler.rb`: T042, T068
+- `lib/ruby_reactor/executor/result_handler.rb`: T042, T068, T097
+- Revision: `CHANGELOG.md` T090, T101, T111, T118; `README.md` T099, T100, T110;
+  `documentation/core_concepts.md` T099, T100, T110; `step_builder.rb` T093, T106;
+  `step_executor.rb` T095, T106; `step_worker.rb` T096, T106; `compensation_manager.rb` T097, T106,
+  T108; `compose_builder.rb` / `async_reactor_builder.rb` T082/T083, T094;
+  `failure_rollback_spec.rb` T092, T103
 
 ### Within each story
 
@@ -729,8 +1068,18 @@ After the MVP, in order. Each step is one PR-sized increment with its own docs, 
 4. US5 (one rule, harness and 007 docs refresh).
 5. Polish.
 
+### Revision order (T080–T121)
+
+1. US6 first (T091–T102). It deletes code and specs that US3's rescue swap would otherwise have to
+   touch.
+2. US2 (T080–T090).
+3. US3 (T103–T113).
+4. Phase 12, then Phase 13.
+
 ### Commits
 
 - Breaking items use `feat!`/`fix!` with a `BREAKING CHANGE:` footer (R-12): T013/T014 (map), T057
   (async compensate) and T059 (inline `undo` rejected).
 - Everything else uses `feat:`/`fix:`/`docs:`/`test:`/`refactor:` (Phase 2 is `refactor:`).
+- Revision breaking commits (`feat!:` + `BREAKING CHANGE:` footer): T082/T083 (`retries` on nested
+  reactors removed), T093 (`where`/`guard` removed), T106 (non-`StandardError` exceptions roll back).

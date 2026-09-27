@@ -13,7 +13,7 @@ module RubyReactor
         period_config: "with_period", ordered_lock_config: "with_ordered_lock"
       }.freeze
 
-      attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
+      attr_accessor :name, :impl, :arguments, :run_block, :compensate_block, :undo_block,
                     :dependencies, :args_validator, :output_validator
 
       def initialize(name, impl = nil, reactor = nil)
@@ -24,8 +24,6 @@ module RubyReactor
         @run_block = nil
         @compensate_block = nil
         @undo_block = nil
-        @conditions = []
-        @guards = []
         @dependencies = []
         @arg_validations = []
         @validate_args_input = nil
@@ -78,12 +76,15 @@ module RubyReactor
         @undo_block = block
       end
 
-      def where(&predicate)
-        @conditions << predicate
+      # `where`/`guard` were a second, pre-body skip mechanism with failure
+      # rules of their own (008 R-15). A step decides to skip itself from its
+      # body instead, so both stay only to name the replacement.
+      def where(*)
+        raise_removed_condition!(:where)
       end
 
-      def guard(&guard_fn)
-        @guards << guard_fn
+      def guard(*)
+        raise_removed_condition!(:guard)
       end
 
       def wait_for(*step_names)
@@ -148,8 +149,6 @@ module RubyReactor
           run_block: @run_block,
           compensate_block: @compensate_block,
           undo_block: @undo_block,
-          conditions: @conditions,
-          guards: @guards,
           dependencies: @dependencies,
           args_validator: @args_validator || build_args_validator(@arg_validations, @validate_args_input),
           output_validator: @output_validator,
@@ -166,6 +165,15 @@ module RubyReactor
       end
 
       private
+
+      def raise_removed_condition!(keyword)
+        raise RubyReactor::Error::DeprecatedDslError.new(
+          "`#{keyword}` inside a step block has been removed (`where`/`guard` are gone). To skip " \
+          ":#{@name}, return `Skipped(value)` (or call `skip!(value)`) from its `run` body; the " \
+          "reactor continues with that value, exactly as for a Success.",
+          step: @name
+        )
+      end
 
       # The same primitive declared BOTH inline and on the step class is
       # ambiguous — two keys for one slot of the fixed acquisition order, and
@@ -260,7 +268,7 @@ module RubyReactor
     class StepConfig
       NO_RETRIES = { max_attempts: 1, backoff: :exponential, base_delay: 1 }.freeze
 
-      attr_reader :name, :impl, :arguments, :run_block, :compensate_block, :undo_block, :conditions, :guards,
+      attr_reader :name, :impl, :arguments, :run_block, :compensate_block, :undo_block,
                   :dependencies, :args_validator, :output_validator, :async_dispatch,
                   :inline_contract
 
@@ -272,8 +280,6 @@ module RubyReactor
         @run_block = config[:run_block]
         @compensate_block = config[:compensate_block]
         @undo_block = config[:undo_block]
-        @conditions = config[:conditions] || []
-        @guards = config[:guards] || []
         @dependencies = config[:dependencies] || []
         @args_validator = config[:args_validator]
         @output_validator = config[:output_validator]
@@ -375,7 +381,7 @@ module RubyReactor
         end
       rescue Error::ExecutionParked
         raise
-      rescue StandardError => e
+      rescue Error::Rescuable => e
         raise never_started(Error::ArgumentResolutionError, "could not resolve its arguments", e)
       end
 
@@ -458,13 +464,6 @@ module RubyReactor
 
       def retryable?
         (retry_config[:max_attempts] || 0) > 1
-      end
-
-      def should_run?(context)
-        @conditions.all? { |condition| condition.call(context) } &&
-          @guards.all? { |guard| guard.call(context) }
-      rescue StandardError => e
-        raise never_started(Error::ConditionError, "could not evaluate its `where`/`guard`", e)
       end
 
       def interrupt?

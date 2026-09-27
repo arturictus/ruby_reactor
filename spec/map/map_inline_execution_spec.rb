@@ -101,8 +101,8 @@ RSpec.describe "Map Inline Execution" do
   end
 
   context "with a nested inline map" do
-    let(:nested_group_reactor_class) do
-      Class.new(RubyReactor::Reactor) do
+    let(:nested_inline_map_reactor_class) do
+      nested_group_class = Class.new(RubyReactor::Reactor) do
         input :numbers
 
         map :doubled_numbers do
@@ -120,10 +120,6 @@ RSpec.describe "Map Inline Execution" do
 
         returns :doubled_numbers
       end
-    end
-
-    let(:nested_inline_map_reactor_class) do
-      nested_group_class = nested_group_reactor_class
 
       Class.new(RubyReactor::Reactor) do
         input :groups

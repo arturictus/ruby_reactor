@@ -152,7 +152,7 @@ module RubyReactor
       park_held_primitives! if @context.inline_async_execution
       @contention_snooze = true
       raise
-    rescue StandardError => e
+    rescue Error::Rescuable => e
       @result = @result_handler.handle_execution_error(e)
       update_context_status(@result)
       completed = true
@@ -272,7 +272,7 @@ module RubyReactor
       park_held_primitives!
       @contention_snooze = true
       raise e
-    rescue StandardError => e
+    rescue Error::Rescuable => e
       handle_resume_error(e)
       update_context_status(@result)
       completed = true
@@ -294,11 +294,13 @@ module RubyReactor
       @compensation_manager.rollback_completed_steps
     end
 
-    # A process-level exception (a signal, out of memory, a custom
-    # `Exception`) — 008 R-08. Running user rollback code now is unsafe, so
-    # none runs: a run in the caller's process is recorded `aborted`, with its
-    # undo stack kept, for a manual `Reactor#undo`; the `ensure` persists it,
-    # best effort. A worker run stays `running` and its job is redelivered.
+    # Reached only by an interruption — a signal, an exit, out of memory, an
+    # enclosing timeout (008 R-08, R-16); every other exception was rescued as
+    # `Error::Rescuable` and rolled back. Running user rollback code now is
+    # unsafe, so none runs: a run in the caller's process is recorded
+    # `aborted`, with the undo entries not yet undone kept, for a manual
+    # `Reactor#undo`; the `ensure` persists it, best effort. A worker run stays
+    # `running` and its job is redelivered.
     def mark_aborted
       @context.status = :aborted unless @context.inline_async_execution
     end

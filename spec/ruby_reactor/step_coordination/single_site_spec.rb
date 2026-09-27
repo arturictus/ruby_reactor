@@ -286,27 +286,4 @@ RSpec.describe "step coordination at a single site", :step_coordination do
       expect(keys).to eq(["inline_override_async:#{account_id}"])
     end
   end
-
-  describe "an async_step suppressed by its guard" do
-    it "takes no coordination in the worker" do
-      mw, events = capture_step_events
-      RubyReactor.configuration.middlewares = [mw]
-      account_id = unique_account_id
-
-      ASYNC_GUARD_FLAG[:run] = true
-      GuardedAsyncReactor.run(account_id: account_id)
-      ASYNC_GUARD_FLAG[:run] = false
-      events.clear
-      perform_last_step_job
-
-      expect(events.select { |event, *| event == :lock_acquired }).to be_empty
-      # The key is free, so nothing is still holding it.
-      probe = RubyReactor::Lock.new("guarded_async:#{account_id}", owner: "probe", ttl: 5, wait: 0,
-                                                                   auto_extend: false)
-      expect { probe.acquire }.not_to raise_error
-      probe.release
-    ensure
-      ASYNC_GUARD_FLAG[:run] = true
-    end
-  end
 end

@@ -2,6 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-09-26
+**Revised**: 2026-09-27 (PR #65 review)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -13,7 +14,7 @@
 
 ## Requirement Completeness
 
-- [x] No [NEEDS CLARIFICATION] markers remain (FR-006, FR-019 resolved in Clarifications 2026-09-26)
+- [x] No [NEEDS CLARIFICATION] markers remain (FR-029 defaulted to option A, 2026-09-27)
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,9 +33,11 @@
 ## Notes
 
 - The product is a library, so its "stakeholders" are reactor authors and maintainers. The DSL
-  words used (`map`, `compose`, `async_step`, `retries`, `where`/`guard`, `compensate`/`undo`) are
-  the public vocabulary, not implementation internals. No file paths, classes or storage mechanisms
-  appear in the requirements.
+  words used (`map`, `compose`, `async_reactor`, `async_step`, `retries`, `where`/`guard`,
+  `Skipped`, `compensate`/`undo`) are the public vocabulary, not implementation internals. No file
+  paths, classes or storage mechanisms appear in the requirements.
 - Success criteria cite the 007 invariants and evidence set. They are the agreed, reproducible
   baseline, not technology choices.
+- 2026-09-27 revision: FR-009, FR-010, FR-014, FR-016, FR-018 revised; FR-028, FR-029 and US6 added.
+  FR numbers kept stable so plan, research and tasks references still resolve.
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`

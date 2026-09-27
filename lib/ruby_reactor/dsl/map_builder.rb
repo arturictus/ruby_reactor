@@ -129,8 +129,6 @@ module RubyReactor
           run_block: nil,
           compensate_block: nil,
           undo_block: nil,
-          conditions: [],
-          guards: [],
           dependencies: dependencies.uniq,
           args_validator: nil,
           output_validator: nil

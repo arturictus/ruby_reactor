@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-26
 
-**Status**: Draft
+**Status**: Draft, revised 2026-09-27 after the PR #65 review
 
 **Input**: User description: "In this investigation specs/007-execution-flow-analysis/analysis/findings-and-options.md
 we found issues that we should fix and make the flows predictable and reliable. This round is to at
@@ -29,8 +29,19 @@ treats rolled-back work as done:
 
 This feature closes those four. It also closes the Medium/Low findings that the same rules fix:
 F-05 (fan-out leftovers depend on scheduling), which has to be solved for F-01 to hold in fan-out
-mode; F-06 (a raising condition compensates a step that never started) and F-13 (failures without
-step attribution), which follow the same never-started and attribution rules as F-03.
+mode; F-06 (a raising condition compensates a step that never started), closed by removing
+`where`/`guard`; and F-13 (failures without step attribution), which follows the same attribution
+rule as F-03.
+
+**Revision after the PR #65 review (2026-09-27)**. Four points in the first implementation were
+wrong and are corrected here:
+
+| Review point | Before | Now |
+| --- | --- | --- |
+| A nested reactor must never be retried as a whole by its parent | `retries` on a `compose` started a fresh child per attempt | `retries` on a `compose` or an `async_reactor` is rejected. The child's own steps declare their retries. This closes F-02 by removing the path (007 option O-02-c) |
+| `where`/`guard` are an old implementation that may be stale | kept, with raising conditions made "never started" | removed from the DSL. A step that should not run returns `Skipped` from its body. This closes F-06 by removing the path |
+| All errors raised by reactor code must roll back | only standard errors rolled back. Every other exception marked the run aborted | every exception raised by reactor code rolls back. Only process-termination exceptions skip rollback |
+| `Skipped` can mean "not required" or "already done" | a `Skipped` step was never undone, and it also suppressed an `after:` hand-off and a period mark | `Skipped` is only an instrumentation mark: in every effect it is a `Success`, rollback included (FR-029, FR-030) |
 
 **Readers**: reactor authors, who need to predict what gets rolled back, and RubyReactor
 maintainers, who need to change rollback behavior safely.
@@ -45,6 +56,32 @@ maintainers, who need to change rollback behavior safely.
   job, when its body finally fails. `undo` on an `async_step` is rejected at definition time
   (FR-019, FR-020). Refined in planning: an `undo` inherited from a step class is warned, not
   rejected (research R-09).
+
+### Session 2026-09-27 (PR #65 review)
+
+- Q: Should a `compose` keep `retries`, with a fresh child per attempt? → A: No. A composed reactor
+  is never retried as a whole by its parent. The child knows how to retry its own steps. `retries`
+  on a `compose` is rejected at definition time (FR-009, FR-010). This replaces the fresh-child
+  decision (research R-05). The same rule applies to `async_reactor`, the other construct that runs
+  a nested reactor.
+- Q: Should `where`/`guard` stay? → A: No. Remove both completely. A step that decides it should
+  not run returns `Skipped` from its body (FR-014).
+- Q: Which exceptions skip rollback? → A: Only the ones that mean the process is ending: a signal
+  (including an interrupt), a request to exit, and out of memory. Any other exception raised by
+  reactor code (a `run`, `compensate` or `undo` body, an argument source or transform, a step
+  definition) is a failure and rolls back, whether or not it is a standard error (FR-016, FR-018,
+  FR-028).
+- Q: Is a `Skipped` step undone? → A: *(first defaulted to "no"; superseded by the review answer
+  below)*.
+- Q (review 2026-09-27): What does `Skipped` change? → A: Nothing. `Skipped` is only an
+  instrumentation mark, so an engineer reviewing the execution can see the step did not need to
+  run. In every effect it is the same as `Success`: the run continues, a `background` hand-off
+  happens as for a completed step, a period bucket is marked, and the step is enrolled for undo
+  (FR-029, FR-030).
+- Q (review 2026-09-27): Cap a stored failure's backtrace? → A: Yes (FR-031).
+- Q (review 2026-09-27): What must happen when a resume arrives while the reactor is compensating?
+  → A: The resume fails; a resume is accepted only by a reactor paused at an interrupt step
+  (FR-032).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -89,65 +126,88 @@ inline mode and in fan-out mode.
 
 ---
 
-### User Story 2 - A retried composed reactor re-runs rolled-back work (Priority: P1)
+### User Story 2 - A nested reactor is never retried as a whole (Priority: P1)
 
-A reactor author puts `retries` on a composed reactor to retry the whole sub-workflow after a
-transient failure. When an attempt fails, the child rolls back. The next attempt must run the child
-again from the start, not skip steps whose effects were already undone.
+A reactor author wants a sub-workflow to survive a transient failure. They declare `retries` on the
+child's steps that can fail transiently. The child retries those steps itself. The parent never
+re-runs the child as a whole: a child whose steps ran out of retries has failed, has rolled itself
+back, and fails the parent. Declaring `retries` on the `compose` (or `async_reactor`) itself is
+rejected, with a message that says where the retries belong.
 
 **Why this priority**: F-02 today returns a success built on a result that was already undone. A
-later failure then undoes only part of the child. It is silent data corruption.
+later failure then undoes only part of the child. It is silent data corruption. Retrying the whole
+child from the parent is the path that causes it. The child already owns its steps' retry policies,
+so the parent-level retry adds nothing but a second, conflicting retry layer.
 
-**Independent Test**: Run a composed child `c1 → c2`, where `c2` fails on the first attempt only,
-with `retries` set to 2. Check that `c1` runs twice, that the result comes from the second attempt,
-and that a later parent failure undoes both `c1` and `c2`.
+**Independent Test**: Define a reactor that declares `retries` on a `compose` and check that the
+class definition is rejected. Separately, run a composed child `c1 → c2` where `c2` declares
+`retries` and fails on its first attempt only. Check that `c1` runs once, `c2` runs twice, the
+compose succeeds, and a later parent failure undoes `c2` then `c1` once each.
 
 **Acceptance Scenarios**:
 
-1. **Given** a composed child `c1 → c2` with retries, where `c2` fails once, **When** the compose is
-   retried, **Then** `c1` and `c2` both run again, and the compose result reflects only the final
-   attempt.
-2. **Given** the same reactor, where a later parent step then fails, **When** rollback runs, **Then**
-   both `c2` and `c1` from the final attempt are undone.
-3. **Given** a child that is parked mid-attempt (contention wait or background hand-off) and later
+1. **Given** a reactor that declares `retries` on a `compose`, in either the class form or the
+   inline block form, **When** the reactor class is defined, **Then** the definition is rejected
+   with a message naming the compose step and saying that retries belong on the child's own steps.
+2. **Given** a reactor that declares `retries` on an `async_reactor`, **When** the reactor class is
+   defined, **Then** it is rejected the same way.
+3. **Given** a composed child `c1 → c2` where `c2` declares `retries` and fails on its first attempt
+   only, **When** the parent runs, **Then** `c1` runs once, `c2` is retried inside the child, and the
+   compose result is the child's result.
+4. **Given** the same reactor, where a later parent step then fails, **When** rollback runs,
+   **Then** `c2` and then `c1` are each undone exactly once.
+5. **Given** a composed child whose step fails after its own retries are exhausted, **When** the
+   child fails, **Then** the child rolls back its completed steps, the compose fails, the parent's
+   completed steps are undone, and the child is not run again.
+6. **Given** a child that is parked mid-run (contention wait or background hand-off) and later
    resumed, **When** it resumes, **Then** the steps it completed before the park are **not** run
    again. A resume is not a retry.
-4. **Given** any execution that resumes or retries after a rollback, **When** it continues, **Then**
-   no rolled-back step is treated as completed.
+7. **Given** any execution that resumes after a rollback, **When** it continues, **Then** no
+   rolled-back step is treated as completed.
 
 ---
 
 ### User Story 3 - Every failure after completed work rolls back (Priority: P1)
 
 A reactor author writes an argument transform, a dynamic argument source or a result path that
-raises. Step `a` has already completed. The author expects `a` to be undone and the failure to
-name the step whose arguments failed. Today nothing is rolled back and the failure has no step name.
+raises. Or a step body raises an exception that is not a standard error: a step class that does not
+implement `run`, a runaway recursion, a custom exception class. Step `a` has already completed. The
+author expects `a` to be undone and the failure to name the step that failed. Today nothing is
+rolled back, and the failure has no step name or is not returned at all.
 
 **Why this priority**: F-03 breaks the README's core promise ("automatically triggers compensation")
-for a common coding mistake, and gives the reader nothing to trace.
+for common coding mistakes, and gives the reader nothing to trace.
 
 **Independent Test**: Run `a → b`, where `b`'s argument transform raises. Check that `a` is undone,
-`b` is not compensated, and the failure carries the step name `b` and the reason.
+`b` is not compensated, and the failure carries the step name `b` and the reason. Repeat with `b`'s
+body raising a not-implemented error and a custom exception that is not a standard error: `a` is
+undone, `b` is compensated, and the failure names `b`.
 
 **Acceptance Scenarios**:
 
 1. **Given** `a` completed and `b`'s argument transform, dynamic source or result path raises,
    **When** the execution fails, **Then** `a` is undone, `b` is not compensated (its body never
    started), and the failure names reactor, step `b` and the reason.
-2. **Given** a `where`/`guard` condition on `b` that raises, **When** the execution fails, **Then**
-   `b` is not compensated and `a` is undone.
+2. **Given** `a` completed and `b`'s body raises an exception that is not a standard error and is
+   not a process-termination exception (for example a not-implemented error, a stack overflow, or a
+   custom exception class), **When** the execution fails, **Then** `b` is compensated, `a` is
+   undone, and the failure is returned to the caller naming reactor, step `b` and the original
+   exception class.
 3. **Given** argument preparation that happens in a worker (an async step unit, or the first step
    after a `background before:` hand-off), **When** it raises, **Then** the same rule applies in
    that process.
-4. **Given** any other unexpected error during an execution after at least one step completed,
+4. **Given** any other unexpected exception during an execution after at least one step completed,
    **When** it happens, **Then** the completed steps are rolled back and the failure reports any
    rollback that did not complete.
-5. **Given** an inline execution interrupted by a process-level exception (not a standard error:
-   a signal, out of memory, a custom `Exception` subclass), **When** it propagates, **Then** no
-   rollback code runs in that process and the exception reaches the caller unchanged. The
-   execution is recorded as **aborted** with completed work outstanding, and the existing manual
-   undo rolls it back. Worker behavior (redelivery) is unchanged.
-6. **Given** a failing step whose own compensation also fails, **When** the failure is returned,
+5. **Given** an inline execution interrupted by a process-termination exception (a signal including
+   an interrupt, a request to exit, or out of memory), **When** it propagates, **Then** no rollback
+   code runs in that process and the exception reaches the caller unchanged. The execution is
+   recorded as **aborted** with completed work outstanding, and the existing manual undo rolls it
+   back. Worker behavior (redelivery) is unchanged.
+6. **Given** a rollback in progress, **When** a `compensate` or `undo` raises an exception that is
+   not a process-termination exception, **Then** it is recorded as a rollback failure for that
+   step and the remaining rollback continues.
+7. **Given** a failing step whose own compensation also fails, **When** the failure is returned,
    **Then** it still carries the reactor and step name.
 
 ---
@@ -207,6 +267,34 @@ map rows read the same. Async rows differ only by the documented independence of
 
 ---
 
+### User Story 6 - One way to skip a step (Priority: P2)
+
+A reactor author wants a step to do nothing under some condition. There is one way to say it: the
+step's body returns `Skipped`. The older `where`/`guard` declarations, which decided before the
+step started and followed their own failure rules, no longer exist. A reactor that still declares
+them is rejected when it is defined, with a message that shows the replacement.
+
+**Why this priority**: `where`/`guard` is an old, barely documented path with its own failure
+behavior (F-06). It duplicates `Skipped`, and every rollback rule has to account for it. Removing it
+removes a whole failure category instead of classifying it.
+
+**Independent Test**: Define a step that declares `where`, and another that declares `guard`. Check
+that each class definition is rejected with a message pointing to `Skipped`. Rewrite the same step
+to return `Skipped` from its body and check that the reactor continues past it.
+
+**Acceptance Scenarios**:
+
+1. **Given** a step, async step or interrupt that declares `where` or `guard`, **When** the reactor
+   class is defined, **Then** the definition is rejected with a message naming the step and saying
+   to return `Skipped` from the step body instead.
+2. **Given** a step whose body returns `Skipped`, **When** the reactor runs, **Then** everything
+   happens exactly as for `Success` (value, hand-off, period mark, undo on a later failure), and
+   only the execution trace records the skip.
+3. **Given** the README and `./documentation`, **When** a reader looks for `where`, `guard` or the
+   condition error, **Then** the only mentions are in the migration note.
+
+---
+
 ### Edge Cases
 
 - **Map with zero elements**: nothing to roll back. The map rollback is a no-op, not an error.
@@ -223,15 +311,28 @@ map rows read the same. Async rows differ only by the documented independence of
 - **Fan-out failure latency**: a fail-fast fan-out map reports failure only after the elements in
   flight have finished and been rolled back. The latency grows to the slowest element in flight.
   This is documented.
-- **Compose retry with child steps that declare no `undo`**: their effect happens again on the
-  retry. That is what retry means, and it is documented.
-- **An earlier attempt's rollback was incomplete, then the retry succeeded**: the incomplete rollback
-  stays visible in the execution's recorded trace and events. A successful final attempt does not
-  erase it.
+- **Existing reactor that declares `retries` on a `compose` or `async_reactor`**: it now fails when
+  its class is loaded, with the migration message. It does not silently run with one attempt.
+- **Compose inline block that declares `retries` meaning "for the steps inside"**: rejected like any
+  compose-level `retries`. The message says to declare `retries` inside each child step.
+- **Existing reactor that declares `where`/`guard`**: fails when its class is loaded, with the
+  migration message.
+- **A `background before:` hand-off at a step that used a `where` condition**: the condition kept
+  the hand-off from happening. After migration the step's body returns `Skipped`, so the hand-off
+  happens at that step. This is documented in the migration note.
+- **A step class that does not implement `run`**: its not-implemented error is a failure of that
+  step. Completed steps are undone.
+- **A process-termination exception during a rollback that is already running**: the rollback
+  stops. The execution is recorded as aborted with the steps not yet undone still outstanding, and
+  manual undo finishes the rollback.
 - **Awaited async result times out during argument preparation**: this already rolls back. It stays
   unchanged.
-- **Process-level exception in a worker**: the job is redelivered and resumes from its last
+- **Process-termination exception in a worker**: the job is redelivered and resumes from its last
   checkpoint. Unchanged.
+- **A step that returns `Skipped`, then a later step fails**: its `undo` runs with the skipped
+  value, as for any `Success` (FR-029). The library's own skips (`with_period`, `with_ordered_lock`)
+  are `Skipped` too, so their `undo` runs with a nil value.
+- **`background after: :x` where `:x` returns `Halt`**: the run halts; nothing is handed off.
 
 ## Requirements *(mandatory)*
 
@@ -259,35 +360,45 @@ map rows read the same. Async rows differ only by the documented independence of
 - **FR-008**: Making maps rollback-capable MUST NOT make the parent execution's stored state grow per
   element in a way that breaks maps that run today within storage limits.
 
-#### Retried composed reactor (F-02)
+#### Nested reactors are never retried as a whole (F-02)
 
-- **FR-009**: When a composed reactor is retried after a failed attempt, the retry MUST start the
-  child from a state in which no step rolled back by that attempt counts as completed. Those steps
-  run again.
-- **FR-010**: The compose result, and any later undo of the compose, MUST reflect only the steps
-  completed in the final attempt.
+- **FR-009** *(revised 2026-09-27)*: Declaring `retries` on a `compose` or an `async_reactor` MUST be
+  rejected when the reactor class is defined, in both the class form and the inline block form. The
+  message MUST name the step and say that retries belong on the child reactor's own steps.
+- **FR-010** *(revised 2026-09-27)*: A parent MUST NOT run a failed nested child again. The only
+  retries inside a child are its own steps' retries. The compose result, and any later undo of the
+  compose, reflect the child's single run.
 - **FR-011**: A resume that is not a retry (redelivery after a park, a contention wait, a background
   hand-off) MUST keep resuming without re-running completed, not-rolled-back steps.
-- **FR-012**: No execution MUST ever treat a rolled-back step as completed when it resumes or retries.
+- **FR-012**: No execution MUST ever treat a rolled-back step as completed when it resumes.
 
 #### Failures that skip rollback (F-03, F-06, F-13)
 
-- **FR-013**: A standard error raised while preparing a step's arguments (argument sources,
-  transforms, result paths) MUST fail that step, MUST NOT compensate it, and MUST undo all completed
-  steps.
-- **FR-014**: A standard error raised by a step's `where`/`guard` condition MUST follow FR-013: the
-  step is not compensated, and completed steps are undone.
-- **FR-015**: FR-013 and FR-014 MUST also hold when argument preparation happens in a worker process
-  (an async step unit, or a `background` hand-off).
-- **FR-016**: Any other standard error raised during an execution after at least one step completed
-  MUST roll back the completed steps. No standard-error path may end the execution without rollback.
-- **FR-017**: Every failure produced under FR-013 to FR-016, and every failure whose compensation
-  itself failed, MUST carry the reactor name, the step name (when a step was executing) and the
-  reason, with rollback failures attached as for any other failure.
-- **FR-018**: A process-level exception (not a standard error) MUST propagate to the caller
-  unchanged and MUST NOT run rollback code in the same process. For an inline execution, the
-  execution MUST be recorded as **aborted** (distinct from running and failed) while the process is
-  still able to record it, and the existing manual undo MUST roll it back.
+- **FR-013**: An exception raised while preparing a step's arguments (argument sources, transforms,
+  result paths) MUST fail that step, MUST NOT compensate it, and MUST undo all completed steps.
+  This covers every exception except the process-termination ones (FR-018).
+- **FR-014** *(revised 2026-09-27)*: The `where` and `guard` step declarations MUST be removed.
+  Declaring either on a step, async step or interrupt MUST be rejected when the reactor class is
+  defined, with a message naming the step and saying to return `Skipped` from the step body instead.
+  With them goes the failure category they created (F-06): a condition that raises.
+- **FR-015**: FR-013 MUST also hold when argument preparation happens in a worker process (an async
+  step unit, or a `background` hand-off).
+- **FR-016** *(revised 2026-09-27)*: Any exception raised during an execution after at least one step
+  completed MUST roll back the completed steps, unless it is a process-termination exception
+  (FR-018). This includes exceptions that are not standard errors, for example a not-implemented
+  error, a load or syntax error from lazily loaded code, a stack overflow, or a custom exception
+  class. A step body that raises one of these MUST be compensated, like any step body failure.
+- **FR-017**: Every failure produced under FR-013 and FR-016, and every failure whose compensation
+  itself failed, MUST carry the reactor name, the step name (when a step was executing), the reason
+  and the original exception class, with rollback failures attached as for any other failure.
+- **FR-018** *(revised 2026-09-27)*: A process-termination exception MUST propagate to the caller
+  unchanged and MUST NOT run rollback code in the same process. Process-termination exceptions are
+  exactly: a signal (including an interrupt), a request to exit the process, out of memory, and the
+  interruption an enclosing timeout raises into the running code (it is not raised by reactor code,
+  and swallowing it would stop the caller's timeout from firing; research R-16). For
+  an inline execution, the execution MUST be recorded as **aborted** (distinct from running and
+  failed) while the process is still able to record it, and the existing manual undo MUST roll it
+  back.
 
 #### Async step rollback hooks (F-04)
 
@@ -316,15 +427,38 @@ map rows read the same. Async rows differ only by the documented independence of
 #### Documentation, demo and tests
 
 - **FR-024**: Every README.md and `./documentation` claim listed in the 007 documentation audit for
-  an in-scope finding MUST be corrected in the same change as its fix.
+  an in-scope finding MUST be corrected in the same change as its fix. The documentation MUST NOT
+  describe `retries` on a `compose`/`async_reactor`, `where`, `guard` or the condition error outside
+  the migration notes, and MUST describe the aborted status as the result of a process-termination
+  exception only.
 - **FR-025**: Each user-visible behavior change MUST ship with a demo reactor, a listed demo rake
-  task and a demo spec written with the shipped matchers (Constitution VI): map rollback, compose
-  retry, argument-failure rollback, and async step hooks.
+  task and a demo spec written with the shipped matchers (Constitution VI): map rollback, a compose
+  whose child step retries on its own (replacing the compose retry demo), failure rollback for
+  argument errors and for an exception that is not a standard error, async step hooks, and a step
+  that skips itself by returning `Skipped` (replacing any `where`/`guard` example).
 - **FR-026**: CHANGELOG.md MUST record each behavior change under the correct heading. Breaking
-  changes MUST include a migration note.
+  changes MUST include a migration note. The removal of `retries` on `compose`/`async_reactor` and
+  of `where`/`guard` are breaking, and each migration note MUST show the replacement.
 - **FR-027**: Each invariant this feature makes hold MUST be covered by at least one automated test
   against real infrastructure that fails on the pre-change behavior. The existing async step test
   that passes whether or not the unit's hooks run MUST be tightened.
+
+#### Rollback code and skipped steps (review 2026-09-27)
+
+- **FR-028**: A `compensate` or `undo` that raises any exception other than a process-termination
+  exception MUST be recorded as a rollback failure for its step, and the remaining rollback MUST
+  continue.
+- **FR-029** *(revised 2026-09-27)*: `Skipped` MUST have every effect `Success` has. It is only an
+  instrumentation mark (execution trace, `skipped?`, telemetry). A `Skipped` step MUST be enrolled
+  for undo, and a later failure MUST run its `undo` with the skipped value.
+- **FR-030**: A `background after: :x` hand-off MUST fire when `:x` returns `Skipped`, and MUST NOT
+  fire when `:x` returns `Halt`. A `with_period` step whose body returns `Skipped` MUST mark its
+  bucket.
+- **FR-031**: A stored failure MUST keep at most 100 backtrace frames, so a stack overflow does not
+  inflate the stored context.
+- **FR-032**: A resume (`continue`) MUST be accepted only while the execution is paused at an
+  interrupt step. A resume that arrives while the execution is running or rolling back MUST fail
+  without changing it.
 
 ### Key Entities
 
@@ -335,12 +469,17 @@ map rows read the same. Async rows differ only by the documented independence of
   each succeeded element.
 - **Element outcome**: per map element: succeeded, failed (self-rolled-back), skipped (never
   started), or in flight. Rollback coverage is decided from this.
-- **Attempt**: one try of a retried construct. Only the final attempt's completed work is owned by
-  the parent afterwards.
+- **Attempt**: one try of a retried step. Only steps declare retries. A nested reactor (compose,
+  async reactor) has exactly one run per parent step.
 - **Rollback failure**: a compensate or undo that did not complete, attributed to its construct
   (and element position for maps), reported on the final failure.
-- **Aborted execution**: an inline execution cut short by a process-level exception. Its completed
-  work is still outstanding, and it can be found and undone manually.
+- **Process-termination exception**: a signal (including an interrupt), a request to exit the
+  process, out of memory, or an enclosing timeout's interruption. The only exceptions that skip
+  rollback.
+- **Aborted execution**: an inline execution cut short by a process-termination exception. Its
+  completed work is still outstanding, and it can be found and undone manually.
+- **Skipped step**: a step whose body returned `Skipped`. A `Success` in every effect, undo
+  included; only the trace marks it (FR-029).
 
 ## Success Criteria *(mandatory)*
 
@@ -349,15 +488,18 @@ map rows read the same. Async rows differ only by the documented independence of
 - **SC-001**: The invariants tied to in-scope findings change status to HOLDS: INV-06, INV-13,
   INV-19, INV-20 and INV-24 (VIOLATED today), and INV-07 and INV-22 (CONDITIONAL today; for INV-22
   the "left in place" clause, since which fan-out elements run stays scheduling-dependent). Each is
-  covered by at least one automated test that fails on the 0.8.3 baseline.
+  covered by at least one automated test that fails on the 0.8.3 baseline. After the review, INV-13
+  holds because no nested reactor can be retried as a whole (its test is the definition-time
+  rejection), INV-07 no longer lists `where`/`guard`, and INV-06 holds for every exception except
+  process-termination ones.
 - **SC-002**: When the 63 scenarios of the 007 evidence set are re-run, every scenario tied to an
   in-scope finding produces its corrected sequence. Every other scenario produces the same sequence
   as the baseline (0 unintended changes).
 - **SC-003**: Across 100 runs of a fail-fast fan-out map with randomized job order, 0 runs leave a
   succeeded element without rollback.
 - **SC-004**: In the 007 failure-kinds table, every failure after completed work either rolls
-  completed work back or, for process-level exceptions only, leaves an execution recorded as aborted
-  that manual undo rolls back. 0 rows end with nothing rolled back and nothing reported.
+  completed work back or, for process-termination exceptions only, leaves an execution recorded as
+  aborted that manual undo rolls back. 0 rows end with nothing rolled back and nothing reported.
 - **SC-005**: 100% of failures produced on in-scope paths carry reactor name, step name (where a step
   was executing) and reason.
 - **SC-006**: A 10,000-element map can fail and roll back all its succeeded elements without a
@@ -366,10 +508,18 @@ map rows read the same. Async rows differ only by the documented independence of
   against the new behavior.
 - **SC-008**: The rebuilt F-10 coverage table has no "left in place" cell for compose or map.
 - **SC-009**: The full test suite, the style checks and the demo acceptance tasks pass.
+- **SC-010**: Each exception kind named in FR-016 (not-implemented, load or syntax error, stack
+  overflow, custom exception class), raised from a step body and from an argument transform, rolls
+  back completed work in an automated test. 0 of them leave the execution aborted.
+- **SC-011**: 0 ways remain to retry a nested reactor as a whole or to declare `where`/`guard`: each
+  one is rejected at definition time by an automated test, and the README and `./documentation`
+  mention them only in migration notes.
 
 ## Assumptions
 
-- **Scope**: the four High findings, plus F-05, F-06 and F-13, which the same rules fix. Out of
+- **Scope**: the four High findings, plus F-05, F-06 and F-13, which the same rules fix. F-02 and
+  F-06 are closed by removing the constructs that caused them (compose `retries`, `where`/`guard`),
+  not by fixing their behavior. Out of
   scope: F-07 (nested `Halt`), F-08 (manual undo outside the reactor lock), F-09 (async units running
   after their dispatcher rolled back), F-11, F-12, F-14, F-15 and F-16. They stay as documented in
   the 007 analysis.
@@ -380,15 +530,28 @@ map rows read the same. Async rows differ only by the documented independence of
   and its alternatives are recorded in the planning research.
 - **Async independence stays**: a parent's rollback still does not cancel or undo async units
   (INV-25, documented). FR-023 changes only where that rule lives.
-- **Retry semantics**: retrying a composed reactor re-runs child steps that have no `undo`, so their
-  effect happens again. This is accepted and documented.
+- **Retry ownership**: a child reactor owns the retries of its own steps. The parent never retries
+  a nested reactor as a whole (review 2026-09-27). `async_reactor` follows the same rule as
+  `compose`: its `retries` could only re-dispatch, or in inline mode re-run, the whole child.
+- **`where`/`guard` removal**: they are removed, not deprecated, because they are an old path with
+  their own failure rules and `Skipped` covers the use. Code that relied on a condition to prevent a
+  `background` hand-off changes behavior and is called out in the migration note.
 - **Fan-out failure latency**: waiting for elements in flight is accepted in exchange for
   predictable rollback.
-- **Process-level exceptions**: running user rollback code while the process is being signalled or
-  is out of memory is unsafe, so FR-018 records the execution for later undo instead.
+- **Process-termination exceptions**: running user rollback code while the process is being
+  signalled, is exiting or is out of memory is unsafe, so FR-018 records the execution for later
+  undo instead. Every other exception comes from reactor code (a body, a transform, a definition)
+  and is a failure of that code. Rolling it back is what the saga promises (review 2026-09-27).
 - **Baseline**: commit `faf90e8d` (0.8.3 + #61, #63). The 007 evidence harness is reused as the
   regression check for SC-002.
 - **Versioning**: behavior changes follow Constitution V. Two are knowingly breaking and need
   migration notes: element-step `undo` blocks now run when a map is rolled back (FR-006), and
   `undo` on an `async_step` is now rejected (FR-020). An `async_step`'s `compensate` that never ran
-  before now runs (FR-019). Planning decides the SemVer level of each change.
+  before now runs (FR-019). The review adds three more breaking changes: `retries` on
+  `compose`/`async_reactor` is rejected (FR-009), `where`/`guard` are removed (FR-014), and
+  exceptions that are not standard errors now roll back instead of propagating (FR-016). Planning
+  decides the SemVer level of each change.
+- **Revision of existing work**: the first implementation of this feature is already on the branch.
+  Planning updates the research decisions this revision reverses (R-05 fresh child per attempt,
+  R-06 condition errors, R-08 aborted on every non-standard exception) and the tasks that
+  implemented them.

@@ -116,14 +116,11 @@ module RubyReactor
         result
       end
 
-      # A step returned `RubyReactor.Skipped(...)`. The reactor continues:
-      # validate and record the value exactly like a Success, but do NOT push
-      # to the undo stack (nothing happened, so there is nothing to undo).
+      # A step returned `RubyReactor.Skipped(...)`: in every effect the same as
+      # a Success — recorded, pushed for undo, continued from. `Skipped` is only
+      # an instrumentation mark, so the trace entry is the one difference.
       def handle_skipped(step_config, result, resolved_arguments)
-        validate_step_output(step_config, result.value, resolved_arguments)
-        @step_results[step_config.name] = result
-        @context.set_result(step_config.name, result.value)
-        @dependency_graph.complete_step(step_config.name)
+        handle_success(step_config, result, resolved_arguments)
         @context.append_execution_trace(
           {
             type: :skipped,
@@ -254,15 +251,11 @@ module RubyReactor
       def resolve_exception_class(original_error, error)
         # A step's own contention is reported by its cause (Lock::AcquisitionError, ...).
         original_error = original_error.original if original_error.is_a?(StepCoordination::Contended)
-        # Argument/condition failures report their cause's class (008 R-06).
-        return original_error.exception_class if never_started_wrapper?(original_error)
+        # Argument failures report their cause's class (008 R-06).
+        return original_error.exception_class if original_error.is_a?(Error::ArgumentResolutionError)
         return original_error.class.name if original_error
 
         error.respond_to?(:exception_class) ? error.exception_class : nil
-      end
-
-      def never_started_wrapper?(error)
-        error.is_a?(Error::ArgumentResolutionError) || error.is_a?(Error::ConditionError)
       end
 
       def validate_step_output(step_config, value, resolved_arguments = {})

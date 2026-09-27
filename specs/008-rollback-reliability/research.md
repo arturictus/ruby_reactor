@@ -5,6 +5,17 @@ Baseline `faf90e8d` (0.8.3 + #61, #63). Findings, invariants and scenario ids re
 
 Each decision: **Decision**, **Rationale**, **Alternatives considered**.
 
+**Revision 2026-09-27 (PR #65 review)**. The review reversed or narrowed four decisions. They stay
+below for the record, each marked with what replaces it:
+
+- R-05 (fresh child per compose attempt) → **superseded by R-14**: nested reactors are never retried
+  as a whole.
+- R-06, condition half (`ConditionError`) → **superseded by R-15**: `where`/`guard` are removed. The
+  argument half (`ArgumentResolutionError`) stays.
+- R-07 and R-08 (`StandardError` rolls back, every other exception aborts) → **narrowed by R-16**:
+  every exception rolls back except interruptions.
+- New: R-17 (what `Skipped` means for rollback), R-18 (rework of the work already on the branch).
+
 ---
 
 ## R-01 · Refactor direction: how much should the step own?
@@ -181,7 +192,7 @@ with the collector and wastes a whole saga run before undoing it.
 
 ---
 
-## R-05 · Compose retry starts a fresh child (F-02, FR-009–FR-012)
+## R-05 · Compose retry starts a fresh child (F-02, FR-009–FR-012) — SUPERSEDED by R-14
 
 **Facts**: `ComposeStep#run` reuses `composed_contexts[step][:context]`. If that child was admitted,
 it calls `resume_execution` [R: step/compose_step.rb:98]. Resume calls
@@ -216,7 +227,7 @@ forbidding `retries` on compose, is breaking and loses a real use.
 
 ---
 
-## R-06 · Argument and condition errors are never-started failures (F-03, F-06, FR-013–FR-015)
+## R-06 · Argument and condition errors are never-started failures (F-03, F-06, FR-013–FR-015) — condition half SUPERSEDED by R-15
 
 **Facts**:
 
@@ -254,7 +265,7 @@ back but still has no attribution, and still compensates on a raising condition.
 
 ---
 
-## R-07 · Any other `StandardError` rolls back and is attributed (FR-016, FR-017)
+## R-07 · Any other `StandardError` rolls back and is attributed (FR-016, FR-017) — widened by R-16
 
 **Decision**:
 
@@ -273,7 +284,7 @@ case rollback exists for.
 
 ---
 
-## R-08 · Process-level exceptions mark an inline run `aborted` (FR-018)
+## R-08 · Process-level exceptions mark an inline run `aborted` (FR-018) — narrowed by R-16
 
 **Facts**:
 
@@ -380,7 +391,8 @@ for nothing (`coordinated_rollback`). Rejected.
 - **SC-002 regression**: re-run the 007 harness (`specs/007-execution-flow-analysis/evidence/run.rb`).
   Only the `expected:` sequences of in-scope scenarios are updated: S-map-01, 03, 04, 04b, 06, 07,
   08, S-compose-05, 05b, S-plain-07, S-edge-03, 04, S-async-02, 07. Every other scenario must
-  still print `MATCH` unchanged.
+  still print `MATCH` unchanged. The 2026-09-27 revision changes S-compose-05/05b, S-edge-03/04 again
+  and adds S-edge-03b (contracts/rollback-semantics.md §3).
 
 ---
 
@@ -395,9 +407,11 @@ use `feat!`/`fix!` commits with a `BREAKING CHANGE:` footer and a migration note
 | `async_step` `compensate` now runs in the unit's job on final failure | breaking (behavior) | The block now runs, possibly with no reader. Move reader-only cleanup into the reader. |
 | Inline `undo` inside `async_step` raises at definition time | breaking (API) | Move it to the reader's `compensate` or use `async_reactor`. |
 | Class `undo` on an `async_step` class is warned | additive | none |
-| Compose `retries` re-run the whole child | fix | Child steps with no `undo` run again on retry. |
-| Argument, condition and unknown errors roll back and carry `step_name` | fix | The failure message and `exception_class` shape change for these paths. |
-| New `aborted` status | additive | Dashboards and filters gain a status. |
+| `retries` on `compose`/`async_reactor` raises at definition time (R-14) | breaking (API) | Declare `retries` on the child reactor's steps. The child retries them itself. |
+| `where`/`guard` removed; declaring them raises at definition time (R-15) | breaking (API) | Return `Skipped` (or call `skip!`) from the step body. A `background before:` hand-off at that step now always fires. |
+| Exceptions that are not `StandardError` (except interruptions) fail the step and roll back (R-16) | breaking (behavior) | They no longer propagate out of `Reactor.run`. Test assertion errors raised inside a step body now surface as the step's failure. |
+| Argument and unknown errors roll back and carry `step_name` | fix | The failure message and `exception_class` shape change for these paths. |
+| New `aborted` status, only for interruptions (R-16) | additive | Dashboards and filters gain a status. |
 | `rollback_failures` entries may carry `map_step`/`element_index` and new reasons | additive | none |
 
 The project is 0.x. Release-please picks the number from the commit types. Constitution V only
@@ -420,3 +434,220 @@ These come from the 007 audit rows tied to in-scope findings:
 - **documentation/interrupts.md**: 155-157. Mention `aborted` next to manual undo.
 - **The 007 analysis**: execution-order.md (failure-kinds table, R-05 audit table) and
   invariants.md (statuses after the fix). Updated so the 007 report stays a correct reference.
+
+**Added by the 2026-09-27 revision**:
+
+- **documentation/composition.md**: the inline example's compose-level `retries` (line ~33), point 5
+  "Retries re-run the whole child" (~185-194), and the `retries` row of the compose vs
+  `async_reactor` table (~205).
+- **documentation/background_and_async.md**: ~159, "A step skipped by a `where`/`guard` never
+  triggers the hand-off".
+- **documentation/core_concepts.md**: the Rollback Rule (drop `ConditionError`, define `Skipped` per
+  R-17, name the interruptions per R-16) and "Skipping a single step".
+- **documentation/DAG.md**: ~248, "a `where` condition that raises".
+- **documentation/interrupts.md**: ~165, `aborted` only for interruptions.
+- **documentation/locks_and_semaphores.md**: ~780, drop `where`/`guard` from the never-started list.
+- **README.md**: ~857 (`Skipped` rollback meaning) and ~1432 (drop `ConditionError`, add
+  non-standard exceptions).
+- **CHANGELOG.md**: rewrite the 008 entries that describe compose retries, `ConditionError` and
+  `aborted` for every non-standard exception.
+- **007 invariants.md / execution-order.md**: INV-06, INV-07, INV-13 rows; failure-kinds table.
+
+---
+
+## R-14 · Nested reactors are never retried as a whole (FR-009–FR-012, review 2026-09-27)
+
+**Facts**:
+
+- `ComposeBuilder` and `AsyncReactorBuilder` include `Dsl::Retryable`, so `retries` inside their
+  block sets the construct's own `retry_config` [R: dsl/compose_builder.rb:7, dsl/async_reactor_builder.rb:13].
+- On a compose, that retries the whole child. R-05 then had to start a fresh child per attempt and
+  record `compose_attempt_discarded` [R: step/compose_step.rb `discard_failed_attempt`].
+- On an `async_reactor`, it retries the dispatching step. That step validates, runs the deadlock
+  guard, then enqueues or, in inline mode, runs the whole child [R: step/async_reactor_step.rb:60].
+- The documentation shows compose-level `retries` inside an inline compose block as if it
+  configured the child's steps (documentation/composition.md:33). It does not.
+- Existing removed-DSL pattern: a stub method raising `Error::DeprecatedDslError` with the
+  replacement (`ComposeBuilder#async`, `StepBuilder#async`).
+
+**Decision**:
+
+- `ComposeBuilder` and `AsyncReactorBuilder` stop including `Retryable`. Each gets a `retries(*)`
+  stub that raises `Error::DeprecatedDslError` at class definition, naming the step and saying to
+  declare `retries` on the child reactor's own steps. Their step configs are built without a
+  `retry_config`, so they default to one attempt (the existing default).
+- Delete `ComposeStep#discard_failed_attempt`, `#attempt_rollback_failures` and the
+  `compose_attempt_discarded` trace entry.
+- No replacement guard in `ComposeStep#run`. R-05's audit showed the compose retry was the only
+  path that re-ran a stored child after it rolled back. With no compose retry, that path is gone,
+  and a park or redelivery resumes a child that is still `running` (FR-011, unchanged).
+
+**Rationale**: the child already owns its steps' retry policies (#61, step-scoped retries). A
+parent-level retry is a second, conflicting retry layer, and it was the root cause of F-02. Removing
+it closes F-02 with less code than R-05 needed (007 option O-02-c).
+
+**Alternatives considered**: keep R-05 (fresh child per attempt). Rejected by the review: the parent
+must never retry the child as a whole. Silently ignoring `retries` on a compose: rejected, because it
+hides the migration.
+
+---
+
+## R-15 · Remove `where`/`guard` (FR-014, US6, review 2026-09-27)
+
+**Facts**:
+
+- `where`/`guard` are two `StepBuilder` methods feeding `StepConfig#should_run?` [R: dsl/step_builder.rb:81-87, 463].
+  `InterruptBuilder` inherits them. The compose, map and async_reactor builders pass empty
+  `conditions: []`, `guards: []`.
+- `should_run?` is consulted in four places: `StepExecutor#execute_step_sync`,
+  `#execute_step_sync_without_result_handling`, `#handoff_at?`, and `StepWorker#run_step`.
+- A false condition returns `Success(nil)` before arguments, validation or coordination. The same
+  intent is served by returning `Skipped` from the body, which is documented and tested.
+- Tests that exercise conditions: `step_contract_enforcement_spec.rb:297`,
+  `step_retries/class_policy_spec.rb:112`, `step_coordination/lock_spec.rb:153` (+ fixture
+  `GuardedLockedChargeReactor`), `step_coordination/single_site_spec.rb:289` (+ `GuardedAsyncReactor`,
+  `ASYNC_GUARD_FLAG`), `dsl/reactor_background_spec.rb:118` (+ `BackgroundSkippedTriggerReactor`),
+  `rollback/failure_rollback_spec.rb` (condition examples), 007 probe S-edge-04.
+
+**Decision**:
+
+- `StepBuilder#where` and `#guard` become `DeprecatedDslError` stubs that name the step and say to
+  return `Skipped` (or call `skip!`) from the step body. Remove `@conditions`/`@guards`, the
+  `conditions`/`guards` config keys and attributes, and `StepConfig#should_run?`.
+- Remove the four `should_run?` call sites. A `background` hand-off fires whenever its step is
+  reached.
+- Delete `Error::ConditionError`, its `NEVER_STARTED_ERROR_CLASSES` entry, and the
+  `ConditionError` branches in `StepExecutor`, `StepWorker` and `ResultHandler#never_started_wrapper?`.
+- Delete the tests listed above that only test conditions, with their fixtures. Add one spec that
+  each of `step`, `async_step` and `interrupt` rejects `where` and `guard`.
+- 007 probe S-edge-04 becomes "a step declaring `where` is rejected at definition time".
+
+**Rationale**: a second skip mechanism with its own failure rules (F-06) is the stale code the review
+named. `Skipped` covers the use. Removing it deletes a never-started category instead of adding one.
+
+**Alternatives considered**: deprecate with a warning for one release. Rejected: the project is 0.x,
+earlier removed DSL (`async`, `retry_defaults`) was removed the same way, and the review asked for
+full removal.
+
+---
+
+## R-16 · Every exception rolls back except interruptions (FR-013, FR-016, FR-018, FR-028, review 2026-09-27)
+
+**Facts** (Ruby 3.4.8, timeout 0.5.0):
+
+- Exceptions that are not `StandardError` and can come from reactor code: `NotImplementedError`
+  (the library's own `Step#run` default raises it), `LoadError`/`SyntaxError` (lazily loaded code),
+  `SystemStackError` (runaway recursion), `SecurityError`, any `class X < Exception`, and test
+  assertion errors (`RSpec::Expectations::ExpectationNotMetError`, `Minitest::Assertion`). Today all
+  of them skip rollback and mark the run `aborted`.
+- Exceptions that come from outside reactor code: `SignalException` (including `Interrupt` and
+  `Sidekiq::Shutdown`), `SystemExit`, `NoMemoryError`, and `Timeout::ExitException`. The last one is
+  what an enclosing `Timeout.timeout` raises into the running thread. Probed: rescuing it inside the
+  block means the caller's `Timeout.timeout` never raises (`:swallowed`).
+- `rescue` accepts a module whose `self.===` decides the match (probed: `NotImplementedError`,
+  `SystemStackError` and custom `Exception` subclasses are rescued, `Interrupt` and `SystemExit`
+  escape).
+- User code runs behind these `rescue StandardError` sites: `StepConfig#resolve_arguments`
+  (sources, transforms), `StepExecutor#safe_execute_step_sync` (body, validation),
+  `CompensationManager#compensate_step`/`#undo_step`, `Executor#execute`/`#resume_execution`,
+  `StepWorker#perform` and its body call, `StepCoordination.resolve_key` (key procs), and the map
+  collect block (`MapStep#process_results`, `Map::Collector`, `Map::Helpers`). The other
+  `rescue StandardError` sites guard infrastructure (release, publish, logging, storage) and stay.
+- `CompensationManager#rollback_completed_steps` clears the undo stack only after the whole loop
+  [R: executor/compensation_manager.rb:78-87]. An interruption mid-rollback leaves the stack whole,
+  so a manual undo would undo the already-undone steps again.
+
+**Decision**:
+
+- Add `RubyReactor::Error::Rescuable`, a module whose `self.===` matches any `Exception` that is not
+  an interruption. The interruptions are `SignalException`, `SystemExit`, `NoMemoryError` and
+  `Timeout::ExitException` (looked up when first needed, since `timeout` may load later).
+- Replace `rescue StandardError` with `rescue Error::Rescuable` at the user-code sites listed above.
+  The existing specific rescues (contention, parks, validation) stay first and are unchanged.
+- `Executor#execute`/`#resume_execution` keep `rescue Exception` after the `Rescuable` rescue. Only
+  interruptions reach it now, and it marks the run `aborted` as R-08 decided.
+- `rollback_completed_steps` removes each entry from the undo stack once its undo has returned. An
+  interruption during a rollback therefore leaves exactly the entries that were not undone yet
+  (the interrupted one included) for a manual undo.
+- `aborted_execution_spec.rb` triggers with `Interrupt` instead of a custom `Exception`. The custom
+  `Exception`, `NotImplementedError` and `SystemStackError` cases join `failure_rollback_spec.rb`
+  as rollbacks. New examples: an enclosing `Timeout.timeout` still fires, and an interruption
+  during rollback leaves only the remaining entries.
+- 007 probe S-edge-03 (custom `Exception`) becomes a rollback, `run:a run:b compensate:b undo:a =>
+  failure(b)`. A new S-edge-03b (`Interrupt`) keeps the `aborted` evidence.
+
+**Rationale**: the review's rule is that every error raised by reactor code rolls back, unless it is
+certain the error comes from outside that code. The interruption set is exactly the exceptions Ruby
+or its host raises into running code from outside. Everything else is the reactor's own failure.
+Keeping the enclosing-timeout exception out avoids breaking the caller's timeouts.
+
+**Alternatives considered**:
+
+- Rescue `Exception` everywhere and roll back even on signals. Rejected: rollback during shutdown or
+  out-of-memory is unsafe (R-08), and it swallows the caller's `Timeout`.
+- An allow-list of rescued classes (`StandardError`, `ScriptError`, ...). Rejected: it misses custom
+  `Exception` subclasses, which the review explicitly wants rolled back.
+- Let test assertion errors propagate. Rejected: they are raised by code inside a step body, so by
+  the review's rule they are that step's failure. The test still fails, because its assertion on the
+  result sees the failure.
+
+---
+
+## R-17 · What `Skipped` means for rollback (FR-029) — SUPERSEDED by R-19
+
+**Facts**: `Skipped` is a `Success` whose step is not pushed on the undo stack [R: lib/ruby_reactor.rb:106-110].
+`ResultHandler` checks `skipped?` before pushing. `Step#undo`/`#compensate` default to returning
+`Skipped()`, which is a different use (nothing to roll back).
+
+**Decision**: no code change. `Skipped` keeps meaning "this run caused no effect for this step", so
+it is never undone or compensated. The documentation says so, and says that a step which finds its
+effect already in place and owned by this workflow (for example, a redelivered run whose earlier
+attempt created it) returns `Success(value)`, so its `undo` runs on rollback.
+
+**Rationale**: the library cannot tell who created an effect that already exists. The author can.
+Option A from the spec clarification: no breaking change, and one sentence resolves the ambiguity.
+
+**Alternatives considered**: undo `Skipped` steps (option B, breaks every `undo` written for "my
+effect happened"); a second "already done" result (option C, new public API for what `Success`
+already expresses).
+
+---
+
+## R-18 · Reworking the work already on the branch
+
+The first implementation (tasks T001–T0xx, all done) built R-05, the condition half of R-06, and
+R-08 for every non-standard exception. What changes:
+
+| Area | Files | Action |
+| --- | --- | --- |
+| Compose retry (R-14) | `lib/ruby_reactor/step/compose_step.rb`, `dsl/compose_builder.rb`, `dsl/async_reactor_builder.rb` | delete fresh-child code, add `retries` stubs |
+| | `spec/ruby_reactor/rollback/compose_retry_spec.rb` | rewrite: rejection, child step retries, no re-run, park/resume |
+| | `spec/ruby_reactor/step_retries/declaration_spec.rb:69-84` | the two "validates `retries` in compose/async_reactor block" examples become rejection examples |
+| | `demo_app/.../compose_retry_demo_reactor.rb` (+ spec, rake) | child step declares `retries`; no compose-level retries |
+| | 007 probes S-compose-05, 05b | rejection, and child-step retry sequence |
+| Conditions (R-15) | `dsl/step_builder.rb`, `dsl/interrupt_builder.rb`, `dsl/{compose,map,async_reactor}_builder.rb`, `executor/step_executor.rb`, `step_worker.rb`, `executor/compensation_manager.rb`, `executor/result_handler.rb`, `error/condition_error.rb` (delete), `lib/ruby_reactor.rb` (require) | remove |
+| | specs and fixtures in R-15 | delete; add rejection spec |
+| Exceptions (R-16) | `error/rescuable.rb` (new), the user-code rescue sites, `executor.rb`, `executor/compensation_manager.rb` | widen; pop per entry |
+| | `spec/ruby_reactor/rollback/aborted_execution_spec.rb`, `failure_rollback_spec.rb` | retarget |
+| | `demo_app/.../argument_failure_demo_reactor.rb` (+ spec, rake) | add a non-standard exception case |
+| Docs | R-13 additions, CHANGELOG | rewrite |
+
+---
+
+## R-19 · `Skipped` is only an instrumentation mark (FR-029, FR-030, review 2026-09-27)
+
+**Facts**: a body's `Skipped` differed from `Success` in three places: `ResultHandler#handle_skipped`
+did not enroll it for undo, `StepExecutor#handoff_after?` did not hand off after it, and
+`StepCoordination#plain_success?` did not mark a period bucket for it. `handoff_after?` also let a
+`Halt` through (probed: `background after: :x` + `Halt` returned a `DispatchResult`).
+
+**Decision** (the review's rule, "`Skipped` is in every effect the same as `Success`"):
+`handle_skipped` calls `handle_success` and only adds the trace entry; `handoff_after?` excludes
+`Halt` instead of `Skipped`; the period mark treats `Skipped` like `Success`. The library's own
+skips (period, ordered lock) come from gates outside the period mark, so they never mark a bucket,
+but they are enrolled for undo like any `Skipped`.
+
+## R-20 · Cap a stored failure's backtrace (FR-031)
+
+A real stack overflow stored a ~12,000-frame backtrace (context 2.4 MB). `Failure` keeps the first
+100 frames plus a `"... N more frames"` line (probed: 23 KB).
