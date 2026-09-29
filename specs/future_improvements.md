@@ -266,3 +266,20 @@ Raised while implementing specs/008-rollback-reliability. None blocks it.
   the failure, so its time is linear in the number of completed elements (10,000 elements take
   about a minute in the test suite). Direction: enqueue one rollback job per element (or per
   batch) and resolve the parent's failure once they report back.
+- **A resume for a second pending interrupt while the first is executing.** A reactor paused at
+  several ready interrupts takes their resumes one at a time: each accepted resume marks the run
+  `running` (008 FR-032), and the run pauses again at the interrupts still pending. A resume that
+  arrives for another pending interrupt while the first resume is still executing is rejected
+  ("the reactor is running"). Interrupt steps have no body, so that window is short, but a caller
+  resuming two interrupts at once can hit it. Direction: accept it for an interrupt that has not
+  executed yet (store its payload and let the running resume pick it up), or return a retryable
+  error.
+- **An interrupted `compensate` of the failing step is not re-run.** An interruption (signal, exit,
+  out of memory) during the failing step's own `compensate` leaves the run `aborted`. A manual
+  `Reactor.undo(id)` undoes the completed steps but never re-runs that `compensate`, so the step
+  can stay half-compensated. Pre-existing (008 R-08). Direction: record the failing step on the
+  aborted run and have manual undo re-run its `compensate` before the undo stack.
+- **Two resumes in the same instant.** Two `continue` calls that both read `paused` before either
+  saves `running` are separated only by the per-run context lock, which inline Sidekiq testing
+  skips. Accepted for now (008 review, 2026-09-27). Direction: claim the resume with an atomic
+  status compare-and-set.

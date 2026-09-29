@@ -983,6 +983,9 @@ paused at an interrupt (FR-032).
   `lib/ruby_reactor.rb`, `spec/ruby_reactor/rollback/removed_dsl_spec.rb`,
   `spec/ruby_reactor/skipped_rollback_spec.rb`, probe S-plain-06, README, `documentation/`,
   CHANGELOG (drop the "`Skipped` steps are undone" migration note), 007 INV-05/R5, 008 artifacts.
+- [X] T131 Record the review's deferred items in `specs/future_improvements.md` (concurrent resume of
+  a second pending interrupt, interrupted failing-step `compensate`, same-instant resumes) and in
+  spec.md (FR-032, Assumptions).
 
 ---
 

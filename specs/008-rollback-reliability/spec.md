@@ -457,7 +457,9 @@ to return `Skipped` from its body and check that the reactor continues past it.
   inflate the stored context.
 - **FR-032**: A resume (`continue`) MUST be accepted only while the execution is paused at an
   interrupt step. A resume that arrives while the execution is running or rolling back MUST fail
-  without changing it.
+  without changing it. With several pending interrupts, each takes its resume once the run has
+  paused again. A resume for a second pending interrupt that arrives while the first resume is
+  still executing is rejected for now (deferred, `specs/future_improvements.md`).
 
 ### Key Entities
 
@@ -550,6 +552,9 @@ to return `Skipped` from its body and check that the reactor continues past it.
   `compose`/`async_reactor` is rejected (FR-009), `where`/`guard` are removed (FR-014), and
   exceptions that are not standard errors now roll back instead of propagating (FR-016). Planning
   decides the SemVer level of each change.
+- **Deferred by the review (2026-09-27)**, recorded in `specs/future_improvements.md`: a resume for
+  a second pending interrupt while the first executes; re-running an interrupted `compensate` of
+  the failing step on manual undo; two resumes in the same instant (accepted).
 - **Revision of existing work**: the first implementation of this feature is already on the branch.
   Planning updates the research decisions this revision reverses (R-05 fresh child per attempt,
   R-06 condition errors, R-08 aborted on every non-standard exception) and the tasks that
