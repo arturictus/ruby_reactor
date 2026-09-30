@@ -279,6 +279,19 @@ Raised while implementing specs/008-rollback-reliability. None blocks it.
   `Reactor.undo(id)` undoes the completed steps but never re-runs that `compensate`, so the step
   can stay half-compensated. Pre-existing (008 R-08). Direction: record the failing step on the
   aborted run and have manual undo re-run its `compensate` before the undo stack.
+- **Recover a resume contended on a lock.** An inline `continue` that cannot take the reactor's
+  `with_lock` or `with_semaphore` raises its `AcquisitionError` and leaves the run `paused`; the
+  caller has to retry it (008 review, 2026-09-30). A webhook sender that does not retry loses the
+  resume. Direction:
+  - Validate the payload first, synchronously in the calling process, as `resume: :background`
+    does today. An invalid payload returns its validation failure to the caller (the webhook),
+    and nothing is stored or enqueued.
+  - Only a valid payload is stored and handed off. On contention, mark the run `running` and give
+    the resume to a worker. The worker snoozes on the contended lock without spending retries and
+    resumes once the lock is free. The deferred resume never re-validates the payload, so it
+    cannot fail on validation after the caller was told it was accepted.
+  - `continue` returns a `DispatchResult` instead of raising, and a second `continue` is rejected
+    as for any running resume.
 - **Two resumes in the same instant.** Two `continue` calls that both read `paused` before either
   saves `running` are separated only by the per-run context lock, which inline Sidekiq testing
   skips. Accepted for now (008 review, 2026-09-27). Direction: claim the resume with an atomic

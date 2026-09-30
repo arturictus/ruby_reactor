@@ -133,6 +133,8 @@ The behavior on a "lock already held" condition depends on **where** the reactor
 | Inline (`Reactor.run`)           | Raises `RubyReactor::Lock::AcquisitionError`. The caller decides whether to retry, switch to background, or give up. |
 | Background worker (Sidekiq/ActiveJob) | Snoozes the job via `perform_in(delay, ...)`. **Does not** consume the backend's retry budget.                  |
 
+An interrupt's inline `continue` behaves like `Reactor.run`: a contended resume raises and the run stays paused, so the caller can retry it ([Resuming Execution](interrupts.md#resuming-execution)).
+
 The background path also force-disables `wait:` (no `sleep`/BLPOP inside a worker thread) — better to snooze the job than to tie up a worker.
 
 After `lock_snooze_max_attempts` snoozes, the worker stops re-enqueuing and marks the context as failed. See [Snooze configuration](#snooze-configuration).

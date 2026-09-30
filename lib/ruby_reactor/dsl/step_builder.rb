@@ -444,6 +444,12 @@ module RubyReactor
         !async_dispatch?
       end
 
+      # Whether a run of this step cut short by an interruption is still
+      # tracked for undo: the construct's own definition decides (008 R-16).
+      def undoes_partial_run?
+        rollback_tracked? && has_impl? && impl.respond_to?(:undoes_partial_run?) && impl.undoes_partial_run?
+      end
+
       def has_impl?
         !@impl.nil?
       end

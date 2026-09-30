@@ -192,6 +192,12 @@ module RubyReactor
       @execution_trace = executor.execution_trace
 
       @result
+    rescue Lock::AcquisitionError, Semaphore::AcquisitionError => e
+      # Contended at the resume's own gates: nothing ran, so the run is still
+      # paused and the caller may retry, as with `Reactor.run`. A context-lock
+      # contention means a live resume holds the run: leave it alone.
+      reopen_paused unless executor&.past_gates? || e.is_a?(Lock::ContextLockContention)
+      raise
     rescue Error::InputValidationError => e
       # This might catch other validations, but here we specifically want payload validation.
       # The block above handles payload validation explicitly.
@@ -222,6 +228,11 @@ module RubyReactor
 
     def configuration
       RubyReactor::Configuration.instance
+    end
+
+    def reopen_paused
+      @context.status = :paused
+      save_context
     end
 
     def validate_steps!

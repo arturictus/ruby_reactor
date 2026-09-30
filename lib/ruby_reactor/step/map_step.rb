@@ -59,6 +59,9 @@ module RubyReactor
 
       alias undo compensate
 
+      # An interrupted run is undone too: undo replays only each element's completed steps.
+      def self.undoes_partial_run? = true
+
       class << self
         def build_mapped_inputs(mappings, context, element)
           built = {}
@@ -114,35 +117,43 @@ module RubyReactor
       end
 
       # `[[index, context], ...]` for every completed element, highest index
-      # first. An indexed element whose row is gone (expired past
-      # `context_ttl`) is reported, never skipped silently; its index lived in
-      # that row.
+      # first. An element whose row is gone (expired past `context_ttl`) is
+      # reported, never skipped silently.
       def completed_elements(map_id, failures)
         storage = RubyReactor.configuration.storage_adapter
         storage_name = RubyReactor.reactor_storage_name(element_class)
         # A parked or retried fan-out element registers its id again.
         ids = storage.retrieve_map_element_context_ids(map_id, context.reactor_class.name).uniq
-
-        elements = ids.filter_map do |id|
-          data = storage.retrieve_context(id, storage_name)
-          unless data
-            failures << element_unavailable(id)
-            next
-          end
-
+        rows = ids.map { |id| storage.retrieve_context(id, storage_name) }
+        elements = rows.compact.map do |data|
           element_context = RubyReactor::Context.deserialize_from_retry(data)
-          next unless element_context.status.to_s == "completed"
-
-          meta = element_context.map_metadata || {}
-          [(meta[:index] || meta["index"]).to_i, element_context]
+          [Utils::FetchIndifferent.call(element_context.map_metadata || {}, :index).to_i, element_context]
         end
-        elements.sort_by { |index, _| -index }
+
+        report_unavailable(elements.map(&:first), rows.count(nil), failures)
+        # An `aborted` element (an inline run interrupted in it) kept the undo
+        # entries of the steps it completed.
+        elements.select { |_, element| %w[completed aborted].include?(element.status.to_s) }
+                .sort_by { |index, _| -index }
       end
 
-      def element_unavailable(id)
+      # The parent's map reference (in its own blob, so it lives as long as
+      # the parent) counts the elements that started: set per element inline,
+      # and to the total when a fan-out map completes. With it, every started
+      # index without a row is named, even when the index list itself expired;
+      # without it (a failed fan-out map skipped some indices), one unnamed
+      # entry per indexed row that is gone.
+      def report_unavailable(found_indexes, missing_rows, failures)
+        ref = Utils::FetchIndifferent.call(context.composed_contexts, context.current_step)
+        started = ref && Utils::FetchIndifferent.call(ref, :started)
+        missing = started ? (0...started).to_a - found_indexes : [nil] * missing_rows
+        missing.each { |index| failures << rollback_entry(index, :context_unavailable, "context expired") }
+      end
+
+      def rollback_entry(index, reason, message)
         step_name = context.current_step.to_sym
-        { step: step_name, kind: :undo, key: nil, reason: :context_unavailable, map_step: step_name,
-          element_index: nil, message: "element context #{id} expired before rollback" }
+        { step: step_name, kind: :undo, key: nil, reason: reason, map_step: step_name, element_index: index,
+          message: "map element #{index} #{message}" }
       end
 
       # The element's own undo stack, replayed as `ComposeStep` replays its
@@ -150,7 +161,7 @@ module RubyReactor
       # settled is a live duplicate delivery, which is left alone and reported.
       def rollback_element(map_id, index, element_context)
         lock = acquire_element_lock(map_id, index)
-        return [element_in_flight(index)] if lock == :held
+        return [rollback_entry(index, :element_in_flight, "was still running at rollback time")] if lock == :held
 
         executor = RubyReactor::Executor.new(element_class, {}, element_context)
         executor.undo_all
@@ -170,11 +181,6 @@ module RubyReactor
         lock
       rescue RubyReactor::Lock::AcquisitionError
         :held
-      end
-
-      def element_in_flight(index)
-        { step: context.current_step.to_sym, kind: :undo, key: nil, reason: :element_in_flight,
-          message: "map element #{index} was still running at rollback time" }
       end
 
       # Fans out anywhere except inside a map element: an element's result and
@@ -239,7 +245,8 @@ module RubyReactor
           name: context.current_step,
           type: :map_ref,
           map_id: map_id,
-          element_reactor_class: inputs.mapped_reactor_class.name
+          element_reactor_class: inputs.mapped_reactor_class.name,
+          started: index + 1
         }
 
         executor = RubyReactor::Executor.new(inputs.mapped_reactor_class, {}, child_context)

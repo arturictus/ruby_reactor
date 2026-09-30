@@ -5,6 +5,12 @@ module RubyReactor
     class Collector
       extend Helpers
 
+      # Seconds a collector waits for another collector of the same map. One
+      # that found the map unsettled releases within milliseconds, and may be
+      # the only trigger left for a failure it just deferred (R-04); a holder
+      # busy longer is the one applying the map's result.
+      COLLECT_LOCK_WAIT = 2
+
       def self.perform(arguments)
         arguments = arguments.transform_keys(&:to_sym)
         map_id = arguments[:map_id]
@@ -30,7 +36,7 @@ module RubyReactor
         lock = RubyReactor::Lock.new(
           "map_collect:#{map_id}",
           owner: SecureRandom.uuid, ttl: RubyReactor.configuration.context_lock_ttl,
-          wait: 0, auto_extend: true
+          wait: COLLECT_LOCK_WAIT, auto_extend: true
         )
         lock.acquire
         lock

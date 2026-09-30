@@ -1422,7 +1422,7 @@ result.rollback_failures
 `reason` is `:coordination_unavailable`, `:returned_failure`, or `:raised`; `kind`
 is `:undo` or `:compensate`. An entry from a map element's rollback also carries
 `map_step:` and `element_index:`, and a map reports an element it could not roll
-back with `reason: :context_unavailable` (its stored context expired) or
+back with `reason: :context_unavailable` (its stored context, or the map's element index, expired) or
 `:element_in_flight` (a duplicate of it was still running). See
 [Step Rollback](documentation/locks_and_semaphores.md#step-rollback).
 

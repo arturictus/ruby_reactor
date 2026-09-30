@@ -70,6 +70,25 @@ module MapRollbackSpec
     end
   end
 
+  # b drops the map's element index (as if it expired past `context_ttl` while
+  # the parent lived on), then fails.
+  class IndexExpiresThenFails < RollbackRecorder::Reactor
+    input :items
+    recording_step :a
+    map :m, ElemOk do
+      source input(:items)
+      argument :i, element(:m)
+    end
+    recording_step(:b, after: :m) do
+      run do |_inputs, ctx|
+        RollbackRecorder.record("run:b")
+        Redis.new(url: REDIS_TEST_URL)
+             .del("reactor:#{ctx.reactor_class.name}:map:#{ctx.context_id}:m:element_contexts")
+        RubyReactor.Failure("boom b")
+      end
+    end
+  end
+
   class ChildWithMap < RollbackRecorder::Reactor
     tag "child"
     input :items
@@ -200,8 +219,17 @@ RSpec.describe "map rollback (inline)" do
 
     expect(RollbackRecorder.log).to end_with("compensate:b", *undone(3, 2, 0), "undo:a")
     expect(result.rollback_failures).to include(
-      a_hash_including(step: :m, kind: :undo, reason: :context_unavailable, map_step: :m, element_index: nil)
+      a_hash_including(step: :m, kind: :undo, reason: :context_unavailable, map_step: :m, element_index: 1)
     )
+  end
+
+  it "reports every element when the map's element index expired, never skipping them silently" do
+    result = MapRollbackSpec::IndexExpiresThenFails.run(MapRollbackSpec::ITEMS)
+
+    expect(RollbackRecorder.log).to end_with("run:b", "compensate:b", "undo:a")
+    expect(RollbackRecorder.log.grep(/\Aundo:e\./)).to be_empty
+    unavailable = result.rollback_failures.select { |entry| entry[:reason] == :context_unavailable }
+    expect(unavailable.map { |entry| entry[:element_index] }).to contain_exactly(0, 1, 2, 3)
   end
 
   it "rolls back nothing, without error, for an empty source" do

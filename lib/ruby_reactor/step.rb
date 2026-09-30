@@ -113,6 +113,13 @@ module RubyReactor
         catch(StepSignals::TAG) { new(with_defaults(arguments), context, reason: reason).compensate }
       end
 
+      # Whether `undo` also reverts a run cut short by an interruption. A
+      # plain step's body stopped mid-way, so no: only a construct whose undo
+      # replays the child work it completed (compose, map) says yes (008 R-16).
+      def undoes_partial_run?
+        false
+      end
+
       def input(...)
         own_input_contract.input(...)
         @input_contract = nil

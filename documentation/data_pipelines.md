@@ -202,7 +202,7 @@ Things to know:
 
 - **Make element `undo`s idempotent.** They can run after the map succeeded, on a later failure or on a manual undo, and a failure elsewhere must not leave a half-refund.
 - **Rollback failures are reported per element.** An element whose undo fails does not stop the others. Its entry in `Failure#rollback_failures` carries `map_step:` and `element_index:`.
-- **`context_ttl` is the rollback horizon.** Each element's rollback reads its stored context. If it expired before the rollback, the element is reported with `reason: :context_unavailable` (and `element_index: nil`, since the index lived in the expired row), never skipped silently.
+- **`context_ttl` is the rollback horizon.** Each element's rollback reads its stored context, found through the map's element index. Both are kept for `context_ttl` from the element's run, while the parent's own TTL restarts on every save. If either expired before the rollback, each element that ran is reported with `reason: :context_unavailable` and its `element_index`, never skipped silently. (A fan-out map that failed skipped some elements, so there an expired row is reported with `element_index: nil`.)
 - **A duplicate still running is left alone.** If an element's job is still live when the rollback reaches it (a duplicate delivery), it is reported with `reason: :element_in_flight`.
 - **Rollback is serial**, in the process that detected the failure, so it takes time proportional to the number of completed elements.
 

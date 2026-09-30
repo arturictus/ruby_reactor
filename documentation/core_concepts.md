@@ -347,7 +347,6 @@ Each construct says what compensate and undo mean for itself:
 | --- | --- | --- |
 | `step` | its `compensate` (inline block, else the step class's, else skipped) | its `undo` (same order) |
 | `compose` | the child already rolled itself back, so nothing is left to do | replay the child's completed steps' `undo`s, newest first |
-| `compose` with `retries` | each retry after a failed attempt starts a **fresh** child | only the final attempt's child is undone |
 | `map` (inline and `fan_out`) | roll back every **completed** element (its steps' `undo`s), highest index first; the failed element already rolled itself back | the same, for every completed element |
 | `async_step` | not tracked by the parent; the **unit** compensates itself once, in its own job, after its final attempt fails | none: an inline `undo` is rejected at definition time |
 | `async_reactor` | not tracked by the parent; the child rolls itself back | none |

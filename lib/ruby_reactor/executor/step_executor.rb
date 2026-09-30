@@ -119,12 +119,25 @@ module RubyReactor
           unless completed
             event = e.is_a?(Error::ExecutionParked) ? :snooze_step : :failed_step
             @middlewares.on(event, step_config.name, e, @context)
+            track_interrupted_construct(step_config, resolved_arguments, e)
           end
           raise
         end
       end
 
       private
+
+      # An interruption leaves a caller-process run `aborted` for a manual
+      # undo, which replays the undo stack. A compose or map cut short already
+      # holds completed child work that only its own undo reverts, so it joins
+      # the stack. A worker run is redelivered instead, and re-runs the step.
+      def track_interrupted_construct(step_config, arguments, error)
+        return if @context.inline_async_execution || Error::Rescuable === error # rubocop:disable Style/CaseEquality
+        return unless step_config.undoes_partial_run?
+
+        @compensation_manager.add_to_undo_stack({ step: step_config, arguments: arguments,
+                                                  result: RubyReactor.Success(nil) })
+      end
 
       # `[arguments, nil]`, or `[{}, ArgumentResolutionError]` for the caller
       # to fail the step with once its `:start_step` has fired.

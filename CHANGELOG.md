@@ -48,8 +48,9 @@
   it reports its failure, and settles the elements it never started as skipped (which also stops
   the map sweeper re-dispatching them). An element rollback that does not complete is listed in
   `Failure#rollback_failures` with `map_step:` and `element_index:`; an element whose context
-  expired is reported with `reason: :context_unavailable`, and a still-running duplicate with
-  `reason: :element_in_flight`.
+  (or the map's element index) expired is reported with `reason: :context_unavailable`, and a
+  still-running duplicate with `reason: :element_in_flight`. A fan-out map whose rollback is
+  incomplete fails with the same `CompensationError` shape as an inline map.
   See *Migration notes: reliable rollback* below.
 * **`RubyReactor::Step` is now a base class, not a mixin.** `include RubyReactor::Step` on a
   plain class with `def self.run(arguments, context)` is gone — no compatibility shim, no dual
@@ -244,9 +245,11 @@ Every breaking or shape-changing item of the rollback work, with what to change.
   (`SignalException` including `Interrupt`, `SystemExit`, `NoMemoryError`, or an enclosing
   `Timeout.timeout`) cuts short runs no rollback code: the exception reaches the caller unchanged,
   and the run is stored as `aborted` with only the steps not yet undone still outstanding (an
-  interruption during a rollback keeps exactly the rest). Workers and the sweeper never resume it; `Reactor.undo(id)`
-  rolls it back. The dashboard and web API show and filter it, next to `failed`. A worker run is
-  unchanged (its job is redelivered).
+  interruption during a rollback keeps exactly the rest, whichever failure started that rollback).
+  Workers and the sweeper never resume it; `Reactor.undo(id)` rolls it back, including the steps a
+  composed child or the elements of an inline `map` completed when the interruption hit inside
+  them. The dashboard and web API show and filter it, next to `failed`. A worker run is unchanged
+  (its job is redelivered).
 * **Step-scoped coordination.** Steps can declare `with_lock`, `with_semaphore`, `with_rate_limit`,
   `with_period`, and `with_ordered_lock` — the same macros as the reactor form, keyed on the step's
   own resolved arguments instead of the reactor's inputs — so one step of a workflow can be
@@ -312,6 +315,8 @@ Every breaking or shape-changing item of the rollback work, with what to change.
   aborted, raises `RubyReactor::Error::ValidationError` and changes nothing. Before, it resumed the
   run from its stored state, which could run a rolled-back or aborted run forward again. An
   accepted resume marks the run `running` before executing, so a concurrent second resume fails.
+  A resume that cannot take the reactor's lock or semaphore raises its `AcquisitionError` and
+  leaves the run paused, so the caller can retry it.
 * A `background after:` step that returns `Halt` no longer hands the rest of the run to a worker:
   the run halts, as `Halt` promises. Before, the remaining steps ran in a worker.
 * A stored `Failure` keeps at most 100 backtrace frames, plus a `"... N more frames"` line. A stack

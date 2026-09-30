@@ -54,6 +54,65 @@ module AbortedExecutionSpec
     recording_step :c, after: :b
     recording_step :d, after: :c, fail: true
   end
+
+  class AmountStep < RubyReactor::Step
+    input :amount, :integer
+
+    def run
+      RubyReactor.Success(inputs.amount)
+    end
+  end
+
+  # b's input contract rejects its argument, so the executor rolls back from
+  # its `rescue` clause; a's undo is interrupted there, on the first try only.
+  UNDO_A_INTERRUPTED_ONCE = proc do |_value, _inputs, _ctx|
+    RollbackRecorder.record("undo:a")
+    raise CRASH if (RollbackRecorder.counters["a undos"] += 1) == 1
+
+    RubyReactor.Success()
+  end
+
+  class InvalidAfterA < RollbackRecorder::Reactor
+    input :amount
+    recording_step(:a) { undo(&UNDO_A_INTERRUPTED_ONCE) }
+    step(:b, AmountStep) do
+      wait_for :a
+      argument :amount, input(:amount)
+    end
+  end
+
+  class PausedThenInvalid < RollbackRecorder::Reactor
+    input :amount
+    recording_step(:a) { undo(&UNDO_A_INTERRUPTED_ONCE) }
+    interrupt(:approve) { wait_for :a }
+    step(:b, AmountStep) do
+      wait_for :approve
+      argument :amount, input(:amount)
+    end
+  end
+
+  class CrashingElement < RollbackRecorder::Reactor
+    tag "e"
+    input :i
+    recording_step :e1, idx: true
+    recording_step(:e2, after: :e1, idx: true) do
+      run do |inputs, _ctx|
+        RollbackRecorder.record("run:e.e2[#{inputs.i}]")
+        raise CRASH if inputs.i == 1
+
+        RubyReactor.Success()
+      end
+    end
+  end
+
+  class MapsCrash < RollbackRecorder::Reactor
+    input :items
+    recording_step :a
+    map :m, CrashingElement do
+      source input(:items)
+      argument :i, element(:m)
+    end
+  end
 end
 
 RSpec.describe "a run cut short by an interruption" do
@@ -151,5 +210,44 @@ RSpec.describe "a run cut short by an interruption" do
     AbortedExecutionSpec::InterruptedRollback.undo(id)
 
     expect(RollbackRecorder.log).to eq(%w[undo:b undo:a])
+  end
+
+  it "aborts when the interrupted rollback runs from the executor's rescue clause" do
+    reactor = AbortedExecutionSpec::InvalidAfterA.new
+    expect { reactor.run(amount: "not a number") }.to raise_error(Interrupt)
+    id = reactor.context.context_id
+
+    expect(stored(AbortedExecutionSpec::InvalidAfterA, id)["status"]).to eq("aborted")
+    expect(RubyReactor::Sweeper.run_once).to eq(0)
+
+    AbortedExecutionSpec::InvalidAfterA.undo(id)
+    expect(RollbackRecorder.log).to eq(%w[run:a undo:a undo:a])
+  end
+
+  it "aborts when that rollback runs on a resume" do
+    id = AbortedExecutionSpec::PausedThenInvalid.run(amount: "not a number").execution_id
+
+    expect { AbortedExecutionSpec::PausedThenInvalid.find(id).continue(payload: {}, step_name: :approve) }
+      .to raise_error(Interrupt)
+    expect(stored(AbortedExecutionSpec::PausedThenInvalid, id)["status"]).to eq("aborted")
+  end
+
+  it "undoes an interrupted composed child's completed steps on a manual undo" do
+    id = run_crashing(AbortedExecutionSpec::ComposesCrash)
+    RollbackRecorder.log.clear
+
+    AbortedExecutionSpec::ComposesCrash.undo(id)
+
+    expect(RollbackRecorder.log).to eq(%w[undo:child.c1 undo:a])
+  end
+
+  it "undoes an interrupted inline map's elements on a manual undo, the interrupted one included" do
+    reactor = AbortedExecutionSpec::MapsCrash.new
+    expect { reactor.run(items: [0, 1, 2]) }.to raise_error(Interrupt)
+    RollbackRecorder.log.clear
+
+    AbortedExecutionSpec::MapsCrash.undo(reactor.context.context_id)
+
+    expect(RollbackRecorder.log).to eq(%w[undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a])
   end
 end

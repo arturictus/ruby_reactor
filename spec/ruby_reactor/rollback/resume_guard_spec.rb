@@ -29,6 +29,20 @@ module ResumeGuardSpec
     interrupt(:approval) { wait_for :a }
     recording_step(:c, after: :approval) { run { |_inputs, _ctx| raise Interrupt } }
   end
+
+  class LockedApproval < RollbackRecorder::Reactor
+    with_lock { |_inputs| "resume-guard:locked" }
+    recording_step :a
+    interrupt(:approval) { wait_for :a }
+    recording_step :c, after: :approval
+  end
+
+  class SemaphoredApproval < RollbackRecorder::Reactor
+    with_semaphore(limit: 1) { |_inputs| "resume-guard:semaphore" }
+    recording_step :a
+    interrupt(:approval) { wait_for :a }
+    recording_step :c, after: :approval
+  end
 end
 
 RSpec.describe "resuming a reactor that is not paused (FR-032)" do
@@ -59,5 +73,28 @@ RSpec.describe "resuming a reactor that is not paused (FR-032)" do
     expect do
       ResumeGuardSpec::InterruptedAfterResume.continue(id: id, payload: { ok: true }, step_name: :approval)
     end.to raise_error(RubyReactor::Error::ValidationError, /aborted.*not paused/)
+  end
+
+  # Contention on the resume is the caller's to retry (locks_and_semaphores.md,
+  # "Inline vs background behavior on contention"): the run stays paused.
+  {
+    "reactor lock" => [ResumeGuardSpec::LockedApproval, RubyReactor::Lock::AcquisitionError,
+                       -> { RubyReactor::Lock.new("resume-guard:locked", owner: "another-run", auto_extend: false) }],
+    "reactor semaphore" => [ResumeGuardSpec::SemaphoredApproval, RubyReactor::Semaphore::AcquisitionError,
+                            -> { RubyReactor::Semaphore.new("resume-guard:semaphore", limit: 1) }]
+  }.each do |primitive, (reactor_class, contention_error, holder)|
+    it "leaves the run paused when its resume is contended on the #{primitive}, so it can be retried" do
+      id = pause(reactor_class)
+      held = holder.call
+      held.acquire
+
+      expect { reactor_class.continue(id: id, payload: { ok: true }, step_name: :approval) }
+        .to raise_error(contention_error)
+      expect(reactor_class.find(id).context.status.to_s).to eq("paused")
+
+      held.release
+      expect(reactor_class.continue(id: id, payload: { ok: true }, step_name: :approval)).to be_success
+      expect(RollbackRecorder.log).to eq(%w[run:a run:c])
+    end
   end
 end

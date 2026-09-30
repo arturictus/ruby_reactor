@@ -153,7 +153,7 @@ module RubyReactor
       @contention_snooze = true
       raise
     rescue Error::Rescuable => e
-      @result = @result_handler.handle_execution_error(e)
+      @result = aborting_on_interruption { @result_handler.handle_execution_error(e) }
       update_context_status(@result)
       completed = true
       @result
@@ -242,6 +242,7 @@ module RubyReactor
       @context.admit!
       prepare_for_resume
       save_context
+      @past_gates = true
 
       @result = if @context.current_step
                   execute_current_step_and_continue
@@ -273,7 +274,7 @@ module RubyReactor
       @contention_snooze = true
       raise e
     rescue Error::Rescuable => e
-      handle_resume_error(e)
+      aborting_on_interruption { handle_resume_error(e) }
       update_context_status(@result)
       completed = true
       @result
@@ -294,6 +295,12 @@ module RubyReactor
       @compensation_manager.rollback_completed_steps
     end
 
+    # True once `resume_execution` is past its reactor-level gates (context
+    # lock, lock, semaphore, period): from there on it may have run steps.
+    def past_gates?
+      @past_gates == true
+    end
+
     # Reached only by an interruption — a signal, an exit, out of memory, an
     # enclosing timeout (008 R-08, R-16); every other exception was rescued as
     # `Error::Rescuable` and rolled back. Running user rollback code now is
@@ -303,6 +310,16 @@ module RubyReactor
     # `running` and its job is redelivered.
     def mark_aborted
       @context.status = :aborted unless @context.inline_async_execution
+    end
+
+    # A rollback run from a `rescue Error::Rescuable` body is outside the
+    # sibling `rescue Exception`, which never sees what that body raises: an
+    # interruption there must mark the run here.
+    def aborting_on_interruption
+      yield
+    rescue Exception => e # rubocop:disable Lint/RescueException
+      mark_aborted unless Error::Rescuable === e # rubocop:disable Style/CaseEquality
+      raise
     end
 
     def undo_stack

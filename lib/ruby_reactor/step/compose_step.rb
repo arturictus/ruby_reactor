@@ -49,6 +49,9 @@ module RubyReactor
 
       alias undo compensate
 
+      # An interrupted run is undone too: undo replays only the child's completed steps.
+      def self.undoes_partial_run? = true
+
       private
 
       def build_composed_inputs(mappings)

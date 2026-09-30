@@ -48,6 +48,34 @@ module MapFanOutSettleSpec
     recording_step :b, after: :m, fail: true
   end
 
+  # Element 2 fails and its own e1 undo fails; element 0's e1 undo fails when
+  # the map rolls back.
+  class ElemUndoFails < RollbackRecorder::Reactor
+    tag "e"
+    input :i
+    recording_step :e1, idx: true, undo_fails: ->(inputs) { [0, 2].include?(inputs.i) }
+    recording_step :e2, after: :e1, idx: true, fail: ->(inputs) { inputs.i == 2 }
+  end
+
+  class InlineUndoFails < RollbackRecorder::Reactor
+    input :items
+    recording_step :a
+    map :m, ElemUndoFails do
+      source input(:items)
+      argument :i, element(:m)
+    end
+  end
+
+  class FanOutUndoFails < RollbackRecorder::Reactor
+    input :items
+    recording_step :a
+    map :m, ElemUndoFails do
+      source input(:items)
+      argument :i, element(:m)
+      fan_out
+    end
+  end
+
   class Batched < RollbackRecorder::Reactor
     input :items
     map :m, ElemFailsAtOne do
@@ -153,6 +181,50 @@ RSpec.describe "map rollback (fan-out)" do
       trace = MapFanOutSettleSpec::Batched.find(id).context.execution_trace
       expect(trace.count { |e| e[:type].to_s == "compensate" && e[:step].to_s == "m" }).to eq(1)
       expect(RubyReactor::Map::Sweeper.run_once[:redispatched]).to eq(0)
+    end
+
+    # A collector that found the map unsettled still holds the lock when the
+    # last element's collector arrives: that one must wait, not drop.
+    it "applies a fail-fast failure when its collector meets another collector's lock" do
+      id = MapFanOutSettleSpec::FailsInMap.run(items).execution_id
+      perform_element_jobs
+      holder = RubyReactor::Lock.new("map_collect:#{id}:m", owner: "deferring-collector", ttl: 30, auto_extend: false)
+      holder.acquire
+      releaser = Thread.new do
+        sleep 0.3
+        holder.release
+      end
+      drain
+      releaser.join
+
+      expect(RollbackRecorder.log).to eq(["run:a", *elements(0, 1, 2, fail_at: 2), *undone(1, 0), "undo:a"])
+      expect(MapFanOutSettleSpec::FailsInMap.find(id).context.status.to_s).to eq("failed")
+    end
+
+    it "fails with the inline map's shape when an element's rollback fails" do
+      inline = MapFanOutSettleSpec::InlineUndoFails.run(items)
+      id = MapFanOutSettleSpec::FanOutUndoFails.run(items).execution_id
+      drain
+      fan_out = MapFanOutSettleSpec::FanOutUndoFails.find(id).result
+
+      shape = ->(failure) { [failure.exception_class, failure.step_name.to_s, failure.error.to_s] }
+      expect(shape.call(fan_out)).to eq(shape.call(inline))
+      expect(fan_out.rollback_failures).to eq(inline.rollback_failures)
+      expect(inline.rollback_failures.map do |entry|
+        entry[:message]
+      end).to eq(["undo e.e1[2] failed", "undo e.e1[0] failed"])
+    end
+
+    it "reports every element when the map's element index expired before a later failure" do
+      id = MapFanOutSettleSpec::LaterFailure.run(items).execution_id
+      perform_element_jobs
+      redis.del("reactor:MapFanOutSettleSpec::LaterFailure:map:#{id}:m:element_contexts")
+      drain
+
+      result = MapFanOutSettleSpec::LaterFailure.find(id).result
+      expect(RollbackRecorder.log.grep(/\Aundo:e\./)).to be_empty
+      unavailable = result.rollback_failures.select { |entry| entry[:reason] == :context_unavailable }
+      expect(unavailable.map { |entry| entry[:element_index] }).to contain_exactly(0, 1, 2, 3)
     end
 
     it "reports an element whose liveness lock is held, and undoes the others" do
