@@ -73,9 +73,7 @@ module RubyReactor
           validation_schema: @validation_schema,
           max_attempts: @max_attempts,
           resume_mode: @resume_mode,
-          dependencies: @dependencies,
-          conditions: @conditions,
-          guards: @guards
+          dependencies: @dependencies
         }
 
         RubyReactor::Dsl::InterruptStepConfig.new(step_config)

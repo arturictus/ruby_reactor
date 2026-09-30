@@ -293,21 +293,6 @@ RSpec.describe "Step input contract enforcement", type: :reactor do
     expect(calls.map { |a| a[:amount] }).not_to include(0)
   end
 
-  it "does not validate a step whose where is false" do
-    skipping = Class.new(RubyReactor::Reactor) do
-      input :amount
-      input :currency
-
-      step :charge, ChargeStep do
-        argument :amount, input(:amount)
-        argument :currency, input(:currency)
-        where { |_ctx| false }
-      end
-    end
-
-    expect(skipping.run(amount: 0, currency: "USD")).to be_success
-  end
-
   it "validates the same class under two step names independently" do
     twice = Class.new(RubyReactor::Reactor) do
       step :first_charge, ChargeStep do

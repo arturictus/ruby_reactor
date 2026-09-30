@@ -152,11 +152,14 @@ module RubyReactor
       park_held_primitives! if @context.inline_async_execution
       @contention_snooze = true
       raise
-    rescue StandardError => e
-      @result = @result_handler.handle_execution_error(e)
+    rescue Error::Rescuable => e
+      @result = aborting_on_interruption { @result_handler.handle_execution_error(e) }
       update_context_status(@result)
       completed = true
       @result
+    rescue Exception # rubocop:disable Lint/RescueException
+      mark_aborted
+      raise
     ensure
       release_locks unless @parked
       leave_ordered_lock_scope
@@ -239,6 +242,7 @@ module RubyReactor
       @context.admit!
       prepare_for_resume
       save_context
+      @past_gates = true
 
       @result = if @context.current_step
                   execute_current_step_and_continue
@@ -269,11 +273,14 @@ module RubyReactor
       park_held_primitives!
       @contention_snooze = true
       raise e
-    rescue StandardError => e
-      handle_resume_error(e)
+    rescue Error::Rescuable => e
+      aborting_on_interruption { handle_resume_error(e) }
       update_context_status(@result)
       completed = true
       @result
+    rescue Exception # rubocop:disable Lint/RescueException
+      mark_aborted
+      raise
     ensure
       release_locks unless @parked
       @acquired_context_lock&.release
@@ -286,6 +293,33 @@ module RubyReactor
 
     def undo_all
       @compensation_manager.rollback_completed_steps
+    end
+
+    # True once `resume_execution` is past its reactor-level gates (context
+    # lock, lock, semaphore, period): from there on it may have run steps.
+    def past_gates?
+      @past_gates == true
+    end
+
+    # Reached only by an interruption — a signal, an exit, out of memory, an
+    # enclosing timeout (008 R-08, R-16); every other exception was rescued as
+    # `Error::Rescuable` and rolled back. Running user rollback code now is
+    # unsafe, so none runs: a run in the caller's process is recorded
+    # `aborted`, with the undo entries not yet undone kept, for a manual
+    # `Reactor#undo`; the `ensure` persists it, best effort. A worker run stays
+    # `running` and its job is redelivered.
+    def mark_aborted
+      @context.status = :aborted unless @context.inline_async_execution
+    end
+
+    # A rollback run from a `rescue Error::Rescuable` body is outside the
+    # sibling `rescue Exception`, which never sees what that body raises: an
+    # interruption there must mark the run here.
+    def aborting_on_interruption
+      yield
+    rescue Exception => e # rubocop:disable Lint/RescueException
+      mark_aborted unless Error::Rescuable === e # rubocop:disable Style/CaseEquality
+      raise
     end
 
     def undo_stack

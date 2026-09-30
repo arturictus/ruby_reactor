@@ -99,7 +99,7 @@ module RubyReactor
         key
       rescue KeyError
         raise
-      rescue StandardError => e
+      rescue RubyReactor::Error::Rescuable => e
         raise KeyError.new(
           "#{step_name}: coordination key proc raised #{e.class}: #{e.message}",
           step: step_name, original_error: e
@@ -188,7 +188,7 @@ module RubyReactor
       # counter and marker must survive the park.
       rescue Contended, Error::ExecutionParked
         raise
-      rescue StandardError
+      rescue Error::Rescuable
         clear_contention_state
         raise
       end
@@ -498,7 +498,7 @@ module RubyReactor
         rescue Error::ExecutionParked
           outcome = :parked
           raise
-        rescue StandardError
+        rescue Error::Rescuable
           outcome = :failed
           raise
         ensure
@@ -513,8 +513,8 @@ module RubyReactor
       #   step again and must keep its place: the stash survives, so the next
       #   attempt re-reads the SAME nonce. The heartbeat is stopped across the
       #   gap; `poison_pill_timeout` bounds it.
-      # - :abandoned — an exit that is not a `StandardError` (`Sidekiq::Shutdown`,
-      #   `NoMemoryError`, ...). Not advanced: `Sidekiq::Shutdown` pushes the
+      # - :abandoned — an interruption (`Sidekiq::Shutdown`, `NoMemoryError`,
+      #   ...; `Error::Rescuable`, 008 R-16). Not advanced: `Sidekiq::Shutdown` pushes the
       #   job back to run again, which must keep this place, and `failed: true`
       #   would poison successors for work that may yet complete. With the
       #   heartbeat stopped, the poison pill releases the position within
@@ -644,7 +644,7 @@ module RubyReactor
         return skipped_for_period if storage_adapter.period_seen?(key)
 
         result = yield
-        if plain_success?(result) && !chain_failed?(result)
+        if continuing_success?(result) && !chain_failed?(result)
           storage_adapter.period_mark(key, RubyReactor::Period.ttl_seconds(config[:every]))
         end
         result
@@ -654,8 +654,11 @@ module RubyReactor
         RubyReactor.Skipped(nil, reason: :period, step_name: step_name)
       end
 
-      def plain_success?(result)
-        result.is_a?(RubyReactor::Success) && !result.is_a?(RubyReactor::Halt) && !result.is_a?(RubyReactor::Skipped)
+      # A body's `Skipped` marks the bucket like a Success: it is only an
+      # instrumentation mark. The library's own skips (period, ordered lock)
+      # are returned by the gates around this one, never through it.
+      def continuing_success?(result)
+        result.is_a?(RubyReactor::Success) && !result.is_a?(RubyReactor::Halt)
       end
 
       def period_key(config)

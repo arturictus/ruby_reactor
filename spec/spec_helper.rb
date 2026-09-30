@@ -88,6 +88,9 @@ RSpec.configure do |config|
   # Disable RSpec exposing methods globally on `Module` and `main`
   config.disable_monkey_patching!
 
+  # `:slow` examples (e.g. the 10,000-element map rollback) run only with `--tag slow`.
+  config.filter_run_excluding :slow unless config.inclusion_filter.rules.key?(:slow)
+
   config.expect_with :rspec do |c|
     c.syntax = :expect
   end

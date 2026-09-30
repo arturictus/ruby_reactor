@@ -66,19 +66,21 @@ RSpec.describe "Step retries: declaring `retries`" do
     end.to raise_error(ArgumentError, /charge: retries max_attempts/)
   end
 
-  it "validates `retries` in a compose block" do
+  # 008 R-14: a parent never retries a nested reactor as a whole.
+  it "rejects `retries` in a compose block" do
     child = Class.new(RubyReactor::Reactor) { step(:inner) { run { |_a, _c| RubyReactor.Success() } } }
 
     expect do
-      Class.new(RubyReactor::Reactor) { compose(:c, child) { retries backoff: :bogus } }
-    end.to raise_error(ArgumentError, /backoff/)
+      Class.new(RubyReactor::Reactor) { compose(:c, child) { retries max_attempts: 2 } }
+    end.to raise_error(RubyReactor::Error::DeprecatedDslError, /:c\b/)
   end
 
-  it "validates `retries` in an async_reactor block" do
+  # 008 R-14: a parent never retries a nested reactor as a whole.
+  it "rejects `retries` in an async_reactor block" do
     child = Class.new(RubyReactor::Reactor) { step(:inner) { run { |_a, _c| RubyReactor.Success() } } }
 
     expect do
-      Class.new(RubyReactor::Reactor) { async_reactor(:a, child) { retries backoff: :bogus } }
-    end.to raise_error(ArgumentError, /backoff/)
+      Class.new(RubyReactor::Reactor) { async_reactor(:a, child) { retries max_attempts: 2 } }
+    end.to raise_error(RubyReactor::Error::DeprecatedDslError, /:a\b/)
   end
 end

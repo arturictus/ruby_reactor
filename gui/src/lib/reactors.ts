@@ -20,7 +20,9 @@ export interface ClassAggregate {
 export const STATUS_GROUPS = {
   success: ['completed', 'halted', 'skipped'],
   running: ['running', 'paused'],
-  errors: ['failed', 'cancelled'],
+  // `aborted`: a caller-process run cut short by a process-level exception,
+  // its completed work still outstanding until a manual undo.
+  errors: ['failed', 'cancelled', 'aborted'],
 } as const;
 
 export type StatusGroup = keyof typeof STATUS_GROUPS;

@@ -80,12 +80,18 @@ module RubyReactor
         # it, not this one. (`async_reactor` still resolves here: its resolved
         # values are the child's INPUTS, needed at dispatch.)
         deferred_body = step_config.async_dispatch == :step || handoff_at?(step_config, :before)
-        resolved_arguments = deferred_body ? {} : resolve_arguments(step_config)
+        resolved_arguments, resolution_error = resolve_before_start(step_config, deferred_body)
 
         @middlewares.on(:start_step, step_config.name, resolved_arguments, @context)
         completed = false
         begin
-          result = if step_config.interrupt?
+          # A step whose arguments could not be resolved fails like any step
+          # (`:failed_step`, attribution) but never started: the result
+          # handler undoes the completed steps and does not compensate it.
+          result = if resolution_error
+                     @result_handler.handle_step_result(step_config,
+                                                        pre_body_failure(step_config, resolution_error), {})
+                   elsif step_config.interrupt?
                      handle_interrupt_step(step_config)
                    elsif step_config.async_dispatch == :step
                      dispatch_async_step(step_config)
@@ -113,12 +119,35 @@ module RubyReactor
           unless completed
             event = e.is_a?(Error::ExecutionParked) ? :snooze_step : :failed_step
             @middlewares.on(event, step_config.name, e, @context)
+            track_interrupted_construct(step_config, resolved_arguments, e)
           end
           raise
         end
       end
 
       private
+
+      # An interruption leaves a caller-process run `aborted` for a manual
+      # undo, which replays the undo stack. A compose or map cut short already
+      # holds completed child work that only its own undo reverts, so it joins
+      # the stack. A worker run is redelivered instead, and re-runs the step.
+      def track_interrupted_construct(step_config, arguments, error)
+        return if @context.inline_async_execution || Error::Rescuable === error # rubocop:disable Style/CaseEquality
+        return unless step_config.undoes_partial_run?
+
+        @compensation_manager.add_to_undo_stack({ step: step_config, arguments: arguments,
+                                                  result: RubyReactor.Success(nil) })
+      end
+
+      # `[arguments, nil]`, or `[{}, ArgumentResolutionError]` for the caller
+      # to fail the step with once its `:start_step` has fired.
+      def resolve_before_start(step_config, deferred_body)
+        return [{}, nil] if deferred_body
+
+        [step_config.resolve_arguments(@context), nil]
+      rescue Error::ArgumentResolutionError => e
+        [{}, e]
+      end
 
       # The reactor's single hand-off point, `{ mode: :after|:before, step: }`.
       # Nil for a reactor that never declares `background`.
@@ -130,23 +159,20 @@ module RubyReactor
       end
 
       # Hand-off is keyed to REACHING the named step, not to where the
-      # declaration sits in the class body. A step whose `where`/guard says it
-      # must not run never triggers it — the hand-off only ever relocates work
-      # that is actually going to happen. Inside the worker the whole thing is
+      # declaration sits in the class body. Inside the worker the whole thing is
       # suppressed (`inline_async_execution`) so it cannot re-trigger.
       def handoff_at?(step_config, mode)
         point = background_handoff
-        return false unless point && point[:mode] == mode && point[:step] == step_config.name
-        return false if @context.inline_async_execution
-
-        step_config.should_run?(@context)
+        point && point[:mode] == mode && point[:step] == step_config.name && !@context.inline_async_execution
       end
 
-      # Post-execution trigger for `after:`. Only a plain continue-Success means
-      # the named step actually completed here — a Failure, Skipped, interrupt,
-      # queued retry or an already-async result each own the flow instead.
+      # Post-execution trigger for `after:`. Only a result the run continues
+      # from hands off: a Success, or a Skipped, which is only an
+      # instrumentation mark and never changes execution. A Halt stops the run,
+      # and a Failure, interrupt, queued retry or already-async result each own
+      # the flow instead.
       def handoff_after?(step_config, result)
-        return false unless result.is_a?(RubyReactor::Success) && !result.is_a?(RubyReactor::Skipped)
+        return false unless result.is_a?(RubyReactor::Success) && !result.is_a?(RubyReactor::Halt)
 
         handoff_at?(step_config, :after)
       end
@@ -175,7 +201,7 @@ module RubyReactor
       end
 
       def execute_step_with_retry(step_config, resolved_arguments = nil)
-        resolved_arguments ||= resolve_arguments(step_config)
+        resolved_arguments ||= step_config.resolve_arguments(@context)
         result = @retry_manager.execute_with_retry(step_config, @reactor_class) do
           safe_execute_step_sync(step_config, resolved_arguments)
         end
@@ -188,7 +214,7 @@ module RubyReactor
       end
 
       def safe_execute_step_sync(step_config, resolved_arguments = nil)
-        resolved_arguments ||= resolve_arguments(step_config)
+        resolved_arguments ||= step_config.resolve_arguments(@context)
         execute_step_sync_without_result_handling(step_config, resolved_arguments)
       rescue Error::InputValidationError => e
         # Validation failures are not retryable and must surface as a structured
@@ -216,10 +242,12 @@ module RubyReactor
       rescue Error::ExecutionParked
         @context.retry_context.decrement_attempt_for_step(step_config.name)
         raise
-      rescue StandardError => e
-        # Identify redacted inputs
-        redact_inputs = @reactor_class.inputs.select { |_, config| config[:redact] }.keys
-
+      # Arguments raised: the body never started. Not retried (the same
+      # inputs fail the same way), never compensated.
+      rescue Error::ArgumentResolutionError => e
+        pre_body_failure(step_config, e)
+      # Any other exception, standard or not, is this step's failure (008 R-16).
+      rescue Error::Rescuable => e
         RubyReactor::Failure(
           e,
           step_name: step_config.name,
@@ -228,6 +256,16 @@ module RubyReactor
           reactor_name: @reactor_class.name,
           step_arguments: resolved_arguments
         )
+      end
+
+      def pre_body_failure(step_config, error)
+        RubyReactor::Failure(error, step_name: step_config.name, reactor_name: @reactor_class.name,
+                                    inputs: @context.inputs, redact_inputs: redact_inputs, step_arguments: {},
+                                    retryable: false, exception_class: error.exception_class)
+      end
+
+      def redact_inputs
+        @reactor_class.inputs.select { |_, config| config[:redact] }.keys
       end
 
       # Contention (US3). Synchronously there is no queue to park into: the
@@ -315,14 +353,8 @@ module RubyReactor
 
       def execute_step_sync(step_config, resolved_arguments = nil)
         @context.with_step(step_config.name) do
-          # Check conditions and guards
-          unless step_config.should_run?(@context)
-            @dependency_graph.complete_step(step_config.name)
-            return RubyReactor.Success(nil)
-          end
-
           # Resolve arguments
-          resolved_arguments ||= resolve_arguments(step_config)
+          resolved_arguments ||= step_config.resolve_arguments(@context)
 
           # Validate arguments if validator is defined
           validate_step_arguments(step_config, resolved_arguments)
@@ -338,14 +370,8 @@ module RubyReactor
       # Execute step without handling the result (used during retries)
       def execute_step_sync_without_result_handling(step_config, resolved_arguments = nil)
         @context.with_step(step_config.name) do
-          # Check conditions and guards
-          unless step_config.should_run?(@context)
-            @dependency_graph.complete_step(step_config.name)
-            return RubyReactor.Success(nil)
-          end
-
           # Resolve arguments
-          resolved_arguments ||= resolve_arguments(step_config)
+          resolved_arguments ||= step_config.resolve_arguments(@context)
 
           yield resolved_arguments if block_given?
 
@@ -433,22 +459,6 @@ module RubyReactor
         error.step_name = step_config.name
         error.step_arguments = resolved_arguments
         raise error
-      end
-
-      def resolve_arguments(step_config)
-        resolved = {}
-
-        step_config.arguments.each do |arg_name, arg_config|
-          source = arg_config[:source]
-          transform = arg_config[:transform]
-
-          value = source.resolve(@context)
-          value = transform.call(value) if transform
-
-          resolved[arg_name] = value
-        end
-
-        resolved
       end
 
       def run_step_implementation(step_config, arguments)

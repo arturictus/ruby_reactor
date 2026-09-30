@@ -78,6 +78,7 @@ export default function ReactorClassInstances() {
               <option value="paused">Paused</option>
               <option value="failed">Failed</option>
               <option value="cancelled">Cancelled</option>
+              <option value="aborted">Aborted</option>
             </select>
           </div>
         </div>

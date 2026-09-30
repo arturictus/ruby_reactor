@@ -10,7 +10,6 @@ module RubyReactor
     # ordering nonce.
     class AsyncReactorBuilder
       include RubyReactor::Dsl::TemplateHelpers
-      include RubyReactor::Dsl::Retryable
 
       attr_accessor :name, :child_reactor_class, :argument_mappings
 
@@ -19,11 +18,21 @@ module RubyReactor
         @child_reactor_class = child_reactor_class
         @reactor = reactor
         @argument_mappings = {}
-        @retry_config = nil
       end
 
       def argument(child_input_name, source)
         @argument_mappings[child_input_name] = source
+      end
+
+      # A parent never retries a nested reactor as a whole (008 R-14): the
+      # child owns its steps' retries. Kept as a stub to name the replacement.
+      def retries(*)
+        raise RubyReactor::Error::DeprecatedDslError.new(
+          "`retries` on an `async_reactor` has been removed: a parent never retries a nested " \
+          "reactor as a whole. Declare `retries` on :#{@name}'s child reactor's own steps " \
+          "(`retries max_attempts: 3` in the step block or the step class); the child retries them itself.",
+          step: @name
+        )
       end
 
       def build
@@ -41,12 +50,9 @@ module RubyReactor
           # that reads `result(:name)` and decides to fail.
           compensate_block: nil,
           undo_block: nil,
-          conditions: [],
-          guards: [],
           dependencies: dependencies_from_mappings,
           args_validator: nil,
-          output_validator: nil,
-          retry_config: @retry_config
+          output_validator: nil
         )
       end
 

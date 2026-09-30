@@ -88,7 +88,13 @@ module RubyReactor
       log(:error, "failed", error: "#{e.class}: #{e.message}")
       complete(RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name, retryable: false),
                context)
-    rescue StandardError => e
+    # Arguments raised: the body never started, so it is neither retried nor
+    # compensated (008 R-06).
+    rescue Error::ArgumentResolutionError => e
+      log(:error, "failed", error: "#{e.class}: #{e.message}")
+      complete(RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name, retryable: false,
+                                      exception_class: e.exception_class), context)
+    rescue Error::Rescuable => e
       # The unit's failure belongs in its record, where a reader can see it.
       # Raising instead would hand the job to the backend's retry machinery to
       # fail identically N more times while every reader waits out its timeout.
@@ -238,17 +244,7 @@ module RubyReactor
     end
 
     def run_step(context, step_config)
-      # A suppressed step never coordinates (FR-012) — decided before the
-      # arguments are validated or any hold is taken, exactly as
-      # `StepExecutor#execute_step_sync` orders it. `complete` persists the
-      # nil result, so the reader sees the same skipped unit a same-process
-      # step would produce.
-      unless step_config.should_run?(context)
-        log(:info, "skipped")
-        return RubyReactor.Success(nil)
-      end
-
-      arguments = resolve_arguments(step_config, context)
+      arguments = step_config.resolve_arguments(context)
       # Reactor-side `argument`/`validate_args` rules gate the step BEFORE its
       # coordination is acquired, exactly as `StepExecutor#execute_step_sync`
       # orders them — an async_step must not take a lock (or spend a rate-limit
@@ -289,7 +285,41 @@ module RubyReactor
         end
       end
 
+      compensate_unit(context, step_config, result, arguments)
       result
+    end
+
+    # 008 R-09: the unit compensates ITSELF, once, here in its own job, after
+    # its final attempt failed — whether or not any step ever reads it, the
+    # way an `async_reactor` child rolls itself back. Never for a success,
+    # skip or halt, and never for a body that never started (invalid
+    # arguments), exactly the executor's rule. Same coordination re-take,
+    # middleware events and failure recording as an in-process compensate.
+    # The outcome goes on this unit's record (`complete`); the parent's
+    # context is never written here (single writer), so the in-memory trace
+    # entry the compensate appends stays local to this job.
+    def compensate_unit(context, step_config, result, arguments)
+      return unless result.is_a?(RubyReactor::Failure) && body_started?(result.error)
+
+      manager = Executor::CompensationManager.new(context)
+      outcome = manager.compensate(step_config, result.error, arguments)
+      @compensation = {
+        "status" => compensation_status(outcome),
+        "rollback_failures" => ContextSerializer.serialize_value(manager.rollback_failures),
+        "completed_at" => Time.now.iso8601
+      }
+    end
+
+    def body_started?(error)
+      return false if error.is_a?(Error::InputValidationError)
+
+      Executor::CompensationManager::NEVER_STARTED_ERROR_CLASSES.none? { |klass| error.is_a?(klass) }
+    end
+
+    def compensation_status(outcome)
+      return "failed" if outcome.is_a?(RubyReactor::Failure)
+
+      outcome.respond_to?(:skipped?) && outcome.skipped? ? "skipped" : "completed"
     end
 
     # Same check and same structured, non-retryable shape `StepExecutor`
@@ -330,7 +360,7 @@ module RubyReactor
                              retryable: false)
     rescue Executor::StepCoordination::Contended, Executor::StepCoordination::KeyError
       raise
-    rescue StandardError => e
+    rescue Error::Rescuable => e
       RubyReactor.Failure(e, step_name: @step_name, reactor_name: @reactor_class_name)
     end
 
@@ -354,14 +384,6 @@ module RubyReactor
       return result if result.is_a?(RubyReactor::Success) || result.is_a?(RubyReactor::Failure)
 
       RubyReactor.Success(result)
-    end
-
-    def resolve_arguments(step_config, context)
-      step_config.arguments.to_h do |arg_name, arg_config|
-        value = arg_config[:source].resolve(context)
-        value = arg_config[:transform].call(value) if arg_config[:transform]
-        [arg_name, value]
-      end
     end
 
     # Write first, publish second. The record is the answer; the signal only
@@ -394,8 +416,10 @@ module RubyReactor
 
     # This delivery's run, once the body was reached: `started_at`,
     # `arguments` (redacted, serialized) and `attempts`. Empty before that.
+    # Plus `compensation` when the unit compensated itself.
     def run_fields
-      @run || {}
+      fields = @run || {}
+      @compensation ? fields.merge("compensation" => @compensation) : fields
     end
 
     def record_missing_parent

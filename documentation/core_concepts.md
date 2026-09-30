@@ -130,7 +130,7 @@ end
 - **Returning inputs.** `Success(inputs)` stores `inputs.to_h`. An `inputs` nested inside a result (`Success(order: inputs)`) is not converted: write `Success(order: inputs.to_h)`.
 - **Reserved names.** `input :method` (or any name the object already answers, such as `class`, `hash`, `send`, `to_h`) raises `Error::ValidationError` when the step is defined, because `inputs.method` couldn't reach it.
 
-Everything outside step code keeps the plain Hash: lock and semaphore key procs (`with_lock { |args| ... }`), `validate_inputs`, map `source` blocks, `where`/`guard`, middleware and error payloads.
+Everything outside step code keeps the plain Hash: lock and semaphore key procs (`with_lock { |args| ... }`), `validate_inputs`, map `source` blocks, middleware and error payloads.
 
 ### Inline step definition
 
@@ -318,9 +318,43 @@ class PaymentReactor < RubyReactor::Reactor
 end
 ```
 
+### The Rollback Rule
+
+One rule decides what a failure rolls back, for every construct:
+
+1. A construct that **completed** is tracked for undo — except an async unit (`async_step`,
+   `async_reactor`), which is independent of its parent by design.
+2. The failing construct is **compensated** if its work started. It is **not** compensated if it
+   never started: its own lock/semaphore was contended, its coordination key could not be resolved,
+   an `async_reactor` dispatch was refused, its arguments could not be resolved
+   (`ArgumentResolutionError`), or its arguments or inputs were invalid.
+3. Then every tracked construct is **undone**, newest first.
+4. A compensate or undo that fails does not stop the rest; it is listed in
+   `Failure#rollback_failures`.
+5. `Halt` stops without rollback. A `Skipped` step is never undone: it had nothing to do. It
+   does not otherwise change execution ([Skipping a single step](#skipping-a-single-step)).
+6. Every exception raised by reactor code is a failure under rules 2–4, whether or not it is a
+   `StandardError` (`NotImplementedError`, `SystemStackError`, a custom `Exception` subclass). Only
+   an interruption (a signal such as `Interrupt`, `SystemExit`, `NoMemoryError`, an enclosing
+   `Timeout.timeout`) runs no rollback. A run in the caller's process is then stored `aborted`
+   with the steps not yet undone, and `Reactor.undo(id)` rolls it back later; a run in a worker
+   is redelivered.
+7. A nested reactor (`compose`, `async_reactor`) is never retried as a whole. Only steps retry.
+
+Each construct says what compensate and undo mean for itself:
+
+| Construct | compensate (its own failure) | undo (a later failure, or a manual undo) |
+| --- | --- | --- |
+| `step` | its `compensate` (inline block, else the step class's, else skipped) | its `undo` (same order) |
+| `compose` | the child already rolled itself back, so nothing is left to do | replay the child's completed steps' `undo`s, newest first |
+| `map` (inline and `fan_out`) | roll back every **completed** element (its steps' `undo`s), highest index first; the failed element already rolled itself back | the same, for every completed element |
+| `async_step` | not tracked by the parent; the **unit** compensates itself once, in its own job, after its final attempt fails | none: an inline `undo` is rejected at definition time |
+| `async_reactor` | not tracked by the parent; the child rolls itself back | none |
+
 ### Compensation Order
 
-Compensation runs in reverse order of successful steps:
+Compensation runs in reverse order of successful steps. A composed reactor or a map is one of
+those steps; undoing it replays its child's (or each completed element's) own undos:
 
 ```mermaid
 graph TD
@@ -747,7 +781,8 @@ end
 
 - The value behaves exactly like a `Success` value: it's stored as the step's result, and dependants read it via `result(:step)` without knowing it was skipped.
 - The reactor continues; the run's overall status is `:completed`, never `:halted`.
-- The step is **not** enrolled for rollback — a later failure walks past it without compensation, because nothing happened.
+- `Skipped` is an **instrumentation mark**: it never changes how the run executes. A `background after:` hand-off and a `with_period` bucket treat it as a completed step. The mark is there so an engineer reviewing the execution can see the step did not need to run.
+- The step is **not** enrolled for rollback: it had nothing to do, so a later failure never undoes it.
 - A `{ type: :skipped, step:, reason: }` entry is appended to the execution trace so dashboards and tests can still see it happened.
 
 `Skipped` is a `Success` subclass too: `result.success?` is `true`; check `result.skipped?` to distinguish it, or use the one-line `skip!(value)` helper.

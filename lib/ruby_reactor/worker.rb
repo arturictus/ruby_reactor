@@ -8,7 +8,7 @@ module RubyReactor
   # `Adapters::ActiveJob::Compat` on ActiveJob::Base) — nothing here references
   # a specific backend.
   module Worker
-    TERMINAL_STATUSES = %w[completed failed cancelled skipped].freeze
+    TERMINAL_STATUSES = %w[completed failed cancelled skipped aborted].freeze
 
     # Use the error's `retry_after_seconds` hint when available
     # (RateLimit::ExceededError carries the time until the bucket rolls);
@@ -89,6 +89,8 @@ module RubyReactor
       reactor_class_name ||= RubyReactor.reactor_storage_name(nil)
       data = RubyReactor.configuration.storage_adapter.retrieve_context(context_id, reactor_class_name)
       return if data.nil?
+      # An aborted run is never resumed forward: only a manual undo applies (008 R-08).
+      return if (data["status"] || data[:status]).to_s == "aborted"
 
       begin
         context = ContextSerializer.deserialize_hash(data)

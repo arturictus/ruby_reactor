@@ -21,8 +21,8 @@ RSpec.describe RubyReactor::Executor::StepExecutor do
     end
 
     it "resolves step arguments only once during execute_step" do
-      # Spy on resolve_arguments method
-      expect_any_instance_of(described_class)
+      # Resolution moved onto the step config (008 R-01); still exactly once.
+      expect_any_instance_of(RubyReactor::Dsl::StepConfig)
         .to receive(:resolve_arguments)
         .once
         .and_call_original

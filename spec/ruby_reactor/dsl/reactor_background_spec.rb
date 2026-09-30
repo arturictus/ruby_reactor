@@ -115,11 +115,20 @@ RSpec.describe "reactor-level `background` hand-off" do
         )
       end
 
-      it "never fires when the named step is skipped by a guard" do
-        result = BackgroundSkippedTriggerReactor.run(hand_off: false)
+      it "hands off after a step that returns Skipped, like any completed step" do
+        result = BackgroundSkippedAfterReactor.run
+        RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs
 
-        expect(result).not_to be_a(RubyReactor::DispatchResult)
-        expect(BackgroundFixtures.trace[:skipped_trigger].map(&:last).uniq).to eq([:here])
+        expect(result).to be_a(RubyReactor::DispatchResult)
+        expect(BackgroundFixtures.trace[:skipped_after]).to eq([%i[maybe here], %i[rest worker]])
+      end
+
+      it "never hands off after a step that returns Halt" do
+        result = BackgroundHaltAfterReactor.run
+
+        expect(result).to be_a(RubyReactor::Halt)
+        expect(RubyReactor::RSpec::AsyncTestHelpers.pending_async_jobs).to be_empty
+        expect(BackgroundFixtures.trace[:halt_after]).to be_empty
       end
 
       it "does not re-trigger inside the worker" do

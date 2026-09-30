@@ -55,10 +55,12 @@ module RubyReactor
         context.inline_async_execution = true
 
         storage = RubyReactor.configuration.storage_adapter
+        return if check_fail_fast?(arguments, storage)
+
+        # Indexed only once it runs: a skipped element saves no context, and
+        # the map's rollback reports an indexed element without one as expired.
         storage.store_map_element_context_id(arguments[:map_id], context.context_id,
                                              arguments[:parent_reactor_class_name])
-
-        return if check_fail_fast?(arguments, storage)
 
         executor = Executor.new(context.reactor_class, {}, context)
         begin
@@ -151,7 +153,11 @@ module RubyReactor
         failed_context_id = storage.retrieve_map_failed_context_id(map_id, parent_reactor_class_name)
         return false unless failed_context_id
 
-        # Skip execution
+        # Skip execution, but settle the index: the collector applies a
+        # fail-fast failure only once every index has a result slot (R-04), and
+        # the map sweeper would otherwise keep re-dispatching this one.
+        storage.store_map_result(map_id, arguments[:index], { "_skipped" => true }, parent_reactor_class_name,
+                                 strict_ordering: arguments[:strict_ordering])
         finalize_execution(arguments, storage)
         true
       end

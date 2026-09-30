@@ -146,4 +146,29 @@ RSpec.describe RubyReactor::Map::ResultEnumerator do
       expect(failures).to eq(%w[failed1 failed2])
     end
   end
+
+  # A fail-fast fan-out map settles the indices it never ran with `_skipped`
+  # slots (008 R-04); they are never an element's outcome. Real Redis.
+  context "with skipped slots" do
+    let(:storage) { RubyReactor::Configuration.instance.storage_adapter }
+
+    before do
+      storage.store_map_result("skip_map", 0, "a", "SkipReactor")
+      storage.store_map_result("skip_map", 1, { "_skipped" => true }, "SkipReactor")
+      storage.store_map_result("skip_map", 2, "c", "SkipReactor")
+    end
+
+    it "never yields a skipped slot, in either ordering mode" do
+      [true, false].each do |strict|
+        enumerator = described_class.new("skip_map", "SkipReactor", strict_ordering: strict)
+        expect(enumerator.map(&:value)).to eq(%w[a c])
+      end
+    end
+
+    it "reads nil at a skipped index" do
+      enumerator = described_class.new("skip_map", "SkipReactor")
+      expect(enumerator[1]).to be_nil
+      expect(enumerator[2].value).to eq("c")
+    end
+  end
 end

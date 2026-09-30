@@ -65,9 +65,8 @@ module RubyReactor
         reactor_class_name = arguments[:parent_reactor_class_name]
 
         # Fail Fast Check
-        if arguments[:fail_fast]
-          failed_context_id = storage.retrieve_map_failed_context_id(map_id, reactor_class_name)
-          return if failed_context_id
+        if arguments[:fail_fast] && storage.retrieve_map_failed_context_id(map_id, reactor_class_name)
+          return settle_undispatched(arguments, storage)
         end
 
         batch_size = arguments[:batch_size] || source.size # Default to all if no batch_size (async=true only)
@@ -102,6 +101,33 @@ module RubyReactor
           absolute_index = current_offset + i
           queue_element_job(element, absolute_index, queue_options)
         end
+      end
+
+      # A fail-fast map stopped dispatching: claim every index not dispatched
+      # yet (one offset bump, so a later dispatcher claims none), settle each
+      # with a `_skipped` slot, count them down, and trigger the collector if
+      # that settled the map. Without this those indices never settle, so the
+      # failure would never be applied (R-04) and the map sweeper would keep
+      # re-dispatching them.
+      def self.settle_undispatched(arguments, storage)
+        map_id = arguments[:map_id]
+        reactor_class_name = arguments[:parent_reactor_class_name]
+        total = storage.retrieve_map_metadata(map_id, reactor_class_name)&.fetch("count", 0).to_i
+        new_offset = storage.increment_map_offset(map_id, total, reactor_class_name)
+        claimed = (new_offset - total)...[new_offset, total].min
+        return if claimed.none?
+
+        claimed.each do |index|
+          storage.store_map_result(map_id, index, { "_skipped" => true }, reactor_class_name,
+                                   strict_ordering: arguments[:strict_ordering])
+        end
+        return unless storage.decrement_map_counter_by(map_id, claimed.size, reactor_class_name) <= 0
+
+        RubyReactor.configuration.async_router.perform_map_collection_async(
+          parent_context_id: arguments[:parent_context_id], map_id: map_id,
+          parent_reactor_class_name: reactor_class_name, step_name: arguments[:step_name].to_s,
+          strict_ordering: arguments[:strict_ordering], timeout: 3600
+        )
       end
 
       # Re-dispatch a SPECIFIC index whose result slot is missing (Phase 5c, used

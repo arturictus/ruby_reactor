@@ -156,9 +156,12 @@ In a linear chain the two coincide. **In a DAG they do not** — if `:audit` and
 
 - The trigger is **reaching the named step**, not the declaration's lexical
   position — put `background` anywhere in the class body.
-- A step skipped by a `where` / `guard` never triggers the hand-off; the run
-  simply completes in the calling process. No step is stranded, because the
-  hand-off only ever relocates work that has not run yet.
+- `Skipped` never changes the hand-off: it is only an instrumentation mark.
+  `before: :x` hands off on reaching `:x` whatever its body will return, and
+  `after: :x` hands off once `:x` returns `Success` or `Skipped`. A step that
+  returns `Halt` stops the run instead, so nothing is handed off. No step is
+  stranded, because the hand-off only ever relocates work that has not run
+  yet.
 - In a DAG, any independent step that became ready and executed before the
   trigger fired has already run locally. Everything not yet executed at the
   trigger moment moves to the worker.
@@ -288,8 +291,37 @@ compensates its own steps only — it does not "undo" a dispatch whose unit runs
 (and may still succeed) elsewhere. Async units are independent units of work
 with independent compensation flows.
 
-`compensate` / `undo` blocks declared on an `async_step` still register; they run
-only if the failure is surfaced into the parent's compensation path this way.
+**The unit compensates itself.** An `async_step`'s own `compensate` runs **once,
+in the unit's own job**, after its body's **final** attempt fails, whether or not
+any step reads the result. It does not run for an attempt that is retried, for a
+unit that halts, or for one whose body never started (invalid or unresolvable
+arguments). The outcome is recorded on the unit's Step Result Record as
+`compensation: { status: "completed" | "failed" | "skipped", rollback_failures:,
+completed_at: }`, and the `start_compensation` / `complete_compensation` /
+`failed_compensation` middleware events fire in the unit's job. A step class used
+with `async_step` re-takes its own lock/semaphore around the compensate, as any
+step does. The unit never writes its parent's context.
+
+```ruby
+async_step :send_email, SendEmailStep do
+  argument :to, input(:email)
+  retries max_attempts: 3
+  compensate { |error, inputs, _ctx| Audit.log_undelivered(inputs.to, error) } # after the 3rd failure
+end
+```
+
+A reader that surfaces the failure then compensates **itself** and undoes the
+parent's completed steps; the unit is never compensated a second time.
+
+**`undo` on an `async_step` is rejected.** Nothing ever undoes an independent
+unit that succeeded, so an inline `undo` block raises
+`RubyReactor::Error::ValidationError` when the reactor class is defined. Put the
+cleanup in the unit's `compensate`, in the reading step's `compensate`, or — for
+cleanup that must run when the parent rolls back — use a `step`/`compose`/`map`
+(tracked for undo) or an `async_reactor` child whose steps declare `undo`. A step
+class that defines `undo` can still be used with `async_step` (the same class is
+often reused by ordinary steps, where its `undo` runs); you get a
+definition-time warning that it will not run for this use.
 
 ### Other behavior
 

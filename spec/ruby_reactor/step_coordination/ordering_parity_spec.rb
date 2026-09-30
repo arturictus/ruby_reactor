@@ -92,6 +92,14 @@ RSpec.describe "step-level ordered-lock parity", :step_coordination do
     ensure
       heartbeats&.each(&:stop)
     end
+
+    it "advances the position as failed when the exit is the step's own non-StandardError failure (R-16)" do
+      key = "osp:abort:#{run_id}"
+
+      expect(OspAbortReactor.run(run_id: run_id, abort: "crash")).to be_failure
+      # Released, not left in flight for the poison pill as an interruption is.
+      expect(key).to have_ordered_lock_in_flight
+    end
   end
 
   # P3: the data-model "Gate classification" table, run at both levels.

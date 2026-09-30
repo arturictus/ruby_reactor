@@ -272,6 +272,7 @@ RSpec.describe "escalating a step-level contention park", :step_coordination do
                                                                    auto_extend: true)
       holder.acquire
 
+      started_at = Time.now
       RubyReactor::Adapters::Sidekiq::Worker.jobs.clear
       dispatch = QuotaParkReactor.run(account_id: account_id)
       job = RubyReactor::Adapters::Sidekiq::Worker.jobs.last
@@ -285,7 +286,7 @@ RSpec.describe "escalating a step-level contention park", :step_coordination do
       RubyReactor::Adapters::Sidekiq::Worker.new.perform(*job["args"].first(2))
 
       expect(QuotaParkReactor.find(dispatch.execution_id).context.status.to_s).to eq("completed")
-      expect("park_rl:#{account_id}").to have_rate_limit_count(1).for(:minute)
+      expect("park_rl:#{account_id}").to have_rate_limit_count(1).for(:minute).since(started_at)
     ensure
       holder&.release
     end

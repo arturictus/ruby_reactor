@@ -149,25 +149,30 @@ class BackgroundDeclaredFirstReactor < RubyReactor::Reactor
   end
 end
 
-# The named step is guarded off, so the hand-off never fires and the whole run
-# finishes in the calling process.
-class BackgroundSkippedTriggerReactor < RubyReactor::Reactor
-  input :hand_off
-
-  step :first do
-    run { |_a, ctx| RubyReactor.Success(BackgroundFixtures.record(:skipped_trigger, :first, ctx)) }
-  end
-
+# `Skipped` is only an instrumentation mark: an `after:` step that skips itself
+# still hands the rest of the run to the worker. `Halt` stops the run instead.
+class BackgroundSkippedAfterReactor < RubyReactor::Reactor
   step :maybe do
-    argument :hand_off, input(:hand_off)
-    where { |ctx| ctx.get_input(:hand_off) }
-    run { |_a, ctx| RubyReactor.Success(BackgroundFixtures.record(:skipped_trigger, :maybe, ctx)) }
+    run { |_a, ctx| RubyReactor.Skipped(BackgroundFixtures.record(:skipped_after, :maybe, ctx)) }
   end
 
-  step :last do
+  step :rest do
     argument :maybe, result(:maybe)
-    run { |_a, ctx| RubyReactor.Success(BackgroundFixtures.record(:skipped_trigger, :last, ctx)) }
+    run { |_a, ctx| RubyReactor.Success(BackgroundFixtures.record(:skipped_after, :rest, ctx)) }
   end
 
   background after: :maybe
+end
+
+class BackgroundHaltAfterReactor < RubyReactor::Reactor
+  step :stop do
+    run { |_a, _ctx| RubyReactor.Halt(reason: "nothing to do") }
+  end
+
+  step :rest do
+    argument :stop, result(:stop)
+    run { |_a, ctx| RubyReactor.Success(BackgroundFixtures.record(:halt_after, :rest, ctx)) }
+  end
+
+  background after: :stop
 end

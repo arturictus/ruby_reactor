@@ -137,8 +137,37 @@ module RubyReactor
         builder = RubyReactor::Dsl::StepBuilder.new(name, impl, self)
         builder.instance_eval(&block) if block_given?
 
-        steps[name] = builder.build(async_dispatch: :step)
+        config = builder.build(async_dispatch: :step)
+        check_async_step_undo!(builder, config, caller_locations(1, 1).first)
+        steps[name] = config
       end
+
+      # An async_step is never undone: its parent does not track it for undo
+      # (008 R-09/R-10), so an `undo` on it would be dead code. An inline one
+      # is rejected; a step class's is only warned about, because the same
+      # class is legitimately reused by ordinary steps, where it does run.
+      def check_async_step_undo!(builder, config, site)
+        if config.undo_block
+          raise RubyReactor::Error::ValidationError,
+                "`undo` on async_step :#{config.name} would never run: the parent never undoes an " \
+                "independent async unit. Put failure cleanup in the unit's `compensate` (it runs in the " \
+                "unit's job when its last attempt fails) or in the reading step's `compensate`; for cleanup " \
+                "that must run when the parent rolls back, use a `step`/`compose`/`map` (tracked for undo) " \
+                "or an `async_reactor` child whose steps declare `undo`."
+        end
+
+        return unless defines_undo?(config.impl)
+
+        builder.send(:warn_definition, site, nil,
+                     "async_step :#{config.name} uses #{config.impl}; its `undo` will not run for this async " \
+                     "use (async units are never undone).")
+      end
+      private :check_async_step_undo!
+
+      def defines_undo?(impl)
+        impl.is_a?(Class) && impl < RubyReactor::Step && impl.instance_method(:undo).owner != RubyReactor::Step
+      end
+      private :defines_undo?
 
       # Dispatch a whole nested reactor to run INDEPENDENTLY — linked
       # to this one by execution id for traceability, but excluded from its

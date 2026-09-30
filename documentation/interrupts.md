@@ -85,6 +85,14 @@ end
 
 You can resume a paused reactor using its UUID or the defined `correlation_id`.
 
+Only a reactor **paused at an interrupt** takes a resume. A resume that arrives while the reactor is
+executing or rolling back (compensating/undoing), or after it finished, was cancelled or was
+aborted, raises `RubyReactor::Error::ValidationError` ("Cannot resume: the reactor is running, not
+paused at an interrupt") and changes nothing. An accepted resume marks the run `running` before it
+executes, so a second resume that arrives meanwhile fails the same way. A resume that cannot take
+the reactor's `with_lock` or `with_semaphore` raises its `AcquisitionError`, as `Reactor.run` does,
+and leaves the run paused: retry it once the holder is done.
+
 ### By UUID
 
 ```ruby
@@ -160,6 +168,18 @@ ReportReactor.undo("uuid-123")
 # The context is preserved for inspection, but resumption is disabled.
 ReportReactor.cancel(id: "uuid-123", reason: "User cancelled")
 ```
+
+`undo` works the same way on an **aborted** execution. A run in the caller's process that is cut
+short by an interruption (a signal such as `Interrupt`, `SystemExit`, `NoMemoryError`, or an
+enclosing `Timeout.timeout`) runs no rollback code: the exception reaches the caller unchanged, and
+the run is stored with status `aborted` and the steps not yet undone still outstanding. That
+includes an interruption inside a composed child or an inline `map` element (`undo` also rolls
+back the steps the child or those elements completed) and one that hits a rollback already
+running (`undo` finishes it). Any other
+exception, a `StandardError` or not (`NotImplementedError`, a custom `Exception` subclass), is the
+step's own failure and rolls back like one. No worker or sweeper resumes
+it. `ReportReactor.undo(id)` rolls it back and marks it cancelled. A run inside a worker is not
+marked: its job is redelivered and resumes from its last checkpoint.
 
 ## Common Use Cases
 

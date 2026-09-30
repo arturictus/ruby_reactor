@@ -153,6 +153,14 @@ module RubyReactor
               "Cannot resume: reactor has been cancelled (Reason: #{@context.cancellation_reason})"
       end
 
+      # Only a reactor paused at an interrupt takes a resume (008 FR-032): one
+      # that is executing or rolling back (`running`), finished, or `aborted`
+      # must not be run forward from its stored state.
+      unless @context.status.to_s == "paused"
+        raise Error::ValidationError,
+              "Cannot resume: the reactor is #{@context.status}, not paused at an interrupt"
+      end
+
       validate_continue_step!(step_name)
 
       if (failure = validate_continue_payload(payload, step_name))
@@ -170,6 +178,11 @@ module RubyReactor
         return @result = enqueue_background_resume
       end
 
+      # Claim the resume before running it, so a `continue` that arrives while
+      # this one executes or rolls back reads `running` and fails (FR-032).
+      @context.status = :running
+      save_context
+
       # Resume execution
       executor = Executor.new(self.class, {}, @context)
       @result = executor.resume_execution
@@ -179,6 +192,12 @@ module RubyReactor
       @execution_trace = executor.execution_trace
 
       @result
+    rescue Lock::AcquisitionError, Semaphore::AcquisitionError => e
+      # Contended at the resume's own gates: nothing ran, so the run is still
+      # paused and the caller may retry, as with `Reactor.run`. A context-lock
+      # contention means a live resume holds the run: leave it alone.
+      reopen_paused unless executor&.past_gates? || e.is_a?(Lock::ContextLockContention)
+      raise
     rescue Error::InputValidationError => e
       # This might catch other validations, but here we specifically want payload validation.
       # The block above handles payload validation explicitly.
@@ -209,6 +228,11 @@ module RubyReactor
 
     def configuration
       RubyReactor::Configuration.instance
+    end
+
+    def reopen_paused
+      @context.status = :paused
+      save_context
     end
 
     def validate_steps!

@@ -242,20 +242,6 @@ class BadKeyReactor < RubyReactor::Reactor
   returns :bad_key
 end
 
-# US1 scenario 8: the step is suppressed entirely — no lock, no :lock_acquired.
-class GuardedLockedChargeReactor < RubyReactor::Reactor
-  input :run_id, optional: true
-  input :account_id
-
-  step :charge, LockedChargeStep do
-    argument :run_id, input(:run_id)
-    argument :account_id, input(:account_id)
-    where { false }
-  end
-
-  returns :charge
-end
-
 # US2 scope_spec: eight steps, only the third one locked. Proves the hold does
 # not leak into its neighbors.
 class ScopedLockReactor < RubyReactor::Reactor
@@ -1061,12 +1047,14 @@ class PeriodStep < RubyReactor::Step
   input :run_id, optional: true
   input :bucket_key
   input :fail_body, optional: true, default: false
+  input :skip_body, optional: true, default: false
 
   with_period(every: :hour) { |args| "period:#{args[:bucket_key]}" }
 
   def run
     record_around(:period_body)
     return Failure("boom, deliberately") if inputs.fail_body
+    return Skipped(:nothing_to_do) if inputs.skip_body
 
     Success(:ran)
   end
@@ -1089,11 +1077,13 @@ class PeriodReactor < RubyReactor::Reactor
   input :run_id, optional: true
   input :bucket_key
   input :fail_body, optional: true
+  input :skip_body, optional: true
 
   step :period_step, PeriodStep do
     argument :run_id, input(:run_id)
     argument :bucket_key, input(:bucket_key)
     argument :fail_body, input(:fail_body)
+    argument :skip_body, input(:skip_body)
   end
 
   step :after, AfterPeriodStep do
@@ -1538,35 +1528,6 @@ class InlineOverrideAsyncReactor < RubyReactor::Reactor
   async_step :charge, InlineOverrideImplStep do
     argument :account_id, input(:account_id)
     with_lock(wait: 0) { |args| "inline_override_async:#{args[:account_id]}" }
-  end
-
-  step :ack do
-    run { RubyReactor.Success(:dispatched) }
-  end
-
-  returns :ack
-end
-
-# Flipped between dispatch and delivery, so the worker is the one deciding
-# the guard — the executor already decided it the other way.
-ASYNC_GUARD_FLAG = { run: true } # rubocop:disable Style/MutableConstant
-
-class GuardedAsyncStep < RubyReactor::Step
-  input :account_id
-
-  with_lock(wait: 0) { |args| "guarded_async:#{args[:account_id]}" }
-
-  def run
-    Success(:charged)
-  end
-end
-
-class GuardedAsyncReactor < RubyReactor::Reactor
-  input :account_id
-
-  async_step :charge, GuardedAsyncStep do
-    argument :account_id, input(:account_id)
-    where { ASYNC_GUARD_FLAG[:run] }
   end
 
   step :ack do

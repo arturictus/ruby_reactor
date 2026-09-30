@@ -112,6 +112,9 @@ RSpec.describe "`async_step`" do
         AsyncStepFailingWithReaderReactor.run
 
         expect(AsyncStepFailingWithReaderReactor.compensated).to include(:setup)
+        # The unit's own `compensate` ran exactly once, in its own job — never
+        # a second time from the reader's rollback (008 US4-3).
+        expect(redis.get(AsyncStepFailingWithReaderReactor::COMPENSATIONS_KEY)).to eq("1")
       end
     end
   end

@@ -684,7 +684,7 @@ expect(test_reactor(SyncReactor, foo: 1)).to be_halted.at_step(:second)         
 
 ### The `Skipped` result
 
-`RubyReactor::Skipped` marks one step skipped while the reactor continues; its value flows to dependants exactly like a `Success` value. Use `be_skipped` to assert that a specific step was skipped — it reads the execution trace, not the run's terminal result, since a run containing skipped steps still completes as a plain `Success`:
+`RubyReactor::Skipped` marks one step skipped; the run continues exactly as for a `Success` (its value flows to dependants), the step is never undone, and the trace records the mark. Use `be_skipped` to assert that a specific step was skipped — it reads the execution trace, not the run's terminal result, since a run containing skipped steps still completes as a plain `Success`:
 
 ```ruby
 expect(test_reactor(SyncReactor, foo: 1)).to be_skipped.at_step(:maybe_sync)
@@ -791,7 +791,16 @@ it "raises inline once the window is full" do
 end
 ```
 
-`have_rate_limit_count(n).for(period)` looks at the **current** bucket for the given `period` (use the same symbol or integer seconds you passed to `with_rate_limit`). For multi-window limits, assert each window separately:
+`have_rate_limit_count(n).for(period)` looks at the **current** bucket for the given `period` (use the same symbol or integer seconds you passed to `with_rate_limit`). Buckets are fixed windows, so a test that crosses a boundary (e.g. a background run spanning `12:00:59 → 12:01:01`) reads a fresh, empty bucket. Capture the start time and chain `.since(started_at)` to sum every bucket from then to now:
+
+```ruby
+started_at = Time.now
+ChargeReactor.run(account_id: 42)
+# ... wait for the worker ...
+expect("stripe:42").to have_rate_limit_count(1).for(:minute).since(started_at)
+```
+
+For multi-window limits, assert each window separately:
 
 ```ruby
 expect("stripe:42").to have_rate_limit_count(3).for(:second)

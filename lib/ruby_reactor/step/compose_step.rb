@@ -34,7 +34,10 @@ module RubyReactor
         return RubyReactor.Success() unless composed_data && composed_data[:context]
 
         child_context = composed_data[:context]
-        executor = RubyReactor::Executor.new(inputs.composed_reactor_class, {}, child_context)
+        # The child's own class: it survives serialization, while a Class in a
+        # stored undo record's arguments comes back as its name (a compose
+        # inside a map element is rolled back from its stored row).
+        executor = RubyReactor::Executor.new(child_context.reactor_class, {}, child_context)
         executor.undo_all
         executor.save_context
 
@@ -45,6 +48,9 @@ module RubyReactor
       end
 
       alias undo compensate
+
+      # An interrupted run is undone too: undo replays only the child's completed steps.
+      def self.undoes_partial_run? = true
 
       private
 

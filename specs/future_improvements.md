@@ -248,3 +248,51 @@ Direction:
 
 Spec: compose → fan-out map, with and without a park after the map. The root completes either
 way.
+
+## Rollback follow-ups (008)
+
+Raised while implementing specs/008-rollback-reliability. None blocks it.
+
+- **Sweeper re-enqueues in-progress inline runs.** `RubyReactor::Sweeper` re-enqueues any
+  top-level context that is `running` with no `async:` lock. A run still executing in the
+  caller's process never holds that lock, so a sweep during it enqueues a worker that resumes the
+  same run forward. Pre-existing; 008 only keeps `aborted` runs out of it. Direction: mark
+  caller-process runs (the `inline_async_execution` inverse) so the sweeper skips them until they
+  are stale by a timestamp, or give them their own liveness lock.
+- **Map-level `undo_all` override.** Map rollback always replays each element's own step `undo`s.
+  A bulk refund API may want one call for all elements instead. Direction: an optional
+  `undo_all { |completed_results| ... }` on `map` that replaces the per-element replay.
+- **Rollback fan-out for very large maps.** Map rollback is serial, in the process that detected
+  the failure, so its time is linear in the number of completed elements (10,000 elements take
+  about a minute in the test suite). Direction: enqueue one rollback job per element (or per
+  batch) and resolve the parent's failure once they report back.
+- **A resume for a second pending interrupt while the first is executing.** A reactor paused at
+  several ready interrupts takes their resumes one at a time: each accepted resume marks the run
+  `running` (008 FR-032), and the run pauses again at the interrupts still pending. A resume that
+  arrives for another pending interrupt while the first resume is still executing is rejected
+  ("the reactor is running"). Interrupt steps have no body, so that window is short, but a caller
+  resuming two interrupts at once can hit it. Direction: accept it for an interrupt that has not
+  executed yet (store its payload and let the running resume pick it up), or return a retryable
+  error.
+- **An interrupted `compensate` of the failing step is not re-run.** An interruption (signal, exit,
+  out of memory) during the failing step's own `compensate` leaves the run `aborted`. A manual
+  `Reactor.undo(id)` undoes the completed steps but never re-runs that `compensate`, so the step
+  can stay half-compensated. Pre-existing (008 R-08). Direction: record the failing step on the
+  aborted run and have manual undo re-run its `compensate` before the undo stack.
+- **Recover a resume contended on a lock.** An inline `continue` that cannot take the reactor's
+  `with_lock` or `with_semaphore` raises its `AcquisitionError` and leaves the run `paused`; the
+  caller has to retry it (008 review, 2026-09-30). A webhook sender that does not retry loses the
+  resume. Direction:
+  - Validate the payload first, synchronously in the calling process, as `resume: :background`
+    does today. An invalid payload returns its validation failure to the caller (the webhook),
+    and nothing is stored or enqueued.
+  - Only a valid payload is stored and handed off. On contention, mark the run `running` and give
+    the resume to a worker. The worker snoozes on the contended lock without spending retries and
+    resumes once the lock is free. The deferred resume never re-validates the payload, so it
+    cannot fail on validation after the caller was told it was accepted.
+  - `continue` returns a `DispatchResult` instead of raising, and a second `continue` is rejected
+    as for any running resume.
+- **Two resumes in the same instant.** Two `continue` calls that both read `paused` before either
+  saves `running` are separated only by the per-run context lock, which inline Sidekiq testing
+  skips. Accepted for now (008 review, 2026-09-27). Direction: claim the resume with an atomic
+  status compare-and-set.

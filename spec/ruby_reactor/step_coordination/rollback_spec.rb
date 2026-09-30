@@ -107,12 +107,13 @@ RSpec.describe "step-scoped coordination on rollback (compensate/undo)", :step_c
     # consumed by its OWN successful run — by the time :boom fails and
     # rollback re-takes :charge's lock for undo, both are already
     # naturally exhausted. Neither must gate `around_rollback`.
+    started_at = Time.now
     result = QuotaGatedRollbackReactor.run(run_id: run_id, account_id: account_id)
 
     expect(result).to be_a(RubyReactor::Failure)
     expect(overlap_recorder.entries(:quota_run)).not_to be_empty
     expect(overlap_recorder.entries(:quota_undo)).not_to be_empty
-    expect("quota_rl:#{account_id}").to have_rate_limit_count(1).for(:minute)
+    expect("quota_rl:#{account_id}").to have_rate_limit_count(1).for(:minute).since(started_at)
   end
 
   it "reports (never silently skips) a rollback that cannot re-acquire its key (US6-4, FR-026)" do

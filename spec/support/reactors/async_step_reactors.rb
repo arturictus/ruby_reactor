@@ -107,9 +107,16 @@ class AsyncStepFailingWithReaderReactor < RubyReactor::Reactor
     end
   end
 
+  # Counted in Redis: on the live sidekiq lane the unit's job runs in another process.
+  COMPENSATIONS_KEY = "async_step_fixtures:risky_compensations"
+
   async_step :risky do
     argument :setup, result(:setup)
     run { RubyReactor.Failure("async step blew up") }
+    compensate do |_error, _args, _ctx|
+      Redis.new(url: RubyReactor.configuration.storage.redis_url).incr(COMPENSATIONS_KEY)
+      RubyReactor.Success()
+    end
   end
 
   step :inspect_risky do

@@ -30,12 +30,10 @@ class UpdateUserReactor < RubyReactor::Reactor
     argument :user_id, input(:user_id)
     argument :data, input(:profile_data)
 
-    # Configure retries for steps within the sub-workflow
-    retries max_attempts: 3
-
     step :update_bio do
       argument :user_id, input(:user_id)
       argument :bio, input(:data, :bio)
+      retries max_attempts: 3 # retries belong on the child's steps, not on the compose
       run { |args| ... }
     end
 
@@ -180,7 +178,29 @@ end
 
 3. **Background Hand-off**: `compose`'s own `async` flag has been removed (it set the same ambiguous per-step flag `step`'s did). To move a compose step and everything after it to a worker, declare `background before: :that_compose_step` on the reactor — see [`async_reactor` vs `compose`](#async_reactor-vs-compose) below for the case where you want the child to run *independently* instead.
 
-4. **Shared Context**: All composed reactors share access to the parent reactor's inputs and results of previous steps and can be configured with different retry strategies.
+4. **Shared Context**: All composed reactors share access to the parent reactor's inputs and results of previous steps, and their steps can be configured with different retry strategies.
+
+5. **No whole-child retries**: a parent never retries a nested reactor as a whole. The child knows how to retry its own steps, so `retries` belongs on the child's steps. `retries` on a `compose` (or an `async_reactor`) raises `RubyReactor::Error::DeprecatedDslError` when the class is defined. A child whose step runs out of retries has failed: it rolls back its completed steps, the compose fails, and the parent rolls back. The parent does not run the child again. A child that was only *parked* (lock contention, a wait on a background result) is resumed, not re-run: steps it completed before the park do not run again.
+
+   ```ruby
+   class ConfirmReservationStep < RubyReactor::Step
+     retries max_attempts: 3, backoff: :exponential, base_delay: 1 # the flaky step retries itself
+
+     def run
+       # ...
+     end
+   end
+
+   class ReservationReactor < RubyReactor::Reactor
+     input :order_id
+     step(:reserve, ReserveStep) { argument :order_id, input(:order_id) }
+     step(:confirm, ConfirmReservationStep) { argument :reservation, result(:reserve) }
+   end
+
+   compose :reserve_and_confirm, ReservationReactor do
+     argument :order_id, input(:order_id)
+   end
+   ```
 
 ### `async_reactor` vs `compose`
 
@@ -193,6 +213,7 @@ control.
 | Where the child runs | inline, in this process, synchronously | its own job, concurrently |
 | Result availability | immediately, as the step's own result | via `result(:name)`, which waits (bounded) |
 | Compensation | fully linked — a child failure rolls the parent back | **not** linked; opt in by reading the result and returning `Failure` |
+| `retries` | not allowed on the compose: declare it on the child's own steps | not allowed on the `async_reactor`: the child's own steps retry inside its job |
 | Lock reentrancy | yes — same logical thread of control, so the child re-enters the parent's lock | never — the two run concurrently, so sharing an owner would break mutual exclusion |
 | Failure with no reader | impossible; the parent always sees it | the parent completes unaffected |
 

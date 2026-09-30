@@ -41,7 +41,7 @@ module RubyReactor
           begin
             collected = collect_block.call(results)
             RubyReactor::Success(collected)
-          rescue StandardError => e
+          rescue RubyReactor::Error::Rescuable => e
             RubyReactor::Failure(e)
           end
         else
@@ -83,7 +83,20 @@ module RubyReactor
                                   parent_context)
           failure_response = nil
           begin
-            failure_response = executor.result_handler.handle_execution_error(error)
+            # The map failed in its element jobs, so no executor compensated it.
+            # Fail it exactly as the inline path does: adopt the failing
+            # element's rollback failures, compensate the map (its completed
+            # elements; every index has settled, R-04), undo the completed
+            # steps, and fail with `CompensationError` if the map's rollback
+            # was incomplete.
+            manager = executor.compensation_manager
+            manager.rollback_failures.concat(final_result.rollback_failures)
+            failure_response = begin
+              manager.handle_step_failure(parent_context.reactor_class.steps[step_name_sym], final_result.error, {})
+              executor.result_handler.handle_execution_error(error)
+            rescue RubyReactor::Error::CompensationError => e
+              executor.result_handler.handle_execution_error(e)
+            end
             # Manually update context status since we're not running executor loop
             executor.send(:update_context_status, failure_response)
           ensure
@@ -95,6 +108,12 @@ module RubyReactor
           store_parent(parent_context, storage)
         else
           parent_context.set_result(step_name_sym, final_result.value)
+          # A completed fan-out map is tracked for undo like any step (R-03).
+          # The record stays empty: `MapStep#undo` finds its elements through
+          # the map's element index, so the parent does not grow per element.
+          parent_context.undo_stack << { step: parent_context.reactor_class.steps[step_name_sym], arguments: {},
+                                         result: RubyReactor.Success(nil) }
+          record_elements_started(parent_context, step_name, storage)
 
           # Manually update execution trace to reflect completion
           # This is necessary because resume_execution continues from the NEXT step
@@ -147,6 +166,17 @@ module RubyReactor
           RubyReactor::Worker.snooze_delay(config, e), parent_context.context_id,
           RubyReactor.reactor_storage_name(parent_context.reactor_class)
         )
+      end
+
+      # Every index of a completed map ran: record the count on the map's
+      # reference in the parent, which outlives the element index, so a late
+      # rollback names each element whose context expired.
+      def record_elements_started(parent_context, step_name, storage)
+        ref = Utils::FetchIndifferent.call(parent_context.composed_contexts, step_name)
+        return unless ref
+
+        map_id = Utils::FetchIndifferent.call(ref, :map_id)
+        ref[:started] = storage.retrieve_map_metadata(map_id, parent_context.reactor_class.name)&.fetch("count", 0).to_i
       end
 
       def store_parent(parent_context, storage)

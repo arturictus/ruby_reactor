@@ -3,15 +3,17 @@
 module RubyReactor
   class Executor
     class CompensationManager
-      # Raised ONLY by the step's own coordination, before its body: a
-      # coordination error raised from inside a body (a nested direct
+      # Raised ONLY before the step's body: by its own coordination, or while
+      # resolving its arguments (008 R-06).
+      # A coordination error raised from inside a body (a nested direct
       # `Step.run`) arrives as `StepCoordination::NestedCoordinationError`, and
       # a bare `Lock::AcquisitionError` etc. may come from a nested
       # `Reactor.run` — both mean the body ran, so neither is listed here.
       NEVER_STARTED_ERROR_CLASSES = [
         RubyReactor::Executor::StepCoordination::Contended,
         RubyReactor::Executor::StepCoordination::KeyError,
-        RubyReactor::Executor::StepCoordination::DispatchRefused
+        RubyReactor::Executor::StepCoordination::DispatchRefused,
+        RubyReactor::Error::ArgumentResolutionError
       ].freeze
 
       def initialize(context)
@@ -65,15 +67,26 @@ module RubyReactor
         end
       end
 
+      # A unit that compensates itself outside the executor loop (StepWorker's
+      # `async_step`): the same coordination re-take, trace, middleware events
+      # and `rollback_failures` as a step compensated here.
+      def compensate(step_config, error, arguments)
+        compensate_step(step_config, error, arguments)
+      end
+
+      # Newest first. Each entry leaves the stack only once its undo returned,
+      # so an interruption mid-rollback leaves exactly the entries still to
+      # undo — the interrupted one included — for a manual undo (008 R-16).
       def rollback_completed_steps
-        undo_stack.reverse_each do |step_info|
+        until undo_stack.empty?
+          step_info = undo_stack.last
           result = @context.with_step(step_info[:step].name) do
             undo_step(step_info[:step], step_info[:result], step_info[:arguments])
           end
+          undo_stack.pop
           @undo_trace << { type: :undo, step: step_info[:step].name, result: result,
                            arguments: step_info[:arguments] }
         end
-        undo_stack.clear
       end
 
       private
@@ -117,19 +130,18 @@ module RubyReactor
         ).around_rollback(&block)
       end
 
+      # Under `with_step`, as `rollback_completed_steps` runs each undo: a
+      # construct (compose, map) reads `context.current_step` to find its own
+      # state during either rollback moment.
       def compensate_step(step_config, error, arguments)
+        @context.with_step(step_config.name) { compensate_step_body(step_config, error, arguments) }
+      end
+
+      def compensate_step_body(step_config, error, arguments)
         middlewares.on(:start_compensation, step_config.name, error, arguments, @context)
         begin
           compensate_result = coordinated_rollback(step_config, arguments) do
-            catch(StepSignals::TAG) do
-              if step_config.compensate_block
-                step_config.compensate_block.call(error, step_config.wrap_inputs(arguments), @context)
-              elsif step_config.has_impl?
-                step_config.impl.compensate(error, arguments, @context)
-              else
-                RubyReactor.Skipped() # Default: nothing defined, rollback continues
-              end
-            end
+            step_config.call_compensate(error, arguments, @context)
           end
 
           @context.append_execution_trace(
@@ -152,7 +164,7 @@ module RubyReactor
           end
 
           compensate_result
-        rescue StandardError => e
+        rescue Error::Rescuable => e
           record_rollback_failure(step_config.name, :compensate, e)
           middlewares.on(:failed_compensation, step_config.name, e, @context)
           # A raise is a compensation failure like a returned Failure: the
@@ -162,19 +174,11 @@ module RubyReactor
         end
       end
 
-      def undo_step(step_config, result, arguments) # rubocop:disable Metrics/MethodLength
+      def undo_step(step_config, result, arguments)
         middlewares.on(:start_undo, step_config.name, result, arguments, @context)
         begin
           undo_result = coordinated_rollback(step_config, arguments) do
-            catch(StepSignals::TAG) do
-              if step_config.undo_block
-                step_config.undo_block.call(result.value, step_config.wrap_inputs(arguments), @context)
-              elsif step_config.has_impl?
-                step_config.impl.undo(result.value, arguments, @context)
-              else
-                RubyReactor.Skipped() # Default: nothing defined, rollback continues
-              end
-            end
+            step_config.call_undo(result.value, arguments, @context)
           end
 
           @context.append_execution_trace(
@@ -196,7 +200,7 @@ module RubyReactor
           end
 
           undo_result
-        rescue StandardError => e
+        rescue Error::Rescuable => e
           record_rollback_failure(step_config.name, :undo, e)
           middlewares.on(:failed_undo, step_config.name, e, @context)
           # Log undo failure but don't halt the rollback process

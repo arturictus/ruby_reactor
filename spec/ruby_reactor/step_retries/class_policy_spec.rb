@@ -109,17 +109,6 @@ RSpec.describe "Step retries: a step class declares its own policy" do
     expect(counter).to be_empty
   end
 
-  it "makes no attempt when the step is skipped by `where`" do
-    step_class = flaky_step(fail_times: 99, calls: calls, max_attempts: 3, base_delay: 0)
-    reactor_class = Class.new(RubyReactor::Reactor) do
-      step(:charge, step_class) { where { false } }
-    end
-    # The retry counter is bumped before `where` is checked; what matters is
-    # that the body never runs, so the failing policy never comes into play.
-    expect(reactor_class.run({})).to be_success
-    expect(calls).to be_empty
-  end
-
   describe "direct invocation" do
     it "runs once and returns the failure, whatever `retries` says" do
       step_class = flaky_step(fail_times: 99, calls: calls, max_attempts: 3, base_delay: 0)

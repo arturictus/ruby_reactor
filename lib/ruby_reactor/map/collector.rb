@@ -5,6 +5,12 @@ module RubyReactor
     class Collector
       extend Helpers
 
+      # Seconds a collector waits for another collector of the same map. One
+      # that found the map unsettled releases within milliseconds, and may be
+      # the only trigger left for a failure it just deferred (R-04); a holder
+      # busy longer is the one applying the map's result.
+      COLLECT_LOCK_WAIT = 2
+
       def self.perform(arguments)
         arguments = arguments.transform_keys(&:to_sym)
         map_id = arguments[:map_id]
@@ -30,7 +36,7 @@ module RubyReactor
         lock = RubyReactor::Lock.new(
           "map_collect:#{map_id}",
           owner: SecureRandom.uuid, ttl: RubyReactor.configuration.context_lock_ttl,
-          wait: 0, auto_extend: true
+          wait: COLLECT_LOCK_WAIT, auto_extend: true
         )
         lock.acquire
         lock
@@ -56,8 +62,9 @@ module RubyReactor
 
         # Idempotency: if the parent already recorded this map step's result, a
         # prior collector already resumed it. Re-resuming would double-execute the
-        # steps after the map. Skip.
-        return if parent_context.intermediate_results.key?(step_name.to_sym)
+        # steps after the map. Skip. A parent already finished (a prior
+        # collector applied this map's failure) must not be rolled back twice.
+        return if parent_context.intermediate_results.key?(step_name.to_sym) || parent_context.finished?
 
         # Check if all tasks are completed
         metadata = storage.retrieve_map_metadata(map_id, parent_reactor_class_name)
@@ -65,17 +72,20 @@ module RubyReactor
 
         results_count = storage.count_map_results(map_id, parent_reactor_class_name)
 
-        # Not done yet, requeue or wait?
-        # Actually Collector currently assumes we only call it when we expect completion or check progress
-        # Since map_offset tracks dispatching progress and might exceed count due to batching reservation,
-        # we must strictly check against the total count of elements.
-        # Check for fail_fast failure FIRST
+        # Completion is judged against the total count of elements, not
+        # map_offset (which batching reservation can push past it).
+        #
+        # A fail-fast failure is applied only once every index has settled
+        # (a result, `_error`, `_halt` or `_skipped` slot), so the map's
+        # compensate sees every element that completed — including ones still
+        # in flight when the failure happened (R-04). Until then the last
+        # element to settle, or the map sweeper, re-triggers this collector.
+        return if results_count < total_count
+
         if (failed_context_id = storage.retrieve_map_failed_context_id(map_id, parent_reactor_class_name))
           handle_failure(failed_context_id, metadata, storage, parent_context, step_name)
           return
         end
-
-        return if results_count < total_count
 
         # Retrieve results lazily
         results = RubyReactor::Map::ResultEnumerator.new(
@@ -114,7 +124,7 @@ module RubyReactor
             # Pass Enumerator to collect block
             collected = collect_block.call(results)
             RubyReactor::Success(collected)
-          rescue StandardError => e
+          rescue RubyReactor::Error::Rescuable => e
             RubyReactor.configuration.logger.error("Map collect block raised: #{e.message}")
             RubyReactor.configuration.logger.error(e.backtrace.join("\n")) if e.backtrace
             RubyReactor::Failure(e)

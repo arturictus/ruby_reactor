@@ -1,0 +1,333 @@
+# Execution-flow probes — 2026-09-27T22:26:31Z — ruby_reactor 0.8.3 (7a8f4a67)
+
+== S-plain-01  a → b(returns Failure) → c   [inline]
+expected: run:a run:b compensate:b undo:a => failure(b)
+observed: run:a run:b compensate:b undo:a => failure(b)
+MATCH
+
+== S-plain-02  a → b(raises) → c   [inline]
+expected: run:a run:b compensate:b undo:a => failure(b)
+observed: run:a run:b compensate:b undo:a => failure(b)
+MATCH
+
+== S-plain-03  a → b(fails, its compensate fails)   [inline]
+expected: run:a run:b compensate:b undo:a => failure(b)
+observed: run:a run:b compensate:b undo:a => failure(b)
+note: rollback_failures=["b/compensate/returned_failure"]
+MATCH
+
+== S-plain-04  a → b(undo raises) → c(fails)   [inline]
+expected: run:a run:b run:c compensate:c undo:b undo:a => failure(c)
+observed: run:a run:b run:c compensate:c undo:b undo:a => failure(c)
+note: rollback_failures=["b/undo/raised"]
+MATCH
+
+== S-plain-05  a → b(Halt) → c   [inline]
+expected: run:a run:b => halt
+observed: run:a run:b => halt
+MATCH
+
+== S-plain-06  a → b(Skipped) → c(fails)   [inline]
+expected: run:a run:b run:c compensate:c undo:a => failure(c)
+observed: run:a run:b run:c compensate:c undo:a => failure(c)
+MATCH
+
+== S-plain-07  a → b(argument transform raises StandardError)   [inline]
+expected: run:a undo:a => failure(b)
+observed: run:a undo:a => failure(b)
+note: error=Step 'b' failed: Step 'b' could not resolve its arguments: transform boom
+MATCH
+
+== S-plain-08  a → b(output fails validate_output)   [inline]
+expected: run:a run:b compensate:b undo:a => failure(b)
+observed: run:a run:b compensate:b undo:a => failure(b)
+MATCH
+
+== S-plain-09  DAG a, b → c → d(fails)   [inline]
+expected: run:a run:b run:c run:d compensate:d undo:c undo:b undo:a => failure(d)
+observed: run:a run:b run:c run:d compensate:d undo:c undo:b undo:a => failure(d)
+MATCH
+
+== S-compose-01  a → compose(c1 → c2 fails) → b   [inline]
+expected: run:a run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 undo:a => failure(child)
+observed: run:a run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 undo:a => failure(child)
+MATCH
+
+== S-compose-02  a → compose(c1 → c2) → b(fails)   [inline]
+expected: run:a run:child.c1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 undo:a => failure(b)
+observed: run:a run:child.c1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 undo:a => failure(b)
+MATCH
+
+== S-compose-03  compose x(x1 → x2) → compose y(y1 → y2 fails)   [Q2]   [inline]
+expected: run:x.x1 run:x.x2 run:y.y1 run:y.y2 compensate:y.y2 undo:y.y1 undo:x.x2 undo:x.x1 => failure(y)
+observed: run:x.x1 run:x.x2 run:y.y1 run:y.y2 compensate:y.y2 undo:y.y1 undo:x.x2 undo:x.x1 => failure(y)
+MATCH
+
+== S-compose-04  a → compose outer(o1 → compose inner(i1 → i2 fails))   [inline]
+expected: run:a run:outer.o1 run:inner.i1 run:inner.i2 compensate:inner.i2 undo:inner.i1 undo:outer.o1 undo:a => failure(outer)
+observed: run:a run:outer.o1 run:inner.i1 run:inner.i2 compensate:inner.i2 undo:inner.i1 undo:outer.o1 undo:a => failure(outer)
+MATCH
+
+== S-compose-05  compose(c1 → c2 fails once) declaring compose-level retries   [inline]
+expected: => raised(RubyReactor::Error::DeprecatedDslError)
+observed: => raised(RubyReactor::Error::DeprecatedDslError)
+MATCH
+
+== S-compose-05b  compose(c1 → c2 fails once, retried by the child) → b(fails)   [inline]
+expected: run:child.c1 run:child.c2 retry:c2#1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 => failure(b)
+observed: run:child.c1 run:child.c2 retry:c2#1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 => failure(b)
+MATCH
+
+== S-compose-06  background all: a → compose(c1 → c2) → b(fails)   [worker]
+expected: run:a run:child.c1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 undo:a => failure(b)
+observed: run:a run:child.c1 run:child.c2 run:b compensate:b undo:child.c2 undo:child.c1 undo:a => failure(b)
+MATCH
+
+== S-compose-07  a → compose(c1(undo raises) → c2 fails)   [inline]
+expected: run:a run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 undo:a => failure(child)
+observed: run:a run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 undo:a => failure(child)
+note: rollback_failures=["c1/undo/raised"]
+MATCH
+
+== S-compose-08  a → compose(c1 → c2 returns Halt) → b   [inline]
+expected: run:a run:child.c1 run:child.c2 run:b => success
+observed: run:a run:child.c1 run:child.c2 run:b => success
+MATCH
+
+== S-map-01  a → map(4 elems, inline, fail_fast; elem 2 fails) → b   [Q1]   [inline]
+expected: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a => failure(m)
+observed: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a => failure(m)
+MATCH
+
+== S-map-02  a → map(inline, fail_fast false; elem 2 fails) → b   [inline]
+expected: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] run:e.e1[3] run:e.e2[3] run:b => success
+observed: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] run:e.e1[3] run:e.e2[3] run:b => success
+MATCH
+
+== S-map-03  a → map(inline, all ok) → b(fails)   [Q1: later failure]   [inline]
+expected: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] run:e.e1[3] run:e.e2[3] run:b compensate:b undo:e.e2[3] undo:e.e1[3] undo:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a => failure(b)
+observed: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] run:e.e1[3] run:e.e2[3] run:b compensate:b undo:e.e2[3] undo:e.e1[3] undo:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a => failure(b)
+MATCH
+
+== S-map-04  a → map(fan_out, fail_fast; elem 2 fails) → b   [worker]
+expected: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a => failure(m)
+observed: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a => failure(m)
+MATCH
+
+== S-map-05  a → map(fan_out, fail_fast false; elem 2 fails) → b   [worker]
+expected: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] run:e.e1[3] run:e.e2[3] run:b => success
+observed: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] run:e.e1[3] run:e.e2[3] run:b => success
+MATCH
+
+== S-map-06  a → map(fan_out, all ok) → b(fails)   [worker]
+expected: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] run:e.e1[3] run:e.e2[3] run:b compensate:b undo:e.e2[3] undo:e.e1[3] undo:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a => failure(b)
+observed: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] run:e.e1[3] run:e.e2[3] run:b compensate:b undo:e.e2[3] undo:e.e1[3] undo:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a => failure(b)
+MATCH
+
+== S-map-07  a → compose(c0 → map(elem 2 fails))   [inline]
+expected: run:a run:child.c0 run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:child.c0 undo:a => failure(child)
+observed: run:a run:child.c0 run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] undo:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:child.c0 undo:a => failure(child)
+MATCH
+
+== S-map-08  map(elem: e1 → compose(k1) → e2; elem 2 fails)   [inline]
+expected: run:e.e1[0] run:k.k1 run:e.e2[0] run:e.e1[1] run:k.k1 run:e.e2[1] run:e.e1[2] run:k.k1 run:e.e2[2] compensate:e.e2[2] undo:k.k1 undo:e.e1[2] undo:e.e2[1] undo:k.k1 undo:e.e1[1] undo:e.e2[0] undo:k.k1 undo:e.e1[0] => failure(m)
+observed: run:e.e1[0] run:k.k1 run:e.e2[0] run:e.e1[1] run:k.k1 run:e.e2[1] run:e.e1[2] run:k.k1 run:e.e2[2] compensate:e.e2[2] undo:k.k1 undo:e.e1[2] undo:e.e2[1] undo:k.k1 undo:e.e1[1] undo:e.e2[0] undo:k.k1 undo:e.e1[0] => failure(m)
+MATCH
+
+== S-map-04b  map(fan_out, fail_fast; elem 2 fails), element jobs performed 3,2,1,0   [worker]
+expected: run:a run:e.e1[3] run:e.e2[3] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] undo:e.e2[3] undo:e.e1[3] undo:a => failure(m)
+observed: run:a run:e.e1[3] run:e.e2[3] run:e.e1[2] run:e.e2[2] compensate:e.e2[2] undo:e.e1[2] undo:e.e2[3] undo:e.e1[3] undo:a => failure(m)
+MATCH
+
+== S-map-09  a → map(fan_out; each e2 fails once, retries 2) → b   [worker]
+expected: run:a run:e.e1[0] run:e.e2[0] retry:e2#1 run:e.e1[1] run:e.e2[1] retry:e2#1 run:e.e2[0] run:e.e2[1] run:b => success
+observed: run:a run:e.e1[0] run:e.e2[0] retry:e2#1 run:e.e1[1] run:e.e2[1] retry:e2#1 run:e.e2[0] run:e.e2[1] run:b => success
+MATCH
+
+== S-map-10  a → map(inline; each e2 fails once, retries 2) → b   [inline]
+expected: run:a run:e.e1[0] run:e.e2[0] retry:e2#1 run:e.e2[0] run:e.e1[1] run:e.e2[1] retry:e2#1 run:e.e2[1] run:b => success
+observed: run:a run:e.e1[0] run:e.e2[0] retry:e2#1 run:e.e2[0] run:e.e1[1] run:e.e2[1] retry:e2#1 run:e.e2[1] run:b => success
+MATCH
+
+== S-map-11  a → map(inline; elem 1 returns Halt) → b   [inline]
+expected: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] => halt
+observed: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] => halt
+MATCH
+
+== S-map-12  a → map(fan_out; element e1 → async_step u, e2; elem 1 fails) → b   [worker]
+expected: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] compensate:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a run:e.u[0] run:e.u[1] => failure(m)
+observed: run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] compensate:e.e2[1] undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a run:e.u[0] run:e.u[1] => failure(m)
+note: StepWorker jobs left after drain: 0
+MATCH
+
+== S-async-01  a → async_step u(fails), no reader; b   [inline parent + drained StepWorker]
+expected: run:a run:b run:u compensate:u => success
+observed: run:a run:b run:u compensate:u => success
+MATCH
+
+== S-async-02  a → async_step u(fails) → r reads u and fails   [inline parent + Sidekiq inline!]
+expected: run:a run:u compensate:u run:r compensate:r undo:a => failure(r)
+observed: run:a run:u compensate:u run:r compensate:r undo:a => failure(r)
+MATCH
+
+== S-async-03  a → async_step u(ok); b(fails), no reader   [inline parent + drained StepWorker]
+expected: run:a run:b compensate:b undo:a run:u => failure(b)
+observed: run:a run:b compensate:b undo:a run:u => failure(b)
+MATCH
+
+== S-async-04  a → async_reactor child(c1 → c2 fails), no reader; b   [inline parent + drained Worker]
+expected: run:a run:b run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 => success
+observed: run:a run:b run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 => success
+MATCH
+
+== S-async-05  a → async_reactor child(c1 → c2 fails) → r reads child and fails   [inline parent + Sidekiq inline!]
+expected: run:a run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 run:r compensate:r undo:a => failure(r)
+observed: run:a run:child.c1 run:child.c2 compensate:child.c2 undo:child.c1 run:r compensate:r undo:a => failure(r)
+MATCH
+
+== S-async-06  a → async_reactor child(ok); b(fails)   [inline parent + drained Worker]
+expected: run:a run:b compensate:b undo:a run:child.c1 run:child.c2 => failure(b)
+observed: run:a run:b compensate:b undo:a run:child.c1 run:child.c2 => failure(b)
+MATCH
+
+== S-async-07  a → async_step u(always fails, retries 3), no reader; b   [inline parent + drained StepWorker]
+expected: run:a run:b run:u run:u run:u compensate:u => success
+observed: run:a run:b run:u run:u run:u compensate:u => success
+MATCH
+
+== S-async-08  a → async_step u → r reads u; unit never finishes in time   [inline parent + drained StepWorker (after)]
+expected: run:a undo:a run:u compensate:u => failure(r)
+observed: run:a undo:a run:u compensate:u => failure(r)
+note: error=Step 'r' failed: Step 'r' could not resolve its arguments: Timed out after 2s waiting for async completion on 'rr:done:fe2a937e-53ea-4b93-8864-79c4cd29f3d4:u'. The dispatched work never reached a terminal state within `RubyReactor.configuration.async_wait_timeout` — check that a worker is running and consuming the queue, or raise the timeout if this unit is legitimately slower.
+MATCH
+
+== S-bg-01  background all: a → b → c(fails)   [worker]
+expected: run:a run:b run:c compensate:c undo:b undo:a => failure(c)
+observed: run:a run:b run:c compensate:c undo:b undo:a => failure(c)
+MATCH
+
+== S-bg-02  a | background after: :a | b → c(fails)   (a ran in the caller)   [caller + worker]
+expected: run:a run:b run:c compensate:c undo:b undo:a => failure(c)
+observed: run:a run:b run:c compensate:c undo:b undo:a => failure(c)
+note: caller returned with 1 worker job(s) queued
+MATCH
+
+== S-bg-03  background all: a → b(always fails, retries 3)   [worker]
+expected: run:a run:b retry:b#1 run:b retry:b#2 run:b compensate:b undo:a => failure(b)
+observed: run:a run:b retry:b#1 run:b retry:b#2 run:b compensate:b undo:a => failure(b)
+MATCH
+
+== S-bg-04  background all: a → b(fails once, retries 2) → c   [worker]
+expected: run:a run:b retry:b#1 run:b run:c => success
+observed: run:a run:b retry:b#1 run:b run:c => success
+MATCH
+
+== S-lock-01  reactor with_lock(rk): a → b(fails)   [inline]
+expected: lock_acquired:rk run:a run:b compensate:b undo:a lock_released:lock:rk => failure(b)
+observed: lock_acquired:rk run:a run:b compensate:b undo:a lock_released:lock:rk => failure(b)
+MATCH
+
+== S-lock-02  a → b(step with_lock sk) → c(fails)   [inline]
+expected: run:a lock_acquired:sk run:b lock_released:sk run:c compensate:c lock_acquired:sk undo:b lock_released:sk undo:a => failure(c)
+observed: run:a lock_acquired:sk run:b lock_released:sk run:c compensate:c lock_acquired:sk undo:b lock_released:sk undo:a => failure(c)
+MATCH
+
+== S-lock-03  a → b(step with_lock sk, key held by another owner)   [inline]
+expected: run:a undo:a => failure(b)
+observed: run:a undo:a => failure(b)
+MATCH
+
+== S-lock-04  a → b(step with_semaphore limit 1) → c(fails)   [inline]
+expected: run:a semaphore_acquired:sem run:b semaphore_released:sem run:c compensate:c semaphore_acquired:sem undo:b semaphore_released:sem undo:a => failure(c)
+observed: run:a semaphore_acquired:sem run:b semaphore_released:sem run:c compensate:c semaphore_acquired:sem undo:b semaphore_released:sem undo:a => failure(c)
+MATCH
+
+== S-lock-05  a → b(step lock sk, rollback_wait 0.3) → c(takes sk as intruder, fails)   [inline]
+expected: run:a lock_acquired:sk run:b lock_released:sk run:c compensate:c undo:a => failure(c)
+observed: run:a lock_acquired:sk run:b lock_released:sk run:c compensate:c undo:a => failure(c)
+note: rollback_failures=["b/undo/coordination_unavailable"]
+MATCH
+
+== S-lock-06  reactor with_lock(rk): a → compose(child with_lock rk: c1) → b(fails)   [inline]
+expected: lock_acquired:rk run:a lock_acquired:rk run:child.c1 lock_released:lock:rk run:b(rk count=1) compensate:b undo:child.c1 undo:a lock_released:lock:rk => failure(b)
+observed: lock_acquired:rk run:a lock_acquired:rk run:child.c1 lock_released:lock:rk run:b(rk count=1) compensate:b undo:child.c1 undo:a lock_released:lock:rk => failure(b)
+MATCH
+
+== S-retry-01  a → b(always fails, retries 3)   [inline]
+expected: run:a run:b retry:b#1 run:b retry:b#2 run:b compensate:b undo:a => failure(b)
+observed: run:a run:b retry:b#1 run:b retry:b#2 run:b compensate:b undo:a => failure(b)
+MATCH
+
+== S-retry-02  a → b(fail! retry: false, retries 3)   [inline]
+expected: run:a run:b compensate:b undo:a => failure(b)
+observed: run:a run:b compensate:b undo:a => failure(b)
+MATCH
+
+== S-retry-03  a → b(fails once, retries 2) → c   [inline]
+expected: run:a run:b retry:b#1 run:b run:c => success
+observed: run:a run:b retry:b#1 run:b run:c => success
+MATCH
+
+== S-retry-04  a → b(raises, retries 2)   [inline]
+expected: run:a run:b retry:b#1 run:b compensate:b undo:a => failure(b)
+observed: run:a run:b retry:b#1 run:b compensate:b undo:a => failure(b)
+MATCH
+
+== S-intr-01  reactor with_lock(rk): a → interrupt → [continue] → c(fails)   [inline]
+expected: lock_acquired:rk run:a lock_released:lock:rk lock_acquired:rk run:c compensate:c undo:a lock_released:lock:rk => failure(c)
+observed: lock_acquired:rk run:a lock_released:lock:rk lock_acquired:rk run:c compensate:c undo:a lock_released:lock:rk => failure(c)
+note: first run => paused
+MATCH
+
+== S-intr-02  a → interrupt(validate, max_attempts 1) ← invalid payload   [inline]
+expected: run:a undo:a => failure(approval)
+observed: run:a undo:a => failure(approval)
+MATCH
+
+== S-intr-03  a → interrupt → Reactor.cancel   [inline]
+expected: run:a => status=cancelled
+observed: run:a => status=cancelled
+MATCH
+
+== S-intr-04  completed a → b; reactor lock rk held by another owner; Reactor.undo(id)   [inline]
+expected: lock_acquired:rk run:a run:b lock_released:lock:rk undo:b undo:a => status=cancelled
+observed: lock_acquired:rk run:a run:b lock_released:lock:rk undo:b undo:a => status=cancelled
+MATCH
+
+== S-edge-01  background all: a → b(step lock held elsewhere; lock_snooze_max_attempts 2)   [worker]
+expected: run:a undo:a => failure(b)
+observed: run:a undo:a => failure(b)
+MATCH
+
+== S-edge-02  background all: a → b(worker crashes once) → c; job redelivered   [worker]
+expected: run:a run:b crash run:b run:c => success
+observed: run:a run:b crash run:b run:c => success
+MATCH
+
+== S-edge-03  a → b(raises a non-StandardError Exception)   [inline]
+expected: run:a run:b compensate:b undo:a => failure(b)
+observed: run:a run:b compensate:b undo:a => failure(b)
+MATCH
+
+== S-edge-03b  a → b(interrupted: raises Interrupt)   [inline]
+expected: run:a run:b => raised(Interrupt)
+observed: run:a run:b => raised(Interrupt)
+note: stored status=aborted
+MATCH
+
+== S-edge-04  a → b(declares a where-condition)   [inline]
+expected: => raised(RubyReactor::Error::DeprecatedDslError)
+observed: => raised(RubyReactor::Error::DeprecatedDslError)
+MATCH
+
+== S-edge-05  a → b(argument type check fails)   [inline]
+expected: run:a undo:a => failure(b)
+observed: run:a undo:a => failure(b)
+MATCH
+
+== S-edge-06  reactor input validation fails   [inline]
+expected: => failure(?)
+observed: => failure(?)
+MATCH
+
+64 scenarios, 64 match, 0 mismatch

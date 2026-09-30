@@ -133,6 +133,8 @@ The behavior on a "lock already held" condition depends on **where** the reactor
 | Inline (`Reactor.run`)           | Raises `RubyReactor::Lock::AcquisitionError`. The caller decides whether to retry, switch to background, or give up. |
 | Background worker (Sidekiq/ActiveJob) | Snoozes the job via `perform_in(delay, ...)`. **Does not** consume the backend's retry budget.                  |
 
+An interrupt's inline `continue` behaves like `Reactor.run`: a contended resume raises and the run stays paused, so the caller can retry it ([Resuming Execution](interrupts.md#resuming-execution)).
+
 The background path also force-disables `wait:` (no `sleep`/BLPOP inside a worker thread) — better to snooze the job than to tie up a worker.
 
 After `lock_snooze_max_attempts` snoozes, the worker stops re-enqueuing and marks the context as failed. See [Snooze configuration](#snooze-configuration).
@@ -739,7 +741,7 @@ Any of the five macros on an **interrupt** step raises at class-definition time:
 
 ### Where it is enforced
 
-Acquisition happens after guards and after argument validation — both the reactor's `argument` validators and the step class's own `input` contract — so a step that will be skipped, or that fails validation, never takes a hold. A step's declarations are taken **once, in one fixed order**, whether they sit on the step class, inline in the reactor's `step` block, or both:
+Acquisition happens after argument validation — both the reactor's `argument` validators and the step class's own `input` contract — so a step that fails validation never takes a hold. A step that skips itself decides so in its body, after its holds are taken. A step's declarations are taken **once, in one fixed order**, whether they sit on the step class, inline in the reactor's `step` block, or both:
 
 | Order | Taken | Released |
 |---|---|---|
@@ -765,7 +767,6 @@ Every entry point is coordinated:
 | `ChargeStep.run(args)` / `.run(args, nil)` directly | ✅ its own execution: contends with every holder, including running reactors; wait-then-fail |
 | `ChargeStep.run(args, context)` from inside a step body | ✅ part of that execution: re-entrant on keys it already holds, contends on any other key — a direct call never parks, so losing that contention fails the *calling* step like any other error (it is compensated; it is never parked and re-run) |
 | `compensate` / `undo` | ✅ exclusion primitives only — see [Rollback](#step-rollback) |
-| Step suppressed by `where`/guard | ❌ by design |
 | Interrupt step | ❌ declaring coordination on one raises |
 
 ### Step Contention
@@ -776,6 +777,8 @@ Losing contention behaves differently depending on where the execution is runnin
 |---|---|
 | Running in a worker (Sidekiq/ActiveJob) | The execution **parks at that step** and is redelivered later, via `perform_in`/`perform_step_in` — reusing `lock_snooze_base_delay`/`lock_snooze_jitter`/`lock_snooze_max_attempts` ([Snooze configuration](#snooze-configuration)). No step compensates; the contended step's own work was never attempted. |
 | Running synchronously | Waits up to the configured `wait:`, then fails with a contention error naming the reactor, step, and key. Already-completed steps roll back as for any step failure; the contended step itself does not compensate — like the parked case, its own work was never attempted. |
+
+Contention is one of the **never-started** failures: the step fails, already-completed steps are undone, and the step itself is not compensated because its body never ran. The others are an unresolvable coordination key, a refused `async_reactor` dispatch, and an `argument` source, `transform` or result path that raises (`RubyReactor::Error::ArgumentResolutionError`). The last one is never retried either: the same inputs fail the same way.
 
 A park hands back everything the contended step took — its work has not started, so there is nothing to protect across the gap, exactly as with reactor-level contention. The only thing it keeps is its ordered-lock position, so the redelivery does not lose its place in line. Coordination the *execution* already held before reaching the step stays checked out across the gap and is re-adopted on redelivery, as for any mid-flight park — **at every nesting depth**: when the contended step sits inside a composed child (or a child of a child), every workflow level on the way up keeps its *own* reactor-level lock and semaphore through the gap and re-adopts it on redelivery. As long as the park gap stays within the lock's `ttl` (see [Owner identity](#owner-identity)), that re-adoption emits no second `:lock_acquired`; a lock whose `ttl` ran out during the gap is acquired afresh, which does emit it. The same holds when a step of a composed child waits on a background result (`result(:some_async_step)`) that is not ready yet, and when a composed child cannot take its own reactor-level lock, semaphore or rate-limit slot ([above](#inline-vs-background-behavior-on-contention)): the execution parks and resumes on redelivery, instead of failing the parent.
 
@@ -898,11 +901,11 @@ result.rollback_failures
 | `reason` | `:coordination_unavailable`, `:returned_failure`, or `:raised` |
 | `message` | a readable cause |
 
-The list is always an Array (empty when every rollback completed), is included in `Failure#to_h`, and survives the stored failure of a background run. It does not cover map elements or `async_reactor` children, which keep their own records. Alongside it, an undo that could not re-acquire (or returned a `Failure`) still writes a `type: :undo` execution-trace entry and fires the `on_failed_undo` hook; an undo that **raised** writes a `type: :undo_failure` entry. A `compensate` that fails — by returning a `Failure` or by raising — does not stop the rollback: the completed steps are still undone, and then `CompensationError` is raised into the reactor's failure.
+The list is always an Array (empty when every rollback completed), is included in `Failure#to_h`, and survives the stored failure of a background run. It includes the rollback of every map element, tagged with `map_step:` and `element_index:`. It does not cover `async_reactor` children or `async_step` units, which keep their own records (an `async_step` unit records its own `compensation` on its Step Result Record). Alongside it, an undo that could not re-acquire (or returned a `Failure`) still writes a `type: :undo` execution-trace entry and fires the `on_failed_undo` hook; an undo that **raised** writes a `type: :undo_failure` entry. A `compensate` that fails — by returning a `Failure` or by raising — does not stop the rollback: the completed steps are still undone, and then `CompensationError` is raised into the reactor's failure.
 
 ### `with_period` skips the step, not the reactor
 
-Reactor-level `with_period` halts the whole reactor when the bucket is marked. At step level that would kill a workflow over one deduplicated step, so instead **the step is skipped** (`RubyReactor.Skipped(reason: :period, ...)`) and the following steps run normally — a `Skipped` step behaves exactly as it does anywhere else (see [The `Halt` result](#the-halt-result) for the contrast with reactor-level halting).
+Reactor-level `with_period` halts the whole reactor when the bucket is marked. At step level that would kill a workflow over one deduplicated step, so instead **the step is skipped** (`RubyReactor.Skipped(reason: :period, ...)`) and the following steps run normally — a `Skipped` step behaves exactly as it does anywhere else: the run continues, and the step is never undone (see [The `Halt` result](#the-halt-result) for the contrast with reactor-level halting). A body that returns `Skipped` marks the bucket just as a `Success` does.
 
 ### The ordered-lock arrival caveat
 
@@ -910,7 +913,7 @@ The reactor-level `with_ordered_lock` assigns its nonce at **enqueue time** ([Ho
 
 > **Use only on `background all: true` reactors.** As at the reactor level, the step gate's only "wait" mechanism is a worker parking the execution and re-polling. A **synchronous** execution that arrives out of turn has nowhere to wait: it fails with a contention error naming the reactor, step and key, and **hands its position back** — it never held the turn, so later arrivals proceed and are not chain-skipped on its account. That caller's work simply did not run; ordering for concurrent synchronous callers is not enforced. A position that **reached the head and then failed** (its body failed, or it lost lock/semaphore/rate-limit contention after the gate) is different: in strict mode it still stops the line, and its strict successors are skipped with `Skipped(reason: :ordered_lock_chain_failed)`.
 
-A step whose position went stale — its batch drained past it (the poison pill, or an ops `OrderedLock.skip!`) and a newer batch reused the numbering before its retry or redelivery ran — is **skipped** with `Skipped(reason: :ordered_lock_stale_batch)` and its body does not run, mirroring the reactor level's `Halt(reason: :ordered_lock_stale_batch)`. A step whose batch merely drained (no newer batch yet) runs late, as a straggler. A body that exits abnormally (anything that is not a `StandardError`, e.g. `Sidekiq::Shutdown`) stops the position's heartbeat but does not advance it: a shut-down job is redelivered and keeps its place, and otherwise the poison pill releases the position within `poison_pill_timeout`.
+A step whose position went stale — its batch drained past it (the poison pill, or an ops `OrderedLock.skip!`) and a newer batch reused the numbering before its retry or redelivery ran — is **skipped** with `Skipped(reason: :ordered_lock_stale_batch)` and its body does not run, mirroring the reactor level's `Halt(reason: :ordered_lock_stale_batch)`. A step whose batch merely drained (no newer batch yet) runs late, as a straggler. A body cut short by an interruption (a signal such as `Sidekiq::Shutdown`, an exit, out of memory; any other exception is an ordinary failure) stops the position's heartbeat but does not advance it: a shut-down job is redelivered and keeps its place, and otherwise the poison pill releases the position within `poison_pill_timeout`.
 
 ### Reactor Level vs Step Level
 
