@@ -83,6 +83,9 @@ RSpec.describe RubyReactor::Web::CoordinationSerializer do
     end
 
     it "includes rate-limit window counts" do
+      # Runs and build must read the same 1s bucket; a second boundary
+      # between them reads an empty bucket.
+      allow(Time).to receive(:now).and_return(Time.now)
       2.times { RateLimitedReactor.run(account_id: 5) }
 
       result = described_class.build(
