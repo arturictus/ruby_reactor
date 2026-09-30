@@ -122,11 +122,12 @@ RSpec.describe "step-level contention parks instead of failing", :step_coordinat
         holder.release
       end
 
+      started_at = Time.now.to_i
       dispatch = RateLimitedFirstStepLockedReactor.run(run_id: run_id, account_id: account_id, sleep_for: 0)
       result = eventually_terminal(RateLimitedFirstStepLockedReactor, dispatch.execution_id)
 
       expect(result.context.status.to_s).to eq("completed")
-      expect("rl:finding4:#{account_id}").to have_rate_limit_count(1).for(:minute)
+      expect("rl:finding4:#{account_id}").to have_rate_limit_count(1).for(:minute).since(started_at)
     end
   end
 

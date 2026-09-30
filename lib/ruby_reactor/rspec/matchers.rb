@@ -261,6 +261,15 @@ module RubyReactor
         RubyReactor.configuration.storage_adapter
       end
 
+      def self.rate_limit_total(key_base, period, since)
+        return coordination_adapter.rate_limit_count(key_base, period) unless since
+
+        seconds = RubyReactor::Period.period_seconds(period)
+        ((since.to_i / seconds)..(Time.now.to_i / seconds)).sum do |bucket|
+          coordination_adapter.rate_limit_count(key_base, period, now: bucket * seconds)
+        end
+      end
+
       # Distinguishes `RubyReactor::Halt` (a clean halt) from a plain
       # `Success`. Works on any object with a `halted?` predicate.
       #
@@ -419,22 +428,29 @@ module RubyReactor
       end
 
       # Asserts the current rate-limit counter for a (key_base, period) pair.
-      # Use `.for(period_unit)` to specify which window.
+      # Use `.for(period_unit)` to specify which window. Add `.since(time)` to
+      # sum every bucket from `time` to now instead — buckets are fixed
+      # windows, so a run that straddles a boundary splits its count.
       #
       #   expect("stripe:42").to have_rate_limit_count(3).for(:second)
+      #   expect("stripe:42").to have_rate_limit_count(1).for(:minute).since(started_at)
       ::RSpec::Matchers.define :have_rate_limit_count do |expected|
         match do |key_base|
           raise ArgumentError, "have_rate_limit_count requires .for(period)" unless @period
 
-          Matchers.coordination_adapter.rate_limit_count(key_base, @period) == expected
+          Matchers.rate_limit_total(key_base, @period, @since) == expected
         end
 
         chain :for do |period|
           @period = period
         end
 
+        chain :since do |time|
+          @since = time
+        end
+
         failure_message do |key_base|
-          actual = Matchers.coordination_adapter.rate_limit_count(key_base, @period)
+          actual = Matchers.rate_limit_total(key_base, @period, @since)
           "expected rate-limit '#{key_base}' (#{@period}) count to be #{expected}, got #{actual}"
         end
       end

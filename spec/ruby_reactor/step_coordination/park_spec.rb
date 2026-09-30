@@ -48,6 +48,7 @@ RSpec.describe "parks at any depth", :step_coordination do
 
   describe "a parent rate limit across a composed park (R2)" do
     it "is charged once per execution" do
+      started_at = Time.now
       holder = hold("park:acct:#{account_id}")
       dispatch = ParkRateParentReactor.run(run_id: run_id, account_id: account_id)
 
@@ -59,15 +60,16 @@ RSpec.describe "parks at any depth", :step_coordination do
       perform_once
 
       expect(status_of(ParkRateParentReactor, dispatch)).to eq("completed")
-      expect("park:rl:#{run_id}").to have_rate_limit_count(1).for(:hour)
+      expect("park:rl:#{run_id}").to have_rate_limit_count(1).for(:hour).since(started_at)
     end
 
     it "is charged once with no contention at all (control)" do
+      started_at = Time.now
       dispatch = ParkRateParentReactor.run(run_id: run_id, account_id: account_id)
       perform_once
 
       expect(status_of(ParkRateParentReactor, dispatch)).to eq("completed")
-      expect("park:rl:#{run_id}").to have_rate_limit_count(1).for(:hour)
+      expect("park:rl:#{run_id}").to have_rate_limit_count(1).for(:hour).since(started_at)
     end
 
     it "emits :snooze_step for the parked step, never :failed_step" do
@@ -114,6 +116,7 @@ RSpec.describe "parks at any depth", :step_coordination do
     end
 
     it "re-acquires a parent lock that lapsed during the gap, still charging the rate limit once (US2-5)" do
+      started_at = Time.now
       holder = hold("park:acct:#{account_id}")
       dispatch = ParkShortTtlParentReactor.run(run_id: run_id, account_id: account_id)
 
@@ -124,12 +127,13 @@ RSpec.describe "parks at any depth", :step_coordination do
 
       expect(status_of(ParkShortTtlParentReactor, dispatch)).to eq("completed")
       expect("park:short:#{run_id}").not_to be_locked
-      expect("park:short_rl:#{run_id}").to have_rate_limit_count(1).for(:hour)
+      expect("park:short_rl:#{run_id}").to have_rate_limit_count(1).for(:hour).since(started_at)
     end
   end
 
   describe "a park two composition levels down" do
     it "keeps the middle level's lock through the gap and charges its rate limit once" do
+      started_at = Time.now
       holder = hold("park:acct:#{account_id}")
       dispatch = ParkGrandParentReactor.run(run_id: run_id, account_id: account_id)
 
@@ -141,12 +145,13 @@ RSpec.describe "parks at any depth", :step_coordination do
 
       expect(status_of(ParkGrandParentReactor, dispatch)).to eq("completed")
       expect("park:middle:#{run_id}").not_to be_locked
-      expect("park:middle_rl:#{run_id}").to have_rate_limit_count(1).for(:hour)
+      expect("park:middle_rl:#{run_id}").to have_rate_limit_count(1).for(:hour).since(started_at)
     end
   end
 
   describe "a reactor-level lock contended before the execution is admitted" do
     it "snoozes the job without charging the rate limit again on redelivery" do
+      started_at = Time.now
       holder = hold("park:root:#{run_id}")
       dispatch = ParkSnoozedRootReactor.run(run_id: run_id)
 
@@ -157,7 +162,7 @@ RSpec.describe "parks at any depth", :step_coordination do
       perform_once
 
       expect(status_of(ParkSnoozedRootReactor, dispatch)).to eq("completed")
-      expect("park:root_rl:#{run_id}").to have_rate_limit_count(1).for(:hour)
+      expect("park:root_rl:#{run_id}").to have_rate_limit_count(1).for(:hour).since(started_at)
     end
   end
 
@@ -167,6 +172,7 @@ RSpec.describe "parks at any depth", :step_coordination do
     end
 
     it "parks the parent's job instead of failing it, and completes once the key is free" do
+      started_at = Time.now
       holder = hold("park:locked_child:#{run_id}")
       dispatch = ParkLockedChildParentReactor.run(run_id: run_id)
 
@@ -183,7 +189,7 @@ RSpec.describe "parks at any depth", :step_coordination do
       expect(result.context.get_result(:child)).to eq("child:#{run_id}")
       expect("park:locked_parent:#{run_id}").not_to be_locked
       expect("park:locked_child:#{run_id}").not_to be_locked
-      expect("park:locked_child_rl:#{run_id}").to have_rate_limit_count(1).for(:hour)
+      expect("park:locked_child_rl:#{run_id}").to have_rate_limit_count(1).for(:hour).since(started_at)
       # The park was not a retry attempt of the compose step.
       expect(result.context.retry_context.attempts_for_step(:child)).to eq(1)
       expect(undo_log).to be_empty

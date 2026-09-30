@@ -255,9 +255,19 @@ RSpec.describe "Locking Integration" do
 
     describe "have_rate_limit_count" do
       it "reports the current bucket count" do
+        started_at = Time.now
         2.times { RateLimitedReactor.run(account_id: 99) }
 
-        expect("api:99").to have_rate_limit_count(2).for(:second)
+        expect("api:99").to have_rate_limit_count(2).for(:second).since(started_at)
+      end
+
+      it "sums every bucket since the given time with .since" do
+        now = Time.now.to_i
+        redis.set("rate:api:98:minute:#{(now / 60) - 1}", 1)
+        redis.set("rate:api:98:minute:#{now / 60}", 1)
+
+        expect("api:98").to have_rate_limit_count(1).for(:minute)
+        expect("api:98").to have_rate_limit_count(2).for(:minute).since(now - 60)
       end
 
       it "raises a clear error if .for(period) is missing" do
