@@ -393,6 +393,13 @@ Every breaking or shape-changing item of the rollback work, with what to change.
 * Docs: a park keeps each level's lock without a second `:lock_acquired` only while the gap stays
   within the lock's `ttl`; a lapsed lock is acquired again.
 
+## [0.8.5](https://github.com/arturictus/ruby_reactor/compare/v0.8.4...v0.8.5) (2026-09-30)
+
+
+### Miscellaneous Chores
+
+* Execution flows improvements and consolidation ([#65](https://github.com/arturictus/ruby_reactor/issues/65)) ([21a4c59](https://github.com/arturictus/ruby_reactor/commit/21a4c59fa13c0e7e66c8e08ccb5f20ea43875353))
+
 ## [0.8.4](https://github.com/arturictus/ruby_reactor/compare/v0.8.3...v0.8.4) (2026-09-26)
 
 
