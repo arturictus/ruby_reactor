@@ -19,7 +19,9 @@ export interface ClassAggregate {
 
 export const STATUS_GROUPS = {
   success: ['completed', 'halted', 'skipped'],
-  running: ['running', 'paused'],
+  // `rolling_back`: a rollback handed off at a fan-out map, waiting for its
+  // element rollback jobs. Not finished, so it counts with the live runs.
+  running: ['running', 'paused', 'rolling_back'],
   // `aborted`: a caller-process run cut short by a process-level exception,
   // its completed work still outstanding until a manual undo.
   errors: ['failed', 'cancelled', 'aborted'],

@@ -114,6 +114,22 @@ describe('ReactorDetail', () => {
     expect(screen.getByTestId('dag-error')).toBeEmptyDOMElement();
   });
 
+  it('shows rolling_back in amber and disables Cancel, which the API rejects', () => {
+    (useSWR as any).mockReturnValue({
+      data: { id: "test-reactor-123", class: "TestReactor", status: "rolling_back", error: null, inputs: {},
+              structure: {}, steps: [] },
+      error: null,
+      isLoading: false,
+      mutate: vi.fn()
+    });
+
+    render(<ReactorDetail />);
+
+    const status = screen.getAllByText('rolling_back').find(el => el.classList.contains('text-amber-300'));
+    expect(status).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Cancel/ })).toBeDisabled();
+  });
+
   it('enables retry only when reactor has failed', () => {
     const cases = [
       { status: 'failed', enabled: true },

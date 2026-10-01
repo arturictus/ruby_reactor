@@ -284,6 +284,29 @@ RSpec.describe RubyReactor::Web::API, type: :request do
     end
   end
 
+  # 009 R-15: a map rolling back distributed shows its progress.
+  describe "a fan-out map's rollback progress" do
+    before { stub_const("ApiRollbackSpec", Module.new) }
+
+    it "adds total, settled, outstanding and failed to the map reference" do
+      MapRollbackFixtures.parent(ApiRollbackSpec, :Later, MapRollbackFixtures::ElemOk, fan_out: true, batch_size: 2,
+                                                                                       b_fails: true)
+      id = ApiRollbackSpec::Later.run(items: [0, 1, 2, 3]).execution_id
+      until RubyReactor::Adapters::Sidekiq::MapElementRollbackWorker.jobs.any?
+        job = (RubyReactor::Adapters::Sidekiq::Worker.jobs + RubyReactor::Adapters::Sidekiq::MapElementWorker.jobs +
+               RubyReactor::Adapters::Sidekiq::MapCollectorWorker.jobs).first
+        RubyReactor::RSpec::SidekiqHelpers.pending_async_jobs.find { |pending| pending.raw.equal?(job) }.perform!
+      end
+
+      get "/reactors/#{id}"
+
+      json = JSON.parse(last_response.body)
+      expect(json["status"]).to eq("rolling_back")
+      expect(json["composed_contexts"]["m"]["rollback"])
+        .to eq("total" => 4, "settled" => 0, "outstanding" => 4, "failed" => 0)
+    end
+  end
+
   describe "hydrating the new composed_contexts refs" do
     it "resolves an async_step_ref to its Step Result Record" do
       result = AsyncStepSiblingReactor.run(email: "a@b.c")

@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe "Map Fail Fast Behavior" do
+RSpec.describe "Map Atomic Behavior" do
   # Helper to track execution events
   module EventTracker
     def self.included(base)
@@ -29,7 +29,7 @@ RSpec.describe "Map Fail Fast Behavior" do
   end
 
   # Base reactor setup
-  def create_reactor_class(class_name, fail_fast_val, async_val, batch_size_val = nil)
+  def create_reactor_class(class_name, atomic_val, async_val, batch_size_val = nil)
     Class.new(RubyReactor::Reactor) do
       include EventTracker
 
@@ -49,7 +49,7 @@ RSpec.describe "Map Fail Fast Behavior" do
         end
 
         # Use a local variable to capture logic if needed, but here we use values directly
-        fail_fast fail_fast_val
+        atomic atomic_val
 
         step :execute do
           argument :item, input(:item)
@@ -87,12 +87,12 @@ RSpec.describe "Map Fail Fast Behavior" do
 
   let(:items_with_failure) { %w[ok1 fail ok2 ok3] }
 
-  describe "when fail_fast is true" do
-    let(:fail_fast) { true }
+  describe "when atomic is true" do
+    let(:atomic) { true }
 
     describe "inline map" do
       before do
-        stub_const("FailFastInlineTrueReactor", create_reactor_class("FailFastInlineTrueReactor", fail_fast, false))
+        stub_const("FailFastInlineTrueReactor", create_reactor_class("FailFastInlineTrueReactor", atomic, false))
       end
 
       let(:reactor_class) { FailFastInlineTrueReactor }
@@ -110,19 +110,19 @@ RSpec.describe "Map Fail Fast Behavior" do
 
     describe "async map (default batch/all)" do
       before do
-        stub_const("FailFastAsyncTrueReactor", create_reactor_class("FailFastAsyncTrueReactor", fail_fast, true))
+        stub_const("FailFastAsyncTrueReactor", create_reactor_class("FailFastAsyncTrueReactor", atomic, true))
       end
 
       let(:reactor_class) { FailFastAsyncTrueReactor }
 
       it "stops processing further elements upon failure" do
         # NOTE: In async unlimited mode (or high default batch), multiple items might be queued before one fails.
-        # But `fail_fast` logic in Dispatcher checks before dispatching, and ElementExecutor checks before running.
+        # But `atomic` logic in Dispatcher checks before dispatching, and ElementExecutor checks before running.
         # If strict ordering is used (default), and sequential processing is implied or enforced?
         # Async map usually fans out.
         # If they run in parallel, "stopping immediately" is race-condition dependent unless strict ordering
         # is enforced.
-        # But our implementation checks `fail_fast` status in `ElementExecutor`.
+        # But our implementation checks `atomic` status in `ElementExecutor`.
         # So even if queued, they should abort execution if a failure flag is set.
         # However, due to parallel execution, "fail" execution might race with "ok2".
         # BUT for the purpose of this test running inline/mocked, it's sequential.
@@ -139,7 +139,7 @@ RSpec.describe "Map Fail Fast Behavior" do
 
     describe "async batched map (batch_size: 1)" do
       before do
-        stub_const("FailFastBatchTrueReactor", create_reactor_class("FailFastBatchTrueReactor", fail_fast, true, 1))
+        stub_const("FailFastBatchTrueReactor", create_reactor_class("FailFastBatchTrueReactor", atomic, true, 1))
       end
 
       let(:reactor_class) { FailFastBatchTrueReactor }
@@ -159,12 +159,12 @@ RSpec.describe "Map Fail Fast Behavior" do
     end
   end
 
-  describe "when fail_fast is false" do
-    let(:fail_fast) { false }
+  describe "when atomic is false" do
+    let(:atomic) { false }
 
     describe "inline map" do
       before do
-        stub_const("FailFastInlineFalseReactor", create_reactor_class("FailFastInlineFalseReactor", fail_fast, false))
+        stub_const("FailFastInlineFalseReactor", create_reactor_class("FailFastInlineFalseReactor", atomic, false))
       end
 
       let(:reactor_class) { FailFastInlineFalseReactor }
@@ -177,9 +177,9 @@ RSpec.describe "Map Fail Fast Behavior" do
         expect(reactor_class.events).to include("RUN ok2")
         expect(reactor_class.events).to include("RUN ok3")
         # Result of map might be success with failures collected?
-        # Default behavior: if fail_fast=false, return success with list of results?
-        # MapStep: `results << (fail_fast ? result.value : result)`
-        # If fail_fast=false, we get list of Result objects.
+        # Default behavior: if atomic=false, return success with list of results?
+        # MapStep: `results << (atomic ? result.value : result)`
+        # If atomic=false, we get list of Result objects.
         expect(result).to be_a(RubyReactor::Success)
         expect(result.value[:process_items].count).to eq(4)
         expect(result.value[:process_items][1]).to be_a(RubyReactor::Failure)
@@ -188,7 +188,7 @@ RSpec.describe "Map Fail Fast Behavior" do
 
     describe "async map" do
       before do
-        stub_const("FailFastAsyncFalseReactor", create_reactor_class("FailFastAsyncFalseReactor", fail_fast, true))
+        stub_const("FailFastAsyncFalseReactor", create_reactor_class("FailFastAsyncFalseReactor", atomic, true))
       end
 
       let(:reactor_class) { FailFastAsyncFalseReactor }
@@ -205,7 +205,7 @@ RSpec.describe "Map Fail Fast Behavior" do
 
     describe "async batched map (batch_size: 1)" do
       before do
-        stub_const("FailFastBatchFalseReactor", create_reactor_class("FailFastBatchFalseReactor", fail_fast, true, 1))
+        stub_const("FailFastBatchFalseReactor", create_reactor_class("FailFastBatchFalseReactor", atomic, true, 1))
       end
 
       let(:reactor_class) { FailFastBatchFalseReactor }

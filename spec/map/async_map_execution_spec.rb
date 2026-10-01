@@ -40,8 +40,10 @@ RSpec.describe "Async Map Execution" do
     # Check if Collector was queued
     expect(RubyReactor::Adapters::Sidekiq::MapCollectorWorker.jobs.size).to eq(2)
 
-    # Process Collector
+    # Process Collector, which signals the owner run; its Worker adopts the
+    # map's results (009 R-03).
     RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+    RubyReactor::Adapters::Sidekiq::Worker.drain
 
     # Verify result in Redis
     storage = RubyReactor.configuration.storage_adapter
@@ -79,6 +81,7 @@ RSpec.describe "Async Map Execution" do
 
     RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
     RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+    RubyReactor::Adapters::Sidekiq::Worker.drain # the owner resume (009 R-03)
 
     found = MapTestReactors::BackgroundFanOutReactor.find(context_id)
     expect(found.context.status.to_s).to eq("completed")

@@ -547,6 +547,15 @@ export default function StepInspector({
           </div>
         )}
 
+        {/* A fan-out map rolling back distributed. Its records outlive the run,
+            so only while the run is still rolling back. */}
+        {reactorStatus === 'rolling_back' && asyncRef?.rollback && (
+          <div className="bg-amber-500/5 rounded-lg border border-amber-500/20 p-4 text-sm text-amber-300">
+            Rolling back {asyncRef.rollback.settled}/{asyncRef.rollback.total} ({asyncRef.rollback.outstanding} outstanding,{' '}
+            {asyncRef.rollback.failed} failed)
+          </div>
+        )}
+
         {/* Resume Action */}
         {reactorStatus === 'paused' && stepConfig?.type === 'interrupt' && (
           <div className="bg-emerald-500/5 rounded-lg border border-emerald-500/20 p-4">
@@ -587,7 +596,7 @@ export default function StepInspector({
           </div>
         )}
 
-        {/* Error Section — a map's failure is whichever element tripped fail_fast,
+        {/* Error Section — a map's failure is whichever element failed an atomic map,
             one arbitrary sample of many; MapResultsPanel lists them all. */}
         {isFailedStep && failureReason && !isMapResults(result) && (
           <FailureDetails failure={failureReason} />

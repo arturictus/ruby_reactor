@@ -173,7 +173,7 @@ module RubyReactor
 
       def self.reactor_status(data)
         status = data[:status].to_s == "skipped" ? "halted" : data[:status].to_s
-        return status if %w[failed paused completed running halted pending aborted].include?(status)
+        return status if %w[failed paused completed running rolling_back halted pending aborted].include?(status)
         return "cancelled" if data[:cancelled]
         return "running" if data[:current_step]
         return "completed" if execution_evidence?(data)
@@ -393,7 +393,17 @@ module RubyReactor
         ref_data.merge("context" => child)
       end
 
+      # A map that rolled back distributed also carries its progress, `{
+      # total, settled, outstanding, failed }` (009 R-15). The records outlive
+      # the run, so a client shows it only while the run is `rolling_back`.
       def self.hydrate_map_ref(ref_data, reactor_class_name)
+        map_id = ref_data[:map_id] || ref_data["map_id"]
+        hydrated = hydrate_map_element(ref_data, reactor_class_name)
+        rollback = map_id && RubyReactor.configuration.storage_adapter.map_rollback_summary(map_id, reactor_class_name)
+        rollback ? hydrated.merge("rollback" => rollback.transform_keys(&:to_s)) : hydrated
+      end
+
+      def self.hydrate_map_element(ref_data, reactor_class_name)
         storage = RubyReactor.configuration.storage_adapter
         map_id = ref_data[:map_id] || ref_data["map_id"]
 

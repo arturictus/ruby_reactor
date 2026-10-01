@@ -22,6 +22,8 @@ RSpec.describe "Async Map Execution without batch_size" do
     # Process the elements and the collector that aggregates them.
     RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
     RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+    # The collector signals the owner run, whose Worker adopts the map (009 R-03).
+    RubyReactor::Adapters::Sidekiq::Worker.drain
 
     # Verify result in Redis
     storage = RubyReactor.configuration.storage_adapter

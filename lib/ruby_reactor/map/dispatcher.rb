@@ -6,7 +6,7 @@ module RubyReactor
       extend Helpers
 
       def self.perform(arguments)
-        arguments = arguments.transform_keys(&:to_sym)
+        arguments = Helpers.normalize_arguments(arguments)
         parent_reactor_class_name = arguments[:parent_reactor_class_name]
 
         storage = RubyReactor.configuration.storage_adapter
@@ -64,12 +64,12 @@ module RubyReactor
         map_id = arguments[:map_id]
         reactor_class_name = arguments[:parent_reactor_class_name]
 
-        # Fail Fast Check
-        if arguments[:fail_fast] && storage.retrieve_map_failed_context_id(map_id, reactor_class_name)
+        # An atomic map stops dispatching at its first failure.
+        if arguments[:atomic] && storage.retrieve_map_failed_context_id(map_id, reactor_class_name)
           return settle_undispatched(arguments, storage)
         end
 
-        batch_size = arguments[:batch_size] || source.size # Default to all if no batch_size (async=true only)
+        batch_size = arguments[:batch_size] || RubyReactor::Map::DEFAULT_BATCH_SIZE
 
         # Atomically reserve a batch
         new_offset = storage.increment_map_offset(map_id, batch_size, reactor_class_name)
@@ -103,7 +103,7 @@ module RubyReactor
         end
       end
 
-      # A fail-fast map stopped dispatching: claim every index not dispatched
+      # An atomic map stopped dispatching: claim every index not dispatched
       # yet (one offset bump, so a later dispatcher claims none), settle each
       # with a `_skipped` slot, count them down, and trigger the collector if
       # that settled the map. Without this those indices never settle, so the
@@ -146,7 +146,7 @@ module RubyReactor
           strict_ordering: map_meta["strict_ordering"],
           parent_context_id: map_meta["parent_context_id"],
           parent_reactor_class_name: parent_class_name,
-          fail_fast: map_meta["fail_fast"],
+          atomic: map_meta["atomic"],
           batch_size: map_meta["batch_size"]
         }
 
@@ -211,9 +211,40 @@ module RubyReactor
           parent_reactor_class_name: context.reactor_class.name,
           step_name: options[:step_name].to_s,
           batch_size: arguments[:batch_size], # Passed to worker so it knows to trigger next batch?
-          fail_fast: arguments[:fail_fast]
+          atomic: arguments[:atomic]
         )
       end
+
+      # One throw of a map's distributed rollback (009 R-02, R-06): claim the
+      # next `batch_size` positions of the element-context index, counted from
+      # its tail, and enqueue one rollback job per position. The job at the
+      # last position of a throw claims the next one, as forward.
+      def self.dispatch_rollback_batch(map_id:, parent_reactor_class_name:)
+        storage = RubyReactor.configuration.storage_adapter
+        meta = storage.retrieve_map_rollback_metadata(map_id, parent_reactor_class_name)
+        return 0 unless meta
+
+        positions = storage.claim_map_rollback_positions(map_id, parent_reactor_class_name, meta["batch_size"].to_i)
+        return 0 if positions.none?
+
+        ids = storage.retrieve_map_element_context_ids_from_tail(map_id, parent_reactor_class_name, positions.first,
+                                                                 positions.size, total: meta["total"].to_i)
+        positions.each_with_index do |position, i|
+          queue_rollback_job(meta, map_id, parent_reactor_class_name, position, ids[i])
+        end
+        positions.size
+      end
+
+      # rubocop:disable Metrics/ParameterLists
+      def self.queue_rollback_job(meta, map_id, parent_reactor_class_name, position, element_context_id, attempt: 0)
+        RubyReactor.configuration.async_router.perform_map_element_rollback_async(
+          map_id: map_id, position: position, element_context_id: element_context_id,
+          reactor_class_info: meta["reactor_class_info"], parent_reactor_class_name: parent_reactor_class_name,
+          step_name: meta["step_name"], batch_size: meta["batch_size"], owner_context_id: meta["owner_context_id"],
+          owner_reactor_class_name: meta["owner_reactor_class_name"], attempt: attempt
+        )
+      end
+      # rubocop:enable Metrics/ParameterLists
 
       def self.resolve_reactor_class_info(arguments, context)
         mapped_reactor_class = arguments[:mapped_reactor_class]

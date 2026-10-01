@@ -115,4 +115,26 @@ RSpec.describe RubyReactor::Map::Dispatcher do
       end
     end
   end
+
+  # 009 R-02, R-06: one throw of a distributed map rollback.
+  describe ".dispatch_rollback_batch" do
+    let(:storage) { RubyReactor::Storage::RedisAdapter.new(url: REDIS_TEST_URL) }
+    let(:jobs) { [] }
+
+    before do
+      allow(async_router).to receive(:perform_map_element_rollback_async) { |**args| jobs << args }
+      %w[a b c d e].each { |id| storage.store_map_element_context_id("p:m", id, "P") }
+      storage.start_map_rollback("p:m", "P", total: 5, batch_size: 2, step_name: "m", owner_context_id: "p",
+                                             owner_reactor_class_name: "P", reactor_class_info: { "type" => "class" })
+    end
+
+    it "claims at most batch_size positions, newest first, and none past the total" do
+      3.times { described_class.dispatch_rollback_batch(map_id: "p:m", parent_reactor_class_name: "P") }
+      expect(described_class.dispatch_rollback_batch(map_id: "p:m", parent_reactor_class_name: "P")).to eq(0)
+
+      expect(jobs.map { |job| [job[:position], job[:element_context_id]] })
+        .to eq([[0, "e"], [1, "d"], [2, "c"], [3, "b"], [4, "a"]])
+      expect(jobs.first).to include(map_id: "p:m", batch_size: 2, owner_context_id: "p", attempt: 0)
+    end
+  end
 end

@@ -56,7 +56,7 @@ RSpec.describe RubyReactor::RSpec::Helpers, type: :reactor do
 
   # Map Reactor whose mapped step always fails, for exercising failure
   # detection through test_reactor/TestSubject rather than the map engine
-  # itself (that's covered by spec/map/fail_fast_spec.rb and friends).
+  # itself (that's covered by spec/map/atomic_inline_spec.rb and friends).
   class HelpersMapFailureReactor < RubyReactor::Reactor
     input :items
     map :process_items do

@@ -241,6 +241,33 @@ Every breaking or shape-changing item of the rollback work, with what to change.
 
 ### Features
 
+* **`fan_out` without `batch_size` is back-pressured: at most 50 element jobs per throw**
+  (`RubyReactor::Map::DEFAULT_BATCH_SIZE`), forward and rollback. Before, every element was
+  enqueued at once. A map of more than 50 elements with no declared `batch_size` now runs in
+  throws of 50, which can lower its peak throughput: declare a larger `batch_size` to keep more
+  element jobs in flight.
+* **Distributed rollback of fan-out maps.** A `fan_out` map that must be rolled back (it failed,
+  a later step failed, or `Reactor.undo`) now rolls back the way it ran: one
+  `MapElementRollbackWorker` job per started element, enqueued `batch_size` per throw with the
+  forward run's back pressure, each loading one element's state. Before, one process loaded every
+  element and undid them one after another. The run ends with the same `Failure` as an inline map's
+  rollback. An element's rollback saves after every undone step, so a worker killed mid-rollback
+  resumes after the last one (the undo that was cut off runs again: keep undos idempotent). Both
+  sweepers recover lost rollback jobs and resumes. Inline maps keep rolling back in process, now
+  reading element states 100 at a time.
+* **`rolling_back` execution status.** A run whose rollback handed off at a fan-out map, until the
+  last element reports; then a worker undoes the steps before the map and the run ends `failed`
+  (`cancelled` for an undo). `Reactor.cancel` and `Reactor.undo` raise
+  `RubyReactor::Error::ValidationError` on it. The dashboard shows it (amber) in every status
+  surface, with the map's rollback progress (`total`, `settled`, `outstanding`, `failed`).
+* **Router methods `perform_map_element_rollback_async` / `perform_map_element_rollback_in`** on both
+  shipped routers, with a `MapElementRollbackWorker` per adapter, on the queue `MapElementWorker`
+  uses. A custom router needs both methods for fan-out map rollback.
+* **`be_rolling_back` matcher.** `pending_async_jobs` / `drain_async_jobs` work on the ActiveJob
+  test adapter too, and `worker_class` names a pending job's class on both backends.
+* **`Reactor.undo` holds the run's context lock**, and raises `RubyReactor::Lock::AcquisitionError`
+  while a live run or rollback holds it.
+
 * **`aborted` execution status.** A run in the caller's process that an interruption
   (`SignalException` including `Interrupt`, `SystemExit`, `NoMemoryError`, or an enclosing
   `Timeout.timeout`) cuts short runs no rollback code: the exception reaches the caller unchanged,
@@ -302,6 +329,11 @@ Every breaking or shape-changing item of the rollback work, with what to change.
 
 ### Deprecations
 
+* **`fail_fast` on a `map` is now `atomic`** (same meaning: every element succeeds, or none is
+  kept). `fail_fast` keeps working and prints one deprecation line per declaration site naming
+  `atomic`; it will be removed no earlier than the next major version. Declaring both on one map
+  raises `RubyReactor::Error::ValidationError`. Element jobs enqueued before the upgrade, which
+  carry `fail_fast`, keep the policy they were enqueued with.
 * Rules on `argument` (`argument :x, src, :type, **predicates`) and `validate_args` keep working
   for steps without a contract, and print one deprecation notice per declaration site. Move them
   to `input` / `validate_inputs` on the step class, or into an `inputs do ... end` block for an
@@ -309,6 +341,25 @@ Every breaking or shape-changing item of the rollback work, with what to change.
   version. See "Step Input Contracts" in the README for the migration.
 
 ### Bug Fixes
+
+* **A fan-out map inside a composed reactor no longer leaves the root running forever.** The map's
+  completion resumed the child as a run of its own, and nothing resumed the root. Now the root
+  resumes and finishes, and a failure of the map or of any later step rolls back through the root.
+  A map that was already running inside a composed child when you upgraded keeps the old
+  behavior: its metadata names no owner run.
+* A fan-out map's completion now resumes the run through its own Worker, which adopts the map's
+  outcome, instead of the collector job resuming the run itself. This costs one extra job per
+  fan-out map completion, and removes the collector's write to the run's context.
+* A map element re-dispatched by `RubyReactor::Map::Sweeper` kept neither `batch_size` nor
+  `fail_fast`: the map metadata never stored them, so the element stopped triggering later
+  batches and was no longer atomic. Both are stored now.
+* `Executor#resume_execution` saves the context before it releases the run's context lock. Released
+  first, a worker resuming the same run could load the pre-save state and have its progress
+  overwritten by the late save.
+* A map's undo record no longer stores the map's resolved source in the parent context.
+* A step that returns another unit's `Failure` (a map adopting a failed element, a composed child)
+  keeps that Failure's `exception_class` on the run's final Failure, also when the step's retries
+  are exhausted. Before, an inline map whose element raised reported no `exception_class`.
 
 * `Reactor.continue` accepts a resume only while the reactor is paused at an interrupt. A resume
   that arrives while the reactor is executing or rolling back, or after it finished or was

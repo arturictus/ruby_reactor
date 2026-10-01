@@ -222,10 +222,13 @@ Probe.scenario "S-map-11", "a → map(inline; elem 1 returns Halt) → b",
   P::Map11.run({ items: [0, 1, 2] })
 end
 
+# 009 R-08: element 0 is now undone by its own rollback job, enqueued once the
+# map settles, so the elements' independent async_step units (queued earlier)
+# run before it. The undone set and the final failure are unchanged.
 Probe.scenario "S-map-12", "a → map(fan_out; element e1 → async_step u, e2; elem 1 fails) → b",
                mode: :worker,
                expected: %w[run:a run:e.e1[0] run:e.e2[0] run:e.e1[1] run:e.e2[1] compensate:e.e2[1]
-                            undo:e.e1[1] undo:e.e2[0] undo:e.e1[0] undo:a run:e.u[0] run:e.u[1] => failure(m)] do
+                            undo:e.e1[1] run:e.u[0] run:e.u[1] undo:e.e2[0] undo:e.e1[0] undo:a => failure(m)] do
   result = Probe.run_async(P::Map12, { items: [0, 1] })
   Probe.note("StepWorker jobs left after drain: #{RubyReactor::Adapters::Sidekiq::StepWorker.jobs.size}")
   result

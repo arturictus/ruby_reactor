@@ -126,6 +126,17 @@ the per-throw burst (`QueueProbe` `max_burst`), never queue depth.
 Worker contends on the `async:` lock if the dispatching worker still holds it, and snoozes
 uncapped until it is released (existing behavior for that lock).
 
+**Implementation notes** (found while implementing):
+
+- `ComposeStep#compensate` / `#undo` now link the stored child to its parent and root, as
+  `#run` does. Unlinked, a fan-out map inside the child recorded the child as its owner during
+  rollback, and the rollback resumed the child's standalone row instead of the root.
+- The `DispatchResult` a fan-out map returns carries the owner's `execution_id`, not the composed
+  child's: it is what the caller of `Reactor.run` holds and looks the run up by.
+- **An interrupt inside a composed child is unsupported on main, fan-out or not**: `ComposeStep`
+  fails the step (`NoMethodError` on `InterruptResult#success?`). US2-AS2 (T052(b)) is out of reach
+  without that separate capability; its example is `pending` with the reason.
+
 ## R-04: Rollback can hand off and resume (`Error::RollbackHandedOff`)
 
 **Decision**: A construct whose rollback is distributed (`MapStep#compensate` / `#undo` on a
@@ -197,6 +208,26 @@ under the context lock:
   so the run would be marked `aborted`), and still needs resumption after a crash.
 - **Subclass `ExecutionParked` and snooze-poll.** Every poll reloads the parent blob. The trigger
   plus sweeper is how the forward path already works.
+
+**Implementation notes** (found while implementing):
+
+- **The final Failure is captured at the hand-off, not rebuilt at resume.** The `ResultHandler`
+  the signal passes through sets `RollbackHandedOff#failure` to the exact Failure the run will end
+  with (`failure_for` of the `StepFailureError` it would raise, minus rollback failures), and the
+  executor saves it in `rollback["failure"]`. `resume_rollback` adds the rollback failures. Rebuilding
+  a `StepFailureError` from the saved Failure loses `step_arguments`, `validation_errors` and the
+  code location; capturing keeps every field, so I-7 holds exactly.
+- `rollback["compensation_error"]`: the failing step's compensate returned a Failure before the
+  rollback handed off, so the resume ends with that `CompensationError`, as inline.
+- **A third trigger, `step`.** When a composed child hands off from inside `ComposeStep#run` (the
+  child's own step failed), the root has no rollback of its own yet. The root records
+  `{trigger: "step"}` and, on resume, runs forward again: `ComposeStep#run` re-enters the child,
+  which is `rolling_back` and finishes its own rollback (`resume_rollback` at the child level), and
+  the child's Failure then rolls the root back exactly as the inline path does. T057's plan
+  (compensate the compose step with `compensated: false`) would report the child's rollback
+  failures as a `CompensationError`, which diverges from the inline Failure (I-7).
+- `Executor#resume_execution` delegates to `resume_rollback` for a `rolling_back` context, which
+  is how a composed child re-enters; `Worker` routes a `rolling_back` row there directly.
 
 ## R-05: Exactly-once owner resume; recovery
 
@@ -270,6 +301,10 @@ completed, as they are today.
   completed twice (a lost result followed by a re-dispatch) would be rolled back once.
 - **Scanning the forward results hash.** It holds result values, not context ids, and can be large.
 
+**Implementation note**: tail positions are anchored at the `total` the rollback started with
+(head index `total - 1 - position`), so an id a late duplicate appends after the start never
+shifts them.
+
 ## R-07: Element rollback checkpoints after every undone entry
 
 **Decision**:
@@ -294,6 +329,11 @@ completed, as they are today.
 **Rationale**: Spec FR-006 as revised. Exactly-once per step would need idempotent user undos or
 two-phase records. At-least-once for the one entry in flight is the standard background-job
 guarantee, and it is documented.
+
+**Implementation notes**: only a job's first attempt waits `ELEMENT_LOCK_WAIT` for the lock (the
+settle gap); a requeued attempt tries once, since its requeue delay is the spacing, so a held lock
+never blocks a worker for `2 s × lock_snooze_max_attempts`. An element saves after each undone entry
+with `Executor#checkpoint!`, which stores the row without publishing a completion signal per entry.
 
 ## R-08: Dispatch order
 
@@ -334,6 +374,12 @@ jobs would need serialization, which defeats FR-001.
 
 **Rationale**: Parity with 008 (FR-007) without loading every index at once. Pipelined `SISMEMBER`
 works on any Redis. `SMISMEMBER` would need 6.2, and the gem does not manage Redis.
+
+**Implementation notes**: an outcome's `failures` are stored serialized with
+`ContextSerializer.serialize_value`, so symbols round-trip exactly and no manual re-symbolizing is
+needed. Outcomes are first-writer-wins (`HSETNX`): a duplicate delivery, which finds the element
+already undone, must not replace a `failed` outcome with its own `undone`, and only the job that
+stored the outcome claims the next throw.
 
 ## R-10: Default batch size, stored with the map
 
@@ -420,6 +466,8 @@ constant, 5s) around the whole undo.
 
 **Out of scope**: the synchronous caller's final save racing a worker (`Reactor.run` with a fan-out
 map never holds `async:`). This is `future_improvements.md` §"Fenced context writes"; unchanged.
+Tracked as the follow-up "A synchronous caller's final save races a worker resume" in
+`specs/future_improvements.md` §"Rollback follow-ups (008)".
 
 ## R-14: A map step's undo record carries no arguments
 

@@ -199,10 +199,24 @@ graph LR
 
 A `map` declaring `fan_out` is also a hand-off point, just not a declared one:
 the reactor stops at the map, each element runs as its own background job
-(`batch_size` caps how many are enqueued at a time), and a collector job resumes
-the reactor in a worker once every element's outcome is in. It fans out the same
-way when the reactor is already in a worker (`background all: true`, or past a
+(`batch_size` caps how many are enqueued at a time), and a collector job
+signals the run once every element's outcome is in: it enqueues the top-level
+run's `Worker`, and the map adopts the collected outcome when the run re-enters
+it — at any composition depth, so a map inside a `compose`d child resumes its
+root. It fans out the same way
+when the reactor is already in a worker (`background all: true`, or past a
 `background` point). See [Data Pipelines](data_pipelines.md).
+
+Rollback is handed off the same way. When a fan-out map has to be rolled back
+(the map failed, a later step failed, or `Reactor.undo`), each started element
+is rolled back by its own `MapElementRollbackWorker` job, `batch_size` per
+throw, and the run becomes `rolling_back` and releases its worker. The job
+that reports the last element resumes the run, which undoes the steps before
+the map and finishes `failed` (or `cancelled` for an undo).
+
+Both sweepers cover the rollback: `RubyReactor::Map::Sweeper` re-dispatches a
+lost element rollback job or a lost throw, and `RubyReactor::Sweeper`
+re-enqueues a `rolling_back` run whose resume was lost.
 
 ## `async_step` — one step, dispatched on its own
 

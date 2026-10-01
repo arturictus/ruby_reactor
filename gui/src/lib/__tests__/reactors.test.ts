@@ -107,3 +107,11 @@ describe('classRoute', () => {
     expect(classRoute('ParentReactor', 'success')).toBe('/reactors/by-class/ParentReactor?status=success');
   });
 });
+
+describe('rolling_back', () => {
+  it('counts and filters with the running runs', () => {
+    expect(matchesStatusFilter('rolling_back', 'running')).toBe(true);
+    expect(matchesStatusFilter('rolling_back', 'errors')).toBe(false);
+    expect(aggregateByClass([{ id: '1', class: 'Foo', status: 'rolling_back', created_at: '' }])[0].running).toBe(1);
+  });
+});

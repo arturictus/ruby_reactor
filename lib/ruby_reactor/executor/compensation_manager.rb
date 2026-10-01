@@ -30,11 +30,23 @@ module RubyReactor
       # (005 FR-004). `ResultHandler` attaches it to the final Failure.
       attr_reader :undo_trace, :rollback_failures
 
+      # The step failure being rolled back: `{ step:, error:, compensated:,
+      # compensation_error: }`. A rollback that hands off (009 R-04) records it,
+      # so the resume knows whether that step's own compensate still runs.
+      attr_reader :pending
+
+      # Rollback failures collected before a hand-off, saved serialized on
+      # the context's `rollback` and restored on resume.
+      def restore_rollback_failures(list)
+        @rollback_failures.replace(Array(ContextSerializer.deserialize_value(list)))
+      end
+
       def add_to_undo_stack(step_info)
         @context.undo_stack << step_info
       end
 
       def handle_step_failure(step_config, error, arguments)
+        @pending = { step: step_config.name, error: error, compensated: false }
         # A step whose OWN coordination acquisition failed (contention, or a
         # bad key proc) never ran its body — "no step compensates, the
         # contended step's work has not been attempted" (US3-1/T018), which
@@ -44,27 +56,36 @@ module RubyReactor
         # turning a plain contention failure into a confusing
         # CompensationError. Prior steps still roll back normally.
         if step_never_started?(error)
+          @pending[:compensated] = true
           rollback_completed_steps
-          return RubyReactor.Failure("Step '#{step_config.name}' failed: #{error}")
+          return RubyReactor.Failure(step_failure_message(step_config, error))
         end
 
         # Try compensation
         compensation_result = compensate_step(step_config, error, arguments)
+        @pending[:compensated] = true
+        @pending[:compensation_error] = compensation_error_message(step_config, compensation_result)
         case compensation_result
         when RubyReactor::Success
           # Compensation succeeded, continue with rollback
           rollback_completed_steps
-          RubyReactor.Failure("Step '#{step_config.name}' failed: #{error}")
+          RubyReactor.Failure(step_failure_message(step_config, error))
         when RubyReactor::Failure
           # Compensation failed, this is more serious
           rollback_completed_steps
-          raise Error::CompensationError.new(
-            "Compensation for step '#{step_config.name}' failed: #{compensation_result.error}",
-            step: step_config.name,
-            context: @context,
-            original_error: error
-          )
+          raise Error::CompensationError.new(@pending[:compensation_error], step: step_config.name, context: @context,
+                                                                            original_error: error)
         end
+      end
+
+      def step_failure_message(step_config, error)
+        "Step '#{step_config.name}' failed: #{error}"
+      end
+
+      def compensation_error_message(step_config, compensation_result)
+        return unless compensation_result.is_a?(RubyReactor::Failure)
+
+        "Compensation for step '#{step_config.name}' failed: #{compensation_result.error}"
       end
 
       # A unit that compensates itself outside the executor loop (StepWorker's
@@ -77,7 +98,9 @@ module RubyReactor
       # Newest first. Each entry leaves the stack only once its undo returned,
       # so an interruption mid-rollback leaves exactly the entries still to
       # undo — the interrupted one included — for a manual undo (008 R-16).
-      def rollback_completed_steps
+      # `after_pop` runs after each pop: an element rollback job saves there,
+      # so a redelivery resumes after the last undone entry (009 R-07).
+      def rollback_completed_steps(&after_pop)
         until undo_stack.empty?
           step_info = undo_stack.last
           result = @context.with_step(step_info[:step].name) do
@@ -86,6 +109,7 @@ module RubyReactor
           undo_stack.pop
           @undo_trace << { type: :undo, step: step_info[:step].name, result: result,
                            arguments: step_info[:arguments] }
+          after_pop&.call
         end
       end
 

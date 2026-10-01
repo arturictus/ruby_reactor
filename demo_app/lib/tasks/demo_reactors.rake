@@ -239,7 +239,7 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo] do
     puts "excuting all reactors"
   end
 
@@ -974,4 +974,112 @@ namespace :demo do
       puts "❌ FAIL: expected a rollback failure for :charge naming :order_id"
     end
   end
+
+  # Polls a run until it reaches a terminal status, yielding each status seen.
+  def await_terminal(reactor_class, id, timeout: 120)
+    status = nil
+    deadline = Time.now + timeout
+    until %w[completed failed cancelled].include?(status) || Time.now > deadline
+      status = reactor_class.find(id).context.status.to_s
+      yield status if block_given?
+      sleep 0.05
+    end
+    status
+  end
+
+  desc "DistributedRefundDemoReactor — a fan-out map's elements are refunded by one rollback job each, " \
+       "at most batch_size per throw"
+  task distributed_map_rollback: [:environment, :flush_redis] do
+    puts "\n>>> Running DistributedRefundDemoReactor(fail_notify: true) [40 orders, fan_out batch_size: 10]"
+    DistributedRefundDemoReactor.reset!
+    dispatch = DistributedRefundDemoReactor.run(fail_notify: true)
+    id = dispatch.execution_id
+    puts "   dispatched: execution_id=#{id}"
+    storage = RubyReactor.configuration.storage_adapter
+    map_id = "#{id}:charge_orders"
+    progress = nil
+    status = await_terminal(DistributedRefundDemoReactor, id) do |seen|
+      progress ||= storage.map_rollback_summary(map_id, "DistributedRefundDemoReactor") if seen == "rolling_back"
+    end
+    puts "   rolling_back: #{progress ? progress.inspect : "(finished between polls)"}"
+    puts "   final: #{status}, rollback #{storage.map_rollback_summary(map_id, "DistributedRefundDemoReactor").inspect}"
+    charges = DistributedRefundDemoReactor.charges
+    refunds = DistributedRefundDemoReactor.refunds
+    puts "   charges: #{charges.size}, refunds: #{refunds.size}"
+    if status == "failed" && charges.size == 40 && charges.sort == refunds.sort
+      puts "✅ SUCCESS: every charged order was refunded by its own rollback job, then the run failed"
+    else
+      puts "❌ FAIL: expected a failed run with 40 charges, each refunded once"
+    end
+  end
+
+  desc "Times the serial in-process rollback against the distributed rollback of the same N elements (SC-002)"
+  task :map_rollback_benchmark, [:count] => [:environment, :flush_redis] do |_task, args|
+    count = (args[:count] || 1000).to_i
+    now = -> { Process.clock_gettime(Process::CLOCK_REALTIME) }
+    puts "\n>>> Benchmark: rolling back #{count} elements (timed from :notify's failure to the end)"
+
+    DistributedRefundDemoReactor.reset!
+    InlineRefundBenchmarkReactor.run(count: count, fail_notify: true)
+    inline = now.call - DistributedRefundDemoReactor.failed_at
+    puts format("   serial (inline map):                %.2fs, %d refunds", inline,
+                DistributedRefundDemoReactor.refunds.size)
+
+    DistributedRefundDemoReactor.reset!
+    dispatch = DistributedRefundDemoReactor.run(count: count, fail_notify: true)
+    status = await_terminal(DistributedRefundDemoReactor, dispatch.execution_id, timeout: 3600)
+    distributed = now.call - DistributedRefundDemoReactor.failed_at
+    puts format("   distributed (fan-out, batch_size 10): %.2fs, %d refunds, %s", distributed,
+                DistributedRefundDemoReactor.refunds.size, status)
+    puts format("   ratio: %.1fx", inline / distributed)
+  end
+
+  desc "ComposedFanOutDemoReactor — a fan-out map inside a composed child: the root resumes and finishes, " \
+       "and rolls back through the root"
+  task composed_fan_out: [:environment, :flush_redis] do
+    puts "\n>>> Running ComposedFanOutDemoReactor [happy path]"
+    ComposedFanOutDemoReactor.reset!
+    happy = await_terminal(ComposedFanOutDemoReactor, ComposedFanOutDemoReactor.run({}).execution_id)
+    puts "   final: #{happy}, shipped: #{ComposedFanOutDemoReactor.shipped.size}"
+    if happy == "completed" && ComposedFanOutDemoReactor.shipped.size == 5
+      puts "✅ SUCCESS: the root resumed after the child's map and finished"
+    else
+      puts "❌ FAIL: expected the root completed with 5 items shipped"
+    end
+
+    puts "\n>>> Running ComposedFanOutDemoReactor(fail_notify: true) [rollback through the root]"
+    ComposedFanOutDemoReactor.reset!
+    failed = await_terminal(ComposedFanOutDemoReactor,
+                            ComposedFanOutDemoReactor.run(fail_notify: true).execution_id)
+    shipped = ComposedFanOutDemoReactor.shipped
+    unshipped = ComposedFanOutDemoReactor.unshipped
+    puts "   final: #{failed}, shipped: #{shipped.size}, unshipped: #{unshipped.size}, " \
+         "released: #{ComposedFanOutDemoReactor.log(:released).inspect}"
+    if failed == "failed" && shipped.size == 5 && shipped.sort == unshipped.sort
+      puts "✅ SUCCESS: every shipped item was unshipped, then the child's reservation released"
+    else
+      puts "❌ FAIL: expected a failed root with every shipped item unshipped"
+    end
+  end
+
+  desc "DefaultBatchFanOutDemoReactor — fan_out without batch_size enqueues at most 50 element jobs per throw"
+  task default_batch_size: [:environment, :flush_redis] do
+    puts "\n>>> Running DefaultBatchFanOutDemoReactor [120 elements, fan_out with no batch_size]"
+    id = DefaultBatchFanOutDemoReactor.run({}).execution_id
+    status = await_terminal(DefaultBatchFanOutDemoReactor, id)
+    metadata = RubyReactor.configuration.storage_adapter
+                          .retrieve_map_metadata("#{id}:doubled", "DefaultBatchFanOutDemoReactor")
+    collected = DefaultBatchFanOutDemoReactor.find(id).context.intermediate_results[:doubled]
+    puts "   final: #{status}, map metadata batch_size: #{metadata&.fetch("batch_size").inspect}, " \
+         "collected: #{collected.inspect}"
+    if status == "completed" && metadata&.fetch("batch_size") == 50 && collected == 120
+      puts "✅ SUCCESS: 50 element jobs per throw by default, all 120 collected"
+    else
+      puts "❌ FAIL: expected batch_size 50 and 120 collected"
+    end
+  end
+
+  desc "Distributed map rollback, composed fan-out, default batch size"
+  task map_execution_undo: [:environment, :flush_redis, :distributed_map_rollback, :composed_fan_out,
+                            :default_batch_size]
 end

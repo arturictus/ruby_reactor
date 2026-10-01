@@ -351,14 +351,14 @@ module RubyReactor
           RubyReactor::Success.new(val)
         when "halted", "skipped" # "skipped" is the legacy name for a halt
           halted_result(ctx)
-        when "running"
+        when "running", "rolling_back"
           # Try to determine if it is truly running or if we just missed the completion
           if @process_jobs && AsyncTestHelpers.active?
             # Force one more check
             process_pending_jobs
             # Reload status
             @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
-            return result unless @reactor_instance.context.status.to_s == "running"
+            return result unless %w[running rolling_back].include?(@reactor_instance.context.status.to_s)
           end
 
           # If still running, return a Pending/Running result instead of nil
@@ -403,6 +403,13 @@ module RubyReactor
       def paused?
         ensure_executed!
         @reactor_instance.context.status.to_s == "paused"
+      end
+
+      # Whether the run's rollback handed off at a fan-out map and has not
+      # finished (009). Reloads, so it reflects jobs performed since.
+      def rolling_back?
+        ensure_executed!
+        @reactor_instance.context.status.to_s == "rolling_back"
       end
 
       # Get the current step where the reactor is paused (interrupt step)
@@ -523,9 +530,12 @@ module RubyReactor
 
       def ensure_executed!
         run unless @executed
+        return unless %w[running rolling_back].include?(@reactor_instance.context.status.to_s)
 
+        # Not finished: jobs the spec performed itself may have moved it on.
+        @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
         # Process jobs if status is running and processing is enabled
-        return unless @process_jobs && @reactor_instance.context.status.to_s == "running"
+        return unless @process_jobs && %w[running rolling_back].include?(@reactor_instance.context.status.to_s)
 
         process_pending_jobs
       end

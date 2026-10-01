@@ -16,6 +16,12 @@ module RubyReactor
     #     re-triggered (M2) — gated so it never fires while a collector or the
     #     parent is alive, or after the parent already collected.
     #
+    # For each distributed map rollback (009 S-5), the same signal on the
+    # rollback's own records: a claimed position with no outcome and no live
+    # element lock lost its job and is re-dispatched; with every claimed
+    # position settled but positions left, the throw's trigger was lost and
+    # the next throw is claimed. A lost owner resume is `RubyReactor::Sweeper`'s.
+    #
     # `run_once` is pure and idempotent; the host wires the cadence (same contract
     # as RubyReactor::Sweeper).
     class Sweeper
@@ -29,10 +35,11 @@ module RubyReactor
         @logger = logger || RubyReactor.configuration.logger
       end
 
-      # Returns { redispatched:, recollected: } counts.
+      # Returns { redispatched:, recollected:, rollback_redispatched: } counts.
       def run_once(limit: 1000)
         redispatched = 0
         recollected = 0
+        rollback_redispatched = 0
 
         @storage.scan_maps(count: limit).each do |meta|
           missing = missing_indices(meta)
@@ -46,10 +53,52 @@ module RubyReactor
           @logger.warn("RubyReactor::Map::Sweeper failed on map #{meta["map_id"]}: #{e.class}: #{e.message}")
         end
 
-        { redispatched: redispatched, recollected: recollected }
+        @storage.scan_map_rollbacks(count: limit).each do |meta|
+          rollback_redispatched += sweep_rollback(meta)
+        rescue StandardError => e
+          @logger.warn("RubyReactor::Map::Sweeper failed on map rollback #{meta["map_id"]}: #{e.class}: #{e.message}")
+        end
+
+        { redispatched: redispatched, recollected: recollected, rollback_redispatched: rollback_redispatched }
       end
 
       private
+
+      def sweep_rollback(meta)
+        map_id = meta["map_id"]
+        map_class = meta["parent_reactor_class_name"]
+        total = meta["total"].to_i
+        claimed = [@storage.retrieve_map_rollback_offset(map_id, map_class), total].min
+        missing = (0...claimed).to_a - @storage.stored_map_rollback_positions(map_id, map_class)
+        return redispatch_rollback(meta, missing) if missing.any?
+        return 0 if claimed >= total
+
+        RubyReactor::Map::Dispatcher.dispatch_rollback_batch(map_id: map_id, parent_reactor_class_name: map_class)
+      end
+
+      def redispatch_rollback(meta, positions)
+        map_id = meta["map_id"]
+        map_class = meta["parent_reactor_class_name"]
+        positions.count do |position|
+          id = @storage.retrieve_map_element_context_ids_from_tail(map_id, map_class, position, 1,
+                                                                   total: meta["total"].to_i).first
+          index = element_index(id, meta)
+          next false if index && @storage.lock_held?("map_element:#{map_id}:#{index}") # element alive
+
+          RubyReactor::Map::Dispatcher.queue_rollback_job(meta, map_id, map_class, position, id)
+          true
+        end
+      end
+
+      # From the element's row; nil once the row is gone (the job reports it).
+      def element_index(element_context_id, meta)
+        return nil unless element_context_id
+
+        element_class = RubyReactor::Map::Helpers.resolve_reactor_class(meta["reactor_class_info"])
+        data = @storage.retrieve_context(element_context_id, RubyReactor.reactor_storage_name(element_class))
+        metadata = data && ContextSerializer.deserialize_value(data["map_metadata"])
+        metadata && Utils::FetchIndifferent.call(metadata, :index)
+      end
 
       def missing_indices(meta)
         @storage.missing_map_indices(meta["map_id"], meta["count"].to_i, meta["parent_reactor_class_name"])
@@ -77,22 +126,31 @@ module RubyReactor
       end
 
       # N1: a nested map's parent is a map element running under a `map_element:`
-      # lock, not an `async:` lock. Derive the right key from metadata.
+      # lock, not an `async:` lock. Derive the right key from metadata. Any
+      # other map's completion resumes its OWNER run (009 R-03), so that run's
+      # lock is the one to check; metadata from before 009 names no owner.
       def parent_live_lock?(meta)
         if meta["parent_is_map_element"]
           @storage.lock_held?("map_element:#{meta["outer_map_id"]}:#{meta["outer_index"]}")
         else
-          @storage.lock_held?("async:#{meta["parent_context_id"]}")
+          @storage.lock_held?("async:#{meta["owner_context_id"] || meta["parent_context_id"]}")
         end
       end
 
+      # The map's own context already recorded the step, or the owner run is
+      # past it: finished, or rolling back (it adopted the map).
       def parent_already_collected?(meta)
         data = @storage.retrieve_context(meta["parent_context_id"], meta["parent_reactor_class_name"])
-        return false unless data
+        return true if data && (data["intermediate_results"] || {}).key?(meta["step_name"].to_s)
 
-        results = data["intermediate_results"] || {}
-        status = data["status"].to_s
-        results.key?(meta["step_name"].to_s) || %w[completed failed halted skipped].include?(status)
+        owner = owner_context_data(meta) || data
+        owner && %w[completed failed halted skipped cancelled rolling_back].include?(owner["status"].to_s)
+      end
+
+      def owner_context_data(meta)
+        return nil unless meta["owner_context_id"]
+
+        @storage.retrieve_context(meta["owner_context_id"], meta["owner_reactor_class_name"])
       end
 
       def retrigger_collector(meta)

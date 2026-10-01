@@ -555,6 +555,27 @@ expect(subject).to be_paused
 expect(subject).not_to be_paused
 ```
 
+#### `be_rolling_back`
+
+Assert that a run's rollback handed off at a fan-out map and has not finished: its element
+rollback jobs are still pending. Build the subject with `process_jobs: false` and perform jobs
+one at a time (`pending_async_jobs.first.perform!`), or the matcher drains them first:
+
+```ruby
+subject = test_reactor(ChargeOrdersReactor, { fail_notify: true }, process_jobs: false)
+subject.run
+until pending_async_jobs.any? { |job| job.worker_class.name.end_with?("MapElementRollbackWorker") }
+  pending_async_jobs.first.perform!
+end
+expect(subject).to be_rolling_back
+
+drain_async_jobs
+expect(subject).to be_failure
+```
+
+`pending_async_jobs` and `drain_async_jobs` work on whichever test backend is active (Sidekiq fake
+mode or the ActiveJob `:test` adapter), and `worker_class` names a pending job's class on both.
+
 #### `be_paused_at`
 
 Assert that a reactor is paused with specific interrupt(s) ready:

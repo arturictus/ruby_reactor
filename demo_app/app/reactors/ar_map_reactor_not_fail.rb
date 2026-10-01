@@ -12,7 +12,7 @@ class ArMapReactorNotFail < RubyReactor::Reactor
     end
     argument :product, element(:prepare_products)
     fan_out batch_size: 2
-    fail_fast false
+    atomic false
     
     step :get_product do
       run do |args|

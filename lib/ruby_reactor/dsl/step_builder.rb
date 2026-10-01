@@ -7,6 +7,7 @@ module RubyReactor
       include RubyReactor::Dsl::ValidationHelpers
       include RubyReactor::Dsl::Lockable::ClassMethods
       include RubyReactor::Dsl::Retryable
+      include RubyReactor::Dsl::DefinitionWarnings
 
       COORDINATION_MACROS = {
         lock_config: "with_lock", semaphore_config: "with_semaphore", rate_limit_config: "with_rate_limit",
@@ -32,11 +33,6 @@ module RubyReactor
         @retry_config = nil
         @inline_contract = nil
         @rule_sites = []
-      end
-
-      # Deprecation notices print once per declaration site for the process.
-      def self.deprecation_sites
-        @deprecation_sites ||= Set.new
       end
 
       def argument(name, source, type = nil, transform: nil, **predicates)
@@ -244,24 +240,8 @@ module RubyReactor
                                               "the step instead (`validate_inputs` in #{target}).")
       end
 
-      def warn_deprecation(site, message)
-        warn_definition(site, "DEPRECATION:", "#{message} Removal no earlier than the next MAJOR.")
-      end
-
-      # A definition-time warning, printed once per declaration site.
-      def warn_definition(site, prefix, message)
-        location = "#{site.path}:#{site.lineno}"
-        return unless StepBuilder.deprecation_sites.add?(location)
-
-        warn ["[RubyReactor]", prefix, location, reactor_label, message].compact.join(" ")
-      end
-
       def owned_contract
         @inline_contract || (@impl.input_contract if @impl.respond_to?(:declares_inputs?) && @impl.declares_inputs?)
-      end
-
-      def reactor_label
-        @reactor&.name || @reactor.inspect
       end
     end
 
@@ -448,6 +428,13 @@ module RubyReactor
       # tracked for undo: the construct's own definition decides (008 R-16).
       def undoes_partial_run?
         rollback_tracked? && has_impl? && impl.respond_to?(:undoes_partial_run?) && impl.undoes_partial_run?
+      end
+
+      # What the undo record keeps of the step's resolved arguments: all of
+      # them, unless the step reads its rollback state elsewhere (a map reads
+      # its declaration and the map records, 009 R-14).
+      def rollback_arguments(resolved)
+        has_impl? && impl.respond_to?(:rollback_arguments) ? impl.rollback_arguments(resolved) : resolved
       end
 
       def has_impl?

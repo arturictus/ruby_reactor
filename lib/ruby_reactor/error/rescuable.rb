@@ -12,11 +12,16 @@ module RubyReactor
     # raises — rescuing that would stop the caller's timeout from ever firing.
     # Running rollback code during any of them is unsafe; the executor marks
     # the run `aborted` for a manual undo instead.
+    #
+    # Nor does it match `RollbackHandedOff`, a control signal (009 R-04): it
+    # must pass the `rescue Error::Rescuable` sites between `MapStep#undo` and
+    # the executor (`CompensationManager#undo_step`, `StepExecutor`), which
+    # would otherwise record it as an undo failure.
     module Rescuable
       INTERRUPTIONS = [SignalException, SystemExit, NoMemoryError].freeze
 
       def self.===(exception)
-        exception.is_a?(Exception) && !interruption?(exception)
+        exception.is_a?(Exception) && !interruption?(exception) && !exception.is_a?(RollbackHandedOff)
       end
 
       def self.interruption?(exception)

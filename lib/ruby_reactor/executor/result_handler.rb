@@ -35,9 +35,13 @@ module RubyReactor
       # Every reactor-level Failure that follows a rollback is built here, so
       # this is the one place `rollback_failures` is attached (005 R-08).
       def handle_execution_error(error)
-        failure = build_execution_failure(error)
-        failure.rollback_failures.concat(@compensation_manager.rollback_failures) if failure.is_a?(RubyReactor::Failure)
-        failure
+        with_rollback_failures(build_execution_failure(error))
+      end
+
+      # The end of a rollback that handed off (009 R-04): the Failure recorded
+      # at the hand-off, with every rollback failure collected since.
+      def handed_off_failure(failure)
+        with_rollback_failures(failure)
       end
 
       def final_result(reactor_class)
@@ -51,32 +55,60 @@ module RubyReactor
 
       private
 
+      def with_rollback_failures(failure)
+        failure.rollback_failures.concat(@compensation_manager.rollback_failures) if failure.is_a?(RubyReactor::Failure)
+        failure
+      end
+
+      # Every error rolls back the completed steps first (Constitution II), then
+      # becomes the run's Failure.
       def build_execution_failure(error)
+        if error.is_a?(Error::StepFailureError)
+          current_context = error.context || @context
+          current_context.current_step = error.step
+          store_failed_map_context(current_context) if current_context.map_metadata
+        end
+        handing_off_as(error) { @compensation_manager.rollback_completed_steps }
+        failure_for(error)
+      end
+
+      # A rollback that hands off mid-way (009 R-04) carries the Failure this
+      # run will end with, minus its rollback failures, to the executor that
+      # records the hand-off. `error` is what the run fails with once the
+      # rollback is done (a lambda when it is costly or not built yet).
+      def handing_off_as(error)
+        yield
+      rescue Error::RollbackHandedOff => e
+        e.failure ||= failure_for(error.respond_to?(:call) ? error.call : error)
+        raise
+      end
+
+      def failure_for(error)
         case error
         when Error::StepFailureError
-          handle_step_failure_error(error)
+          create_failure_from_error(error, redacted_input_names(error.context))
         when Error::InputValidationError
           # Unified validation failure shape (inputs, step args, step output).
-          # Roll back any completed steps so saga semantics hold for mid-reactor
-          # validation failures (a no-op for input validation at reactor start).
-          @compensation_manager.rollback_completed_steps
           build_validation_failure(error)
         when Error::Base
-          # Other errors need rollback. A `CompensationError` names the step
-          # whose compensation failed.
-          @compensation_manager.rollback_completed_steps
+          # A `CompensationError` names the step whose compensation failed.
           RubyReactor.Failure("Execution error: #{error.message}", exception_class: error.class.name,
                                                                    step_name: error.step || @context.current_step,
                                                                    reactor_name: @context.reactor_class&.name)
         else
           # Any other StandardError after completed work (a checkpoint write,
-          # a hook) still leaves a partial saga: roll it back like any failure
-          # (Constitution II, 008 R-07) and name the step that was executing.
-          @compensation_manager.rollback_completed_steps
+          # a hook) still leaves a partial saga, rolled back like any failure
+          # (Constitution II, 008 R-07); name the step that was executing.
           RubyReactor.Failure("Execution failed: #{error.message}", exception_class: error.class.name,
                                                                     step_name: @context.current_step,
                                                                     reactor_name: @context.reactor_class&.name)
         end
+      end
+
+      def redacted_input_names(context)
+        return [] unless context&.reactor_class
+
+        context.reactor_class.inputs.select { |_, config| config[:redact] }.keys
       end
 
       # Failure for a validation error (reactor inputs, step arguments, or
@@ -139,7 +171,8 @@ module RubyReactor
         validate_step_output(step_config, result.value, resolved_arguments)
         @step_results[step_config.name] = result
         if step_config.rollback_tracked?
-          @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments,
+          @compensation_manager.add_to_undo_stack({ step: step_config,
+                                                    arguments: step_config.rollback_arguments(resolved_arguments),
                                                     result: result })
         end
         @context.set_result(step_config.name, result.value)
@@ -156,36 +189,38 @@ module RubyReactor
 
       def handle_retries_exhausted(step_config, result, resolved_arguments)
         adopt_rollback_failures(result)
-        @compensation_manager.handle_step_failure(step_config, result.original_error, resolved_arguments)
-        orig_err = result.original_error.is_a?(Exception) ? result.original_error : nil
-        error = Error::StepFailureError.new(result.error, step: step_config.name, context: @context,
-                                                          original_error: orig_err,
-                                                          step_arguments: resolved_arguments,
-                                                          validation_errors: result.validation_errors)
-        if result.respond_to?(:backtrace) && result.backtrace
-          error.set_backtrace(result.backtrace)
-        elsif orig_err
-          error.set_backtrace(orig_err.backtrace)
+        error = step_failure_error(step_config, result.error, result, resolved_arguments, cause: result.original_error)
+        handing_off_as(error) do
+          @compensation_manager.handle_step_failure(step_config, result.original_error, resolved_arguments)
         end
         raise error
       end
 
       def handle_failure(step_config, result, resolved_arguments)
         adopt_rollback_failures(result)
-        failure_result = @compensation_manager.handle_step_failure(step_config, result.error, resolved_arguments)
-        orig_err = result.error.is_a?(Exception) ? result.error : nil
-        # A step that propagates another unit's validation failure (an
-        # async_step reader) keeps its field errors on the reactor's failure.
-        error = Error::StepFailureError.new(failure_result.error, step: step_config.name, context: @context,
-                                                                  original_error: orig_err,
-                                                                  step_arguments: resolved_arguments,
-                                                                  validation_errors: result.validation_errors)
+        message = @compensation_manager.step_failure_message(step_config, result.error)
+        failure_result = handing_off_as(-> { step_failure_error(step_config, message, result, resolved_arguments) }) do
+          @compensation_manager.handle_step_failure(step_config, result.error, resolved_arguments)
+        end
+        raise step_failure_error(step_config, failure_result.error, result, resolved_arguments)
+      end
+
+      # A step that propagates another unit's failure (an async_step reader, a
+      # map adopting a fan-out element's Failure) keeps its field errors and
+      # exception class on the reactor's failure.
+      def step_failure_error(step_config, message, result, resolved_arguments, cause: result.error)
+        orig_err = cause.is_a?(Exception) ? cause : nil
+        error = Error::StepFailureError.new(message, step: step_config.name, context: @context,
+                                                     original_error: orig_err,
+                                                     step_arguments: resolved_arguments,
+                                                     exception_class: (result.exception_class unless orig_err),
+                                                     validation_errors: result.validation_errors)
         if result.respond_to?(:backtrace) && result.backtrace
           error.set_backtrace(result.backtrace)
         elsif orig_err
           error.set_backtrace(orig_err.backtrace)
         end
-        raise error
+        error
       end
 
       # Wrapped first, so a returned `Step::Inputs` is validated and stored as its Hash.
@@ -193,31 +228,16 @@ module RubyReactor
         success_result = RubyReactor.Success(result)
         validate_step_output(step_config, success_result.value, resolved_arguments)
         @step_results[step_config.name] = success_result
-        @compensation_manager.add_to_undo_stack({ step: step_config, arguments: resolved_arguments,
+        @compensation_manager.add_to_undo_stack({ step: step_config,
+                                                  arguments: step_config.rollback_arguments(resolved_arguments),
                                                   result: success_result })
         @context.set_result(step_config.name, success_result.value)
         @dependency_graph.complete_step(step_config.name)
       end
 
-      def handle_step_failure_error(error)
-        current_context = error.context || @context
-        current_context.current_step = error.step
-
-        store_failed_map_context(current_context) if current_context.map_metadata
-
-        @compensation_manager.rollback_completed_steps
-
-        redact_inputs = []
-        if error.context&.reactor_class
-          redact_inputs = error.context.reactor_class.inputs.select { |_, config| config[:redact] }.keys
-        end
-
-        create_failure_from_error(error, redact_inputs)
-      end
-
       def store_failed_map_context(context)
         return unless context.map_metadata && context.map_metadata[:map_id]
-        return unless context.map_metadata[:fail_fast]
+        return unless Map::Helpers.normalize_arguments(context.map_metadata)[:atomic]
 
         storage = RubyReactor.configuration.storage_adapter
         storage.store_map_failed_context_id(
@@ -276,7 +296,7 @@ module RubyReactor
         # compensation and roll back prior steps, so the side effect is not
         # orphaned. Then surface the structured validation error (the later
         # rollback in handle_execution_error is a no-op — stack already clear).
-        @compensation_manager.handle_step_failure(step_config, error, resolved_arguments)
+        handing_off_as(error) { @compensation_manager.handle_step_failure(step_config, error, resolved_arguments) }
         raise error
       end
 

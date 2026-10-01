@@ -141,7 +141,7 @@ describe('DagVisualizer', () => {
     expect(getByTestId('node-step2').getAttribute('data-status')).toBe('cancelled');
   });
 
-  // A map with fail_fast false completes even when elements failed, so the
+  // A map with atomic false completes even when elements failed, so the
   // node's own status is the only place that can flag it.
   it('marks a map step failed when its elements failed', () => {
     const struct = { items: { type: 'map', depends_on: [] } };

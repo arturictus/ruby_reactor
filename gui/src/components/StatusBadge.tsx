@@ -1,4 +1,4 @@
-import { Activity, Clock, AlertCircle, AlertTriangle, CheckCircle2, SkipForward, OctagonMinus } from 'lucide-react';
+import { Activity, Clock, AlertCircle, AlertTriangle, CheckCircle2, SkipForward, OctagonMinus, Undo2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export default function StatusBadge({ status }: { status: string }) {
@@ -12,6 +12,8 @@ export default function StatusBadge({ status }: { status: string }) {
     // Not `failed`: no rollback ran, completed work awaits a manual undo.
     aborted: "bg-orange-500/10 text-orange-400 border-orange-500/20",
     paused: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    // Still unwinding: element rollback jobs of a fan-out map are pending.
+    rolling_back: "bg-amber-500/10 text-amber-300 border-amber-400/30",
   }[status] || "bg-slate-800 text-slate-400 border-slate-700";
 
   const icons = {
@@ -23,12 +25,13 @@ export default function StatusBadge({ status }: { status: string }) {
     cancelled: <Clock className="w-3 h-3" />,
     aborted: <AlertTriangle className="w-3 h-3" />,
     paused: <Clock className="w-3 h-3" />,
+    rolling_back: <Undo2 className="w-3 h-3 animate-pulse" />,
   }[status];
 
   return (
     <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border backdrop-blur-md transition-all", styles)}>
       {icons}
-      <span className="capitalize tracking-wide">{status}</span>
+      <span className="capitalize tracking-wide">{status.replace('_', ' ')}</span>
     </span>
   );
 }

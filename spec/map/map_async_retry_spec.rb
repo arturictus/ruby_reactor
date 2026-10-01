@@ -56,6 +56,7 @@ RSpec.describe "Map Async Retry Behavior" do
       # and collector workers; retries requeue MapElementWorker jobs.
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
       RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain # the owner resume (009 R-03)
 
       # Retrieve final result
       context_id = reactor.context.context_id
@@ -75,15 +76,16 @@ RSpec.describe "Map Async Retry Behavior" do
 
       expect(result).to be_a(RubyReactor::DispatchResult)
 
-      RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
-      RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+      # The failed map rolls back one job per started element, then the owner
+      # resumes and fails (009 R-03, R-04).
+      RubyReactor::RSpec::SidekiqHelpers.drain_async_jobs
 
       context_id = reactor.context.context_id
       storage = RubyReactor.configuration.storage_adapter
       context_data = storage.retrieve_context(context_id, AsyncRetryMapReactorV2.name)
 
-      # With fail_fast (the default) the exhausted-retry failure propagates to the
-      # parent reactor: the collector marks the parent context as failed.
+      # With atomic (the default) the exhausted-retry failure propagates to the
+      # parent reactor, which fails.
       context = RubyReactor::Context.deserialize_from_retry(context_data)
       expect(context.status).to eq("failed")
       expect(context.failure_reason.error).to include("failed after 5 attempts")
@@ -154,6 +156,7 @@ RSpec.describe "Map Async Retry Behavior" do
       # Drain workers (multiple times might be needed for batches/retries)
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
       RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain # the owner resume (009 R-03)
 
       # Retrieve final result
       context_id = reactor.context.context_id
@@ -181,6 +184,7 @@ RSpec.describe "Map Async Retry Behavior" do
       # Drain workers
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
       RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain # the owner resume (009 R-03)
 
       # Retrieve final result
       context_id = reactor.context.context_id
@@ -192,10 +196,10 @@ RSpec.describe "Map Async Retry Behavior" do
   end
 
   # ============================================================================
-  # Test async retry with fail_fast: false
+  # Test async retry with atomic: false
   # ============================================================================
 
-  describe "Async retry with fail_fast: false" do
+  describe "Async retry with atomic: false" do
     class AsyncFailFastFalseItemReactor < RubyReactor::Reactor
       input :item
       input :fail_items
@@ -237,7 +241,7 @@ RSpec.describe "Map Async Retry Behavior" do
         argument :fail_until, input(:fail_until_attempt)
 
         fan_out batch_size: 2
-        fail_fast false
+        atomic false
 
         collect do |results|
           successes = results.select(&:success?).map(&:value)
@@ -265,6 +269,7 @@ RSpec.describe "Map Async Retry Behavior" do
       # Drain workers
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
       RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain # the owner resume (009 R-03)
 
       # Retrieve final result
       context_id = reactor.context.context_id
@@ -290,6 +295,7 @@ RSpec.describe "Map Async Retry Behavior" do
       # Drain workers
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
       RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+      RubyReactor::Adapters::Sidekiq::Worker.drain # the owner resume (009 R-03)
 
       # Retrieve final result
       context_id = reactor.context.context_id

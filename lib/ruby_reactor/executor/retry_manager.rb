@@ -61,7 +61,7 @@ module RubyReactor
         serialized_context = ContextSerializer.serialize(context_to_serialize)
 
         if @context.map_metadata
-          map_args = @context.map_metadata.transform_keys(&:to_sym)
+          map_args = Map::Helpers.normalize_arguments(@context.map_metadata)
           configuration.async_router.perform_map_element_in(
             delay,
             map_id: map_args[:map_id],
@@ -75,7 +75,7 @@ module RubyReactor
             step_name: map_args[:step_name],
             batch_size: map_args[:batch_size],
             serialized_context: serialized_context,
-            fail_fast: map_args[:fail_fast]
+            atomic: map_args[:atomic]
           )
         else
           # Persist BEFORE enqueue — the job payload is identity-only (F2). The
@@ -193,7 +193,8 @@ module RubyReactor
           reactor_name: reactor_class.name,
           step_arguments: result.respond_to?(:step_arguments) ? result.step_arguments : {},
           validation_errors: result.validation_errors,
-          rollback_failures: result.rollback_failures
+          rollback_failures: result.rollback_failures,
+          exception_class: result.exception_class
         )
       end
 

@@ -231,6 +231,7 @@ RSpec.describe "parks at any depth", :step_coordination do
       holder.release
       map_worker.drain
       RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+      worker_class.drain # the owner resume adopts the map (009 R-03)
 
       stored = RubyReactor.configuration.storage_adapter.retrieve_context(reactor.context.context_id, "ParkMapReactor")
       enumerator = RubyReactor::ContextSerializer.deserialize_value(stored["intermediate_results"]["charges"])

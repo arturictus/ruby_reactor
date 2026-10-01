@@ -57,8 +57,8 @@ Found while auditing for 005 R-19:
 | `Worker.record_retries_exhausted` | backend's retries-exhausted hook | Plain read-modify-write, no lock. Marks the context failed even if a redelivery is live. |
 | `Worker#escalate_snooze` | after the executor returned | Runs after the executor released the context lock. |
 | `Worker#handle_deserialization_failure` | before any executor | Writes a failed payload with no lock. |
-| Map collector, failure branch | `Map::Helpers#resume_parent_execution` | Holds `map_collect:<map_id>`, never the parent's `async:` lock. |
-| `Reactor.cancel`, `Reactor.undo` | any process (app code, console) | `find` → mutate → `save_context`: a blind write racing a live worker. |
+| ~~Map collector, failure branch~~ | ~~`Map::Helpers#resume_parent_execution`~~ | Fixed by 009 R-03: the collector writes no context; it signals the owner run, whose Worker adopts the map's outcome. |
+| `Reactor.cancel` | any process (app code, console) | `find` → mutate → `save_context`: a blind write racing a live worker. (`Reactor.undo` holds the run's `async:` lock since 009 R-12.) |
 | `Reactor#continue` (interrupt resume) | web request / app code | Writes the payload before `resume_execution` takes the lock. |
 | Synchronous `Reactor.run` / `Executor#execute` | caller's process | Never takes the context lock, so its saves are unfenced. |
 
@@ -222,32 +222,17 @@ All against real Redis, per the constitution.
 - Docs: `locks_and_semaphores.md`, `background_and_async.md`, and the README's "Durability &
   Recovery" section.
 
-## Fan-out map inside a composed child
+## Interrupt inside a composed child
 
-**Status:** bug, already present on main (0.8.1). Raised by the PR #56 review.
+**Status:** unsupported on main, found while implementing 009 (US2-AS2). An `interrupt` in a
+`compose`d child does not pause the root: `ComposeStep#handle_execution_result` calls `success?` on
+the child's `InterruptResult`, and the compose step fails with `NoMethodError`. It fails the same
+way with or without a fan-out map in the child.
 
-A root that composes a child, where the child runs a `fan_out` map, never finishes. The root
-stays `running`.
-
-- `MapStep#prepare_async_execution` stores the child under its own id.
-- The map collector loads that child blob. Its `root_context` is nil, so the collector resumes
-  the child as a standalone execution. On a park, it requeues the child the same way.
-- The child completes in its own blob. Nothing resumes the root, and the root's embedded copy of
-  the child stays at the map step.
-
-To reproduce: `Root` composes `Child`, and `Child` runs a `map ... fan_out batch_size: 1`. Drain
-the element, collector and `Worker` jobs. The root is still `running`.
-
-A literal patch would have the collector write the root's blob. That breaks the single-writer
-rule, because the collector holds only `map_collect:`, never the root's `async:` lock.
-
-Direction:
-- The collector records the map's completion on the map's own records, which it already does.
-- The collector requeues the ROOT worker and does not resume the child itself.
-- On re-entry, `MapStep` adopts the finished map: collect the results, don't dispatch again.
-
-Spec: compose → fan-out map, with and without a park after the map. The root completes either
-way.
+Direction: propagate the child's `InterruptResult` as the compose step's result, so the root
+pauses; let `Reactor.continue` and the `be_paused_at` matcher name the nested interrupt (a step
+path such as `:fulfil, :approve`); and resume through `ComposeStep#run`, which already re-enters
+an admitted child. Spec: `spec/map/map_compose_fan_out_spec.rb` keeps a `pending` example for it.
 
 ## Rollback follow-ups (008)
 
@@ -262,10 +247,13 @@ Raised while implementing specs/008-rollback-reliability. None blocks it.
 - **Map-level `undo_all` override.** Map rollback always replays each element's own step `undo`s.
   A bulk refund API may want one call for all elements instead. Direction: an optional
   `undo_all { |completed_results| ... }` on `map` that replaces the per-element replay.
-- **Rollback fan-out for very large maps.** Map rollback is serial, in the process that detected
-  the failure, so its time is linear in the number of completed elements (10,000 elements take
-  about a minute in the test suite). Direction: enqueue one rollback job per element (or per
-  batch) and resolve the parent's failure once they report back.
+- **A synchronous caller's final save races a worker resume.** A `Reactor.run` that reaches a
+  fan-out map in the caller's process never holds the run's `async:` lock. Its final save, after
+  `MapStep#run` returned the hand-off, can land after the owner's Worker (resumed by the map's
+  completion) took the lock and saved newer progress, and overwrite it. 009 R-13 fixed the same
+  window on the worker path (save before release) and stores the owner tree before dispatch,
+  which narrows this one but does not close it. Direction: §"Fenced context writes" above; or have
+  a caller-process run take the `async:` lock from its first hand-off on.
 - **A resume for a second pending interrupt while the first is executing.** A reactor paused at
   several ready interrupts takes their resumes one at a time: each accepted resume marks the run
   `running` (008 FR-032), and the run pauses again at the interrupts still pending. A resume that

@@ -2,6 +2,14 @@
 
 require "spec_helper"
 
+module MapRecoverySpec
+  MapRollbackFixtures.parent(self, :Batched, MapRollbackFixtures::ElemOk, fan_out: true, batch_size: 3)
+end
+
+# 009 R-10: the metadata never stored `batch_size` / `fail_fast`, so a
+# re-dispatched element lost both — it stopped triggering batches and was no
+# longer atomic.
+
 # Phase 5 end-to-end: the map sweeper re-dispatches lost element jobs by index
 # (exercising Dispatcher.requeue_index's real source resolution) and the map
 # completes off the index-keyed results hash.
@@ -31,9 +39,10 @@ RSpec.describe "Map recovery (M1)" do
     expect(result[:redispatched]).to eq(3) # indices 0,1,2 all missing
     expect(element_worker.jobs.size).to eq(3)
 
-    # Run the recovered elements and collect.
+    # Run the recovered elements, collect, and resume the owner (009 R-03).
     element_worker.drain
     collector_worker.drain
+    RubyReactor::Adapters::Sidekiq::Worker.drain
 
     data = storage.retrieve_context(context_id, MapTestReactors::AsyncMapReactor.name)
     enumerator = RubyReactor::ContextSerializer.deserialize_value(data["intermediate_results"]["doubled_numbers"])
@@ -68,5 +77,21 @@ RSpec.describe "Map recovery (M1)" do
 
     result = RubyReactor::Map::Sweeper.run_once
     expect(result[:redispatched]).to eq(2) # 1 and 2 re-dispatched; 0 left to the live worker
+  end
+
+  describe "keeping batch_size and atomic (009 R-10)" do
+    it "re-dispatches a dropped element with the map's batch_size and atomic" do
+      id = MapRecoverySpec::Batched.run(items: [0, 1, 2]).execution_id
+      dropped = element_worker.jobs.find { |job| job["args"].first["index"] == 1 }
+      element_worker.jobs.delete(dropped)
+      element_worker.drain
+
+      expect(RubyReactor::Map::Sweeper.run_once[:redispatched]).to eq(1)
+      args = element_worker.jobs.last["args"].first
+      expect(args).to include("index" => 1, "batch_size" => 3, "atomic" => true)
+
+      RubyReactor::RSpec::SidekiqHelpers.drain_async_jobs
+      expect(MapRecoverySpec::Batched.find(id).context.status.to_s).to eq("completed")
+    end
   end
 end

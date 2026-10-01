@@ -135,7 +135,8 @@ docker compose -p rr_009 -f docker-compose.yml -f override.yml run --rm --no-dep
   bin/rails "demo:map_rollback_benchmark[10000]"
 ```
 
-The task prints two times and their ratio:
+The task prints two times and their ratio, each timed from the moment `:notify` fails (the
+rollback's start) to the end of the run, so the forward run is not counted:
 
 - the serial baseline: the inline-map rollback of the same 10,000 elements, through
   `InlineRefundBenchmarkReactor`, which is today's serial algorithm;

@@ -4,6 +4,7 @@ module RubyReactor
   module Dsl
     class MapBuilder
       include RubyReactor::Dsl::TemplateHelpers
+      include RubyReactor::Dsl::DefinitionWarnings
 
       attr_accessor :name, :mapped_reactor_class, :argument_mappings, :source_enumerable
 
@@ -25,7 +26,7 @@ module RubyReactor
         @batch_size = nil
         @source_enumerable = nil
         @collect_block = nil
-        @fail_fast = true # Default: stop on first error
+        @atomic = true # Default: every element succeeds, or none is kept
       end
 
       def argument(mapped_input_name, source)
@@ -41,10 +42,10 @@ module RubyReactor
       end
 
       # Run every element as its own background job. `batch_size` caps how many
-      # element jobs are enqueued at a time (back pressure); without it the whole
-      # source fans out at once. A fan-out map is a hand-off point: the reactor
-      # stops at the map and resumes in a worker once the collector has every
-      # element's outcome.
+      # element jobs one throw enqueues (back pressure), forward and rollback;
+      # without it, `Map::DEFAULT_BATCH_SIZE` (50) does. A fan-out map is a
+      # hand-off point: the reactor stops at the map and resumes in a worker
+      # once the collector has every element's outcome.
       def fan_out(enabled = true, batch_size: nil)
         @fan_out = enabled
         self.batch_size(batch_size) unless batch_size.nil?
@@ -83,11 +84,30 @@ module RubyReactor
         @collect_block = block
       end
 
+      # On (the default), the map succeeds only if every element does: the
+      # first element failure fails it, no new element starts, and every
+      # completed element is rolled back. Off, it completes with every
+      # element's outcome; a failed element rolls itself back, the others are
+      # kept.
+      def atomic(enabled = true)
+        @atomic_declared = true
+        @atomic = enabled
+      end
+
+      # The old name for `atomic` (009 R-11), which read as "stop early".
       def fail_fast(enabled = true)
-        @fail_fast = enabled
+        @fail_fast_site = caller_locations(1, 1).first
+        @atomic = enabled
+        warn_deprecation(@fail_fast_site, "map :#{@name} declares fail_fast. Use atomic (same meaning).")
       end
 
       def build
+        if @atomic_declared && @fail_fast_site
+          raise RubyReactor::Error::ValidationError.new(
+            "map :#{@name} declares both fail_fast and atomic; declare only atomic", step: @name
+          )
+        end
+
         dependencies = extract_dependencies_from_mappings
         dependencies << @source_enumerable.step_name if @source_enumerable.is_a?(RubyReactor::Template::Result)
 
@@ -123,7 +143,7 @@ module RubyReactor
             strict_ordering: { source: RubyReactor::Template::Value.new(@strict_ordering) },
             batch_size: { source: RubyReactor::Template::Value.new(@batch_size) },
             collect_block: { source: RubyReactor::Template::Value.new(@collect_block) },
-            fail_fast: { source: RubyReactor::Template::Value.new(@fail_fast) },
+            atomic: { source: RubyReactor::Template::Value.new(@atomic) },
             fan_out: { source: RubyReactor::Template::Value.new(@fan_out) }
           },
           run_block: nil,

@@ -109,28 +109,35 @@ end
 
 **How it works:**
 1. The system initially enqueues `batch_size` jobs.
-2. As each job completes, it triggers the next job in the queue.
+2. When the last job of that throw completes, it enqueues the next `batch_size`.
 3. This maintains a steady stream of processing without flooding the queue.
+
+`batch_size` is optional: without it, a fan-out map uses a batch size of **50**
+(`RubyReactor::Map::DEFAULT_BATCH_SIZE`). There is no unbounded mode; set
+`batch_size` to change the throw size. The same size bounds the map's rollback:
+one rollback job per element, at most `batch_size` per throw.
 
 ## Error Handling
 
-You can control how the pipeline reacts to failures using the `fail_fast` option.
+You can control how the pipeline reacts to failures using the `atomic` option.
 
-### Fail Fast (Default)
+### Atomic maps (`atomic`)
 
-By default (`fail_fast true`), the entire map operation fails immediately if any single element fails.
+By default (`atomic true`), the map succeeds only if every element succeeds: the first element failure fails the map, no new element starts, and every completed element is rolled back.
+
+> **Deprecated: `fail_fast`.** The old name keeps working with the same meaning and prints one deprecation line per declaration site, naming `atomic`. Declaring both on one map raises `RubyReactor::Error::ValidationError`.
 
 ```ruby
 map :strict_processing do
   source input(:items)
   # ...
-  fail_fast true # Default
+  atomic true # Default
 end
 ```
 
 ### Collecting Partial Results
 
-If you want to process all elements regardless of failures, set `fail_fast false`. You can then use a `collect` block to handle successes and failures separately.
+If you want to process all elements regardless of failures, set `atomic false`. You can then use a `collect` block to handle successes and failures separately.
 
 ```ruby
 map :resilient_processing do
@@ -138,7 +145,7 @@ map :resilient_processing do
   argument :item, element(:resilient_processing)
   
   # Continue processing even if some items fail
-  fail_fast false
+  atomic false
 
   step :risky_operation do
     # ...

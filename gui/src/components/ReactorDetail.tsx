@@ -77,6 +77,7 @@ export default function ReactorDetail() {
               <span className="text-sm text-slate-400">Status: <span className={`font-medium ${reactor.status === 'failed' ? 'text-red-400' :
                 reactor.status === 'completed' ? 'text-emerald-400' :
                   reactor.status === 'paused' ? 'text-amber-400' :
+                  reactor.status === 'rolling_back' ? 'text-amber-300' :
                     reactor.status === 'halted' ? 'text-slate-300' :
                       reactor.status === 'pending' ? 'text-slate-400' :
                     'text-slate-200'

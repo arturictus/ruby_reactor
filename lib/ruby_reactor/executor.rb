@@ -135,6 +135,10 @@ module RubyReactor
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
       completed = true
       @result
+    rescue Error::RollbackHandedOff => e
+      record_rollback_handoff(e)
+      completed = true
+      @result
     rescue RubyReactor::Lock::AcquisitionError,
            RubyReactor::Semaphore::AcquisitionError,
            RubyReactor::RateLimit::ExceededError,
@@ -153,7 +157,7 @@ module RubyReactor
       @contention_snooze = true
       raise
     rescue Error::Rescuable => e
-      @result = aborting_on_interruption { @result_handler.handle_execution_error(e) }
+      @result = handing_off { aborting_on_interruption { @result_handler.handle_execution_error(e) } }
       update_context_status(@result)
       completed = true
       @result
@@ -184,6 +188,9 @@ module RubyReactor
     end
 
     def resume_execution # rubocop:disable Metrics/MethodLength,Metrics/PerceivedComplexity,Metrics/CyclomaticComplexity
+      # A composed child re-entered while its own rollback is handed off.
+      return resume_rollback if @context.rolling_back?
+
       middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
       completed = false
 
@@ -256,6 +263,10 @@ module RubyReactor
       handle_interrupt(@result) if @result.is_a?(RubyReactor::InterruptResult)
       completed = true
       @result
+    rescue Error::RollbackHandedOff => e
+      record_rollback_handoff(e)
+      completed = true
+      @result
     rescue RubyReactor::Lock::AcquisitionError,
            RubyReactor::Semaphore::AcquisitionError,
            RubyReactor::RateLimit::ExceededError,
@@ -274,7 +285,7 @@ module RubyReactor
       @contention_snooze = true
       raise e
     rescue Error::Rescuable => e
-      aborting_on_interruption { handle_resume_error(e) }
+      handing_off { aborting_on_interruption { handle_resume_error(e) } }
       update_context_status(@result)
       completed = true
       @result
@@ -283,16 +294,100 @@ module RubyReactor
       raise
     ensure
       release_locks unless @parked
+      # Saved while the context lock is still held (009 R-13): released first,
+      # a worker resuming this run could load the pre-save blob, and this save
+      # would then overwrite its progress.
+      save_context unless skip_context_persist?
       @acquired_context_lock&.release
       @acquired_context_lock = nil
       leave_ordered_lock_scope
-      save_context unless skip_context_persist?
 
       emit_lifecycle_completion(completed)
     end
 
-    def undo_all
-      @compensation_manager.rollback_completed_steps
+    # Undoes every completed step (manual undo, a composed child's undo, a
+    # map element's rollback). A rollback that hands off here (009 R-04)
+    # leaves this level's rollback failures on its context, and the next
+    # `undo_all` of the same context picks them up, so none is lost though
+    # the executor is rebuilt on resume (G2).
+    def undo_all(&after_pop)
+      saved = @context.rollback && @context.rollback["failures"]
+      @compensation_manager.restore_rollback_failures(saved) if saved
+      @compensation_manager.rollback_completed_steps(&after_pop)
+      clear_saved_rollback_failures
+    rescue Error::RollbackHandedOff
+      (@context.rollback ||= {})["failures"] =
+        ContextSerializer.serialize_value(@compensation_manager.rollback_failures)
+      raise
+    end
+
+    # Finishes a rollback that handed off at a fan-out map (009 R-04), once
+    # the map's element rollbacks have all reported: the Worker of a
+    # `rolling_back` run, or a composed child re-entered by its root. Under
+    # the run's context lock, as `resume_execution`.
+    def resume_rollback
+      state = @context.rollback || {}
+      # The hand-off came out of a running step (a composed child rolling
+      # back inside `ComposeStep#run`): resume forward, and that step
+      # finishes its child's rollback.
+      if state["trigger"] == "step" || state.empty?
+        @context.rollback = nil
+        @context.status = :running
+        return resume_execution
+      end
+
+      middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
+      completed = false
+      enter_ordered_lock_scope
+      acquire_context_lock
+      @result = finish_rollback(state)
+      @context.rollback = nil
+      update_context_status(@result)
+      completed = true
+      @result
+    rescue Error::RollbackHandedOff => e
+      record_rollback_handoff(e)
+      completed = true
+      @result
+    rescue RubyReactor::Lock::AcquisitionError => e
+      @contention_snooze = true
+      raise composed_contention_park(e) || e
+    rescue Error::Rescuable => e
+      handing_off { aborting_on_interruption { handle_resume_error(e) } }
+      update_context_status(@result)
+      completed = true
+      @result
+    rescue Exception # rubocop:disable Lint/RescueException
+      mark_aborted
+      raise
+    ensure
+      save_context unless skip_context_persist?
+      @acquired_context_lock&.release
+      @acquired_context_lock = nil
+      leave_ordered_lock_scope
+
+      emit_lifecycle_completion(completed)
+    end
+
+    # The rollback's other half (009 R-05): marks the hand-off saved, then
+    # enqueues the owner's Worker if the map rollback already settled and this
+    # side claims the signal. Whichever of this and the last element rollback
+    # job sees both second enqueues the owner, once. Called right after the
+    # `rolling_back` save, while the context lock is still held.
+    def hand_off_rollback!(handed_off)
+      storage = RubyReactor.configuration.storage_adapter
+      map_id = handed_off.map_id
+      map_class = handed_off.reactor_class_name
+      storage.mark_map_rollback_handed_off(map_id, map_class)
+      RubyReactor.configuration.logger.info(
+        "event=ruby_reactor.rollback.handed_off context_id=#{@context.context_id.inspect} map_id=#{map_id.inspect}"
+      )
+      meta = storage.retrieve_map_rollback_metadata(map_id, map_class)
+      return unless meta && storage.count_map_rollback_outcomes(map_id, map_class) >= meta["total"].to_i
+      return unless storage.claim_map_rollback_signal(map_id, map_class)
+
+      RubyReactor.configuration.async_router.perform_async(@context.context_id,
+                                                           RubyReactor.reactor_storage_name(@reactor_class))
     end
 
     # True once `resume_execution` is past its reactor-level gates (context
@@ -318,8 +413,16 @@ module RubyReactor
     def aborting_on_interruption
       yield
     rescue Exception => e # rubocop:disable Lint/RescueException
-      mark_aborted unless Error::Rescuable === e # rubocop:disable Style/CaseEquality
+      mark_aborted unless Error::Rescuable === e || e.is_a?(Error::RollbackHandedOff) # rubocop:disable Style/CaseEquality
       raise
+    end
+
+    # A rollback run from a `rescue Error::Rescuable` body (the error's own
+    # rollback) is outside the sibling `rescue Error::RollbackHandedOff`.
+    def handing_off
+      yield
+    rescue Error::RollbackHandedOff => e
+      record_rollback_handoff(e)
     end
 
     def undo_stack
@@ -768,7 +871,8 @@ module RubyReactor
 
       case result
       when RubyReactor::DispatchResult
-        @context.status = :running
+        # A rollback hand-off returns one too, and stays `rolling_back`.
+        @context.status = :running unless @context.rolling_back?
       when RubyReactor::Halt
         @context.status = :halted
       when RubyReactor::Success
@@ -831,6 +935,82 @@ module RubyReactor
     def handle_resume_error(error)
       @result = @result_handler.handle_execution_error(error)
       @result
+    end
+
+    # Where this level's rollback stands when it hands off (009 DM §1). A
+    # composed child keeps it on its own context, inside the root's blob, and
+    # re-raises; the top-level run saves it as `rolling_back` while it still
+    # holds the context lock (I-6), runs the handshake, and returns a
+    # `DispatchResult`, as a forward hand-off does.
+    def record_rollback_handoff(handed_off)
+      failure = handed_off.failure
+      handed_off.failure = nil # this level's Failure; the level above builds its own
+      @context.rollback = rollback_state(failure)
+      @context.status = :rolling_back
+      raise handed_off if @context.root_context
+
+      save_context
+      hand_off_rollback!(handed_off)
+      @result = RubyReactor::DispatchResult.new(job_id: "map_rollback:#{handed_off.map_id}",
+                                                intermediate_results: @context.intermediate_results,
+                                                execution_id: @context.context_id)
+    end
+
+    # `trigger`: `failure` (a step failure is rolling back), `undo` (set by
+    # `Reactor#undo`), or `step` (a running step's child handed off, and no
+    # rollback started at this level). A later hand-off of the same rollback
+    # keeps what an earlier one recorded.
+    def rollback_state(failure)
+      state = (@context.rollback || {}).dup
+      pending = @compensation_manager.pending
+      state["trigger"] ||= failure || pending ? "failure" : "step"
+      if pending
+        state["step"] = pending[:step].to_s
+        state["compensated"] = pending[:compensated]
+        state["compensation_error"] = pending[:compensation_error]
+      end
+      state["failure"] = ContextSerializer.serialize_value(failure) if failure
+      state["failures"] = ContextSerializer.serialize_value(@compensation_manager.rollback_failures)
+      state
+    end
+
+    # The rest of a handed-off rollback: the failing step's own compensate if
+    # it had not finished (a map or compose adopts its settled state), the
+    # steps still on the undo stack, then the outcome the inline rollback
+    # gives (I-7).
+    def finish_rollback(state)
+      @compensation_manager.restore_rollback_failures(state["failures"])
+      return finish_undo if state["trigger"] == "undo"
+
+      failure = ContextSerializer.deserialize_value(state["failure"])
+      step_config = state["step"] && @reactor_class.steps[state["step"].to_sym]
+      if step_config && !state["compensated"]
+        @compensation_manager.handle_step_failure(step_config, failure.error, {})
+      else
+        @compensation_manager.rollback_completed_steps
+        if state["compensation_error"]
+          raise Error::CompensationError.new(state["compensation_error"], step: step_config&.name, context: @context)
+        end
+      end
+      @context.current_step = failure.step_name&.to_sym
+      @result_handler.handed_off_failure(failure)
+    rescue Error::CompensationError => e
+      @result_handler.handle_execution_error(e)
+    end
+
+    def finish_undo
+      @compensation_manager.rollback_completed_steps
+      @context.cancelled = true
+      @context.cancellation_reason = "Undo triggered"
+      @context.status = "cancelled"
+      nil
+    end
+
+    def clear_saved_rollback_failures
+      return unless @context.rollback
+
+      @context.rollback.delete("failures")
+      @context.rollback = nil if @context.rollback.empty?
     end
 
     def handle_interrupt(interrupt_result)
