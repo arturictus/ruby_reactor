@@ -809,10 +809,10 @@ more than 50 element jobs in one throw, and all 500 outcomes are collected.
     count.
   - Add `demo_app/spec/reactors/default_batch_fan_out_demo_reactor_spec.rb` with shipped matchers:
     `be_success`, and `step_result` count 120.
-  - **Accepted limitation (G5)**: the demo spec asserts the outcome only. The shipped matchers
-    cannot observe enqueue bursts, and adding a burst matcher for one demo is not worth it. The
-    bound itself is covered by gem spec T064, and the rake task prints the stored `batch_size` for
-    the operator.
+  - **G5 (revised by /speckit-demo-tests)**: no burst matcher was added. The demo specs read the
+    first throw with the shipped `pending_async_jobs` under `process_jobs: false`: 50 element jobs
+    here, and 10 forward plus 10 rollback in the T048 spec. Gem spec T064 covers every throw, and
+    the rake task prints the stored `batch_size` for the operator.
 - [X] T068 [P] [US3] Documentation:
   - rewrite `documentation/data_pipelines.md` §"`fan_out` Without `batch_size`": default 50, no
     unbounded mode, set `batch_size` to change it;
