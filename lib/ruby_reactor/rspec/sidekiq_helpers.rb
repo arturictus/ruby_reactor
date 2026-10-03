@@ -12,15 +12,18 @@ module RubyReactor
       # until the queues are empty. Recursive — handles jobs that re-enqueue
       # themselves (e.g. ordered_lock snoozes) and worker chains that queue
       # additional jobs.
+      # Whichever test backend is active (Sidekiq fake mode or the ActiveJob
+      # `:test` adapter), via `AsyncTestHelpers`.
       def drain_async_jobs(max_iterations: 100)
-        SidekiqHelpers.drain_async_jobs(max_iterations: max_iterations)
+        AsyncTestHelpers.drain_async_jobs(max_iterations: max_iterations)
       end
 
       # All currently-pending async jobs, wrapped in `PendingJob` so callers
       # can perform individual jobs out-of-order (e.g. to assert
-      # ordered_lock's snooze behavior) without touching Sidekiq internals.
+      # ordered_lock's snooze behavior) without touching backend internals.
+      # `worker_class` names the job's class on either backend.
       def pending_async_jobs
-        SidekiqHelpers.pending_async_jobs
+        AsyncTestHelpers.pending_async_jobs
       end
 
       PendingJob = Struct.new(:worker_class, :raw) do
@@ -39,6 +42,7 @@ module RubyReactor
           RubyReactor::Adapters::Sidekiq::Worker,
           RubyReactor::Adapters::Sidekiq::MapElementWorker,
           RubyReactor::Adapters::Sidekiq::MapCollectorWorker,
+          RubyReactor::Adapters::Sidekiq::MapElementRollbackWorker,
           RubyReactor::Adapters::Sidekiq::StepWorker
         ]
       end

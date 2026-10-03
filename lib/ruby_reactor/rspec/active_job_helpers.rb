@@ -11,12 +11,16 @@ module RubyReactor
       PendingJob = Struct.new(:job_class, :raw) do
         def perform!
           ::ActiveJob::Base.queue_adapter.enqueued_jobs.delete(raw)
-          job_class.new(*raw[:args]).perform_now
+          job_class.new(*ActiveJobHelpers.arguments(raw)).perform_now
         end
 
         def args
           raw[:args]
         end
+
+        # The Sidekiq `PendingJob`'s name for it, so step-wise drains read the
+        # same on both backends (009 U4).
+        alias_method :worker_class, :job_class
       end
 
       def self.test_adapter?
@@ -37,9 +41,16 @@ module RubyReactor
 
           queue.dup.each do |job|
             queue.delete(job)
-            job[:job].new(*job[:args]).perform_now
+            job[:job].new(*arguments(job)).perform_now
           end
         end
+      end
+
+      # The test adapter keeps a job's arguments serialized; a real backend
+      # hands `perform` the deserialized ones (a job requeueing its own
+      # arguments would otherwise re-serialize ActiveJob's markers).
+      def self.arguments(raw)
+        ::ActiveJob::Arguments.deserialize(raw[:args])
       end
 
       def self.pending_async_jobs

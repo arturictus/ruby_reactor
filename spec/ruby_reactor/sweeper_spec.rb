@@ -50,6 +50,16 @@ RSpec.describe RubyReactor::Sweeper do
       expect(enqueued).to be_empty
     end
 
+    # 009 S-5: a rollback whose owner resume was lost.
+    it "re-enqueues a rolling_back context with no live lock, and skips one with" do
+      id = store_context(status: :rolling_back)
+      expect(sweeper.run_once).to eq(1)
+      expect(enqueued).to eq([[id, "SweeperTestReactor"]])
+
+      hold_lock(id)
+      expect(sweeper.run_once).to eq(0)
+    end
+
     %i[completed failed halted].each do |terminal|
       it "skips a terminal (#{terminal}) context" do
         store_context(status: terminal)

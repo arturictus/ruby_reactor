@@ -2,6 +2,16 @@
 
 require "spec_helper"
 
+module MapDefaultBatchSizeSpec
+  MapRollbackFixtures.parent(self, :Unbatched, MapRollbackFixtures::ElemOk, fan_out: true)
+  MapRollbackFixtures.parent(self, :Batched200, MapRollbackFixtures::ElemOk, fan_out: true, batch_size: 200)
+  MapRollbackFixtures.parent(self, :UnbatchedFails, MapRollbackFixtures::ElemOk, fan_out: true, b_fails: true)
+end
+
+# 009 US3, FR-017–FR-019, SC-004: `fan_out` without `batch_size` enqueues at
+# most 50 element jobs per throw, forward and rollback. The bound is per
+# throw (FR-002, R-02); queue depth is not asserted.
+
 RSpec.describe "Map Batch Size Execution" do
   before do
     # Use real Redis from spec_helper configuration
@@ -71,6 +81,44 @@ RSpec.describe "Map Batch Size Execution" do
       expect do
         define_map_reactor(batch_size: 1.5)
       end.to raise_error(RubyReactor::Error::ValidationError, /batch_size.*positive Integer/)
+    end
+  end
+
+  describe "fan_out default batch size (009 US3)" do
+    let(:storage) { RubyReactor.configuration.storage_adapter }
+
+    def items(count) = { items: (0...count).to_a }
+
+    for_each_async_backend do
+      it "throws at most 50 element jobs for 500 elements, and collects all 500" do
+        reactor = MapDefaultBatchSizeSpec::Unbatched
+        id = reactor.run(items(500)).execution_id
+
+        expect(QueueProbe.drain_tracking("MapElementWorker")[:max_burst]).to be <= 50
+        expect(storage.count_map_results("#{id}:m", reactor.name)).to eq(500)
+        expect(storage.retrieve_map_metadata("#{id}:m", reactor.name)["batch_size"]).to eq(50)
+        expect(reactor.find(id).context.status.to_s).to eq("completed")
+      end
+
+      it "throws all 20 elements at once when there are fewer than 50" do
+        MapDefaultBatchSizeSpec::Unbatched.run(items(20))
+
+        expect(QueueProbe.enqueued("MapElementWorker")).to eq(20)
+      end
+
+      it "uses a declared batch_size instead of the default" do
+        MapDefaultBatchSizeSpec::Batched200.run(items(500))
+
+        expect(QueueProbe.drain_tracking("MapElementWorker")[:max_burst]).to eq(200)
+      end
+
+      it "rolls back with the same default" do
+        reactor = MapDefaultBatchSizeSpec::UnbatchedFails
+        id = reactor.run(items(120)).execution_id
+
+        expect(QueueProbe.drain_tracking("MapElementRollbackWorker")[:max_burst]).to be <= 50
+        expect(reactor.find(id).context.status.to_s).to eq("failed")
+      end
     end
   end
 end

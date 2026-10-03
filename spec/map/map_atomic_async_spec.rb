@@ -2,19 +2,19 @@
 
 require "spec_helper"
 
-RSpec.describe "Map fail_fast Option" do
+RSpec.describe "Map atomic Option" do
   # ============================================================================
-  # Test fail_fast: true (default behavior - stop on first error)
+  # Test atomic: true (default behavior - stop on first error)
   # ============================================================================
 
-  describe "fail_fast: true (default)" do
+  describe "atomic: true (default)" do
     class FailFastTrueReactor < RubyReactor::Reactor
       input :items
 
       map :processed do
         source input(:items)
         argument :item, element(:processed)
-        # fail_fast true is the default, no need to specify
+        # atomic true is the default, no need to specify
 
         step :process do
           argument :val, input(:item)
@@ -47,17 +47,17 @@ RSpec.describe "Map fail_fast Option" do
   end
 
   # ============================================================================
-  # Test fail_fast: false (continue on errors, collect partial results)
+  # Test atomic: false (continue on errors, collect partial results)
   # ============================================================================
 
-  describe "fail_fast: false" do
+  describe "atomic: false" do
     class FailFastFalseReactor < RubyReactor::Reactor
       input :items
 
       map :processed do
         source input(:items)
         argument :item, element(:processed)
-        fail_fast false
+        atomic false
 
         step :process do
           argument :val, input(:item)
@@ -95,7 +95,7 @@ RSpec.describe "Map fail_fast Option" do
       expect(result).to be_a(RubyReactor::Success)
       expect(result).to be_a(RubyReactor::Success)
       # When all succeed, we get an array of Success objects (implied by Result wrapper logic in map_step)
-      # Wait, inline map with fail_fast: false returns [Result, Result].
+      # Wait, inline map with atomic: false returns [Result, Result].
       # We need to unwrap them if we want to check values easily, or just check the objects.
       results = result.value[:processed]
       expect(results.map(&:value)).to eq(%w[HELLO WORLD])
@@ -103,17 +103,17 @@ RSpec.describe "Map fail_fast Option" do
   end
 
   # ============================================================================
-  # Test fail_fast: false with collect block (access to both successes and failures)
+  # Test atomic: false with collect block (access to both successes and failures)
   # ============================================================================
 
-  describe "fail_fast: false with collect block" do
+  describe "atomic: false with collect block" do
     class PartialFailureWithCollectReactor < RubyReactor::Reactor
       input :items
 
       map :processed do
         source input(:items)
         argument :item, element(:processed)
-        fail_fast false
+        atomic false
 
         step :process do
           argument :val, input(:item)
@@ -128,7 +128,7 @@ RSpec.describe "Map fail_fast Option" do
 
         returns :process
 
-        # Collect block receives Result objects when fail_fast: false
+        # Collect block receives Result objects when atomic: false
         collect do |results|
           successes = results.select(&:success?).map(&:value)
           failures = results.select(&:failure?).map(&:error)
@@ -188,17 +188,17 @@ RSpec.describe "Map fail_fast Option" do
   end
 
   # ============================================================================
-  # Test explicit fail_fast: true with collect block
+  # Test explicit atomic: true with collect block
   # ============================================================================
 
-  describe "fail_fast: true with collect block" do
+  describe "atomic: true with collect block" do
     class FailFastTrueWithCollectReactor < RubyReactor::Reactor
       input :items
 
       map :processed do
         source input(:items)
         argument :item, element(:processed)
-        fail_fast true
+        atomic true
 
         step :process do
           argument :val, input(:item)
@@ -213,7 +213,7 @@ RSpec.describe "Map fail_fast Option" do
 
         returns :process
 
-        # When fail_fast: true, collect receives values (not Result objects)
+        # When atomic: true, collect receives values (not Result objects)
         collect do |results|
           {
             items: results,
@@ -243,7 +243,7 @@ RSpec.describe "Map fail_fast Option" do
   end
 
   # ============================================================================
-  # Test complex ETL scenario with fail_fast: false
+  # Test complex ETL scenario with atomic: false
   # ============================================================================
 
   describe "ETL scenario with partial failures" do
@@ -253,7 +253,7 @@ RSpec.describe "Map fail_fast Option" do
       map :validated_records do
         source input(:records)
         argument :record, element(:validated_records)
-        fail_fast false
+        atomic false
 
         step :validate do
           argument :rec, input(:record)
@@ -316,10 +316,10 @@ RSpec.describe "Map fail_fast Option" do
   end
 
   # ============================================================================
-  # Test reproduction of Async Map Fail Fast Hang
+  # Test reproduction of Async Map Atomic Hang
   # ============================================================================
 
-  describe "Reproduction of Async Map Fail Fast Hang" do
+  describe "Reproduction of Async Map Atomic Hang" do
     class AsyncFailFastReactor < RubyReactor::Reactor
       input :items
       input :fail_item
@@ -329,7 +329,7 @@ RSpec.describe "Map fail_fast Option" do
         argument :item, element(:processed)
         argument :fail_item, input(:fail_item)
 
-        # Default fail_fast is true
+        # Default atomic is true
         fan_out batch_size: 2
 
         step :process do
@@ -349,7 +349,7 @@ RSpec.describe "Map fail_fast Option" do
       end
     end
 
-    it "fails the reactor when an item fails in async map with fail_fast: true" do
+    it "fails the reactor when an item fails in async map with atomic: true" do
       # Manually create context and SAVE IT
       context = RubyReactor::Context.new(
         { items: [1, 2, 3, 4, 5], fail_item: 3 },
@@ -377,14 +377,15 @@ RSpec.describe "Map fail_fast Option" do
       # Process elements (Batches)
       RubyReactor::Adapters::Sidekiq::MapElementWorker.drain
 
-      # Collector
-      RubyReactor::Adapters::Sidekiq::MapCollectorWorker.drain
+      # Collector, the owner resume that applies the failure (009 R-03), and
+      # the map's distributed rollback (R-04)
+      RubyReactor::RSpec::SidekiqHelpers.drain_async_jobs
 
       # Reload reactor from storage to check status
       stored_reactor = AsyncFailFastReactor.find(context.context_id)
 
       # If bug exists, status will be 'running' because Collector is waiting for all 5 results,
-      # but only 1-4 might have run (3 failed), and 5 was skipped due to fail_fast check in Execution.
+      # but only 1-4 might have run (3 failed), and 5 was skipped due to atomic check in Execution.
 
       expect(stored_reactor.context.status).to eq("failed")
       expect(stored_reactor.context.failure_reason.error).to include("Simulated failure for 3")

@@ -382,7 +382,7 @@ export default function DagVisualizer({ structure, steps, onStepSelect, selected
         }
 
         // A map step still "completes" when individual elements failed
-        // (fail_fast false), so its result summary is the only signal that
+        // (atomic false), so its result summary is the only signal that
         // anything went wrong inside it.
         const mapResult = currentResults?.[key];
         if (mapResult?._type === 'map_results' && mapResult.failed > 0) {

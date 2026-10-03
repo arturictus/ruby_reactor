@@ -11,6 +11,7 @@ module RubyReactor
       include RedisStepResults
       include RedisPubSub
       include RedisReactorScan
+      include RedisMapRollback
 
       def initialize(redis_config)
         super()
@@ -70,7 +71,8 @@ module RubyReactor
       # rubocop:disable Metrics/ParameterLists
       def initialize_map_operation(map_id, count, parent_reactor_class_name, reactor_class_info:, strict_ordering: true,
                                    parent_context_id: nil, step_name: nil, parent_is_map_element: false,
-                                   outer_map_id: nil, outer_index: nil)
+                                   outer_map_id: nil, outer_index: nil, owner_context_id: nil,
+                                   owner_reactor_class_name: nil, batch_size: nil, atomic: nil)
         # Ensure counter is set
         set_map_counter(map_id, count, parent_reactor_class_name)
 
@@ -79,7 +81,9 @@ module RubyReactor
         # nested-map fields (parent_is_map_element + outer_map_id/outer_index)
         # record which liveness lock the parent actually holds (N1): a nested
         # map's parent is itself a map element running under a `map_element:` lock,
-        # not an `async:` lock.
+        # not an `async:` lock. The owner is the top-level run the collector
+        # resumes (009 R-03); `batch_size` and `atomic` let a re-dispatched
+        # element keep both (R-10).
         key = "reactor:#{parent_reactor_class_name}:map:#{map_id}:metadata"
         metadata = {
           map_id: map_id,
@@ -92,11 +96,21 @@ module RubyReactor
           parent_is_map_element: parent_is_map_element,
           outer_map_id: outer_map_id,
           outer_index: outer_index,
+          owner_context_id: owner_context_id,
+          owner_reactor_class_name: owner_reactor_class_name,
+          batch_size: batch_size,
+          atomic: atomic,
           created_at: Time.now.to_i
         }
         @redis.set(key, metadata.to_json, ex: durability_ttl)
       end
       # rubocop:enable Metrics/ParameterLists
+
+      # Claimed once, by the collector that found the map settled: only that
+      # one enqueues the owner's Worker (009 DM §3).
+      def claim_map_owner_signal(map_id, reactor_class_name) # rubocop:disable Naming/PredicateMethod
+        !!@redis.set("reactor:#{reactor_class_name}:map:#{map_id}:owner_signalled", "1", nx: true, ex: durability_ttl)
+      end
 
       # Enumerate active map operations for the map sweeper (Phase 5d). Returns
       # the parsed metadata hash for each (includes map_id, count,
@@ -105,6 +119,8 @@ module RubyReactor
       def scan_maps(count: 1000)
         results = []
         @redis.scan_each(match: "reactor:*:map:*:metadata", count: 100) do |key|
+          next if key.end_with?(":rollback:metadata") # a hash, listed by scan_map_rollbacks
+
           json = @redis.get(key)
           next unless json
 

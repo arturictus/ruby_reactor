@@ -133,9 +133,11 @@ module RubyReactor
       # the stack. A worker run is redelivered instead, and re-runs the step.
       def track_interrupted_construct(step_config, arguments, error)
         return if @context.inline_async_execution || Error::Rescuable === error # rubocop:disable Style/CaseEquality
+        return if error.is_a?(Error::RollbackHandedOff) # a rollback signal, not an interruption
         return unless step_config.undoes_partial_run?
 
-        @compensation_manager.add_to_undo_stack({ step: step_config, arguments: arguments,
+        @compensation_manager.add_to_undo_stack({ step: step_config,
+                                                  arguments: step_config.rollback_arguments(arguments),
                                                   result: RubyReactor.Success(nil) })
       end
 

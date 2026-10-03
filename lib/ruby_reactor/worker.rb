@@ -119,9 +119,11 @@ module RubyReactor
       context.inline_async_execution = true
 
       begin
-        # Resume execution from the failed step
+        # Resume execution from the failed step — or, for a run whose rollback
+        # handed off at a fan-out map, finish that rollback (009 R-04).
         executor = Executor.new(context.reactor_class, {}, context)
-        executor.resume_execution
+        rolling_back = (data["status"] || data[:status]).to_s == "rolling_back"
+        rolling_back ? executor.resume_rollback : executor.resume_execution
         # No explicit save here: resume_execution's ensure block already persists
         # the final root state (`save_context unless skip_context_persist?`), and
         # in the worker the executor's context IS the root, so an extra checkpoint!

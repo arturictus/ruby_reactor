@@ -15,6 +15,7 @@ RSpec.describe RubyReactor::Step::MapStep do
                     context_id: "test-context-id",
                     map_operations: {},
                     map_metadata: nil,
+                    root_context: nil,
                     current_step: :test_step,
                     inline_async_execution: false,
                     intermediate_results: {},

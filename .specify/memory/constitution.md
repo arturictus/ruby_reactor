@@ -1,27 +1,28 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.2.1 → 1.3.0 (MINOR: Development Workflow now REQUIRES every generated
-  plan.md and tasks.md to carry an explicit documentation-update task/gate, with the
-  requirement propagated into both templates — a new enforcement mechanism, not just
-  wording)
+Version change: 1.3.0 → 1.3.1 (PATCH: factual correction in Technical Constraints — the worker
+  path named a directory that no longer exists; no principle or rule changed)
 
-Modified principles: none (Development Workflow section, not a Core Principle)
+Modified principles: none
+
+Modified sections: Technical Constraints — the "Sidekiq" bullet now points at
+  `lib/ruby_reactor/adapters/{sidekiq,active_job}/`, where the queue-backend workers actually
+  live, and names ActiveJob as the alternative adapter
 
 Added sections: none
 
 Removed sections: none
 
 Templates checked:
-  - .specify/templates/plan-template.md      ✅ Added Constitution Check checklist item:
-                                                 identify README.md/./documentation impact
-  - .specify/templates/spec-template.md      ✅ No principle-specific content — no edit required
-  - .specify/templates/tasks-template.md     ✅ Polish-phase doc task now explicit and marked
-                                                 REQUIRED, citing README.md + ./documentation
+  - .specify/templates/plan-template.md      ✅ No reference to the worker path — no edit required
+  - .specify/templates/spec-template.md      ✅ No reference — no edit required
+  - .specify/templates/tasks-template.md     ✅ No reference — no edit required
   - .specify/templates/checklist-template.md ✅ Generic — no edit required
   - .specify/extensions.yml                  ✅ No before/after_constitution hooks registered
-  - README.md                                ✅ No principle-specific claims to update
-  - documentation/*.md                       ✅ No principle-specific claims to update
+  - README.md, documentation/*.md            ✅ No reference to the old path
+
+Found by /speckit-analyze on specs/009-distributed-map-undo (finding C5), 2026-09-30.
 
 Deferred TODOs: none
 -->
@@ -151,7 +152,9 @@ gaps in the matcher library surface as work instead of as workarounds.
 ## Technical Constraints
 
 - **Ruby**: >= 3.0.0 required. No polyfills for older Rubies.
-- **Sidekiq**: Core async dependency. Workers live in `lib/ruby_reactor/sidekiq_workers/`.
+- **Sidekiq**: Core async dependency. ActiveJob is the supported alternative. Queue-backend
+  workers and routers live in `lib/ruby_reactor/adapters/{sidekiq,active_job}/`; the
+  backend-agnostic worker logic lives in `lib/ruby_reactor/worker.rb` and `lib/ruby_reactor/map/`.
 - **Redis**: Required for state persistence, locks, semaphores, rate limits, and
   periods. The gem does NOT manage Redis connections — callers provide them.
 - **dry-validation**: Input validation DSL. Schema definitions stay inside the
@@ -208,4 +211,4 @@ justified in the `Complexity Tracking` table of the plan.
 Compliance review: at each MINOR or MAJOR gem release, confirm this constitution
 still accurately reflects the codebase and update as needed.
 
-**Version**: 1.3.0 | **Ratified**: 2025-10-02 | **Last Amended**: 2026-09-11
+**Version**: 1.3.1 | **Ratified**: 2025-10-02 | **Last Amended**: 2026-09-30

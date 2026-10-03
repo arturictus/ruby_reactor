@@ -202,6 +202,8 @@ end
    end
    ```
 
+6. **A `fan_out` map inside a composed child works at any depth.** The map hands the whole run off, as it would at the top level: the top-level run's worker is resumed once every element has reported, re-enters the child, and the map adopts its outcome — the child never resumes as a run of its own. Nothing to declare. If the map, or any step after it in the child or the parent, fails, the rollback travels through the top-level run: the map's elements are rolled back one job each (see [Rollback](data_pipelines.md#rollback)), then the child's earlier steps, then the parent's. A manual `Reactor.undo` of the top-level run reaches the child's map the same way. An `interrupt` inside a composed child is not supported yet, with or without a map.
+
 ### `async_reactor` vs `compose`
 
 Both run a nested reactor. They differ in exactly one thing that then determines

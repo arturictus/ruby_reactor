@@ -58,7 +58,7 @@ module RubyReactor
         # rubocop:disable Metrics/ParameterLists
         def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
                                            strict_ordering:, parent_context_id:, parent_reactor_class_name:,
-                                           step_name:, batch_size: nil, serialized_context: nil, fail_fast: nil)
+                                           step_name:, batch_size: nil, serialized_context: nil, atomic: nil)
           job_id = RubyReactor::Adapters::Sidekiq::MapElementWorker.perform_async(
             {
               "map_id" => map_id,
@@ -72,7 +72,7 @@ module RubyReactor
               "step_name" => step_name,
               "batch_size" => batch_size,
               "serialized_context" => serialized_context,
-              "fail_fast" => fail_fast
+              "atomic" => atomic
             }
           )
           RubyReactor::DispatchResult.new(job_id: job_id)
@@ -81,7 +81,7 @@ module RubyReactor
         def self.perform_map_element_in(delay, map_id:, element_id:, index:, serialized_inputs:,
                                         reactor_class_info:, strict_ordering:, parent_context_id:,
                                         parent_reactor_class_name:, step_name:, batch_size: nil,
-                                        serialized_context: nil, fail_fast: nil)
+                                        serialized_context: nil, atomic: nil)
           job_id = RubyReactor::Adapters::Sidekiq::MapElementWorker.perform_in(
             delay,
             {
@@ -96,7 +96,7 @@ module RubyReactor
               "step_name" => step_name,
               "batch_size" => batch_size,
               "serialized_context" => serialized_context,
-              "fail_fast" => fail_fast
+              "atomic" => atomic
             }
           )
           # Return an DispatchResult so RetryManager#handle_async_retry recognises the
@@ -104,6 +104,34 @@ module RubyReactor
           RubyReactor::DispatchResult.new(job_id: job_id)
         end
         # rubocop:enable Metrics/ParameterLists
+
+        # One element's rollback in a fan-out map's distributed rollback (009
+        # R-07); the `_in` form is its requeue on a contended element lock.
+        def self.perform_map_element_rollback_async(**args)
+          job_id = RubyReactor::Adapters::Sidekiq::MapElementRollbackWorker.perform_async(map_element_rollback_payload(**args))
+          RubyReactor::DispatchResult.new(job_id: job_id)
+        end
+
+        def self.perform_map_element_rollback_in(delay, **args)
+          job_id = RubyReactor::Adapters::Sidekiq::MapElementRollbackWorker.perform_in(
+            delay, map_element_rollback_payload(**args)
+          )
+          RubyReactor::DispatchResult.new(job_id: job_id)
+        end
+
+        # rubocop:disable Metrics/ParameterLists
+        def self.map_element_rollback_payload(map_id:, position:, element_context_id:, reactor_class_info:,
+                                              parent_reactor_class_name:, step_name:, batch_size:, owner_context_id:,
+                                              owner_reactor_class_name:, attempt: 0)
+          {
+            "map_id" => map_id, "position" => position, "element_context_id" => element_context_id,
+            "reactor_class_info" => reactor_class_info, "parent_reactor_class_name" => parent_reactor_class_name,
+            "step_name" => step_name, "batch_size" => batch_size, "owner_context_id" => owner_context_id,
+            "owner_reactor_class_name" => owner_reactor_class_name, "attempt" => attempt
+          }
+        end
+        # rubocop:enable Metrics/ParameterLists
+        private_class_method :map_element_rollback_payload
 
         # rubocop:disable Metrics/ParameterLists
         def self.perform_map_collection_async(parent_context_id:, map_id:, parent_reactor_class_name:, step_name:,

@@ -107,6 +107,20 @@ module RubyReactor
       def retrieve_map_element_context_ids(map_id, reactor_class_name)
         raise NotImplementedError
       end
+
+      def claim_map_owner_signal(map_id, reactor_class_name)
+        raise NotImplementedError
+      end
+
+      # Map rollback records (009 DM §5); see RedisMapRollback.
+      %i[count_map_element_context_ids retrieve_map_element_context_ids_from_tail start_map_rollback
+         retrieve_map_rollback_metadata claim_map_rollback_positions retrieve_map_rollback_offset
+         store_map_rollback_outcome count_map_rollback_outcomes map_rollback_outcome_stored?
+         stored_map_rollback_positions each_map_rollback_outcome map_rollback_indexes_seen
+         mark_map_rollback_handed_off map_rollback_handed_off? claim_map_rollback_signal map_rollback_summary
+         scan_map_rollbacks].each do |method|
+        define_method(method) { |*, **| raise NotImplementedError }
+      end
     end
   end
 end

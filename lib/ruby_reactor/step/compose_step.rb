@@ -34,6 +34,9 @@ module RubyReactor
         return RubyReactor.Success() unless composed_data && composed_data[:context]
 
         child_context = composed_data[:context]
+        # Linked like a running child, so a construct in it finds the run that
+        # owns it: a fan-out map's rollback resumes that run (009 S-3).
+        link_contexts(child_context, context)
         # The child's own class: it survives serialization, while a Class in a
         # stored undo record's arguments comes back as its name (a compose
         # inside a map element is rolled back from its stored row).

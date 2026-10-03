@@ -72,6 +72,27 @@ describe('StepInspector', () => {
     expect(screen.getByText('FOREGROUND')).toBeInTheDocument();
   });
 
+  describe('fan-out map rollback progress', () => {
+    const mapProps = {
+      ...defaultProps,
+      stepName: 'm',
+      structure: { m: { type: 'map', depends_on: [] } },
+      composedContexts: {
+        m: { name: 'm', type: 'map_element', rollback: { total: 10, settled: 4, outstanding: 6, failed: 1 } }
+      }
+    };
+
+    it('shows the progress while the run is rolling back', () => {
+      render(<StepInspector {...mapProps} reactorStatus="rolling_back" />);
+      expect(screen.getByText(/Rolling back 4\/10 \(6 outstanding,\s*1 failed\)/)).toBeInTheDocument();
+    });
+
+    it('hides it once the run finished, though the records remain', () => {
+      render(<StepInspector {...mapProps} reactorStatus="failed" />);
+      expect(screen.queryByText(/Rolling back/)).not.toBeInTheDocument();
+    });
+  });
+
   describe('Compensation History', () => {
     const propsWithUndo = {
       ...defaultProps,

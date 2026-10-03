@@ -2,11 +2,11 @@
 
 require "spec_helper"
 
-# Regression: a `fan_out` map is its own hand-off point (the collector resumes
-# the parent in its own worker). When a `background before:/after:` cut point
-# sits on a step AFTER the map, the collector's resumed context must be
-# recognized as already running in a worker, or `StepExecutor#handoff_at?`
-# re-fires the cut point and enqueues a second, redundant hand-off.
+# Regression: a `fan_out` map is its own hand-off point (its completion resumes
+# the run in its own Worker, 009 R-03). When a `background before:/after:` cut
+# point sits on a step AFTER the map, the resumed run must be recognized as
+# already running in a worker, or `StepExecutor#handoff_at?` re-fires the cut
+# point and enqueues a second, redundant hand-off.
 RSpec.describe "map fan-out followed by a background cut point" do
   before do
     allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::Adapters::Sidekiq::Router)
@@ -49,7 +49,7 @@ RSpec.describe "map fan-out followed by a background cut point" do
   let(:collector_worker) { RubyReactor::Adapters::Sidekiq::MapCollectorWorker }
   let(:background_worker) { RubyReactor::Adapters::Sidekiq::Worker }
 
-  it "completes in the collector's own job instead of enqueueing another hand-off" do
+  it "completes in the owner's resumed job instead of enqueueing another hand-off" do
     reactor = MapThenBackgroundReactor.new
     result = reactor.run(numbers: [1, 2, 3])
     context_id = reactor.context.context_id
@@ -58,11 +58,13 @@ RSpec.describe "map fan-out followed by a background cut point" do
 
     element_worker.drain
     collector_worker.drain
+    # The collector signals the owner once (009 R-03).
+    expect(background_worker.jobs.size).to eq(1)
+    background_worker.drain
 
-    # The bug: the collector's resumed context still looks like the ORIGINAL
-    # caller (inline_async_execution defaults false on deserialize), so the
-    # `background after: :after_map` cut point re-fires and queues a second
-    # Worker job instead of finishing here.
+    # The bug: a resumed context that still looks like the ORIGINAL caller
+    # re-fires the `background after: :after_map` cut point and queues a
+    # second Worker job instead of finishing here.
     expect(background_worker.jobs).to be_empty
 
     context = MapThenBackgroundReactor.find(context_id).context

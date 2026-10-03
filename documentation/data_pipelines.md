@@ -95,19 +95,20 @@ end
 
 ### `fan_out` Without `batch_size`
 
-`batch_size` is optional. When you enable `fan_out` without it, RubyReactor
-defaults the batch size to the full source size and fans out **one background
-worker per element** immediately. Every element runs through the same
-per-element path — so elements whose sub-reactor contains `background` hand-offs
-or background retries are handled correctly — and a collector aggregates the outcomes into a
-`ResultEnumerator`.
+`batch_size` is optional. Without it, a fan-out map uses a batch size of **50**
+(`RubyReactor::Map::DEFAULT_BATCH_SIZE`): no throw enqueues more than 50 element
+jobs, and the next throw fires when the previous throw's last element finishes.
+A source of 50 elements or fewer is dispatched all at once. Every element still
+runs through the same per-element path, so elements whose sub-reactor contains
+`background` hand-offs or background retries are handled correctly, and a
+collector aggregates the outcomes into a `ResultEnumerator`.
 
 ```ruby
 map :process_items do
   source input(:items)
   argument :item, element(:process_items)
 
-  # No batch_size: every element gets its own worker, enqueued at once
+  # No batch_size: at most 50 element jobs per throw
   fan_out
 
   step :process do
@@ -116,14 +117,12 @@ map :process_items do
 end
 ```
 
-This is convenient for small or fixed-size collections, but it provides **no
-back pressure** — all element jobs are enqueued simultaneously. For large or
-database-backed sources, set a `batch_size` to enable the back-pressure
-mechanism described below.
+There is no unbounded mode: set `batch_size` to change the throw size, larger or
+smaller. The same size bounds the map's rollback (see [Rollback](#rollback)).
 
 ### Back Pressure & Resource Management
 
-When `fan_out` is used with a `batch_size`, RubyReactor implements an intelligent **back pressure** mechanism. Instead of flooding Redis and the queue backend with millions of jobs immediately (which is the standard behavior for many background job systems), the system processes data in controlled chunks.
+Every `fan_out` map gets this **back pressure** mechanism, with its declared `batch_size` or the default of 50. Instead of flooding Redis and the queue backend with millions of jobs immediately (which is the standard behavior for many background job systems), the system processes data in controlled chunks.
 
 This approach provides critical benefits for stability and scalability:
 
@@ -158,21 +157,29 @@ graph TD
 
 This ensures that the system works at the speed of your workers, not the speed of the enqueueing process, maintaining a constant and manageable resource footprint regardless of dataset size.
 
+The bound is **per throw**: no job enqueues more than `batch_size` element jobs, and the next throw fires when the previous throw's last position finishes. Jobs still running from earlier throws are not counted, so a slow element never holds back later throws.
+
+The same back pressure applies when a fan-out map is **rolled back**: one rollback job per element, `batch_size` per throw (see [Rollback](#rollback)).
+
 ## Error Handling
 
-You can control how the pipeline reacts to failures using the `fail_fast` option.
+You can control how the pipeline reacts to failures using the `atomic` option.
 
-### Fail Fast (Default)
+### Atomic maps (`atomic`)
 
-By default (`fail_fast true`), the map fails as soon as any single element fails: no new element starts after the failure.
+By default (`atomic true`), the map succeeds only if every element succeeds. The first element failure fails the map: no new element starts after it, and every element that completed is rolled back (see [Rollback](#rollback)).
 
 ```ruby
 map :strict_processing do
   source input(:items)
   # ...
-  fail_fast true # Default
+  atomic true # Default
 end
 ```
+
+`atomic false` keeps every element's outcome instead: see [Collecting Results](#collecting-results-successes--failures).
+
+> **Deprecated: `fail_fast`.** `atomic` was called `fail_fast`, which read as "stop early" when the contract is "every element succeeds, or none is kept". `fail_fast` keeps working with the same meaning and prints one deprecation line per declaration site, naming `atomic`; it will be removed no earlier than the next major version. Declaring both on one map raises `RubyReactor::Error::ValidationError` at class definition. Element jobs enqueued before the upgrade keep the policy they carry.
 
 In fan-out mode, elements already running when the failure happens finish first. The map reports its failure only once every element has settled, so its failure latency grows to the slowest element in flight. Elements that had not started are marked skipped and never run.
 
@@ -180,10 +187,17 @@ In fan-out mode, elements already running when the failure happens finish first.
 
 A map rolls back like a composed reactor. The elements that **completed** are rolled back by replaying each element's own step `undo`s, newest step first, **highest element index first**. There is no map-level rollback DSL: the `undo` blocks you already write on the element reactor's steps are the element's rollback. This happens:
 
-- **When the map fails** (an element fails with `fail_fast`, or the `collect` block raises): every element that completed is rolled back, then the steps before the map are undone. The failing element already rolled itself back (its failing step compensated, its earlier steps undone).
+- **When the map fails** (an element fails in an atomic map, or the `collect` block raises): every element that completed is rolled back, then the steps before the map are undone. The failing element already rolled itself back (its failing step compensated, its earlier steps undone).
 - **When a later step fails, or the run is undone manually** (`Reactor.undo(id)`): every completed element is rolled back at the map's position in the parent's reverse-completion order.
 
-The same holds in inline and fan-out mode, whatever order the element jobs ran in.
+The same holds in inline and fan-out mode, whatever order the element jobs ran in, and the run ends with the same `Failure` either way.
+
+**A map rolls back the way it ran.**
+
+- **Fan-out map**: each element that started gets its own rollback job (`MapElementRollbackWorker`), enqueued with the forward run's back pressure: at most `batch_size` per throw, the next throw when the previous throw's last position reports. Only the completed elements undo anything; a failed or halted element's job reports `not_needed`, and skipped elements get no job. No job loads more than one element's state. While the jobs run, the run is **`rolling_back`**: not finished, not cancellable, not undoable again. When the last element reports, the run resumes in a worker, undoes the steps **before** the map, and ends `failed` (or `cancelled` for a manual undo).
+- **Inline map**: rolled back in the process that ran it, reading element states 100 at a time, highest index first.
+
+A map nested inside a fan-out element runs inline, so it is rolled back inline inside that element's rollback job.
 
 ```ruby
 map :charge_orders, ChargeOrderReactor do   # ChargeOrderReactor's :charge step declares `undo` (a refund)
@@ -200,15 +214,15 @@ end
 
 Things to know:
 
-- **Make element `undo`s idempotent.** They can run after the map succeeded, on a later failure or on a manual undo, and a failure elsewhere must not leave a half-refund.
+- **Make element `undo`s idempotent.** They can run after the map succeeded, on a later failure or on a manual undo, and a failure elsewhere must not leave a half-refund. A fan-out element's rollback saves after every undone step, so a worker killed mid-rollback resumes after the last one; the undo that was cut off runs again (at least once, as for any background job).
 - **Rollback failures are reported per element.** An element whose undo fails does not stop the others. Its entry in `Failure#rollback_failures` carries `map_step:` and `element_index:`.
 - **`context_ttl` is the rollback horizon.** Each element's rollback reads its stored context, found through the map's element index. Both are kept for `context_ttl` from the element's run, while the parent's own TTL restarts on every save. If either expired before the rollback, each element that ran is reported with `reason: :context_unavailable` and its `element_index`, never skipped silently. (A fan-out map that failed skipped some elements, so there an expired row is reported with `element_index: nil`.)
-- **A duplicate still running is left alone.** If an element's job is still live when the rollback reaches it (a duplicate delivery), it is reported with `reason: :element_in_flight`.
-- **Rollback is serial**, in the process that detected the failure, so it takes time proportional to the number of completed elements.
+- **A duplicate still running is left alone.** If an element's liveness lock is still held when its rollback reaches it (a duplicate delivery), a fan-out rollback job requeues itself up to `lock_snooze_max_attempts` times before reporting it with `reason: :element_in_flight`; an inline rollback waits once.
+- **Lost rollback jobs are recovered.** `RubyReactor::Map::Sweeper` re-dispatches an element rollback whose job was lost and claims a throw whose trigger was lost; `RubyReactor::Sweeper` re-enqueues a `rolling_back` run whose resume was lost.
 
 ### Collecting Results (Successes & Failures)
 
-If you want to process all elements regardless of failures, set `fail_fast false`. The map step returns a `ResultEnumerator` that allows you to easily separate successful executions from failures. Each failed element rolls itself back; if a later step fails, the successful elements are rolled back as described in [Rollback](#rollback), and the failed ones are not rolled back twice.
+If you want to process all elements regardless of failures, set `atomic false`. The map step returns a `ResultEnumerator` that allows you to easily separate successful executions from failures. Each failed element rolls itself back; if a later step fails, the successful elements are rolled back as described in [Rollback](#rollback), and the failed ones are not rolled back twice.
 
 ```ruby
 map :resilient_processing do
@@ -216,7 +230,7 @@ map :resilient_processing do
   argument :item, element(:resilient_processing)
   
   # Continue processing even if some items fail
-  fail_fast false
+  atomic false
 
   step :risky_operation do
     # ...

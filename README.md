@@ -634,7 +634,9 @@ That's all that's required: `start_sweeper!` is idempotent (safe to call on ever
 boot — duplicate kicks collapse to one chain), runs both the top-level reactor
 sweeper and the map sweeper every `config.sweeper_interval` seconds, and stops if
 you set `config.sweeper_enabled = false`. The interval is your recovery-latency
-bound.
+bound. Both cover a fan-out map's distributed rollback too: the map sweeper
+re-dispatches a lost element rollback job, and the reactor sweeper re-enqueues a
+`rolling_back` run (like a `running` one) whose resume was lost.
 
 > **Sidekiq Enterprise `super_fetch` compatibility:** the chain is safe under
 > reliable fetch. `super_fetch` re-runs a job whose worker died mid-execution, so
@@ -893,19 +895,23 @@ class DataProcessingReactor < RubyReactor::Reactor
 end
 ```
 
-A `fan_out` map is a **hand-off point**: the reactor stops at the map (the caller gets a `DispatchResult`), every element runs as its own background job, and once all outcomes are collected the reactor resumes in a worker with the steps after the map. It fans out the same way when the reactor is already running in a worker (e.g. `background all: true`).
+A `fan_out` map is a **hand-off point**: the reactor stops at the map (the caller gets a `DispatchResult`), every element runs as its own background job, and once all outcomes are collected the reactor resumes in a worker with the steps after the map. It fans out the same way when the reactor is already running in a worker (e.g. `background all: true`), and inside a `compose`d child, where the top-level run is the one that resumes.
 
 By using `fan_out` with `batch_size`, the system applies **Back Pressure** to efficiently manage resources. [Read more about Back Pressure & Resource Management](documentation/data_pipelines.md#back-pressure--resource-management).
 
 **Rollback.** A map rolls back like a composed reactor, with no map-level rollback DSL: the `undo`s
 already declared on the element reactor's steps are each element's rollback. When the map fails
-(an element fails under `fail_fast`, or `collect` raises), and when a later step fails or the run is
-undone manually, every element that completed is rolled back, highest index first, in inline and
-fan-out mode alike. A fail-fast fan-out map lets elements already in flight finish before it reports
-the failure. Make element `undo`s idempotent. See
+(an element fails in an `atomic` map, the default, or `collect` raises), and when a later step fails or the run is
+undone manually, every element that completed is rolled back, newest-started first, and the run ends
+with the same `Failure` in inline and fan-out mode alike. A map rolls back the way it ran: an inline
+map in process, reading element states 100 at a time; a fan-out map with **one rollback job per
+started element**, `batch_size` per throw, the same back pressure as its forward run. Until the last
+element reports, the run is `rolling_back`, and only then are the steps before the map undone. A
+failing atomic fan-out map lets elements already in flight finish before it reports the failure. Make
+element `undo`s idempotent: one cut off by a killed worker runs again. See
 [Rollback](documentation/data_pipelines.md#rollback).
 
-`batch_size` is optional: with `fan_out` alone, RubyReactor fans out one worker per element (defaulting the batch size to the full source size) and aggregates the outcomes into a `ResultEnumerator` — convenient for small collections, but with no back pressure. See [`fan_out` Without `batch_size`](documentation/data_pipelines.md#fan_out-without-batch_size).
+`batch_size` is optional: with `fan_out` alone, no throw enqueues more than 50 element jobs (`RubyReactor::Map::DEFAULT_BATCH_SIZE`), forward and rollback, and the outcomes are aggregated into a `ResultEnumerator`. Set `batch_size` to change the throw size. See [`fan_out` Without `batch_size`](documentation/data_pipelines.md#fan_out-without-batch_size).
 
 > **Breaking change:** `async true` inside a `map` block has been **removed** — it read like `async_step`/`async_reactor`, which dispatch independent units the reactor does not stop for. It now raises at class-definition time. The exact replacement is `fan_out` (`fan_out batch_size: N`).
 
@@ -1447,6 +1453,15 @@ rollback code. A run in the caller's process is stored with status `aborted`,
 the steps not yet undone still outstanding; `MyReactor.undo(id)` rolls them
 back. A run in a worker is redelivered instead.
 
+`MyReactor.undo(id)` holds the run's context lock while it undoes, and raises
+`RubyReactor::Lock::AcquisitionError` if a live run or rollback holds it (retry
+later). When the undo reaches a completed fan-out map, it undoes the steps after
+the map, dispatches the map's element rollbacks and returns with the run
+`rolling_back`; a worker finishes the rest and marks the run `cancelled`. While a
+run is `rolling_back`, both `undo` and `cancel` raise
+`RubyReactor::Error::ValidationError`: cancelling would mark it finished and
+strand the steps before the map.
+
 ### Using Pre-defined Schemas
 
 You can use existing dry-validation schemas:
@@ -1518,7 +1533,7 @@ Explore the ways to move work off the calling process: background execution (`ba
 Discover how to build complex, modular workflows by composing reactors within other reactors. This guide covers inline composition, class-based composition, and how to manage dependencies between composed workflows.
 
 ### [Data Pipelines](documentation/data_pipelines.md)
-Master the `map` feature for processing collections. Learn about parallel execution, batch processing for large datasets, and error handling strategies like fail-fast vs. partial result collection.
+Master the `map` feature for processing collections. Learn about parallel execution, batch processing for large datasets, and error handling strategies like atomic maps vs. partial result collection.
 
 ### [Retry Configuration](documentation/retry_configuration.md)
 Configure robust retry policies for your steps. This guide details the available backoff strategies (exponential, linear, fixed), how to declare retries on a step class or inline step, and how background retries work without blocking workers.

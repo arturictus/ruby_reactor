@@ -285,10 +285,14 @@ Step-by-step state lives on the context, not the result object. Reload via `Reac
 ```ruby
 reactor = OrderProcessingReactor.find(execution_id)
 reactor.context.intermediate_results # => { validate_order: {...}, ... }
-reactor.context.status               # => "completed" | "failed" | "paused" | "running"
+reactor.context.status               # => "completed" | "failed" | "paused" | "running" | "rolling_back"
 reactor.execution_trace              # ordered list of run/undo/compensate entries
 reactor.result                       # reconstructed Success/Failure/InterruptResult
 ```
+
+`rolling_back` means a rollback handed off at a fan-out map: the map's element rollback jobs are still
+running. It is not finished, and `Reactor.cancel` / `Reactor.undo` reject it; a worker moves it to `failed`
+(or `cancelled`, for an undo) once every element has reported.
 
 ## Error Handling
 
@@ -347,7 +351,7 @@ Each construct says what compensate and undo mean for itself:
 | --- | --- | --- |
 | `step` | its `compensate` (inline block, else the step class's, else skipped) | its `undo` (same order) |
 | `compose` | the child already rolled itself back, so nothing is left to do | replay the child's completed steps' `undo`s, newest first |
-| `map` (inline and `fan_out`) | roll back every **completed** element (its steps' `undo`s), highest index first; the failed element already rolled itself back | the same, for every completed element |
+| `map` (inline and `fan_out`) | roll back every **completed** element (its steps' `undo`s), newest-started first; the failed element already rolled itself back. A `fan_out` map does it with one job per started element, `batch_size` per throw, and the run is `rolling_back` until they all report | the same, for every completed element |
 | `async_step` | not tracked by the parent; the **unit** compensates itself once, in its own job, after its final attempt fails | none: an inline `undo` is rejected at definition time |
 | `async_reactor` | not tracked by the parent; the child rolls itself back | none |
 

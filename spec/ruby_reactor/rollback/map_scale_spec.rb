@@ -40,6 +40,23 @@ module MapScaleSpec
       collect(&COLLECT_RAISES)
     end
   end
+
+  # 009 T024: the same, fanned out — one rollback job per element.
+  class CollectRaisesFanOut < RubyReactor::Reactor
+    input :count
+
+    step :ids do
+      argument :count, input(:count)
+      run { |inputs, _ctx| RubyReactor.Success(0...inputs.count) }
+    end
+
+    map :m, Elem do
+      source result(:ids)
+      argument :i, element(:m)
+      fan_out batch_size: 50
+      collect(&COLLECT_RAISES)
+    end
+  end
 end
 
 RSpec.describe "map rollback at scale", :slow do
@@ -61,5 +78,28 @@ RSpec.describe "map rollback at scale", :slow do
     expect(MapScaleSpec::Elem.undone.size).to eq(10_000)
     expect(MapScaleSpec::Elem.undone.first).to eq(9_999)
     expect(large_size).to be <= small_size * 2
+  end
+
+  describe "fanned out (009)", :slow do
+    let(:storage) { RubyReactor.configuration.storage_adapter }
+
+    def run_and_measure(size)
+      MapScaleSpec::Elem.undone.clear
+      id = MapScaleSpec::CollectRaisesFanOut.run(count: size).execution_id
+      burst = QueueProbe.drain_tracking("MapElementRollbackWorker")[:max_burst]
+      parent = storage.retrieve_context(id, MapScaleSpec::CollectRaisesFanOut.name)
+      [MapScaleSpec::CollectRaisesFanOut.find(id), JSON.generate(parent).bytesize, burst]
+    end
+
+    it "undoes all 10,000 elements, one job each, at most 50 per throw" do
+      _small, small_size, = run_and_measure(10)
+      reactor, large_size, burst = run_and_measure(10_000)
+
+      expect(reactor.context.status.to_s).to eq("failed")
+      expect(MapScaleSpec::Elem.undone.size).to eq(10_000)
+      expect(MapScaleSpec::Elem.undone.uniq.size).to eq(10_000)
+      expect(large_size).to be <= small_size * 2
+      expect(burst).to be <= 50
+    end
   end
 end

@@ -29,6 +29,12 @@ module RubyReactor
                   :cancelled, :cancellation_reason, :parent_context_id, :retried_from_id, :status, :failure_reason,
                   :middlewares
 
+    # Where this execution level's rollback stands while it is `rolling_back`
+    # (009 DM §1): `trigger`, `step`, `compensated`, `failure`, `failures`.
+    # Kept JSON-safe (string keys; `failure` / `failures` already serialized),
+    # so it round-trips unchanged. Nil otherwise.
+    attr_accessor :rollback
+
     # Transient, NOT serialized (absent from `to_h`, `serialize_for_retry`,
     # and `deserialize_from_retry` below — confirmed by
     # reentrancy_spec.rb US4-16). Overrides `StepCoordination#owner` for
@@ -74,6 +80,10 @@ module RubyReactor
 
     def failed?
       @status.to_s == "failed"
+    end
+
+    def rolling_back?
+      @status.to_s == "rolling_back"
     end
 
     def get_input(name, path = nil)
@@ -149,7 +159,8 @@ module RubyReactor
         reactor_class: @reactor_class,
         execution_trace: @execution_trace,
         status: @status,
-        failure_reason: @failure_reason
+        failure_reason: @failure_reason,
+        rollback: @rollback
       }
     end
 
@@ -175,6 +186,7 @@ module RubyReactor
         cancellation_reason: @cancellation_reason,
         status: @status,
         failure_reason: ContextSerializer.serialize_value(@failure_reason),
+        rollback: @rollback,
         parent_context_id: @parent_context&.context_id || @parent_context_id,
         retried_from_id: @retried_from_id
       }
@@ -200,6 +212,7 @@ module RubyReactor
       context.cancellation_reason = data["cancellation_reason"]
       context.status = data["status"] || "pending"
       context.failure_reason = ContextSerializer.deserialize_value(data["failure_reason"])
+      context.rollback = data["rollback"]
       context.parent_context_id = data["parent_context_id"]
       context.retried_from_id = data["retried_from_id"]
 

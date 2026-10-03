@@ -55,10 +55,10 @@ RSpec.describe "Map Retry Behavior" do
   end
 
   # ============================================================================
-  # Test retry with fail_fast: true
+  # Test retry with atomic: true
   # ============================================================================
 
-  describe "Retry with fail_fast: true" do
+  describe "Retry with atomic: true" do
     class RetryFailFastTrueReactor < RubyReactor::Reactor
       input :items
       input :fail_item
@@ -70,7 +70,7 @@ RSpec.describe "Map Retry Behavior" do
         argument :fail_item, input(:fail_item)
         argument :fail_until, input(:fail_until_attempt)
 
-        fail_fast true
+        atomic true
 
         step :process do
           argument :val, input(:item)
@@ -122,10 +122,10 @@ RSpec.describe "Map Retry Behavior" do
   end
 
   # ============================================================================
-  # Test retry with fail_fast: false
+  # Test retry with atomic: false
   # ============================================================================
 
-  describe "Retry with fail_fast: false" do
+  describe "Retry with atomic: false" do
     class RetryFailFastFalseReactor < RubyReactor::Reactor
       input :items
       input :fail_items
@@ -137,7 +137,7 @@ RSpec.describe "Map Retry Behavior" do
         argument :fail_items, input(:fail_items)
         argument :fail_until, input(:fail_until_attempt)
 
-        fail_fast false
+        atomic false
 
         step :process do
           argument :val, input(:item)
@@ -342,7 +342,7 @@ RSpec.describe "Map Retry Behavior" do
         source input(:records)
         argument :record, element(:validated)
 
-        fail_fast false
+        atomic false
 
         step :validate do
           argument :rec, input(:record)

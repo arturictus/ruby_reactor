@@ -6,7 +6,7 @@ module RubyReactor
       extend Helpers
 
       def self.perform(arguments)
-        arguments = arguments.transform_keys(&:to_sym)
+        arguments = Helpers.normalize_arguments(arguments)
 
         # Per-element liveness lock (Phase 5b): its presence is the map sweeper's
         # "element alive" signal, and it serializes duplicate deliveries so a
@@ -55,12 +55,16 @@ module RubyReactor
         context.inline_async_execution = true
 
         storage = RubyReactor.configuration.storage_adapter
-        return if check_fail_fast?(arguments, storage)
+        return if check_atomic?(arguments, storage)
 
         # Indexed only once it runs: a skipped element saves no context, and
         # the map's rollback reports an indexed element without one as expired.
-        storage.store_map_element_context_id(arguments[:map_id], context.context_id,
-                                             arguments[:parent_reactor_class_name])
+        # Only a fresh context: a parked or retried element re-enters with its
+        # own, already indexed (009 R-06).
+        unless arguments[:serialized_context]
+          storage.store_map_element_context_id(arguments[:map_id], context.context_id,
+                                               arguments[:parent_reactor_class_name])
+        end
 
         executor = Executor.new(context.reactor_class, {}, context)
         begin
@@ -95,7 +99,7 @@ module RubyReactor
           strict_ordering: arguments[:strict_ordering], parent_context_id: arguments[:parent_context_id],
           parent_reactor_class_name: arguments[:parent_reactor_class_name], step_name: arguments[:step_name],
           batch_size: arguments[:batch_size], serialized_context: ContextSerializer.serialize(context),
-          fail_fast: arguments[:fail_fast]
+          atomic: arguments[:atomic]
         )
       end
 
@@ -144,8 +148,8 @@ module RubyReactor
       end
       # rubocop:enable Style/IdenticalConditionalBranches
 
-      def self.check_fail_fast?(arguments, storage)
-        return false unless arguments[:fail_fast]
+      def self.check_atomic?(arguments, storage)
+        return false unless arguments[:atomic]
 
         map_id = arguments[:map_id]
         parent_reactor_class_name = arguments[:parent_reactor_class_name]
@@ -154,7 +158,7 @@ module RubyReactor
         return false unless failed_context_id
 
         # Skip execution, but settle the index: the collector applies a
-        # fail-fast failure only once every index has a result slot (R-04), and
+        # atomic map's failure only once every index has a result slot (R-04), and
         # the map sweeper would otherwise keep re-dispatching this one.
         storage.store_map_result(map_id, arguments[:index], { "_skipped" => true }, parent_reactor_class_name,
                                  strict_ordering: arguments[:strict_ordering])
@@ -183,12 +187,12 @@ module RubyReactor
           # Store the whole serialized Failure, not just its message: step_name,
           # backtrace, file_path and code_snippet are the only record of why this
           # element failed once its context row expires, and the dashboard has
-          # nothing else to show for a non-fail_fast map.
+          # nothing else to show for a non-atomic map.
           storage.store_map_result(map_id, index,
                                    { _error: ContextSerializer.serialize_value(result) }, parent_class,
                                    strict_ordering: arguments[:strict_ordering])
 
-          if arguments[:fail_fast]
+          if arguments[:atomic]
             storage.store_map_failed_context_id(map_id, context.context_id, parent_class)
             # FAST FAIL: Trigger Collector immediately to cancel/fail the map execution
             RubyReactor.configuration.async_router.perform_map_collection_async(

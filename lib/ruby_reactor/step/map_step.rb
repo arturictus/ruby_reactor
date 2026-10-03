@@ -3,6 +3,8 @@
 module RubyReactor
   class Step
     class MapStep < RubyReactor::Step
+      include RubyReactor::Map::StepRollback
+
       # Seconds a rollback waits for an element's liveness lock. The last
       # element to settle triggers the collector before its own job releases
       # that lock, so a short wait covers the gap.
@@ -15,14 +17,16 @@ module RubyReactor
       input :strict_ordering, optional: true
       input :batch_size, optional: true
       input :collect_block, optional: true
-      input :fail_fast, optional: true
+      input :atomic, optional: true
       input :fan_out, optional: true
 
       def run
-        return RubyReactor::Failure("Map source cannot be nil") if inputs.source.nil?
-
         # Initialize map state in context if not present
         context.map_operations ||= {}
+        # Dispatched already: the owner run resumed (009 R-03) — adopt the
+        # settled outcome, never dispatch again (I-3).
+        return adopt_dispatched_map(context.current_step) if dispatched_map_id(context.current_step)
+        return RubyReactor::Failure("Map source cannot be nil") if inputs.source.nil?
 
         if fan_out?
           run_async(context.current_step)
@@ -34,33 +38,28 @@ module RubyReactor
       # Compensating a failed map and undoing a completed one are the same work,
       # as for compose: replay the undo stack of every element that COMPLETED
       # (a failed element already rolled itself back; a halted or skipped one
-      # did nothing to undo), highest index first. Elements are found through
+      # did nothing to undo), newest-started first. Elements are found through
       # the index both modes write, so nothing per element lives in the parent
       # (008 R-02). Runs only once every element has settled (R-04), from the
       # execution that owns the map, so it is the elements' only writer.
       #
-      # ponytail: serial, in the process that detected the failure, so rollback
-      # time is linear in the number of completed elements. Fan the rollback
-      # out per element if that ever outgrows one job.
+      # A map rolls back where it ran (009 R-01): a fan-out map one job per
+      # started element, `batch_size` per throw, handing the run off until
+      # they all report; an inline map in process, 100 elements per read.
       def compensate
         step_name = context.current_step
         map_id = "#{context.context_id}:#{step_name}"
-        failures = []
-
-        completed_elements(map_id, failures).each do |index, element_context|
-          tag = { map_step: step_name.to_sym, element_index: index }
-          failures.concat(rollback_element(map_id, index, element_context).map { |entry| entry.merge(tag) })
-        end
-
-        return RubyReactor.Success() if failures.empty?
-
-        RubyReactor.Failure("map :#{step_name} rollback incomplete", rollback_failures: failures)
+        dispatched_map_id(step_name) ? distributed_rollback(map_id, step_name) : inline_rollback(map_id, step_name)
       end
 
       alias undo compensate
 
       # An interrupted run is undone too: undo replays only each element's completed steps.
       def self.undoes_partial_run? = true
+
+      # The undo record keeps no arguments: rollback reads the map's
+      # declaration and records, never the resolved source (009 R-14).
+      def self.rollback_arguments(_resolved) = {}
 
       class << self
         def build_mapped_inputs(mappings, context, element)
@@ -116,73 +115,6 @@ module RubyReactor
         context.reactor_class.steps[context.current_step].arguments[:mapped_reactor_class][:source].value
       end
 
-      # `[[index, context], ...]` for every completed element, highest index
-      # first. An element whose row is gone (expired past `context_ttl`) is
-      # reported, never skipped silently.
-      def completed_elements(map_id, failures)
-        storage = RubyReactor.configuration.storage_adapter
-        storage_name = RubyReactor.reactor_storage_name(element_class)
-        # A parked or retried fan-out element registers its id again.
-        ids = storage.retrieve_map_element_context_ids(map_id, context.reactor_class.name).uniq
-        rows = ids.map { |id| storage.retrieve_context(id, storage_name) }
-        elements = rows.compact.map do |data|
-          element_context = RubyReactor::Context.deserialize_from_retry(data)
-          [Utils::FetchIndifferent.call(element_context.map_metadata || {}, :index).to_i, element_context]
-        end
-
-        report_unavailable(elements.map(&:first), rows.count(nil), failures)
-        # An `aborted` element (an inline run interrupted in it) kept the undo
-        # entries of the steps it completed.
-        elements.select { |_, element| %w[completed aborted].include?(element.status.to_s) }
-                .sort_by { |index, _| -index }
-      end
-
-      # The parent's map reference (in its own blob, so it lives as long as
-      # the parent) counts the elements that started: set per element inline,
-      # and to the total when a fan-out map completes. With it, every started
-      # index without a row is named, even when the index list itself expired;
-      # without it (a failed fan-out map skipped some indices), one unnamed
-      # entry per indexed row that is gone.
-      def report_unavailable(found_indexes, missing_rows, failures)
-        ref = Utils::FetchIndifferent.call(context.composed_contexts, context.current_step)
-        started = ref && Utils::FetchIndifferent.call(ref, :started)
-        missing = started ? (0...started).to_a - found_indexes : [nil] * missing_rows
-        missing.each { |index| failures << rollback_entry(index, :context_unavailable, "context expired") }
-      end
-
-      def rollback_entry(index, reason, message)
-        step_name = context.current_step.to_sym
-        { step: step_name, kind: :undo, key: nil, reason: reason, map_step: step_name, element_index: index,
-          message: "map element #{index} #{message}" }
-      end
-
-      # The element's own undo stack, replayed as `ComposeStep` replays its
-      # child's, under the element's liveness lock: a held lock after the map
-      # settled is a live duplicate delivery, which is left alone and reported.
-      def rollback_element(map_id, index, element_context)
-        lock = acquire_element_lock(map_id, index)
-        return [rollback_entry(index, :element_in_flight, "was still running at rollback time")] if lock == :held
-
-        executor = RubyReactor::Executor.new(element_class, {}, element_context)
-        executor.undo_all
-        executor.save_context
-        executor.compensation_manager.rollback_failures
-      ensure
-        lock.release if lock.respond_to?(:release)
-      end
-
-      def acquire_element_lock(map_id, index)
-        return nil if RubyReactor::Map::ElementExecutor.inline_testing_mode?
-
-        config = RubyReactor.configuration
-        lock = RubyReactor::Lock.new("map_element:#{map_id}:#{index}",
-                                     owner: SecureRandom.uuid, ttl: config.context_lock_ttl, wait: ELEMENT_LOCK_WAIT)
-        lock.acquire
-        lock
-      rescue RubyReactor::Lock::AcquisitionError
-        :held
-      end
-
       # Fans out anywhere except inside a map element: an element's result and
       # the map's completion counter are tracked by its own ElementExecutor job,
       # so a nested hand-off there would escape that tracking. A reactor worker
@@ -194,16 +126,20 @@ module RubyReactor
         inputs.fan_out
       end
 
+      def atomic?
+        inputs.atomic.nil? || inputs.atomic
+      end
+
       def run_inline
         results = execute_inline_map
         return results if results.is_a?(RubyReactor::Failure) || results.is_a?(RubyReactor::Halt)
 
-        process_results(results, inputs.collect_block, inputs.fail_fast)
+        collect_results(results)
       end
 
       def execute_inline_map
         results = []
-        fail_fast = inputs.fail_fast.nil? || inputs.fail_fast
+        atomic = atomic?
 
         inputs.source.each_with_index do |element, index|
           result = execute_single_element(element, index)
@@ -212,12 +148,10 @@ module RubyReactor
           # rather than being collected as a (nil) value.
           return result if result.is_a?(RubyReactor::Halt)
 
-          if fail_fast && result.failure?
-            return result # Stop immediately on first failure
-          end
+          return result if atomic && result.failure? # Stop immediately on first failure
 
-          # When fail_fast is false, store Result objects; when true, store values
-          results << (fail_fast ? result.value : result)
+          # A non-atomic map collects Result objects; an atomic one, values.
+          results << (atomic ? result.value : result)
         end
 
         results
@@ -260,20 +194,6 @@ module RubyReactor
         child_context.inline_async_execution = parent_context.inline_async_execution
       end
 
-      def process_results(results, collect_block, _fail_fast = true)
-        if collect_block
-          begin
-            # Collect block receives Result objects when fail_fast is false, values when true
-            return RubyReactor::Success(collect_block.call(results))
-          rescue RubyReactor::Error::Rescuable => e
-            return RubyReactor::Failure(e)
-          end
-        end
-
-        # Simplified: both branches returned Success(results)
-        RubyReactor::Success(results)
-      end
-
       def run_async(step_name)
         map_id = "#{context.context_id}:#{step_name}"
         context.map_operations[step_name.to_s] = map_id
@@ -293,10 +213,12 @@ module RubyReactor
           element_reactor_class: inputs.mapped_reactor_class.name
         }
 
+        # The owner's id: the run the caller holds, and the one the map's
+        # completion resumes (a composed child's own id is internal).
         RubyReactor::DispatchResult.new(
           job_id: job_id,
           intermediate_results: context.intermediate_results,
-          execution_id: context.context_id
+          execution_id: owner_context.context_id
         )
       end
 
@@ -305,8 +227,81 @@ module RubyReactor
         storage.initialize_map_operation(
           map_id, inputs.source.size, context.reactor_class.name,
           strict_ordering: inputs.strict_ordering, reactor_class_info: reactor_class_info,
+          owner_context_id: owner_context.context_id,
+          owner_reactor_class_name: RubyReactor.reactor_storage_name(owner_context.reactor_class),
+          batch_size: effective_batch_size, atomic: atomic?,
           **map_recovery_metadata(context.current_step)
         )
+      end
+
+      # The top-level run: the one execution that writes the context tree, and
+      # the one the map's completion resumes (009 R-03).
+      def owner_context
+        context.root_context || context
+      end
+
+      # Declared, or `Map::DEFAULT_BATCH_SIZE`: no throw enqueues more (R-10).
+      def effective_batch_size
+        inputs.batch_size || RubyReactor::Map::DEFAULT_BATCH_SIZE
+      end
+
+      def dispatched_map_id(step_name)
+        Utils::FetchIndifferent.call(context.map_operations || {}, step_name)
+      end
+
+      # Re-entry of a dispatched map (S-1). Unsettled (an early or duplicate
+      # resume): hand off again without dispatching. Settled: the failing
+      # element's Failure for an atomic map, else the collected results. The
+      # executor records either like any step result.
+      def adopt_dispatched_map(step_name)
+        map_id = dispatched_map_id(step_name)
+        storage = RubyReactor.configuration.storage_adapter
+        metadata = storage.retrieve_map_metadata(map_id, context.reactor_class.name)
+        return RubyReactor::Failure("map :#{step_name} records expired before it settled") unless metadata
+
+        total = metadata["count"].to_i
+        if storage.count_map_results(map_id, context.reactor_class.name) < total
+          return RubyReactor::DispatchResult.new(job_id: "map:#{map_id}", execution_id: owner_context.context_id,
+                                                 intermediate_results: context.intermediate_results)
+        end
+
+        failed_id = storage.retrieve_map_failed_context_id(map_id, context.reactor_class.name)
+        return adopt_element_failure(step_name, failed_id) if failed_id
+
+        record_elements_started(step_name, total)
+        collect_results(RubyReactor::Map::ResultEnumerator.new(map_id, context.reactor_class.name,
+                                                               strict_ordering: inputs.strict_ordering))
+      end
+
+      # The element's own Failure, carrying its rollback failures: the executor
+      # compensates the map (its completed elements) and rolls the run back.
+      def adopt_element_failure(step_name, failed_id)
+        data = RubyReactor.configuration.storage_adapter.retrieve_context(
+          failed_id, RubyReactor.reactor_storage_name(element_class)
+        )
+        return RubyReactor::Failure("map :#{step_name} element failed; its context expired") unless data
+
+        reason = RubyReactor::Context.deserialize_from_retry(data).failure_reason
+        reason.is_a?(RubyReactor::Failure) ? reason : RubyReactor::Failure(reason)
+      end
+
+      # The collect block gets Result objects for a non-atomic map, values for
+      # an atomic one; a raise is the map's failure.
+      def collect_results(results)
+        return RubyReactor::Success(results) unless inputs.collect_block
+
+        RubyReactor::Success(inputs.collect_block.call(results))
+      rescue RubyReactor::Error::Rescuable => e
+        RubyReactor.configuration.logger.error("Map collect block raised: #{e.message}")
+        RubyReactor::Failure(e)
+      end
+
+      # Every index of a completed map ran: record the count on the map's
+      # reference, which outlives the element index, so a late rollback names
+      # each element whose context expired.
+      def record_elements_started(step_name, total)
+        ref = Utils::FetchIndifferent.call(context.composed_contexts, step_name)
+        ref[:started] = total if ref
       end
 
       # Recovery metadata for the map sweeper. When this map runs inside a map
@@ -324,13 +319,13 @@ module RubyReactor
       end
 
       def dispatch_async_map(map_id, _reactor_class_info, step_name)
-        # Every async map runs through the per-element Dispatcher path. When no
-        # batch_size is given we default to the full source size (one fan-out
-        # batch), so there is a single execution path: each element runs in its
-        # own worker, with the map counter/collector tracking completion. This
-        # lets elements with async steps or async retries hand off correctly
-        # instead of being forced to run synchronously in a single worker.
-        batch_size = inputs.batch_size || inputs.source.size
+        # Every async map runs through the per-element Dispatcher path: each
+        # element runs in its own worker, with the map counter/collector
+        # tracking completion. This lets elements with async steps or async
+        # retries hand off correctly instead of being forced to run
+        # synchronously in a single worker. Without a declared batch_size, at
+        # most `Map::DEFAULT_BATCH_SIZE` are enqueued per throw (009 R-10).
+        batch_size = effective_batch_size
 
         RubyReactor::Map::Dispatcher.perform(
           map_id: map_id,
@@ -342,18 +337,26 @@ module RubyReactor
           argument_mappings: inputs.argument_mappings,
           strict_ordering: inputs.strict_ordering,
           mapped_reactor_class: inputs.mapped_reactor_class,
-          fail_fast: inputs.fail_fast.nil? || inputs.fail_fast
+          atomic: atomic?
         )
         queue_collector(map_id, step_name, inputs.strict_ordering)
         "map:#{map_id}"
       end
 
+      # Stores the context the Dispatcher reads the source from, and — for a
+      # map inside a composed child — the owner's tree, which the map's
+      # completion resumes (009 R-03): a fast resume must find it consistent,
+      # as `handle_background_handoff` ensures for a `background` hand-off.
       def prepare_async_execution(map_id, count)
         storage = RubyReactor.configuration.storage_adapter
         middlewares = context.middlewares || Executor.middlewares_for(context.reactor_class)
         middlewares.on(:before_async_enqueue, context)
         serialized_context = ContextSerializer.serialize(context)
         storage.store_context(context.context_id, serialized_context, context.reactor_class.name)
+        unless owner_context.equal?(context)
+          storage.store_context(owner_context.context_id, ContextSerializer.serialize(owner_context),
+                                RubyReactor.reactor_storage_name(owner_context.reactor_class))
+        end
         storage.set_map_counter(map_id, count, context.reactor_class.name)
       end
 

@@ -188,6 +188,23 @@ module RubyReactor
         end
       end
 
+      # A run whose rollback handed off at a fan-out map and has not finished
+      # (009): its element rollback jobs are still pending.
+      ::RSpec::Matchers.define :be_rolling_back do
+        match do |subject|
+          subject.ensure_executed!
+          subject.rolling_back?
+        end
+
+        failure_message do |subject|
+          "expected reactor to be rolling back, but status was #{subject.reactor_instance.context.status}"
+        end
+
+        failure_message_when_negated do |_subject|
+          "expected reactor not to be rolling back, but it is"
+        end
+      end
+
       # Matcher to check if reactor is paused at a specific interrupt step
       # Works with both single and multiple concurrent interrupts
       ::RSpec::Matchers.define :be_paused_at do |*step_names|

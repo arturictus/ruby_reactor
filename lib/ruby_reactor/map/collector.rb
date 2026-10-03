@@ -3,8 +3,6 @@
 module RubyReactor
   module Map
     class Collector
-      extend Helpers
-
       # Seconds a collector waits for another collector of the same map. One
       # that found the map unsettled releases within milliseconds, and may be
       # the only trigger left for a failure it just deferred (R-04); a holder
@@ -12,7 +10,7 @@ module RubyReactor
       COLLECT_LOCK_WAIT = 2
 
       def self.perform(arguments)
-        arguments = arguments.transform_keys(&:to_sym)
+        arguments = Helpers.normalize_arguments(arguments)
         map_id = arguments[:map_id]
 
         # Serialize concurrent collector deliveries for the SAME map (eager queue +
@@ -48,105 +46,39 @@ module RubyReactor
         defined?(Sidekiq::Testing) && Sidekiq::Testing.respond_to?(:inline?) && Sidekiq::Testing.inline?
       end
 
+      # Once every index has a result slot (a value, `_error`, `_halt` or
+      # `_skipped`), signal the map's OWNER run — the top-level context —
+      # once, and write nothing else (009 R-03, I-1). The owner's Worker
+      # resumes, and `MapStep#run` adopts the settled outcome at any
+      # composition depth. An atomic map's failure is applied the same way
+      # only once every index has settled, so its compensate sees every
+      # element that completed, including ones still in flight when it
+      # failed. Until then the last element to settle, or the map sweeper,
+      # re-triggers this collector.
       def self.perform_collection(arguments)
         map_id = arguments[:map_id]
-        parent_context_id = arguments[:parent_context_id]
         parent_reactor_class_name = arguments[:parent_reactor_class_name]
-        step_name = arguments[:step_name]
-        strict_ordering = arguments[:strict_ordering]
-        # timeout = arguments[:timeout]
-
         storage = RubyReactor.configuration.storage_adapter
-        parent_context_data = storage.retrieve_context(parent_context_id, parent_reactor_class_name)
-        parent_context = RubyReactor::Context.deserialize_from_retry(parent_context_data)
 
-        # Idempotency: if the parent already recorded this map step's result, a
-        # prior collector already resumed it. Re-resuming would double-execute the
-        # steps after the map. Skip. A parent already finished (a prior
-        # collector applied this map's failure) must not be rolled back twice.
-        return if parent_context.intermediate_results.key?(step_name.to_sym) || parent_context.finished?
-
-        # Check if all tasks are completed
         metadata = storage.retrieve_map_metadata(map_id, parent_reactor_class_name)
-        total_count = metadata ? metadata["count"].to_i : 0
+        return unless metadata
+        # Judged against the element count, not map_offset (which batching
+        # reservation can push past it).
+        return if storage.count_map_results(map_id, parent_reactor_class_name) < metadata["count"].to_i
+        return unless storage.claim_map_owner_signal(map_id, parent_reactor_class_name)
 
-        results_count = storage.count_map_results(map_id, parent_reactor_class_name)
+        signal_owner(metadata, arguments)
+      end
 
-        # Completion is judged against the total count of elements, not
-        # map_offset (which batching reservation can push past it).
-        #
-        # A fail-fast failure is applied only once every index has settled
-        # (a result, `_error`, `_halt` or `_skipped` slot), so the map's
-        # compensate sees every element that completed — including ones still
-        # in flight when the failure happened (R-04). Until then the last
-        # element to settle, or the map sweeper, re-triggers this collector.
-        return if results_count < total_count
-
-        if (failed_context_id = storage.retrieve_map_failed_context_id(map_id, parent_reactor_class_name))
-          handle_failure(failed_context_id, metadata, storage, parent_context, step_name)
-          return
-        end
-
-        # Retrieve results lazily
-        results = RubyReactor::Map::ResultEnumerator.new(
-          map_id,
-          parent_reactor_class_name,
-          strict_ordering: strict_ordering
+      # Metadata written before the upgrade names no owner (S-6): the parent is
+      # the owner of a root-level map.
+      def self.signal_owner(metadata, arguments)
+        owner_id = metadata["owner_context_id"] || metadata["parent_context_id"] || arguments[:parent_context_id]
+        owner_class = metadata["owner_reactor_class_name"] || metadata["parent_reactor_class_name"]
+        RubyReactor.configuration.logger.info(
+          "event=ruby_reactor.map.settled map_id=#{arguments[:map_id].inspect} owner=#{owner_id.inspect}"
         )
-
-        # Apply collect block (or default collection)
-        step_config = parent_context.reactor_class.steps[step_name.to_sym]
-
-        begin
-          final_result = apply_collect_block(results, step_config)
-
-          if final_result.failure?
-            # Optionally log failure internally or just rely on context status update
-          end
-        rescue StandardError => e
-          final_result = RubyReactor::Failure(e)
-        end
-
-        # Resume parent execution
-        resume_parent_execution(parent_context, step_name, final_result, storage)
-      rescue StandardError => e
-        RubyReactor.configuration.logger.error("Map collector crashed: #{e.message}")
-        RubyReactor.configuration.logger.error(e.backtrace.join("\n")) if e.backtrace
-        raise e
-      end
-
-      def self.apply_collect_block(results, step_config)
-        collect_block = step_config.arguments[:collect_block][:source].value if step_config.arguments[:collect_block]
-        # TODO: Check allow_partial_failure option
-
-        if collect_block
-          begin
-            # Pass Enumerator to collect block
-            collected = collect_block.call(results)
-            RubyReactor::Success(collected)
-          rescue RubyReactor::Error::Rescuable => e
-            RubyReactor.configuration.logger.error("Map collect block raised: #{e.message}")
-            RubyReactor.configuration.logger.error(e.backtrace.join("\n")) if e.backtrace
-            RubyReactor::Failure(e)
-          end
-        else
-          # Default behavior: Return Success(Enumerator).
-          # Logic for checking failures is deferred to the consumer of the enumerator.
-          RubyReactor::Success(results)
-        end
-      end
-
-      def self.handle_failure(failed_context_id, metadata, storage, parent_context, step_name)
-        # Resolve the class of the mapped reactor to retrieve its context
-        reactor_class = resolve_reactor_class(metadata["reactor_class_info"])
-        failed_context_data = storage.retrieve_context(failed_context_id, reactor_class.name)
-
-        return unless failed_context_data
-
-        failed_context = RubyReactor::Context.deserialize_from_retry(failed_context_data)
-        reason = failed_context.failure_reason
-        result = reason.is_a?(RubyReactor::Failure) ? reason : RubyReactor::Failure(reason)
-        resume_parent_execution(parent_context, step_name, result, storage)
+        RubyReactor.configuration.async_router.perform_async(owner_id, owner_class)
       end
     end
   end

@@ -6,6 +6,9 @@ module RubyReactor
     include RubyReactor::Dsl::Reactor
     include RubyReactor::Dsl::Lockable
 
+    # Seconds a manual undo waits for the run's context lock (009 R-12).
+    UNDO_LOCK_WAIT = 5
+
     attr_reader :context, :result, :undo_trace, :execution_trace
 
     def self.find(id)
@@ -60,9 +63,12 @@ module RubyReactor
       reactor.cancel(reason)
     end
 
+    # A rollback that hands off at a fan-out map finishes in a worker, which
+    # applies `cancelled` itself (009 R-12).
     def self.undo(id)
       reactor = find(id)
-      reactor.undo
+      return if reactor.undo == :handed_off
+
       cancel(id: id, reason: "Undo triggered")
     end
 
@@ -204,13 +210,34 @@ module RubyReactor
       RubyReactor::Failure(e.message, invalid_payload: true)
     end
 
+    # Undoes every completed step, under the run's context lock so no worker
+    # resumes it meanwhile (009 R-12). Returns `:handed_off` when a fan-out
+    # map's rollback continues in its element jobs: the run is then
+    # `rolling_back`, and a worker finishes it as `cancelled`.
     def undo
+      raise Error::ValidationError, "rollback already in progress" if @context.rolling_back?
+
+      lock = acquire_undo_lock
       executor = Executor.new(self.class, {}, @context)
-      executor.undo_all
+      @context.rollback = { "trigger" => "undo", "compensated" => true, "failures" => [] }
+      begin
+        executor.undo_all
+      rescue Error::RollbackHandedOff => e
+        @context.status = :rolling_back
+        executor.save_context
+        executor.hand_off_rollback!(e)
+        return :handed_off
+      end
+      @context.rollback = nil
       executor.save_context
+    ensure
+      lock&.release
     end
 
     def cancel(reason)
+      # `cancelled` is terminal: the steps before the map would never be undone.
+      raise Error::ValidationError, "rollback in progress; cannot cancel" if @context.rolling_back?
+
       @context.cancelled = true
       @context.cancellation_reason = reason
       @context.status = "cancelled"
@@ -233,6 +260,18 @@ module RubyReactor
     def reopen_paused
       @context.status = :paused
       save_context
+    end
+
+    # Raises `Lock::AcquisitionError` while a live run or rollback holds it.
+    # Skipped in inline job-testing mode, as `Executor#acquire_context_lock`.
+    def acquire_undo_lock
+      return if defined?(Sidekiq::Testing) && Sidekiq::Testing.respond_to?(:inline?) && Sidekiq::Testing.inline?
+
+      lock = RubyReactor::Lock.new("async:#{@context.context_id}", owner: SecureRandom.uuid,
+                                                                   ttl: configuration.context_lock_ttl,
+                                                                   wait: UNDO_LOCK_WAIT)
+      lock.acquire
+      lock
     end
 
     def validate_steps!

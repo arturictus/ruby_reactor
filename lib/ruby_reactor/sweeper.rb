@@ -48,7 +48,9 @@ module RubyReactor
       reenqueued = 0
 
       @storage.scan_reactors(count: limit, include_dispatched_children: true).each do |reactor|
-        next unless reactor[:status] == "running" # non-terminal only
+        # Non-terminal only. A `rolling_back` run whose owner resume was lost
+        # is re-enqueued too: unsettled, it simply hands off again (009 S-5).
+        next unless %w[running rolling_back].include?(reactor[:status])
         next if @storage.lock_held?("async:#{reactor[:id]}") # worker alive -> leave alone
 
         @async_router.perform_async(reactor[:id], reactor[:class])

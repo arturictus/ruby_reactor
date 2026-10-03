@@ -25,6 +25,8 @@ module Probe
     RubyReactor::Adapters::Sidekiq::Worker,
     RubyReactor::Adapters::Sidekiq::MapElementWorker,
     RubyReactor::Adapters::Sidekiq::MapCollectorWorker,
+    # 009 R-04: a fan-out map rolls back one element per job.
+    RubyReactor::Adapters::Sidekiq::MapElementRollbackWorker,
     RubyReactor::Adapters::Sidekiq::StepWorker
   ].freeze
 
