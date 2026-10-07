@@ -7,7 +7,7 @@ require "spec_helper"
 # `lock_snooze_max_attempts`, with its own counter so a busy key never eats
 # the retry budget meant for genuine failures (Finding 2). Synchronously
 # there is no queue to park into, so that path waits then fails.
-RSpec.describe "step-level contention parks instead of failing", :step_coordination do
+RSpec.describe "step-level contention parks instead of failing", :step_coordination, type: :reactor do
   def unique_account_id
     SecureRandom.random_number(10**9)
   end

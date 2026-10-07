@@ -5,7 +5,7 @@ require "spec_helper"
 # Regressions for the PR #51 review: each one is a place where the
 # non-retryable / structured-error guarantee, or a step signal, was silently
 # lost on the way through a serialization boundary.
-RSpec.describe "Failure and signal metadata survive their round trips" do
+RSpec.describe "Failure and signal metadata survive their round trips", type: :reactor do
   before do
     stub_const("ViolatingStep", Class.new(RubyReactor::Step) do
       input :n, :integer

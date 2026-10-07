@@ -45,7 +45,7 @@ module ResumeGuardSpec
   end
 end
 
-RSpec.describe "resuming a reactor that is not paused (FR-032)" do
+RSpec.describe "resuming a reactor that is not paused (FR-032)", type: :reactor do
   before { ResumeGuardSpec.attempts.clear }
 
   def pause(reactor_class)

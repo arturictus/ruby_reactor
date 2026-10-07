@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)" do
+RSpec.describe "Step outcome helpers (success!/skip!/fail!/halt!)", type: :reactor do
   UNREACHABLE = ->(*) { raise "unreachable line was executed" }
 
   describe "success!" do

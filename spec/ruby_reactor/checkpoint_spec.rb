@@ -42,7 +42,7 @@ class CkThreeStepReactor < RubyReactor::Reactor
   end
 end
 
-RSpec.describe "Per-step checkpoints" do
+RSpec.describe "Per-step checkpoints", type: :reactor do
   let(:storage) { RubyReactor.configuration.storage_adapter }
 
   def count_root_writes

@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe "Skipped step result" do
+RSpec.describe "Skipped step result", type: :reactor do
   it "lets a dependant read the skipped step's value" do
     reactor_class = Class.new(RubyReactor::Reactor) do
       step :maybe_sync do

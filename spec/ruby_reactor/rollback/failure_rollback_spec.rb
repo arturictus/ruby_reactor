@@ -89,7 +89,7 @@ module FailureRollbackSpec
   end
 end
 
-RSpec.describe "rollback on failures outside a step body" do
+RSpec.describe "rollback on failures outside a step body", type: :reactor do
   let(:storage) { RubyReactor.configuration.storage_adapter }
 
   it "undoes completed steps and names the step when an argument transform raises (S-plain-07)" do

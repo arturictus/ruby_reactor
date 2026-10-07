@@ -5,7 +5,7 @@ require "spec_helper"
 # US2: for a step that owns its contract, `argument` is wiring only. Rules in
 # the reactor, or wiring for an input the step never declares, fail when the
 # `step` macro runs.
-RSpec.describe "Reactor-side rules on a contract-owning step" do
+RSpec.describe "Reactor-side rules on a contract-owning step", type: :reactor do
   before do
     stub_const("ChargeStep", Class.new(RubyReactor::Step) do
       input :amount, :integer, gteq?: 1

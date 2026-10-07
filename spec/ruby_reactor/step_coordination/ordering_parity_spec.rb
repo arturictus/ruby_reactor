@@ -6,7 +6,7 @@ require "spec_helper"
 # reactor-level gate rules — one exhaustive classifier for both levels, one
 # position lifecycle at the step level. State is built in real Redis through
 # `OrderedLock`'s own API; nothing here stubs `OrderedLock`.
-RSpec.describe "step-level ordered-lock parity", :step_coordination do
+RSpec.describe "step-level ordered-lock parity", :step_coordination, type: :reactor do
   let(:run_id) { step_coord_run_id }
   let(:worker_class) { RubyReactor::Adapters::Sidekiq::Worker }
 

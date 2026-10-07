@@ -6,7 +6,7 @@ require "spec_helper"
 # a real class hierarchy with `inherited` deleted (data-model.md — contract
 # ivars are already per-class, so there is nothing left for `inherited` to
 # reset). Regression guard, not a red spec by design.
-RSpec.describe "Step contract inheritance across subclasses" do
+RSpec.describe "Step contract inheritance across subclasses", type: :reactor do
   before do
     stub_const("BaseStep", Class.new(RubyReactor::Step) do
       input :a, :integer

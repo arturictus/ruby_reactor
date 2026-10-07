@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe "Compensation and undo defaults" do
+RSpec.describe "Compensation and undo defaults", type: :reactor do
   it "reports skipped for an undefined compensation and still proceeds with rollback" do
     undone = []
 

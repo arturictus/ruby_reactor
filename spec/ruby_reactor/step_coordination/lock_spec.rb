@@ -11,7 +11,7 @@ require "spec_helper"
 # test Redis is shared across worktrees/sessions (see spec/spec_helper.rb),
 # so a fixed key like "acct:1" can collide with another session's concurrent
 # run of this same spec.
-RSpec.describe "step-scoped `with_lock`", :step_coordination do
+RSpec.describe "step-scoped `with_lock`", :step_coordination, type: :reactor do
   def unique_account_id
     SecureRandom.random_number(10**9)
   end

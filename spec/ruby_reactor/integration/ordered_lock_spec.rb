@@ -3,7 +3,7 @@
 require "spec_helper"
 require_relative "../../examples/locking_reactors"
 
-RSpec.describe "OrderedLock Integration" do
+RSpec.describe "OrderedLock Integration", type: :reactor do
   let(:adapter) { RubyReactor.configuration.storage_adapter }
 
   describe "nonce assignment" do

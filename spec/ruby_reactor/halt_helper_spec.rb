@@ -6,7 +6,7 @@ require "spec_helper"
 # `Success`/`Failure` — both inside class steps (RubyReactor::Step) and inside
 # inline `run` blocks (RubyReactor::Dsl::TemplateHelpers) — and that halting
 # stops the run with no compensation of already-completed steps.
-RSpec.describe "Halt helper parity" do
+RSpec.describe "Halt helper parity", type: :reactor do
   describe "inside a class step" do
     let(:step_class) do
       Class.new(RubyReactor::Step) do

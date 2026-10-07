@@ -151,7 +151,7 @@ class ValidatedAsyncReactor < RubyReactor::Reactor
   returns :ack
 end
 
-RSpec.describe "escalating a step-level contention park", :step_coordination do
+RSpec.describe "escalating a step-level contention park", :step_coordination, type: :reactor do
   def unique_account_id
     SecureRandom.random_number(10**9)
   end

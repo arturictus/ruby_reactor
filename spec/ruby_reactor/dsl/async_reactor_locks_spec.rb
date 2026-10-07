@@ -7,7 +7,7 @@ require "spec_helper"
 # section at once — mutual exclusion silently broken, which is strictly worse
 # than a stall. The one guaranteed deadlock is therefore caught at dispatch,
 # loudly, instead of being left to a 30s timeout.
-RSpec.describe "`async_reactor` lock deadlock guard" do
+RSpec.describe "`async_reactor` lock deadlock guard", type: :reactor do
   before { AsyncReactorFixtures.reset! }
 
   for_each_async_backend do

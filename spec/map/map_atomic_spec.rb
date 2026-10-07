@@ -25,7 +25,7 @@ module MapAtomicSpec
   Partial = define(:atomic_false)
 end
 
-RSpec.describe "map atomic" do
+RSpec.describe "map atomic", type: :reactor do
   let(:items) { { items: [0, 1, 2, 3], fail_at: 2 } }
 
   before { RollbackRecorder.reset! }

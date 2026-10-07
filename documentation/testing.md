@@ -14,9 +14,9 @@ RSpec.configure do |config|
 end
 ```
 
-The custom matchers are available everywhere. The `test_reactor` helper and the
-background-job helpers are only included in example groups tagged `type: :reactor`,
-so the rest of your suite keeps a clean namespace:
+The custom matchers, the `test_reactor` helper and the background-job helpers are
+only included in example groups tagged `type: :reactor`, so the rest of your suite
+keeps a clean namespace:
 
 ```ruby
 RSpec.describe MyReactor, type: :reactor do
@@ -24,13 +24,20 @@ RSpec.describe MyReactor, type: :reactor do
 end
 ```
 
-To use them without the tag, include the module yourself:
+To use them without the tag, include the modules yourself:
 
 ```ruby
 RSpec.describe MyReactor do
   include RubyReactor::RSpec::Helpers
+  include RubyReactor::RSpec::Matchers
 end
 ```
+
+> **Untagged groups degrade silently.** Outside `type: :reactor`, `be_success`,
+> `be_halted`, `be_paused`, etc. fall through to RSpec's built-in predicate
+> matchers (`result.success?`). They may still pass, but with generic failure
+> messages and without the `ensure_executed!` nudge. Chained matchers
+> (`have_run_step(:x).returning(y)`, `be_locked.by(owner)`) fail loudly.
 
 > For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, or `with_ordered_lock`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_halted`, `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, `be_period_marked`, `have_ordered_lock_next`, `have_ordered_lock_last_completed`, `have_ordered_lock_in_flight`, and `be_ordered_lock_drained` matchers, plus patterns for testing background snooze and escalation.
 

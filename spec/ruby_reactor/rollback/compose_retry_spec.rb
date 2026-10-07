@@ -65,7 +65,7 @@ module ComposeRetrySpec
   end
 end
 
-RSpec.describe "a nested reactor is never retried as a whole" do
+RSpec.describe "a nested reactor is never retried as a whole", type: :reactor do
   let(:worker_class) { RubyReactor::Adapters::Sidekiq::Worker }
 
   it "rejects `retries` on a compose (class form)" do

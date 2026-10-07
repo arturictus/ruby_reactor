@@ -7,7 +7,7 @@ require "spec_helper"
 # (StepConfig reads its OWN lock_config) + T013 (run_step_implementation
 # wraps has_run_block? in StepCoordination). This spec proves it, running
 # lock_spec's core scenarios against both forms from one shared example set.
-RSpec.describe "step-scoped coordination: inline steps behave like class steps", :step_coordination do
+RSpec.describe "step-scoped coordination: inline steps behave like class steps", :step_coordination, type: :reactor do
   def unique_account_id
     SecureRandom.random_number(10**9)
   end

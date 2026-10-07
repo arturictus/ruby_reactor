@@ -4,7 +4,7 @@ require "spec_helper"
 
 # FR-023: a value is "provided" when its key exists, never when it is truthy.
 # A supplied `false` must reach the step as `false`, not `nil`.
-RSpec.describe "Falsey input resolution" do
+RSpec.describe "Falsey input resolution", type: :reactor do
   let(:received) { [] }
 
   def inline_reactor(sink)

@@ -4,7 +4,7 @@ require "spec_helper"
 
 # US3: `inputs do ... end` inside a `step` block declares the same lines a step
 # class would, and is enforced by the same InputContract#enforce!.
-RSpec.describe "Inline step input contracts" do
+RSpec.describe "Inline step input contracts", type: :reactor do
   let(:inline_reactor) do
     Class.new(RubyReactor::Reactor) do
       input :amount
