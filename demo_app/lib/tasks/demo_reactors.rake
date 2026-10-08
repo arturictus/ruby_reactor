@@ -1079,6 +1079,51 @@ namespace :demo do
     end
   end
 
+  desc "ComposedApprovalReactor — an interrupt inside a composed child pauses the root; resume it by its " \
+       "step path, or undo it while it waits"
+  task composed_interrupt: [:environment, :flush_redis] do
+    path = ComposedApprovalReactor::APPROVAL
+    status = ->(id) { ComposedApprovalReactor.find(id).context.status.to_s }
+
+    puts "\n>>> Running ComposedApprovalReactor(order_id: 1) [pause inside the child, approve by correlation id]"
+    ComposedApprovalReactor.reset!
+    paused = ComposedApprovalReactor.run(order_id: 1)
+    id = paused.execution_id
+    pending = ComposedApprovalReactor.find(id).ready_interrupt_steps
+    puts "   paused: #{status.call(id)}, root id: #{id}, pending: #{pending.inspect}, " \
+         "correlation id: #{paused.correlation_id.inspect}"
+    ComposedApprovalReactor.continue_by_correlation_id(correlation_id: "approval-1", payload: { approved: true },
+                                                       step_name: path)
+    puts "   after approval: #{status.call(id)}"
+    if paused.paused? && pending == [path] && status.call(id) == "completed"
+      puts "✅ SUCCESS: the root paused at #{path.inspect} and finished once approved"
+    else
+      puts "❌ FAIL: expected a pause at #{path.inspect}, then a completed root"
+    end
+
+    puts "\n>>> Running ComposedApprovalReactor(order_id: 2) [the manager rejects]"
+    ComposedApprovalReactor.reset!
+    id = ComposedApprovalReactor.run(order_id: 2).execution_id
+    ComposedApprovalReactor.continue(id: id, payload: { approved: false }, step_name: path)
+    puts "   final: #{status.call(id)}, rolled back: #{ComposedApprovalReactor.log.inspect}"
+    if status.call(id) == "failed" && ComposedApprovalReactor.log == %i[released refunded]
+      puts "✅ SUCCESS: the child's stock was released, then the card refunded"
+    else
+      puts "❌ FAIL: expected a failed root, with the stock released before the refund"
+    end
+
+    puts "\n>>> Running ComposedApprovalReactor(order_id: 3) [undone while it waits]"
+    ComposedApprovalReactor.reset!
+    id = ComposedApprovalReactor.run(order_id: 3).execution_id
+    ComposedApprovalReactor.undo(id)
+    puts "   final: #{status.call(id)}, rolled back: #{ComposedApprovalReactor.log.inspect}"
+    if status.call(id) == "cancelled" && ComposedApprovalReactor.log == %i[released refunded]
+      puts "✅ SUCCESS: undo reached the paused child's stock, then the card"
+    else
+      puts "❌ FAIL: expected a cancelled root, with the stock released before the refund"
+    end
+  end
+
   desc "Distributed map rollback, composed fan-out, default batch size"
   task map_execution_undo: [:environment, :flush_redis, :distributed_map_rollback, :composed_fan_out,
                             :default_batch_size]

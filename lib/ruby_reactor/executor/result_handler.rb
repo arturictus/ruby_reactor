@@ -27,6 +27,8 @@ module RubyReactor
           handle_retries_exhausted(step_config, result, resolved_arguments)
         when RubyReactor::Failure
           handle_failure(step_config, result, resolved_arguments)
+        when RubyReactor::InterruptResult
+          handle_interrupted(step_config, resolved_arguments)
         else
           handle_unknown_result(step_config, result, resolved_arguments)
         end
@@ -146,6 +148,20 @@ module RubyReactor
           }
         )
         result
+      end
+
+      # A composed child paused at an interrupt (010): the step stays
+      # incomplete, and this run pauses on it. `with_step` cleared
+      # `current_step` on the way out; it is the run's resume cursor. The
+      # child's completed steps are only undone through this step, so it joins
+      # the undo stack as a partial run, as an interrupted compose does (R-04).
+      def handle_interrupted(step_config, resolved_arguments)
+        @context.current_step = step_config.name
+        return unless step_config.undoes_partial_run?
+
+        @compensation_manager.add_to_undo_stack({ step: step_config,
+                                                  arguments: step_config.rollback_arguments(resolved_arguments),
+                                                  result: RubyReactor.Success(nil) })
       end
 
       # A step returned `RubyReactor.Skipped(...)`: the run continues exactly as

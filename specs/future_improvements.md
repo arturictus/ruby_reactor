@@ -222,18 +222,6 @@ All against real Redis, per the constitution.
 - Docs: `locks_and_semaphores.md`, `background_and_async.md`, and the README's "Durability &
   Recovery" section.
 
-## Interrupt inside a composed child
-
-**Status:** unsupported on main, found while implementing 009 (US2-AS2). An `interrupt` in a
-`compose`d child does not pause the root: `ComposeStep#handle_execution_result` calls `success?` on
-the child's `InterruptResult`, and the compose step fails with `NoMethodError`. It fails the same
-way with or without a fan-out map in the child.
-
-Direction: propagate the child's `InterruptResult` as the compose step's result, so the root
-pauses; let `Reactor.continue` and the `be_paused_at` matcher name the nested interrupt (a step
-path such as `:fulfil, :approve`); and resume through `ComposeStep#run`, which already re-enters
-an admitted child. Spec: `spec/map/map_compose_fan_out_spec.rb` keeps a `pending` example for it.
-
 ## Rollback follow-ups (008)
 
 Raised while implementing specs/008-rollback-reliability. None blocks it.

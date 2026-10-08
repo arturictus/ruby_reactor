@@ -108,8 +108,8 @@ module RubyReactor
           result
         when RubyReactor::Failure
           handle_failure_result(step_config, reactor_class, result)
-        when RetryQueuedResult, RubyReactor::DispatchResult
-          # Pass through async results
+        when RetryQueuedResult, RubyReactor::DispatchResult, RubyReactor::InterruptResult
+          # Pass through async results, and a composed child's pause
           result
         else
           clear_retry_state

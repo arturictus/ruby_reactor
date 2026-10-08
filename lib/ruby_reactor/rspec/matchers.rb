@@ -210,50 +210,49 @@ module RubyReactor
       # Matcher to check if reactor is paused at a specific interrupt step
       # Works with both single and multiple concurrent interrupts
       matcher :be_paused_at do |*step_names|
+        # A step inside a composed child is named by its path, e.g. `[:fulfil, :approve]`.
+        expected = -> { step_names.map { |name| RubyReactor::Reactor.interrupt_key(name).inspect }.join(", ") }
+
         match do |subject|
           subject.ensure_executed!
           return false unless subject.paused?
 
           ready_steps = subject.ready_interrupt_steps
-          step_names.all? { |name| ready_steps.include?(name.to_sym) }
+          step_names.all? { |name| ready_steps.include?(RubyReactor::Reactor.interrupt_key(name)) }
         end
 
         failure_message do |subject|
           if subject.paused?
-            ready_steps = subject.ready_interrupt_steps
-            if step_names.size == 1
-              "expected reactor to be paused at :#{step_names.first}, " \
-                "but ready interrupt steps are: #{ready_steps.inspect}"
-            else
-              "expected reactor to be paused at #{step_names.map { |s| ":#{s}" }.join(", ")}, " \
-                "but ready interrupt steps are: #{ready_steps.inspect}"
-            end
+            "expected reactor to be paused at #{expected.call}, " \
+              "but ready interrupt steps are: #{subject.ready_interrupt_steps.inspect}"
           else
-            "expected reactor to be paused at #{step_names.map { |s| ":#{s}" }.join(", ")}, " \
+            "expected reactor to be paused at #{expected.call}, " \
               "but status was #{subject.reactor_instance.context.status}"
           end
         end
 
         failure_message_when_negated do |_subject|
-          "expected reactor not to be paused at #{step_names.map { |s| ":#{s}" }.join(", ")}, but it is"
+          "expected reactor not to be paused at #{expected.call}, but it is"
         end
       end
 
       # Matcher to check the exact set of ready interrupt steps
       matcher :have_ready_interrupts do |*expected_steps|
+        # A step inside a composed child is named by its path, e.g. `[:fulfil, :approve]`.
+        expected = -> { expected_steps.map { |name| RubyReactor::Reactor.interrupt_key(name) } }
+
         match do |subject|
           subject.ensure_executed!
           return false unless subject.paused?
 
-          actual_steps = subject.ready_interrupt_steps.sort
-          expected = expected_steps.map(&:to_sym).sort
-          actual_steps == expected
+          # Symbols and paths (Arrays) do not compare: sort by their inspect.
+          subject.ready_interrupt_steps.sort_by(&:inspect) == expected.call.sort_by(&:inspect)
         end
 
         failure_message do |subject|
           if subject.paused?
             actual_steps = subject.ready_interrupt_steps
-            "expected ready interrupt steps to be #{expected_steps.map { |s| ":#{s}" }}, " \
+            "expected ready interrupt steps to be #{expected.call}, " \
               "but got #{actual_steps.inspect}"
           else
             "expected reactor to be paused with ready interrupt steps, " \
@@ -263,7 +262,7 @@ module RubyReactor
 
         failure_message_when_negated do |subject|
           actual_steps = subject.ready_interrupt_steps
-          "expected ready interrupt steps not to be #{expected_steps.map { |s| ":#{s}" }}, " \
+          "expected ready interrupt steps not to be #{expected.call}, " \
             "but it was #{actual_steps.inspect}"
         end
       end

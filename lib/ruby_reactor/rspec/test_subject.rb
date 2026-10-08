@@ -426,29 +426,19 @@ module RubyReactor
       # Get all ready interrupt steps (steps that can be resumed)
       # This is useful when multiple interrupts are waiting concurrently.
       #
-      # @return [Array<Symbol>] list of ready interrupt step names
+      # @return [Array<Symbol, Array<Symbol>>] the reactor's own interrupts by
+      #   name, and one inside a composed child by its step path
+      #   (e.g. `[:fulfil, :approve]`)
       def ready_interrupt_steps
         ensure_executed!
-        return [] unless paused?
-
-        # Build the dependency graph and get ready steps
-        graph = RubyReactor::DependencyGraph.new
-        graph_manager = RubyReactor::Executor::GraphManager.new(
-          @reactor_class, graph, @reactor_instance.context
-        )
-        graph_manager.build_and_validate!
-        graph_manager.mark_completed_steps_from_context
-
-        # Filter to only interrupt steps (using interrupt? predicate method)
-        ready = graph_manager.dependency_graph.ready_steps
-        ready.select { |step_config| step_config.respond_to?(:interrupt?) && step_config.interrupt? }
-             .map { |step_config| step_config.name.to_sym }
+        @reactor_instance.ready_interrupt_steps
       end
 
       # Resume a paused reactor with the given payload
       #
       # @param payload [Hash] The data to provide to the interrupt step
-      # @param step [Symbol, String, nil] The specific interrupt step to resume.
+      # @param step [Symbol, String, Array, nil] The specific interrupt step to resume,
+      #   or the step path of one inside a composed child (e.g. `[:fulfil, :approve]`).
       #   Required when multiple interrupts are ready. If not provided and only
       #   one interrupt is ready, that step will be used.
       # @return [TestSubject] self for chaining and introspection
@@ -483,10 +473,10 @@ module RubyReactor
 
         if step
           # User explicitly specified a step
-          step_sym = step.to_sym
+          step_sym = RubyReactor::Reactor.interrupt_key(step)
           unless ready_steps.include?(step_sym)
             raise RubyReactor::Error::ValidationError,
-                  "Cannot resume: step :#{step} is not ready. Ready steps: #{ready_steps.inspect}"
+                  "Cannot resume: step #{step_sym.inspect} is not ready. Ready steps: #{ready_steps.inspect}"
           end
           step_sym
         elsif ready_steps.size == 1

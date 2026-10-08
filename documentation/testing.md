@@ -505,9 +505,12 @@ subject = test_reactor(ApprovalWorkflow, request_id: 123)
 # Check if reactor is paused
 subject.paused?  # => true/false
 
-# Get the current interrupt step name
+# Get the step the run is paused on (its resume cursor)
 subject.current_step  # => :wait_for_approval (Symbol) or nil
 ```
+
+For a pause inside a composed child, `current_step` is the top-level compose step (e.g.
+`:approval`), not the interrupt. Use `ready_interrupt_steps` to get the interrupt's step path.
 
 #### Getting Ready Interrupt Steps
 
@@ -519,6 +522,11 @@ subject = test_reactor(MultiApprovalWorkflow, params)
 # Get all ready interrupt steps
 subject.ready_interrupt_steps  # => [:manager_approval, :director_approval]
 ```
+
+An interrupt inside a composed child is listed by its step path: the compose step names, then the
+interrupt (`[[:approval, :wait_for_manager]]`). Pass the same path to `be_paused_at`,
+`have_ready_interrupts` and `resume(step:)`. See
+[Interrupts inside composed reactors](interrupts.md#interrupts-inside-composed-reactors).
 
 ### Resuming Paused Reactors
 
@@ -1235,9 +1243,9 @@ end
 | `success?` | Check if reactor succeeded |
 | `failure?` | Check if reactor failed |
 | `paused?` | Check if reactor is paused at an interrupt |
-| `current_step` | Get the current interrupt step name (Symbol or nil) |
-| `ready_interrupt_steps` | Get all ready interrupt step names (Array of Symbols) |
-| `resume(payload:, step:)` | Resume a paused reactor with payload; `step:` required for multiple interrupts |
+| `current_step` | Get the step the run is paused on (Symbol or nil): the interrupt, or the top-level compose step for a pause inside a composed child |
+| `ready_interrupt_steps` | Get all ready interrupts: Symbols for the reactor's own, step paths (Arrays of Symbols) for ones inside composed children |
+| `resume(payload:, step:)` | Resume a paused reactor with payload; `step:` (a name or a step path) required for multiple interrupts |
 | `step_result(name)` | Get a specific step's result |
 | `error` | Get the error message if failed |
 | `map_elements(step_name)` | Get all map element subjects |

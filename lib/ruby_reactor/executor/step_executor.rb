@@ -431,6 +431,15 @@ module RubyReactor
           return RubyReactor.Success(result)
         end
 
+        # A map element cannot pause: nothing would resume it. The step fails
+        # like any other, rolling back what the element completed (010 R-08).
+        if inside_map_element?
+          failure = RubyReactor::Failure("interrupt :#{step_config.name} is not supported inside a map element",
+                                         step_name: step_config.name, reactor_name: @reactor_class.name,
+                                         retryable: false)
+          return @result_handler.handle_step_result(step_config, failure, {})
+        end
+
         # We are pausing
         correlation_id = nil
         correlation_id = step_config.correlation_id_block.call(@context) if step_config.correlation_id_block
@@ -443,6 +452,17 @@ module RubyReactor
           correlation_id: correlation_id,
           intermediate_results: @context.intermediate_results
         )
+      end
+
+      # This run, or one it is composed into, is a map element.
+      def inside_map_element?
+        context = @context
+        while context
+          return true if context.map_metadata
+
+          context = context.parent_context
+        end
+        false
       end
 
       def configuration

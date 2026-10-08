@@ -241,6 +241,23 @@ Every breaking or shape-changing item of the rollback work, with what to change.
 
 ### Features
 
+* **An `interrupt` inside a composed child pauses the top-level run.** Before, the compose step
+  failed with `NoMethodError` and the run rolled back. Now the top-level run is stored `paused`, at
+  any compose depth and after a `fan_out` map in the child, and the paused result carries its id.
+  Resume it on the top-level class by the interrupt's step path, an Array of the compose step names
+  then the interrupt (`continue(id:, payload:, step_name: [:approval, :wait_for_manager])`), by id
+  or by the child interrupt's correlation id. Payload validation, `max_attempts`,
+  `resume: :background` and the resume guards apply as for a top-level interrupt. A resume
+  contended on the child's own `with_lock`/`with_semaphore` fails and rolls back the run. Only
+  contention on the top-level reactor's lock leaves it paused. `Reactor.undo`
+  of the paused run rolls back the child's completed steps, then the parent's. A composed child
+  refuses a `continue` of its own. New `Reactor#ready_interrupt_steps` lists the pending
+  interrupts (Symbols, and paths for nested ones). `be_paused_at`, `have_ready_interrupts` and
+  `TestSubject#resume(step:)` accept paths. A `continue` must now name a pending interrupt: naming
+  another ready step, which used to store the payload as that step's result, raises
+  `ValidationError`. An `interrupt` inside a `map` element now fails that element with "not
+  supported inside a map element" instead of `NoMethodError`.
+  See [Interrupts inside composed reactors](documentation/interrupts.md#interrupts-inside-composed-reactors).
 * **`fan_out` without `batch_size` is back-pressured: at most 50 element jobs per throw**
   (`RubyReactor::Map::DEFAULT_BATCH_SIZE`), forward and rollback. Before, every element was
   enqueued at once. A map of more than 50 elements with no declared `batch_size` now runs in

@@ -278,6 +278,46 @@ RSpec.describe RubyReactor::RSpec::Helpers, type: :reactor do
         end
       end
 
+      # 010: an interrupt inside a composed child is named by its step path.
+      context "with an interrupt inside a composed child" do
+        let(:path) { %i[fulfil approve] }
+
+        before { RollbackRecorder.reset! }
+
+        def nested_subject
+          test_reactor(InterruptInComposeFixtures::Root, {}, async: false)
+        end
+
+        it "lists the nested interrupt by its path" do
+          subject = nested_subject
+          expect(subject.ready_interrupt_steps).to eq([path])
+          expect(subject).to be_paused_at(path)
+          expect(subject).to have_ready_interrupts(path)
+        end
+
+        it "fails be_paused_at for the bare name, naming the pending path" do
+          subject = nested_subject
+          expect { expect(subject).to be_paused_at(:approve) }
+            .to raise_error(RSpec::Expectations::ExpectationNotMetError, /\[:fulfil, :approve\]/)
+        end
+
+        it "resumes the only pending interrupt without naming it" do
+          subject = nested_subject.resume(payload: { ok: true })
+          expect(subject).to be_success
+        end
+
+        it "resumes the nested interrupt by its path" do
+          subject = nested_subject.resume(step: path, payload: { ok: true })
+          expect(subject).to be_success
+        end
+
+        it "lists a root interrupt beside the nested one" do
+          subject = test_reactor(InterruptInComposeFixtures::RootWithOwnInterrupt, {}, async: false)
+          expect(subject).to have_ready_interrupts(:audit, path)
+          expect(subject).to be_paused_at(:audit, path)
+        end
+      end
+
       context "with async execution (default)" do
         it "detects paused state with async processing" do
           subject = test_reactor(HelpersInterruptReactor, {})

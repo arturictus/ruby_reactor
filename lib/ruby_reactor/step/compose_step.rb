@@ -74,6 +74,8 @@ module RubyReactor
         unless child_context
           composed_inputs = build_composed_inputs(inputs.argument_mappings || {})
           child_context = RubyReactor::Context.new(composed_inputs, inputs.composed_reactor_class)
+          # Resumed only through this run, never on its own (010 R-07).
+          child_context.private_data[:composed] = true
         end
 
         link_contexts(child_context, context)
@@ -119,6 +121,14 @@ module RubyReactor
         # `error` alone drops validation_errors, retryability and the rest of
         # the metadata the direct and async paths do propagate.
         return result if result.is_a?(RubyReactor::Failure)
+
+        # The child paused at an interrupt: so does this run. Each compose
+        # level re-stamps its own id, so the top-level result names the root.
+        if result.is_a?(RubyReactor::InterruptResult)
+          return RubyReactor::InterruptResult.new(execution_id: context.context_id,
+                                                  correlation_id: result.correlation_id,
+                                                  intermediate_results: context.intermediate_results)
+        end
 
         result.success? ? RubyReactor.Success(result.value) : RubyReactor.Failure(result.error)
       end

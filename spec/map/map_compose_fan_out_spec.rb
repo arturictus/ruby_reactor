@@ -8,7 +8,8 @@ require "spec_helper"
 module MapComposeFanOutSpec
   F = MapRollbackFixtures
 
-  def self.child(name, element: F::ElemOk, distributed: true, c2_fails: false, c2_undo_fails: false)
+  def self.child(name, element: F::ElemOk, distributed: true, c2_fails: false, c2_undo_fails: false, # rubocop:disable Metrics/ParameterLists
+                 interrupt_after_map: false)
     klass = Class.new(RollbackRecorder::Reactor) do
       tag "child"
       input :items
@@ -21,7 +22,8 @@ module MapComposeFanOutSpec
         argument :fail_at, input(:fail_at)
         fan_out(batch_size: 1) if distributed
       end
-      recording_step :c2, after: :m, fail: c2_fails, undo_fails: c2_undo_fails
+      interrupt(:approve) { wait_for :m } if interrupt_after_map
+      recording_step :c2, after: interrupt_after_map ? :approve : :m, fail: c2_fails, undo_fails: c2_undo_fails
     end
     const_set(name, klass)
   end
@@ -55,6 +57,8 @@ module MapComposeFanOutSpec
   root :ChildStepFailsRoot, ChildStepFails
   child :ChildUndoFails, c2_undo_fails: true
   root :ChildUndoFailsRoot, ChildUndoFails, r2_fails: true
+  child :InterruptChild, interrupt_after_map: true
+  root :InterruptRoot, InterruptChild
 end
 
 RSpec.describe "fan-out map inside a composed child" do
@@ -87,11 +91,18 @@ RSpec.describe "fan-out map inside a composed child" do
     end
 
     it "resumes the root once the child's interrupt after the map is continued" do
-      pending "an interrupt inside a composed child is unsupported on main, fan-out or not (Step 'c' fails with " \
-              "NoMethodError on InterruptResult); out of 009's scope"
-      found = run(MapComposeFanOutSpec::Root)
+      found = run(MapComposeFanOutSpec::InterruptRoot)
 
       expect(found.context.status.to_s).to eq("paused")
+      expect(found.context.composed_contexts[:c][:context].current_step).to eq(:approve)
+      expect(log).not_to include("run:child.c2")
+
+      MapComposeFanOutSpec::InterruptRoot.continue(id: found.context.context_id, payload: {}, step_name: %i[c approve])
+      drain
+
+      resumed = MapComposeFanOutSpec::InterruptRoot.find(found.context.context_id)
+      expect(resumed.context.status.to_s).to eq("completed")
+      expect(resumed.context.intermediate_results[:r2]).to eq("r2-value")
     end
 
     it "resumes the top-level root with the map two composes deep" do
@@ -163,6 +174,20 @@ RSpec.describe "fan-out map inside a composed child" do
         expect(element_undos.tally.values).to all(eq(1))
         expect(element_undos.size).to eq(8)
         %w[undo:child.c2 undo:child.c1 undo:r1].each { |event| expect(log.count(event)).to eq(1) }
+      end
+
+      it "undoes the elements, the child's earlier steps, then the root's, when undone while paused" do
+        id = MapComposeFanOutSpec::InterruptRoot.run(items).execution_id
+        drain
+        RollbackRecorder.reset!
+
+        MapComposeFanOutSpec::InterruptRoot.undo(id)
+        drain
+
+        expect(MapComposeFanOutSpec::InterruptRoot.find(id).context.status.to_s).to eq("cancelled")
+        expect(element_undos.tally.values).to all(eq(1))
+        expect(element_undos.size).to eq(8)
+        expect(log.last(2)).to eq(%w[undo:child.c1 undo:r1])
       end
 
       it "keeps a child step's undo failure recorded before the hand-off" do
