@@ -10,7 +10,7 @@ class RetryFalseAsyncReactor < RubyReactor::Reactor
   end
 end
 
-RSpec.describe "Retry interaction with success!/skip!/fail!/halt!" do
+RSpec.describe "Retry interaction with success!/skip!/fail!/halt!", type: :reactor do
   it "fail!(e) on a 3-attempt step retries 3 times then rolls back" do
     attempts = []
 

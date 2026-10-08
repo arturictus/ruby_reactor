@@ -7,7 +7,7 @@ require "spec_helper"
 #
 # Notices are deduplicated per file:line for the whole process, so every
 # example defines its reactor at its own line.
-RSpec.describe "Deprecation of reactor-declared step rules" do
+RSpec.describe "Deprecation of reactor-declared step rules", type: :reactor do
   def one_notice_matching(pattern)
     satisfy { |stderr| stderr.scan("[RubyReactor] DEPRECATION:").size == 1 && stderr.match?(pattern) }
   end

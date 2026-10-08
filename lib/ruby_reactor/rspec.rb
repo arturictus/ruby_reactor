@@ -21,15 +21,12 @@ module RubyReactor
     def self.configure(config)
       require_relative "rspec/step_executor_patch"
 
-      # `test_reactor` and the async-job helpers are only auto-included into
+      # Helpers, matchers and async-job helpers are only auto-included into
       # examples tagged `type: :reactor`, so a host app's other specs keep a
       # clean namespace. Specs that want them without the tag can
-      # `include RubyReactor::RSpec::Helpers` explicitly.
-      #
-      # Matchers stay unconditional: `::RSpec::Matchers.define` registers them
-      # globally at load time, so gating this include would not scope anything.
+      # `include RubyReactor::RSpec::Helpers` / `Matchers` explicitly.
       config.include RubyReactor::RSpec::Helpers, REACTOR_METADATA
-      config.include RubyReactor::RSpec::Matchers
+      config.include RubyReactor::RSpec::Matchers, REACTOR_METADATA
       config.include RubyReactor::RSpec::SidekiqHelpers, REACTOR_METADATA
 
       ::RubyReactor::Executor::StepExecutor.prepend(RubyReactor::RSpec::StepExecutorPatch)

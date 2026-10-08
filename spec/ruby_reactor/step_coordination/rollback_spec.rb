@@ -6,7 +6,7 @@ require "spec_helper"
 # semaphore (never rate limit, period, or the ordered lock), keyed from the
 # same arguments — closing the race where a concurrent forward execution
 # could enter the step's critical section while rollback undoes it.
-RSpec.describe "step-scoped coordination on rollback (compensate/undo)", :step_coordination do
+RSpec.describe "step-scoped coordination on rollback (compensate/undo)", :step_coordination, type: :reactor do
   around do |example|
     original = RubyReactor.configuration.middlewares
     example.run

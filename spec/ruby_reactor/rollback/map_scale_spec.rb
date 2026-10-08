@@ -59,7 +59,7 @@ module MapScaleSpec
   end
 end
 
-RSpec.describe "map rollback at scale", :slow do
+RSpec.describe "map rollback at scale", :slow, type: :reactor do
   let(:storage) { RubyReactor.configuration.storage_adapter }
 
   def run_and_measure(size)

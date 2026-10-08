@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe "Step input contract declaration" do
+RSpec.describe "Step input contract declaration", type: :reactor do
   let(:payload_schema) { Dry::Schema.Params { required(:payload).filled(:hash) } }
 
   def step_class(&body)

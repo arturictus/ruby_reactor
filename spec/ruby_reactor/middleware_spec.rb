@@ -68,7 +68,7 @@ class TestMiddlewareReactor < RubyReactor::Reactor
   returns :double_it
 end
 
-RSpec.describe "RubyReactor Middleware System" do
+RSpec.describe "RubyReactor Middleware System", type: :reactor do
   before do
     MiddlewareExecutionTracker.reset
     RubyReactor.configure do |config|

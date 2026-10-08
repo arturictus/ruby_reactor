@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe "Skipped step rollback interaction" do
+RSpec.describe "Skipped step rollback interaction", type: :reactor do
   it "undoes a preceding success but never touches a skipped step on a later failure" do
     undone = []
 

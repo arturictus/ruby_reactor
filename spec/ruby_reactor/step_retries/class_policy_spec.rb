@@ -4,7 +4,7 @@ require "spec_helper"
 
 # US2: a step class carries its own retry policy into any reactor that uses
 # it, with no retry wiring in the reactor (FR-001, FR-008, FR-011, FR-012).
-RSpec.describe "Step retries: a step class declares its own policy" do
+RSpec.describe "Step retries: a step class declares its own policy", type: :reactor do
   # A class step that fails its first `fail_times` attempts, then succeeds.
   def flaky_step(fail_times:, calls:, **retries_opts)
     Class.new(RubyReactor::Step) do

@@ -26,7 +26,7 @@ module RemovedDslSpec
   end
 end
 
-RSpec.describe "removed `where`/`guard` DSL" do
+RSpec.describe "removed `where`/`guard` DSL", type: :reactor do
   { step: :step, async_step: :async_step, interrupt: :interrupt }.each do |label, kind|
     %i[where guard].each do |keyword|
       it "rejects `#{keyword}` on #{label} at definition time" do

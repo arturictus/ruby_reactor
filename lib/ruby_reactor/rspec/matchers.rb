@@ -4,8 +4,10 @@ module RubyReactor
   module RSpec
     # rubocop:disable Metrics/ModuleLength
     module Matchers
+      extend ::RSpec::Matchers::DSL
+
       # rubocop:disable Metrics/BlockLength
-      ::RSpec::Matchers.define :be_success do
+      matcher :be_success do
         match do |subject|
           subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
           subject.success?
@@ -63,7 +65,7 @@ module RubyReactor
         end
       end
 
-      ::RSpec::Matchers.define :be_failure do
+      matcher :be_failure do
         match do |subject|
           subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
           subject.failure?
@@ -74,7 +76,7 @@ module RubyReactor
         end
       end
 
-      ::RSpec::Matchers.define :have_run_step do |step_name|
+      matcher :have_run_step do |step_name|
         match do |subject|
           subject.ensure_executed!
           @trace = subject.reactor_instance.context.execution_trace
@@ -127,7 +129,7 @@ module RubyReactor
         end
       end
 
-      ::RSpec::Matchers.define :have_retried_step do |step_name|
+      matcher :have_retried_step do |step_name|
         match do |subject|
           subject.ensure_executed!
           attempts = subject.reactor_instance.context.retry_context.attempts_for_step(step_name)
@@ -151,7 +153,7 @@ module RubyReactor
         end
       end
 
-      ::RSpec::Matchers.define :have_validation_error do |field|
+      matcher :have_validation_error do |field|
         match do |subject|
           subject.ensure_executed!
           return false unless subject.failure?
@@ -173,7 +175,7 @@ module RubyReactor
       end
 
       # Matcher to check if reactor is paused at an interrupt
-      ::RSpec::Matchers.define :be_paused do
+      matcher :be_paused do
         match do |subject|
           subject.ensure_executed!
           subject.paused?
@@ -190,7 +192,7 @@ module RubyReactor
 
       # A run whose rollback handed off at a fan-out map and has not finished
       # (009): its element rollback jobs are still pending.
-      ::RSpec::Matchers.define :be_rolling_back do
+      matcher :be_rolling_back do
         match do |subject|
           subject.ensure_executed!
           subject.rolling_back?
@@ -207,7 +209,7 @@ module RubyReactor
 
       # Matcher to check if reactor is paused at a specific interrupt step
       # Works with both single and multiple concurrent interrupts
-      ::RSpec::Matchers.define :be_paused_at do |*step_names|
+      matcher :be_paused_at do |*step_names|
         match do |subject|
           subject.ensure_executed!
           return false unless subject.paused?
@@ -238,7 +240,7 @@ module RubyReactor
       end
 
       # Matcher to check the exact set of ready interrupt steps
-      ::RSpec::Matchers.define :have_ready_interrupts do |*expected_steps|
+      matcher :have_ready_interrupts do |*expected_steps|
         match do |subject|
           subject.ensure_executed!
           return false unless subject.paused?
@@ -294,7 +296,7 @@ module RubyReactor
       #   expect(result).to be_halted
       #   expect(result).to be_halted.because(:period)
       #   expect(result).to be_halted.at_step(:second)
-      ::RSpec::Matchers.define :be_halted do
+      matcher :be_halted do
         match do |subject|
           subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
           actual = subject.respond_to?(:result) ? subject.result : subject
@@ -337,7 +339,7 @@ module RubyReactor
       # Examples:
       #   expect(result).to be_skipped
       #   expect(subject).to be_skipped.at_step(:maybe_sync)
-      ::RSpec::Matchers.define :be_skipped do
+      matcher :be_skipped do
         match do |subject|
           subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
           actual = subject.respond_to?(:result) ? subject.result : subject
@@ -384,7 +386,7 @@ module RubyReactor
       #
       #   expect("order:42").to be_locked
       #   expect("order:42").to be_locked.by("ctx-abc")
-      ::RSpec::Matchers.define :be_locked do
+      matcher :be_locked do
         match do |key|
           info = Matchers.coordination_adapter.lock_info("lock:#{key}")
           next false unless info
@@ -417,7 +419,7 @@ module RubyReactor
       # user-provided semaphore name (without the "semaphore:" prefix).
       #
       #   expect("api_limit").to have_available_tokens(3)
-      ::RSpec::Matchers.define :have_available_tokens do |expected|
+      matcher :have_available_tokens do |expected|
         match do |name|
           Matchers.coordination_adapter.semaphore_state(name)[:available] == expected
         end
@@ -432,7 +434,7 @@ module RubyReactor
       # Asserts the number of currently-checked-out semaphore tokens.
       #
       #   expect("api_limit").to have_held_tokens(2)
-      ::RSpec::Matchers.define :have_held_tokens do |expected|
+      matcher :have_held_tokens do |expected|
         match do |name|
           Matchers.coordination_adapter.semaphore_state(name)[:held] == expected
         end
@@ -451,7 +453,7 @@ module RubyReactor
       #
       #   expect("stripe:42").to have_rate_limit_count(3).for(:second)
       #   expect("stripe:42").to have_rate_limit_count(1).for(:minute).since(started_at)
-      ::RSpec::Matchers.define :have_rate_limit_count do |expected|
+      matcher :have_rate_limit_count do |expected|
         match do |key_base|
           raise ArgumentError, "have_rate_limit_count requires .for(period)" unless @period
 
@@ -475,7 +477,7 @@ module RubyReactor
       # Asserts that a `with_period` bucket has been marked. Use `.for(period)`.
       #
       #   expect("daily_report:7").to be_period_marked.for(:day)
-      ::RSpec::Matchers.define :be_period_marked do
+      matcher :be_period_marked do
         match do |key_base|
           raise ArgumentError, "be_period_marked requires .for(period)" unless @period
 
@@ -499,7 +501,7 @@ module RubyReactor
       # the user-provided ordered_lock key (without the `ordered_lock:` prefix).
       #
       #   expect("orders:42").to have_ordered_lock_next(3)
-      ::RSpec::Matchers.define :have_ordered_lock_next do |expected|
+      matcher :have_ordered_lock_next do |expected|
         match { |key| Matchers.coordination_adapter.ordered_lock_peek(key)[:next] == expected }
 
         failure_message do |key|
@@ -512,7 +514,7 @@ module RubyReactor
       # Asserts the last-advanced cursor for an ordered_lock key.
       #
       #   expect("orders:42").to have_ordered_lock_last_completed(2)
-      ::RSpec::Matchers.define :have_ordered_lock_last_completed do |expected|
+      matcher :have_ordered_lock_last_completed do |expected|
         match do |key|
           Matchers.coordination_adapter.ordered_lock_peek(key)[:last_completed] == expected
         end
@@ -528,7 +530,7 @@ module RubyReactor
       # Order-insensitive — the matcher sorts both sides.
       #
       #   expect("orders:42").to have_ordered_lock_in_flight(2, 3)
-      ::RSpec::Matchers.define :have_ordered_lock_in_flight do |*expected|
+      matcher :have_ordered_lock_in_flight do |*expected|
         match do |key|
           actual = Matchers.coordination_adapter.ordered_lock_peek(key)[:in_flight].sort
           actual == expected.flatten.map(&:to_i).sort
@@ -545,7 +547,7 @@ module RubyReactor
       # in-flight nonces. After a clean drain `peek` returns all zeros.
       #
       #   expect("orders:42").to be_ordered_lock_drained
-      ::RSpec::Matchers.define :be_ordered_lock_drained do
+      matcher :be_ordered_lock_drained do
         match do |key|
           state = Matchers.coordination_adapter.ordered_lock_peek(key)
           state[:next].zero? && state[:last_completed].zero? && state[:in_flight].empty?
@@ -568,7 +570,7 @@ module RubyReactor
       #
       #   expect(result).to have_contended_at(:charge)
       #   expect(result).to have_contended_at(:charge).on("acct:1")
-      ::RSpec::Matchers.define :have_contended_at do |step_name|
+      matcher :have_contended_at do |step_name|
         match do |subject|
           trace = execution_trace_for(subject)
           @entry = trace.find do |t|
@@ -613,7 +615,7 @@ module RubyReactor
       #   expect(result).to have_rollback_failure(:charge)
       #   expect(subject).to have_rollback_failure(:charge).for_key("acct:1").because(:coordination_unavailable)
       #   expect(subject).not_to have_rollback_failure(:charge)
-      ::RSpec::Matchers.define :have_rollback_failure do |step_name|
+      matcher :have_rollback_failure do |step_name|
         match do |subject|
           @entries = rollback_failures_for(subject)
           @entries.any? do |e|

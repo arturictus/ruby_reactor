@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe "have_rollback_failure matcher" do
+RSpec.describe "have_rollback_failure matcher", type: :reactor do
   let(:failure) do
     RubyReactor::Failure.new(
       "boom",

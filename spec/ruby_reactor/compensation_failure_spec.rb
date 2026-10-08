@@ -5,7 +5,7 @@ require "spec_helper"
 # A failing step's `compensate` that raises is a compensation failure, exactly
 # like one that returns a Failure: the rest of the rollback still runs, and the
 # reactor's Failure reports it.
-RSpec.describe "A compensation that fails" do
+RSpec.describe "A compensation that fails", type: :reactor do
   let(:undone) { [] }
 
   def reactor_with_compensate(&compensate_body)

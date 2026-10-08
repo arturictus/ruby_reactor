@@ -3,7 +3,7 @@
 require "spec_helper"
 require_relative "../../examples/locking_reactors"
 
-RSpec.describe "Locking Integration" do
+RSpec.describe "Locking Integration", type: :reactor do
   # `redis` + `flushdb` come from spec_helper's RedisHelpers + global `before`.
 
   describe "Exclusive Locks" do

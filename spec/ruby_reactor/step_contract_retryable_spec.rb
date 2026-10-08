@@ -10,7 +10,7 @@ require "spec_helper"
 # so `RubyReactor::Failure`'s default (`error.respond_to?(:retryable?) ?
 # error.retryable? : true`) resolves to `true` in both cases, because
 # `Error::InputValidationError` has no `retryable?` method yet.
-RSpec.describe "Input-validation failures are non-retryable" do
+RSpec.describe "Input-validation failures are non-retryable", type: :reactor do
   before do
     stub_const("ViolatingStep", Class.new(RubyReactor::Step) do
       input :n, :integer

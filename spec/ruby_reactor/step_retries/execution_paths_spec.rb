@@ -68,7 +68,7 @@ class StepRetriesPathsInterruptReactor < RubyReactor::Reactor
   returns :charge
 end
 
-RSpec.describe "Step retries: the class policy on every execution path" do
+RSpec.describe "Step retries: the class policy on every execution path", type: :reactor do
   def drain
     RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs
   end

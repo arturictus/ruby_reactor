@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe RubyReactor::Storage::RedisOrderedLocking do
+RSpec.describe RubyReactor::Storage::RedisOrderedLocking, type: :reactor do
   let(:adapter) { RubyReactor.configuration.storage_adapter }
   let(:key) { "test_key" }
 

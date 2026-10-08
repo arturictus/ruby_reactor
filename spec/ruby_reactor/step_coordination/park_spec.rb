@@ -7,7 +7,7 @@ require "spec_helper"
 # background-result wait inside a composed child parks instead of failing the
 # parent. Every park is driven through the real `Worker#perform`, one job at a
 # time (`Sidekiq::Testing.fake!`).
-RSpec.describe "parks at any depth", :step_coordination do
+RSpec.describe "parks at any depth", :step_coordination, type: :reactor do
   let(:run_id) { step_coord_run_id }
   let(:account_id) { SecureRandom.random_number(10**9) }
   let(:worker_class) { RubyReactor::Adapters::Sidekiq::Worker }

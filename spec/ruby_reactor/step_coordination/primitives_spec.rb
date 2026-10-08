@@ -5,7 +5,7 @@ require "spec_helper"
 # US5: semaphore, rate limit, and period (dedup) at step level, in the fixed
 # order of contract §3. The step-level ordered lock is Phase 11 (T058+),
 # added as a later section of this same file.
-RSpec.describe "step-scoped semaphore, rate limit, and period", :step_coordination do
+RSpec.describe "step-scoped semaphore, rate limit, and period", :step_coordination, type: :reactor do
   def unique_id
     SecureRandom.random_number(10**9)
   end

@@ -4,7 +4,7 @@ require "spec_helper"
 
 # US3: a whole nested reactor dispatched to run independently — linked to the
 # parent for traceability, deliberately outside its compensation graph.
-RSpec.describe "`async_reactor`" do
+RSpec.describe "`async_reactor`", type: :reactor do
   before { AsyncReactorFixtures.reset! }
 
   def drain

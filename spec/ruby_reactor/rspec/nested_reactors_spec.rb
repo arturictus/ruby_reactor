@@ -4,7 +4,7 @@ require "spec_helper"
 require "support/map_mock_test_reactor"
 require "support/nested_inline_reactors"
 
-RSpec.describe "Nested Reactor Helpers" do
+RSpec.describe "Nested Reactor Helpers", type: :reactor do
   include RubyReactor::RSpec::Helpers
 
   # Using existing reactors defined in spec/support/nested_inline_reactors.rb

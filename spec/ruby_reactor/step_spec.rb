@@ -5,7 +5,7 @@ require "spec_helper"
 # The lifecycle contract for RubyReactor::Step as a base class, per
 # data-model.md and contracts/step-lifecycle.md. This file cannot load while
 # RubyReactor::Step is still a mixin module (T004 makes it a class).
-RSpec.describe RubyReactor::Step do
+RSpec.describe RubyReactor::Step, type: :reactor do
   let(:context) { RubyReactor::Context.new({}) }
 
   describe "authoring and invocation (scenario a)" do

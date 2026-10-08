@@ -4,7 +4,7 @@ require "spec_helper"
 
 # US1: `retry_defaults` is gone. A step with no `retries` anywhere runs once,
 # and nothing reads a reactor-level default.
-RSpec.describe "Step retries: reactor-wide retry_defaults removed" do
+RSpec.describe "Step retries: reactor-wide retry_defaults removed", type: :reactor do
   it "runs a failing step without `retries` exactly once" do
     reactor_class = Class.new(RubyReactor::Reactor) do
       step :x do
