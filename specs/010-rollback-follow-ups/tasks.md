@@ -926,27 +926,27 @@ applied by the lock owner (R-05, R-06, R-08, P-4).
   `spec/ruby_reactor/interrupts/contended_resume_spec.rb` (`resume.deferred`),
   `spec/ruby_reactor/worker_snooze_admitted_spec.rb` (`resume.waiting`) and
   `spec/map/map_undo_all_spec.rb` (`undo_all.*`) if not already covered.
-- [ ] T071 Run `bundle exec rubocop` and fix offences. No `--disable-pending-cops`.
-- [ ] T072 Run the full gem suite, `bundle exec rspec`, alone on the test Redis. Compare with T002:
+- [X] T071 Run `bundle exec rubocop` and fix offences. No `--disable-pending-cops`.
+- [X] T072 Run the full gem suite, `bundle exec rspec`, alone on the test Redis. Compare with T002:
   no new failures. Pending examples are allowed only for the documented `future_improvements`
   items.
-- [ ] T073 Run the `:slow` and `:fork` tags explicitly:
+- [X] T073 Run the `:slow` and `:fork` tags explicitly:
   `bundle exec rspec --tag slow spec/map/map_undo_all_spec.rb` and
   `bundle exec rspec --tag fork spec/ruby_reactor/caller_process_liveness_spec.rb`.
-- [ ] T074 [P] GUI: run `cd gui && npm run lint && npm test -- --run`. Confirm that the committed
+- [X] T074 [P] GUI: run `cd gui && npm run lint && npm test -- --run`. Confirm that the committed
   bundle in `lib/ruby_reactor/web/public/` matches a fresh `npm run build`.
-- [ ] T075 Demo specs, locally:
+- [X] T075 Demo specs, locally:
   `cd demo_app && REDIS_URL=redis://localhost:6780/5 RAILS_ENV=test bundle exec rspec spec/reactors/{bulk_refund,contended_approval,dual_approval}_demo_reactor_spec.rb`,
   and `REDIS_URL=redis://localhost:6780/5 bin/rails demo:rollback_follow_ups`.
-- [ ] T076 Docker acceptance (Constitution VI.4), using an isolated compose project because the
+- [X] T076 Docker acceptance (Constitution VI.4), using an isolated compose project because the
   container names are fixed:
   `docker compose -p rr_rollback_follow_ups -f docker-compose.yml -f <override with unique container_name and ports: !reset []> up -d --build demo-redis demo-sidekiq`,
   then `run --rm --no-deps demo-app bash -c "bin/rails db:prepare && bin/rails demo:rollback_follow_ups"`.
   Check the printed outcomes against quickstart §9, then tear the project down. Ask before
   touching another worktree's containers.
-- [ ] T077 Walk through quickstart.md §1–§9 and tick each row. Fix any drift in the quickstart
+- [X] T077 Walk through quickstart.md §1–§9 and tick each row. Fix any drift in the quickstart
   itself.
-- [ ] T078 Fill in `specs/010-rollback-follow-ups/pr-description.md`: the summary per story, the
+- [X] T078 Fill in `specs/010-rollback-follow-ups/pr-description.md`: the summary per story, the
   migration notes (R-16), the regression proof from T018, the T002 and T072 counts, and the
   Docker run output.
 

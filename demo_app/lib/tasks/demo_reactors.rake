@@ -1142,7 +1142,7 @@ namespace :demo do
     held.release
     puts "   lock released"
 
-    final = await_terminal(ContendedApprovalDemoReactor, id, timeout: 30)
+    final = await_terminal(ContendedApprovalDemoReactor, id)
     approve = ContendedApprovalDemoReactor.find(id).context.get_result(:approve)
     puts "   final: #{final}, approve result: #{approve.inspect}"
     if result.is_a?(RubyReactor::DispatchResult) && final == "completed"
@@ -1167,7 +1167,7 @@ namespace :demo do
     legal = DualApprovalDemoReactor.continue(id: id, payload: { approved: true }, step_name: :legal)
     puts "   legal accepted while running: #{legal.class.name.split("::").last}"
 
-    final = await_terminal(DualApprovalDemoReactor, id, timeout: 30)
+    final = await_terminal(DualApprovalDemoReactor, id)
     result = DualApprovalDemoReactor.find(id).context.get_result(:approve_all)
     puts "   final: #{final}, approve_all: #{result.inspect}"
     if final == "completed" && result == { finance: true, legal: true }
@@ -1184,7 +1184,7 @@ namespace :demo do
     BulkRefundDemoReactor.reset!
     dispatch = BulkRefundDemoReactor.run(count: 12, fail_settle: true)
     id = dispatch.execution_id
-    status = await_terminal(BulkRefundDemoReactor, id, timeout: 60)
+    status = await_terminal(BulkRefundDemoReactor, id)
     bulk = BulkRefundDemoReactor.log(:bulk_refunds)
     singles = BulkRefundDemoReactor.log(:single_refunds)
     charges = bulk.first.to_s.split(",")

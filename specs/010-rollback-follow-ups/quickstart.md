@@ -22,8 +22,8 @@ bundle exec rspec spec/ruby_reactor/sweeper_spec.rb
 | Scenario | Observable outcome |
 | --- | --- |
 | Synchronous run blocked in a step (latch), `Sweeper.run_once` called meanwhile | Returns 0 for that run, `be_locked` on `async:<id>`, and the step's counter is 1 after the latch opens |
-| Same, `context_lock_ttl = 1`, the step blocks 3s, sweeping every 0.5s | Never re-enqueued (the auto-extender renews the lock) |
-| A forked child runs the reactor, and is `SIGKILL`ed mid-step | Within `context_lock_ttl + 1s`, `Sweeper.run_once` re-enqueues it once (spec tagged `:fork`) |
+| Same, `context_lock_ttl = 2` (the lock extends at most once a second), the step blocks 4s, sweeping every 0.5s | Never re-enqueued (the auto-extender renews the lock) |
+| A forked child runs the reactor, and is `SIGKILL`ed mid-step | Once its lock lapses (`context_lock_ttl = 2`), `Sweeper.run_once` re-enqueues it once (spec tagged `:fork`) |
 | Synchronous run hands off at a fan-out map and returns | Swept as before (lock released after the final save) |
 
 ## 2. US2: no lost progress from the caller's last save (P1)
@@ -88,12 +88,12 @@ bundle exec rspec spec/ruby_reactor/multiple_interrupts_spec.rb   # existing, un
 ## 6. US6: manual undo finishes a cut-off `compensate` (P2)
 
 ```bash
-bundle exec rspec spec/ruby_reactor/rollback/aborted_execution_spec.rb   # extended
+bundle exec rspec spec/ruby_reactor/rollback/aborted_compensate_spec.rb
 ```
 
 | Scenario | Observable outcome |
 | --- | --- |
-| Step X fails; X's `compensate` raises `SignalException` part-way (caller process) | The run is `aborted`, and `rollback` carries `step: X`, `compensated: false` and the arguments; the API shows `pending_compensation` |
+| Step X fails; X's `compensate` raises `Interrupt` part-way (caller process) | The run is `aborted`, and `rollback` carries `step: X`, `compensated: false` and the arguments; the API shows `pending_compensation` |
 | `Reactor.undo(id)` | X's `compensate` runs again with the same arguments and a `RecordedFailure` reason (or the original string), before every undo; `cancelled` |
 | Interruption after X's `compensate` returned (during the undo stack) | Manual undo does not re-run `compensate`, and replays only the remaining entries |
 | Re-run `compensate` returns `Failure` | A `:failed_compensation` event and trace entry; the undo stack is still replayed |

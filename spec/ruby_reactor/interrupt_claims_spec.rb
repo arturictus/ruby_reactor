@@ -66,6 +66,17 @@ RSpec.describe RubyReactor::InterruptClaims do
   end
 
   describe "applied by the lock owner" do
+    # The claim's copy goes through serialization; the process that owns the
+    # run hands its step the caller's payload exactly as given, as before 010.
+    it "gives an inline resume's step the caller's payload as given, string keys included" do
+      context = paused_dual.context
+
+      result = klass.continue(id: context.context_id, payload: { "a" => 1 }, step_name: :a)
+
+      expect(result).to be_a(RubyReactor::InterruptResult) # paused at :b
+      expect(result.intermediate_results[:after_a]).to eq("a" => 1)
+    end
+
     it "lets a Worker resume a paused run that has a claim, applying it at resume start" do
       context = paused_dual.context
       described_class.claim!(context, :b, { ok: true })

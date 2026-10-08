@@ -186,7 +186,7 @@ module RubyReactor
 
       raise_already_resumed(path) unless InterruptClaims.claim!(@context, path, payload)
 
-      resume_claimed(path, step_config)
+      resume_claimed(path, step_config, payload)
     rescue Error::InputValidationError => e
       # This might catch other validations, but here we specifically want payload validation.
       # The block above handles payload validation explicitly.
@@ -308,12 +308,19 @@ module RubyReactor
     # Worker and never runs it here. The lock is released before any hand-off
     # enqueues, so the Worker never waits on it; a crash in between leaves a
     # `running` run the sweeper recovers.
-    def resume_claimed(path, step_config)
+    def resume_claimed(path, step_config, payload)
       lock = @context.status.to_s == "paused" ? try_run_lock : :contended
       return hand_off_resume(path, reason: :run_busy) if lock == :contended
 
       begin
         reload_for_resume!
+        # This process owns the run: apply the caller's payload as given, as
+        # an inline resume always did (the claim's copy went through
+        # serialization). Other claims are applied from storage at resume.
+        if @context.status.to_s == "paused"
+          path[0...-1].reduce(@context) { |context, name| paused_child(context, name) }
+              &.set_result(path.last, payload)
+        end
         if @context.status.to_s != "paused"
           reason = :run_busy
         elsif background_resume?(step_config)
