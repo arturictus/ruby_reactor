@@ -286,6 +286,44 @@ module RubyReactor
         @redis.hlen(key)
       end
 
+      # Result slots at `indexes`, aligned with them: nil where a slot is
+      # missing (expired), else the stored value, JSON-parsed (010 R-13).
+      def retrieve_map_result_slots(map_id, reactor_class_name, indexes)
+        return [] if indexes.empty?
+
+        @redis.hmget(map_results_key(map_id, reactor_class_name), *indexes.map(&:to_s)).map do |raw|
+          raw && JSON.parse(raw)
+        end
+      end
+
+      # A resume's claim on one interrupt (010 DM §2): the first `SET NX` wins,
+      # and the value holds the payload until the run's lock owner applies it.
+      # Never deleted; it expires with the run and stays the dedupe marker.
+      def claim_interrupt_resume(context_id, reactor_class_name, step_name, serialized_payload) # rubocop:disable Naming/PredicateMethod
+        !!@redis.set(interrupt_resume_key(context_id, reactor_class_name, step_name), serialized_payload,
+                     nx: true, ex: durability_ttl)
+      end
+
+      # `{ "step" => serialized_payload }` for the claimed ones among `step_names`.
+      def retrieve_interrupt_resumes(context_id, reactor_class_name, step_names)
+        names = Array(step_names).map(&:to_s)
+        return {} if names.empty?
+
+        values = @redis.mget(*names.map { |name| interrupt_resume_key(context_id, reactor_class_name, name) })
+        names.zip(values).to_h.compact
+      end
+
+      # Invalid resume payloads counted per interrupt (010 DM §3), kept out of
+      # the context blob so counting never writes the run.
+      def increment_interrupt_attempts(context_id, reactor_class_name, step_name)
+        key = "#{context_key(context_id, reactor_class_name)}:resume_attempts:#{step_name}"
+        count, = @redis.multi do |tx|
+          tx.incr(key)
+          tx.expire(key, durability_ttl)
+        end
+        count
+      end
+
       private
 
       # Single source of truth for the retention window of all durability-bearing
@@ -295,6 +333,10 @@ module RubyReactor
       # map results mid-flight and break recovery. Re-stamped on every write.
       def durability_ttl
         RubyReactor.configuration.context_ttl
+      end
+
+      def interrupt_resume_key(context_id, reactor_class_name, step_name)
+        "#{context_key(context_id, reactor_class_name)}:resume:#{step_name}"
       end
 
       def context_key(context_id, reactor_class_name)

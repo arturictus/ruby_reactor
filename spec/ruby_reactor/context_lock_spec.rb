@@ -89,4 +89,20 @@ RSpec.describe "Per-context liveness lock" do
 
     expect(redis.exists?("lock:async:#{context.context_id}")).to be false
   end
+
+  # 010 R-03: a Worker or `continue` that already holds the lock hands its
+  # owner to the executor, which re-enters instead of contending.
+  it "re-enters a lock its outer holder passed in, and leaves it to that holder to release" do
+    context = resumable_context
+    outer = hold_async_lock(context.context_id, owner: "outer")
+
+    executor = RubyReactor::Executor.new(CtxLockReactor, {}, context)
+    executor.context_lock_owner = "outer"
+    executor.resume_execution
+
+    expect(CtxLockReactor.runs).to eq(1)
+    expect(storage.lock_held?("async:#{context.context_id}")).to be true
+    outer.release
+    expect(storage.lock_held?("async:#{context.context_id}")).to be false
+  end
 end

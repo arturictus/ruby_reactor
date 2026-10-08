@@ -36,8 +36,11 @@ RSpec.describe "Interrupt Compensation and Undo" do
         stored = RubyReactor::Configuration.instance.storage_adapter.retrieve_context(execution_id, reactor_class.name)
         expect(stored).not_to be_nil
         context = RubyReactor::Context.deserialize_from_retry(stored)
-        # Verify attempt count increased
-        expect(context.private_data[:interrupt_attempts][:wait_for_input]).to eq(1)
+        expect(context.status.to_s).to eq("paused")
+        # The attempt is counted in its own record, never in the run (010 R-08)
+        expect(context.private_data).not_to have_key(:interrupt_attempts)
+        expect(redis.get("reactor:#{reactor_class.name}:context:#{execution_id}:resume_attempts:wait_for_input"))
+          .to eq("1")
       end
 
       it "resumes successfully on valid payload" do

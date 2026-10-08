@@ -595,7 +595,12 @@ any background job is enqueued the root context is persisted, and after every
 completed step a checkpoint advances the stored blob — so a crash re-runs at most
 one step, never the whole reactor. Each running reactor also holds a short
 **liveness lock** that a live worker auto-extends; its absence is how a dead
-worker is detected.
+worker is detected. A run executing in the caller's process (a synchronous
+`Reactor.run`, an inline `continue`) holds the same lock while it executes, so a
+sweep never runs it a second time, however long a step takes; if that process is
+killed, the lock lapses within `context_lock_ttl` and the run is recovered like a
+worker's. A worker takes the run's lock before it reads the run, so it always
+resumes from the last save of whoever held it.
 
 **Recovery is not automatic until you start the sweeper.** A crashed worker's
 reactor only resumes when the recovery sweeper notices the lapsed liveness lock
@@ -707,6 +712,12 @@ ApprovalReactor.continue_by_correlation_id(
 An interrupt inside a `compose`d child pauses the top-level run; resume it there by the step path,
 e.g. `step_name: [:approval, :wait_for_manager]`. See
 [Interrupts inside composed reactors](documentation/interrupts.md#interrupts-inside-composed-reactors).
+`continue` validates the payload in the calling process first: an invalid one is answered with its
+validation failure and nothing is stored. A valid one claims its interrupt, so of two resumes of the
+same interrupt exactly one is accepted (the other raises "already resumed"). When the run is busy,
+another interrupt's resume is still running, or the reactor's `with_lock`/`with_semaphore` is held,
+the accepted resume is handed to a worker and `continue` returns a `DispatchResult` instead of
+raising, so a webhook's resume is never lost. See [Resuming Execution](documentation/interrupts.md#resuming-execution).
 
 ### Locks, Semaphores & Ordered Locks
 
@@ -717,6 +728,8 @@ Coordinate across processes with Redis-backed primitives:
 - **`with_rate_limit`** — fixed-window rate limit, single or multi-window ("3/sec AND 100/min"). Inline per-reactor, or reference a named limit registered once in `RubyReactor.configure` and shared across reactors.
 - **`with_period`** — run at most once per calendar bucket (dedup / once-per-day, once-per-month, etc).
 - **`with_ordered_lock`** — strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Workers can only proceed when their nonce equals `last_completed + 1`.
+
+An interrupt's resume that meets the reactor's held lock or semaphore is accepted and deferred to a worker, which waits for it (`continue` returns a `DispatchResult`); a run already admitted is never failed by the snooze limit for waiting.
 
 ```ruby
 class RefundOrderReactor < RubyReactor::Reactor
@@ -903,8 +916,8 @@ A `fan_out` map is a **hand-off point**: the reactor stops at the map (the calle
 
 By using `fan_out` with `batch_size`, the system applies **Back Pressure** to efficiently manage resources. [Read more about Back Pressure & Resource Management](documentation/data_pipelines.md#back-pressure--resource-management).
 
-**Rollback.** A map rolls back like a composed reactor, with no map-level rollback DSL: the `undo`s
-already declared on the element reactor's steps are each element's rollback. When the map fails
+**Rollback.** A map rolls back like a composed reactor: the `undo`s already declared on the element
+reactor's steps are each element's rollback, unless the map declares `undo_all` (below). When the map fails
 (an element fails in an `atomic` map, the default, or `collect` raises), and when a later step fails or the run is
 undone manually, every element that completed is rolled back, newest-started first, and the run ends
 with the same `Failure` in inline and fan-out mode alike. A map rolls back the way it ran: an inline
@@ -914,6 +927,28 @@ element reports, the run is `rolling_back`, and only then are the steps before t
 failing atomic fan-out map lets elements already in flight finish before it reports the failure. Make
 element `undo`s idempotent: one cut off by a killed worker runs again. See
 [Rollback](documentation/data_pipelines.md#rollback).
+
+**One bulk undo.** When an API can roll back many elements in one call (a bulk refund), declare
+`undo_all` on the map. Every rollback of the map then calls it **once** with the completed elements'
+results, instead of replaying each element's undos:
+
+```ruby
+map :charges, ChargeReactor do
+  source input(:payments)
+  argument :payment, element(:charges)
+  fan_out batch_size: 100
+
+  # A lazy Enumerable of the completed elements' results, in index order.
+  undo_all do |charges|
+    Payments.bulk_refund(charges.map { |charge| charge[:id] }.to_a)
+  end
+end
+```
+
+A fan-out map dispatches no element rollback jobs for it, and nothing holds every result at once.
+Failed elements still roll themselves back; a block that raises or returns a `Failure` is reported as
+one rollback failure (`kind: :undo_all`), and the steps before the map are still undone. See
+[`undo_all`](documentation/data_pipelines.md#undo_all-one-bulk-rollback).
 
 `batch_size` is optional: with `fan_out` alone, no throw enqueues more than 50 element jobs (`RubyReactor::Map::DEFAULT_BATCH_SIZE`), forward and rollback, and the outcomes are aggregated into a `ResultEnumerator`. Set `batch_size` to change the throw size. See [`fan_out` Without `batch_size`](documentation/data_pipelines.md#fan_out-without-batch_size).
 

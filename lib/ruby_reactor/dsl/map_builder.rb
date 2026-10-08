@@ -84,6 +84,19 @@ module RubyReactor
         @collect_block = block
       end
 
+      # One call that rolls back every completed element (010 US7), instead of
+      # replaying each element's own undos: a bulk refund, a batch delete. The
+      # block gets a lazy Enumerable of the completed elements' results, in
+      # index order, on every rollback of the map.
+      def undo_all(&block)
+        raise RubyReactor::Error::ValidationError.new("map :#{@name} undo_all needs a block", step: @name) unless block
+        if @undo_all_block
+          raise RubyReactor::Error::ValidationError.new("map :#{@name} declares undo_all twice", step: @name)
+        end
+
+        @undo_all_block = block
+      end
+
       # On (the default), the map succeeds only if every element does: the
       # first element failure fails it, no new element starts, and every
       # completed element is rolled back. Off, it completes with every
@@ -144,7 +157,8 @@ module RubyReactor
             batch_size: { source: RubyReactor::Template::Value.new(@batch_size) },
             collect_block: { source: RubyReactor::Template::Value.new(@collect_block) },
             atomic: { source: RubyReactor::Template::Value.new(@atomic) },
-            fan_out: { source: RubyReactor::Template::Value.new(@fan_out) }
+            fan_out: { source: RubyReactor::Template::Value.new(@fan_out) },
+            **undo_all_argument
           },
           run_block: nil,
           compensate_block: nil,
@@ -153,6 +167,11 @@ module RubyReactor
           args_validator: nil,
           output_validator: nil
         }
+      end
+
+      # Read at rollback from this declaration (`MapStep#undo_all_block`).
+      def undo_all_argument
+        @undo_all_block ? { undo_all_block: { source: RubyReactor::Template::Value.new(@undo_all_block) } } : {}
       end
 
       def extract_dependencies_from_mappings

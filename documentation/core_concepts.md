@@ -342,7 +342,10 @@ One rule decides what a failure rolls back, for every construct:
    an interruption (a signal such as `Interrupt`, `SystemExit`, `NoMemoryError`, an enclosing
    `Timeout.timeout`) runs no rollback. A run in the caller's process is then stored `aborted`
    with the steps not yet undone, and `Reactor.undo(id)` rolls it back later; a run in a worker
-   is redelivered.
+   is redelivered. If the interruption cut off the failing step's own `compensate`, the aborted
+   run records it, and `Reactor.undo(id)` runs that `compensate` again (same arguments and
+   reason) before the undo stack, at any nesting depth, so a `compensate` must be safe to run
+   twice.
 7. A nested reactor (`compose`, `async_reactor`) is never retried as a whole. Only steps retry.
 
 Each construct says what compensate and undo mean for itself:
@@ -351,7 +354,7 @@ Each construct says what compensate and undo mean for itself:
 | --- | --- | --- |
 | `step` | its `compensate` (inline block, else the step class's, else skipped) | its `undo` (same order) |
 | `compose` | the child already rolled itself back, so nothing is left to do | replay the child's completed steps' `undo`s, newest first |
-| `map` (inline and `fan_out`) | roll back every **completed** element (its steps' `undo`s), newest-started first; the failed element already rolled itself back. A `fan_out` map does it with one job per started element, `batch_size` per throw, and the run is `rolling_back` until they all report | the same, for every completed element |
+| `map` (inline and `fan_out`) | roll back every **completed** element (its steps' `undo`s), newest-started first; the failed element already rolled itself back. A `fan_out` map does it with one job per started element, `batch_size` per throw, and the run is `rolling_back` until they all report. A map declaring `undo_all` instead calls that block once with the completed elements' results | the same, for every completed element |
 | `async_step` | not tracked by the parent; the **unit** compensates itself once, in its own job, after its final attempt fails | none: an inline `undo` is rejected at definition time |
 | `async_reactor` | not tracked by the parent; the child rolls itself back | none |
 

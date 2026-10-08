@@ -81,6 +81,8 @@ module RubyReactor
                 ),
                 error: data[:failure_reason]
               }
+              pending = self.class.pending_compensation(api_status, data[:rollback])
+              response_data[:pending_compensation] = pending if pending
 
               ContextSerializer.simplify_for_api(response_data)
             end
@@ -152,6 +154,9 @@ module RubyReactor
                 if result.is_a?(RubyReactor::Failure)
                   response.status = 422
                   { error: result.error }
+                elsif result.is_a?(RubyReactor::DispatchResult)
+                  # Accepted and handed to a worker (010 FR-009, FR-019).
+                  { success: true, message: "Resume accepted" }
                 else
                   { success: true, message: "Reactor resumed" }
                 end
@@ -162,6 +167,18 @@ module RubyReactor
             end
           end
         end
+      end
+
+      # An aborted run whose failing step's `compensate` an interruption cut
+      # off (010 R-11): a manual undo runs it again first.
+      def self.pending_compensation(status, rollback)
+        return unless status == "aborted" && rollback.is_a?(Hash)
+
+        fetch = ->(key) { Utils::FetchIndifferent.call(rollback, key) }
+        return unless rollback.key?("arguments") || rollback.key?(:arguments)
+        return unless fetch.call(:compensated) == false
+
+        { step: fetch.call(:step).to_s }
       end
 
       def self.scan_limit(raw)

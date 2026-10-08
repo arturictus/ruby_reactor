@@ -60,7 +60,9 @@ RSpec.describe "resuming a reactor that is not paused (FR-032)", type: :reactor 
     result = ResumeGuardSpec::CompensatingResume.continue(id: id, payload: { ok: true }, step_name: :approval)
 
     expect(result).to be_failure
-    expect(ResumeGuardSpec.attempts).to contain_exactly(/Cannot resume.*running.*not paused/)
+    # The run is `running` while it compensates; its interrupt already has a
+    # result and a claim, so the resume is rejected as already resumed (010 FR-020).
+    expect(ResumeGuardSpec.attempts).to contain_exactly(/Cannot resume: interrupt :approval was already resumed/)
     expect(RollbackRecorder.log).to eq(%w[run:a run:c compensate:c undo:a])
   end
 
@@ -75,25 +77,30 @@ RSpec.describe "resuming a reactor that is not paused (FR-032)", type: :reactor 
     end.to raise_error(RubyReactor::Error::ValidationError, /aborted.*not paused/)
   end
 
-  # Contention on the resume is the caller's to retry (locks_and_semaphores.md,
-  # "Inline vs background behavior on contention"): the run stays paused.
+  # 010 US3 (FR-009): a valid resume contended on the reactor's lock or
+  # semaphore is accepted and handed to a worker, which waits for the holder.
   {
-    "reactor lock" => [ResumeGuardSpec::LockedApproval, RubyReactor::Lock::AcquisitionError,
+    "reactor lock" => [ResumeGuardSpec::LockedApproval,
                        -> { RubyReactor::Lock.new("resume-guard:locked", owner: "another-run", auto_extend: false) }],
-    "reactor semaphore" => [ResumeGuardSpec::SemaphoredApproval, RubyReactor::Semaphore::AcquisitionError,
+    "reactor semaphore" => [ResumeGuardSpec::SemaphoredApproval,
                             -> { RubyReactor::Semaphore.new("resume-guard:semaphore", limit: 1) }]
-  }.each do |primitive, (reactor_class, contention_error, holder)|
-    it "leaves the run paused when its resume is contended on the #{primitive}, so it can be retried" do
+  }.each do |primitive, (reactor_class, holder)|
+    it "defers a resume contended on the #{primitive} to a worker, which finishes it once released" do
+      Sidekiq::Worker.clear_all
       id = pause(reactor_class)
       held = holder.call
       held.acquire
 
+      result = reactor_class.continue(id: id, payload: { ok: true }, step_name: :approval)
+
+      expect(result).to be_a(RubyReactor::DispatchResult)
+      expect(reactor_class.find(id).context.status.to_s).to eq("running")
       expect { reactor_class.continue(id: id, payload: { ok: true }, step_name: :approval) }
-        .to raise_error(contention_error)
-      expect(reactor_class.find(id).context.status.to_s).to eq("paused")
+        .to raise_error(RubyReactor::Error::ValidationError, /already resumed|running/)
 
       held.release
-      expect(reactor_class.continue(id: id, payload: { ok: true }, step_name: :approval)).to be_success
+      RubyReactor::RSpec::AsyncTestHelpers.drain_async_jobs
+      expect(reactor_class.find(id).context.status.to_s).to eq("completed")
       expect(RollbackRecorder.log).to eq(%w[run:a run:c])
     end
   end

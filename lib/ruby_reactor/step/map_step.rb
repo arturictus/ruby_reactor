@@ -19,6 +19,7 @@ module RubyReactor
       input :collect_block, optional: true
       input :atomic, optional: true
       input :fan_out, optional: true
+      input :undo_all_block, optional: true
 
       def run
         # Initialize map state in context if not present
@@ -46,9 +47,14 @@ module RubyReactor
       # A map rolls back where it ran (009 R-01): a fan-out map one job per
       # started element, `batch_size` per throw, handing the run off until
       # they all report; an inline map in process, 100 elements per read.
+      #
+      # A map declaring `undo_all` rolls its completed elements back with one
+      # call to that block instead (010 R-13).
       def compensate
         step_name = context.current_step
         map_id = "#{context.context_id}:#{step_name}"
+        return bulk_rollback(map_id, step_name, undo_all_block) if undo_all_block
+
         dispatched_map_id(step_name) ? distributed_rollback(map_id, step_name) : inline_rollback(map_id, step_name)
       end
 
@@ -113,6 +119,12 @@ module RubyReactor
       # which a fan-out map leaves empty (R-03).
       def element_class
         context.reactor_class.steps[context.current_step].arguments[:mapped_reactor_class][:source].value
+      end
+
+      # The `undo_all` block, from the same static declaration (009 R-14): the
+      # undo record carries no arguments.
+      def undo_all_block
+        context.reactor_class.steps[context.current_step].arguments[:undo_all_block]&.dig(:source)&.value
       end
 
       # Fans out anywhere except inside a map element: an element's result and

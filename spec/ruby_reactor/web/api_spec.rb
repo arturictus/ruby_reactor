@@ -240,6 +240,42 @@ RSpec.describe RubyReactor::Web::API, type: :request do
   # The dashboard must stay current with the reactor state model. The
   # fire-and-forget model makes this load-bearing rather than cosmetic — a
   # dispatched unit's outcome may have no other surface in the parent at all.
+  describe "POST /reactors/:id/continue" do
+    def pause_locked_approval
+      reactor = ResumeFixtures::LockedApproval.new
+      reactor.run({})
+      reactor.context.context_id
+    end
+
+    # 010 FR-009: a contended resume is accepted, not an error.
+    it "answers 'Resume accepted' when the resume is handed to a worker" do
+      id = pause_locked_approval
+      held = RubyReactor::Lock.new("resume-fx:locked", owner: "another-run", ttl: 30, auto_extend: false)
+      held.acquire
+
+      post "/reactors/#{id}/continue", JSON.generate(payload: { ok: true }, step_name: "approval")
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)).to eq("success" => true, "message" => "Resume accepted")
+    ensure
+      held&.release
+    end
+
+    it "answers 422 when the interrupt was already resumed" do
+      id = pause_locked_approval
+      held = RubyReactor::Lock.new("resume-fx:locked", owner: "another-run", ttl: 30, auto_extend: false)
+      held.acquire
+      post "/reactors/#{id}/continue", JSON.generate(payload: { ok: true }, step_name: "approval")
+
+      post "/reactors/#{id}/continue", JSON.generate(payload: { ok: true }, step_name: "approval")
+
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)["error"]).to match(/already resumed|running/)
+    ensure
+      held&.release
+    end
+  end
+
   describe "the new async step types" do
     it "identifies an async_step" do
       expect(described_class.determine_step_type(AsyncStepSiblingReactor.steps[:send_email]))

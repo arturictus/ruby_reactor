@@ -51,8 +51,22 @@ module RubyReactor
         @context.undo_stack << step_info
       end
 
+      # A failing step whose `compensate` was cut off by an interruption, as
+      # an aborted run keeps it for manual undo (010 R-10, DM §4); nil once that
+      # `compensate` returned. The `arguments` key marks the record: 009's
+      # hand-off states carry none.
+      def pending_record
+        return unless @pending && !@pending[:compensated]
+
+        { "trigger" => "failure", "step" => @pending[:step].to_s, "compensated" => false,
+          "arguments" => ContextSerializer.serialize_value(@pending[:arguments] || {}),
+          "error" => recorded_error(@pending[:error]),
+          "failures" => ContextSerializer.serialize_value(@rollback_failures) }
+      end
+
       def handle_step_failure(step_config, error, arguments)
-        @pending = { step: step_config.name, error: error, compensated: false }
+        @pending = { step: step_config.name, error: error, compensated: false,
+                     arguments: step_config.rollback_arguments(arguments) }
         # A step whose OWN coordination acquisition failed (contention, or a
         # bad key proc) never ran its body — "no step compensates, the
         # contended step's work has not been attempted" (US3-1/T018), which
@@ -120,6 +134,12 @@ module RubyReactor
       end
 
       private
+
+      def recorded_error(error)
+        return error if error.is_a?(String)
+
+        { "class" => error.class.name, "message" => error.respond_to?(:message) ? error.message : error.to_s }
+      end
 
       def middlewares
         @context.middlewares || RubyReactor::MiddlewareRunner.new([])
