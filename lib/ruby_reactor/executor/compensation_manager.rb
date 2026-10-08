@@ -41,7 +41,13 @@ module RubyReactor
         @rollback_failures.replace(Array(ContextSerializer.deserialize_value(list)))
       end
 
+      # A step that paused (a compose whose child hit an interrupt) is already
+      # on top as a partial run; its re-run replaces that entry, so the step is
+      # undone once (010 R-04).
+      # ponytail: assumes the paused step's entry is on top when it re-runs,
+      # which holds because a run stops at a pause and resumes at that step.
       def add_to_undo_stack(step_info)
+        undo_stack.pop if undo_stack.last && undo_stack.last[:step].name == step_info[:step].name
         @context.undo_stack << step_info
       end
 

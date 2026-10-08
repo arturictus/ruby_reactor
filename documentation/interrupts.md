@@ -155,6 +155,108 @@ There are two ways to invoke continuation:
     *   If payload is invalid, it returns a failure result but **does not** cancel execution.
     *   Allows you to handle the error (e.g., show a form error to a user) and try again.
 
+## Interrupts inside composed reactors
+
+An `interrupt` inside a `compose`d child pauses the **top-level** run, at any depth. The paused
+result carries the top-level run's `execution_id`, and the child interrupt's `correlation_id`.
+
+```ruby
+class ManagerApprovalReactor < RubyReactor::Reactor
+  input :order_id
+
+  step :reserve_stock, ReserveStockStep do
+    argument :order_id, input(:order_id)
+  end
+
+  interrupt :wait_for_manager do
+    wait_for :reserve_stock
+    correlation_id { |context| "approval-#{context.inputs[:order_id]}" }
+    validate_payload { required(:approved).filled(:bool) }
+  end
+
+  step :confirm_reservation, ConfirmReservationStep do
+    argument :decision, result(:wait_for_manager)
+  end
+end
+
+class OrderReactor < RubyReactor::Reactor
+  input :order_id
+
+  step :charge_card, ChargeCardStep do
+    argument :order_id, input(:order_id)
+  end
+
+  compose :approval, ManagerApprovalReactor do
+    argument :order_id, input(:order_id)
+  end
+
+  step :ship, ShipStep do
+    wait_for :approval
+  end
+end
+
+execution = OrderReactor.run(order_id: 1)
+execution.paused?        # => true
+execution.execution_id   # => the OrderReactor run's id
+OrderReactor.find(execution.execution_id).ready_interrupt_steps
+# => [[:approval, :wait_for_manager]]
+```
+
+**Resume it by its step path**: the compose step names from the top-level reactor down, then the
+interrupt, as an Array (strings work too, so a JSON body can carry it). A bare name always means a
+step of the top-level reactor itself.
+
+```ruby
+OrderReactor.continue(id: execution.execution_id, payload: { approved: true },
+                      step_name: [:approval, :wait_for_manager])
+
+# or by the child interrupt's correlation id, on the top-level class
+OrderReactor.continue_by_correlation_id(correlation_id: "approval-1", payload: { approved: true },
+                                        step_name: [:approval, :wait_for_manager])
+```
+
+The child then runs its remaining steps, and the top-level run carries on from the compose step.
+`ready_interrupt_steps` lists everything the paused run can be resumed at: Symbols for the
+top-level reactor's own interrupts, paths for nested ones. Two composes deep, the path has three
+names (`[:order, :approval, :wait_for_manager]`).
+
+Everything else works as for a top-level interrupt, driven by the child interrupt's declaration:
+
+* **Validation and `max_attempts`**: once the attempts run out, the whole run is rolled back from
+  the top level and marked `failed`.
+* **`resume: :background`**: the remainder runs in the top-level run's worker.
+* **Refusals**: a resume of a run that is not paused, or was cancelled, is refused.
+* **Lock contention**: a resume that cannot take the top-level reactor's `with_lock` or
+  `with_semaphore` raises its `AcquisitionError` and leaves the run paused, ready to retry. The
+  child's own `with_lock`/`with_semaphore` is different: it is taken inside the compose step. A
+  resume that finds it contended, inline or with `resume: :background`, fails the compose step,
+  and the whole run rolls back and ends `failed`, losing the payload. When an approval must
+  survive contention, declare the lock on the top-level reactor instead.
+* **Wrong names**: a `continue` that names anything but a pending interrupt raises
+  `RubyReactor::Error::ValidationError` listing the pending ones, and changes nothing.
+
+`OrderReactor.undo(id)` on the paused run rolls back what the child completed (`reserve_stock`),
+then the top-level steps (`charge_card`), and cancels the run.
+
+The child is never a run of its own: `ManagerApprovalReactor.continue(...)` on the child's id, or
+`continue_by_correlation_id` on the child class, raises `ValidationError` ("is a composed child;
+continue its root run").
+
+> An `interrupt` inside a `map` element, directly or through a compose there, is not supported:
+> nothing would resume one element. The element fails with "interrupt :name is not supported
+> inside a map element", and rolls back like any failed element.
+
+In specs, the matchers and test subject take the same path:
+
+```ruby
+subject = test_reactor(OrderReactor, { order_id: 1 })
+expect(subject).to be_paused_at([:approval, :wait_for_manager])
+subject.resume(step: [:approval, :wait_for_manager], payload: { approved: true })
+expect(subject).to be_success
+```
+
+`be_paused_at(:a, :b)` still means two top-level interrupts; a nested one is always one Array.
+
 ## Cancellation & Undo
 
 You can cancel a paused reactor if the operation is no longer needed.

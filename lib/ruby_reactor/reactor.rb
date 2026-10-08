@@ -38,6 +38,14 @@ module RubyReactor
       find(context_id)
     end
 
+    # How a resume names an interrupt: a Symbol for one of the reactor's own,
+    # or its step path from the root (an Array: the compose step names, then
+    # the interrupt) for one inside a composed child (010).
+    def self.interrupt_key(step_name)
+      path = Array(step_name).map(&:to_sym)
+      path.one? ? path.first : path
+    end
+
     def self.continue(id:, payload:, step_name:, idempotency_key: nil)
       reactor = find(id)
       result = reactor.continue(payload: payload, step_name: step_name, idempotency_key: idempotency_key)
@@ -154,6 +162,11 @@ module RubyReactor
         raise Error::ValidationError, "Cannot resume: context does not have a current step (was it interrupted?)"
       end
 
+      # A composed child pauses only inside its root, which owns the run (010 R-07).
+      if @context.private_data[:composed] || @context.private_data["composed"]
+        raise Error::ValidationError, "Cannot resume: #{self.class.name} is a composed child; continue its root run"
+      end
+
       if @context.cancelled
         raise Error::ValidationError,
               "Cannot resume: reactor has been cancelled (Reason: #{@context.cancellation_reason})"
@@ -167,19 +180,17 @@ module RubyReactor
               "Cannot resume: the reactor is #{@context.status}, not paused at an interrupt"
       end
 
-      validate_continue_step!(step_name)
+      path = Array(self.class.interrupt_key(step_name))
+      target_context, step_config = resolve_interrupt_target!(path)
 
-      if (failure = validate_continue_payload(payload, step_name))
-        return failure
-      end
+      failure = validate_continue_payload(payload, step_config, path)
+      return failure if failure
 
-      target_step = step_name
-      @context.set_result(target_step, payload)
+      target_context.set_result(path.last, payload) # the context that paused (010 R-06)
 
       # `interrupt :x, resume: :background` — payload is validated and stored
       # (above, in this process); the remaining work goes to a worker instead
       # of running inline in the delivering process.
-      step_config = self.class.steps[step_name.to_sym]
       if step_config.respond_to?(:background_resume?) && step_config.background_resume?
         return @result = enqueue_background_resume
       end
@@ -242,6 +253,15 @@ module RubyReactor
       @context.cancellation_reason = reason
       @context.status = "cancelled"
       save_context
+    end
+
+    # The interrupts this paused run can be resumed at (010 R-05): a Symbol
+    # for one of this reactor's own, and the step path from here (the compose
+    # step names, then the interrupt) for one inside a composed child.
+    def ready_interrupt_steps
+      return [] unless @context.status.to_s == "paused"
+
+      pending_interrupts(self.class, @context, [])
     end
 
     def validate!
@@ -434,39 +454,69 @@ module RubyReactor
       @undo_trace = executor.undo_trace
     end
 
-    def validate_continue_step!(step_name)
-      return if step_name.to_s == @context.current_step.to_s
+    # The context that paused at the interrupt `path` names, and that
+    # interrupt's config. A one-name path is a step of this reactor; a longer
+    # one names compose steps from here down, then the interrupt (010 R-05).
+    def resolve_interrupt_target!(path)
+      pending = ready_interrupt_steps
+      key = path.one? ? path.first : path
+      unless pending.include?(key)
+        raise Error::ValidationError,
+              "Cannot resume: expected step '#{@context.current_step}' " \
+              "or ready steps #{pending.inspect} but got '#{key}'"
+      end
 
-      # Build graph to check if step is ready
-      graph_manager = Executor::GraphManager.new(self.class, DependencyGraph.new, @context)
-      graph_manager.build_and_validate!
-      graph_manager.mark_completed_steps_from_context
-      ready_steps = graph_manager.dependency_graph.ready_steps.map(&:name).map(&:to_s)
-
-      return if ready_steps.include?(step_name.to_s)
-
-      raise Error::ValidationError,
-            "Cannot resume: expected step '#{@context.current_step}' " \
-            "or ready steps #{ready_steps} but got '#{step_name}'"
+      target = path[0...-1].reduce(@context) { |context, name| paused_child(context, name) }
+      [target, target.reactor_class.steps[path.last]]
     end
 
-    def validate_continue_payload(payload, step_name)
-      step_config = self.class.steps[step_name.to_sym]
+    def pending_interrupts(reactor_class, context, prefix)
+      graph_manager = Executor::GraphManager.new(reactor_class, DependencyGraph.new, context)
+      graph_manager.build_and_validate!
+      graph_manager.mark_completed_steps_from_context
+
+      # The interrupt a context paused at stays pending even once a resume
+      # stored its payload: that resume was contended and never ran.
+      ready = graph_manager.dependency_graph.ready_steps
+      paused_at = reactor_class.steps[context.current_step&.to_sym]
+      ready += [paused_at] if paused_at&.interrupt? && ready.none? { |step| step.name == paused_at.name }
+
+      ready.flat_map do |step_config|
+        name = step_config.name.to_sym
+        if step_config.respond_to?(:interrupt?) && step_config.interrupt?
+          [prefix.empty? ? name : prefix + [name]]
+        elsif (child = paused_child(context, name))
+          pending_interrupts(child.reactor_class, child, prefix + [name])
+        else
+          []
+        end
+      end
+    end
+
+    def paused_child(context, step_name)
+      entry = context.composed_contexts[step_name] || context.composed_contexts[step_name.to_s]
+      child = entry.is_a?(Hash) && (entry[:context] || entry["context"])
+      child if child.is_a?(Context) && child.status.to_s == "paused"
+    end
+
+    def validate_continue_payload(payload, step_config, path)
       return unless step_config&.validation_schema
+
+      # A nested interrupt counts apart from a root step of the same name.
+      step_name = path.one? ? path.first : path.join(".").to_sym
 
       validation = step_config.validation_schema.call(payload)
 
       return unless validation.failure?
 
       # Track attempts
-      step_key = step_name.to_sym
       @context.private_data[:interrupt_attempts] ||= {}
-      @context.private_data[:interrupt_attempts][step_key] ||= 0
-      @context.private_data[:interrupt_attempts][step_key] += 1
+      @context.private_data[:interrupt_attempts][step_name] ||= 0
+      @context.private_data[:interrupt_attempts][step_name] += 1
 
       save_context # Persist the attempt count
 
-      current_attempts = @context.private_data[:interrupt_attempts][step_key]
+      current_attempts = @context.private_data[:interrupt_attempts][step_name]
       max_attempts = step_config.max_attempts
 
       if max_attempts != :infinity && current_attempts >= max_attempts

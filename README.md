@@ -704,6 +704,10 @@ ApprovalReactor.continue_by_correlation_id(
 )
 ```
 
+An interrupt inside a `compose`d child pauses the top-level run; resume it there by the step path,
+e.g. `step_name: [:approval, :wait_for_manager]`. See
+[Interrupts inside composed reactors](documentation/interrupts.md#interrupts-inside-composed-reactors).
+
 ### Locks, Semaphores & Ordered Locks
 
 Coordinate across processes with Redis-backed primitives:

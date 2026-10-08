@@ -202,7 +202,9 @@ end
    end
    ```
 
-6. **A `fan_out` map inside a composed child works at any depth.** The map hands the whole run off, as it would at the top level: the top-level run's worker is resumed once every element has reported, re-enters the child, and the map adopts its outcome — the child never resumes as a run of its own. Nothing to declare. If the map, or any step after it in the child or the parent, fails, the rollback travels through the top-level run: the map's elements are rolled back one job each (see [Rollback](data_pipelines.md#rollback)), then the child's earlier steps, then the parent's. A manual `Reactor.undo` of the top-level run reaches the child's map the same way. An `interrupt` inside a composed child is not supported yet, with or without a map.
+6. **A `fan_out` map inside a composed child works at any depth.** The map hands the whole run off, as it would at the top level: the top-level run's worker is resumed once every element has reported, re-enters the child, and the map adopts its outcome — the child never resumes as a run of its own. Nothing to declare. If the map, or any step after it in the child or the parent, fails, the rollback travels through the top-level run: the map's elements are rolled back one job each (see [Rollback](data_pipelines.md#rollback)), then the child's earlier steps, then the parent's. A manual `Reactor.undo` of the top-level run reaches the child's map the same way.
+
+7. **An `interrupt` inside a composed child pauses the top-level run**, at any depth, with or without a map before it. The top-level run is stored `paused` and the paused result carries its id. Resume it on the top-level class by the interrupt's step path, the compose step names from there down and then the interrupt (`step_name: [:fulfil, :approve]`); the child is never resumed as a run of its own. `Reactor.undo` of the paused run rolls back the steps the child completed, then the parent's. See [Interrupts inside composed reactors](interrupts.md#interrupts-inside-composed-reactors).
 
 ### `async_reactor` vs `compose`
 
