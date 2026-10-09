@@ -179,7 +179,11 @@ module RubyReactor
       _ = idempotency_key
 
       path = Array(self.class.interrupt_key(step_name))
-      target_context, step_config = ensure_resumable!(path)
+      _, step_config = ensure_resumable!(path)
+
+      # A claimed resume is accepted: a later payload, valid or not, must not
+      # count against `max_attempts` and undo the run it is about to complete.
+      raise_already_resumed(path) if InterruptClaims.claimed?(@context, path)
 
       failure = validate_continue_payload(payload, step_config, path)
       return failure if failure
@@ -300,7 +304,7 @@ module RubyReactor
     end
 
     def raise_already_resumed(path)
-      raise Error::ValidationError, "Cannot resume: interrupt :#{path.join('.')} was already resumed"
+      raise Error::ValidationError, "Cannot resume: interrupt :#{path.join(".")} was already resumed"
     end
 
     # Owns a paused run if its lock is free (lock, then load), else hands off.
@@ -319,7 +323,7 @@ module RubyReactor
         # serialization). Other claims are applied from storage at resume.
         if @context.status.to_s == "paused"
           path[0...-1].reduce(@context) { |context, name| paused_child(context, name) }
-              &.set_result(path.last, payload)
+                      &.set_result(path.last, payload)
         end
         if @context.status.to_s != "paused"
           reason = :run_busy

@@ -16,14 +16,23 @@ module RubyReactor
                                      JSON.generate(ContextSerializer.serialize_value(payload)))
     end
 
-    # `{ step => payload }` (a nested interrupt: `{ [child, step] => payload }`) for the claimed interrupts that have no result yet.
+    # true when a resume already claimed the interrupt, applied or not.
+    def claimed?(context, path)
+      storage.retrieve_interrupt_resumes(context.context_id, storage_name(context), [key(Array(path))]).any?
+    end
+
+    # `{ step => payload }` (a nested interrupt: `{ [child, step] => payload }`)
+    # for the claimed interrupts that have no result yet.
     def unapplied(context)
       paths = pending_interrupts(context)
       return {} if paths.empty?
 
       raw = storage.retrieve_interrupt_resumes(context.context_id, storage_name(context), paths.map { |p| key(p) })
       paths.filter_map do |path|
-        [path.one? ? path.first : path, ContextSerializer.deserialize_value(JSON.parse(raw[key(path)]))] if raw.key?(key(path))
+        if raw.key?(key(path))
+          [path.one? ? path.first : path,
+           ContextSerializer.deserialize_value(JSON.parse(raw[key(path)]))]
+        end
       end.to_h
     end
 
@@ -41,8 +50,10 @@ module RubyReactor
     # Step paths of the interrupts without a result, here and in paused composed children.
     def pending_interrupts(context, prefix = [])
       steps = context.reactor_class.respond_to?(:steps) ? context.reactor_class.steps : {}
-      own = steps.select { |name, config| config.respond_to?(:interrupt?) && config.interrupt? && !context.has_result?(name) }
-                 .keys.map { |name| prefix + [name] }
+      interrupts = steps.select do |name, config|
+        config.respond_to?(:interrupt?) && config.interrupt? && !context.has_result?(name)
+      end
+      own = interrupts.keys.map { |name| prefix + [name] }
       nested = steps.keys.flat_map do |name|
         (c = child(context, name)) ? pending_interrupts(c, prefix + [name]) : []
       end

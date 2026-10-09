@@ -126,6 +126,21 @@ RSpec.describe "interrupt inside a composed child" do
       expect(stored(fx::ValidatedRetryRoot, id).status.to_s).to eq("completed")
     end
 
+    it "does not count an invalid payload against a nested interrupt that already has a claim" do
+      id = fx::ValidatedRetryRoot.run({}).execution_id
+      RubyReactor::InterruptClaims.claim!(stored(fx::ValidatedRetryRoot, id), path, payload)
+
+      3.times do
+        expect { fx::ValidatedRetryRoot.continue(id: id, payload: { ok: "x" }, step_name: path) }
+          .to raise_error(RubyReactor::Error::ValidationError, /already resumed/)
+      end
+
+      expect(stored(fx::ValidatedRetryRoot, id).status.to_s).to eq("paused")
+      expect(RubyReactor.configuration.storage_adapter.increment_interrupt_attempts(
+               id, RubyReactor.reactor_storage_name(fx::ValidatedRetryRoot), :"fulfil.approve"
+             )).to eq(1)
+    end
+
     it "pauses again at the child's next interrupt" do
       id = fx::TwoInterruptsRoot.run({}).execution_id
 
