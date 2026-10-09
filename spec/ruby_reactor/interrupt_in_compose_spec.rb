@@ -189,6 +189,27 @@ RSpec.describe "interrupt inside a composed child" do
       expect(stored(fx::Root, id).status.to_s).to eq("completed")
     end
 
+    it "accepts exactly one of two simultaneous resumes of the nested interrupt" do
+      id = fx::Root.run({}).execution_id
+      barrier = Concurrent::CyclicBarrier.new(2) if defined?(Concurrent)
+      barrier ||= ResumeFixtures.barrier(2)
+
+      outcomes = [{ ok: true }, { ok: false }].map do |body|
+        Thread.new do
+          barrier.wait
+          fx::Root.continue(id: id, payload: body, step_name: path)
+          :accepted
+        rescue RubyReactor::Error::ValidationError => e
+          e.message
+        end
+      end.map(&:value)
+
+      expect(outcomes.count(:accepted)).to eq(1)
+      expect(outcomes - [:accepted]).to all(match(/already resumed|not paused|ready steps/))
+      expect(stored(fx::Root, id).status.to_s).to eq("completed")
+      expect(log.count("run:child.c2")).to eq(1)
+    end
+
     describe "undo and cancel" do
       it "undoes the child's completed steps before the root's and cancels the run" do
         id = fx::Root.run({}).execution_id

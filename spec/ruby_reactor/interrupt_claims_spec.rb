@@ -56,6 +56,22 @@ RSpec.describe RubyReactor::InterruptClaims do
       expect(described_class.unapplied(context)).to eq({})
     end
 
+    it "claims, lists and applies an interrupt inside a composed child by its step path" do
+      fx = InterruptInComposeFixtures
+      RollbackRecorder.reset!
+      context = fx::Root.find(fx::Root.run({}).execution_id).context
+      path = %i[fulfil approve]
+
+      expect(described_class.claim!(context, path, { ok: true })).to be(true)
+      expect(described_class.claim!(context, path, { ok: false })).to be(false)
+      expect(described_class.claim!(context, :approve, { ok: false })).to be(true) # a root step of that name is apart
+
+      expect(described_class.unapplied(context)).to eq(path => { ok: true })
+      expect(described_class.apply!(context)).to eq([path])
+      expect(context.composed_contexts[:fulfil][:context].get_result(:approve)).to eq(ok: true)
+      expect(described_class.unapplied(context)).to eq({})
+    end
+
     it "reads nothing for a reactor without interrupts" do
       context = RubyReactor::Context.new({}, ResumeFixtures::SlowSync)
       allow(storage).to receive(:retrieve_interrupt_resumes)
@@ -87,6 +103,18 @@ RSpec.describe RubyReactor::InterruptClaims do
       expect(stored.get_result(:b)).to eq(ok: true)
       expect(stored.status.to_s).to eq("paused")
       expect(stored.current_step.to_s).to eq("a")
+    end
+
+    it "lets a Worker resume a run paused in a composed child that has a claim on its path" do
+      fx = InterruptInComposeFixtures
+      RollbackRecorder.reset!
+      id = fx::Root.run({}).execution_id
+      described_class.claim!(fx::Root.find(id).context, %i[fulfil approve], { ok: true })
+
+      RubyReactor::Adapters::Sidekiq::Worker.new.perform(id, fx::Root.name)
+
+      expect(fx::Root.find(id).context.status.to_s).to eq("completed")
+      expect(RollbackRecorder.log).to eq(%w[run:r1 run:child.c1 run:child.c2 run:r2])
     end
   end
 end
