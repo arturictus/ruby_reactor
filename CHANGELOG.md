@@ -267,8 +267,8 @@ Every breaking or shape-changing item of the rollback work, with what to change.
   then the interrupt (`continue(id:, payload:, step_name: [:approval, :wait_for_manager])`), by id
   or by the child interrupt's correlation id. Payload validation, `max_attempts`,
   `resume: :background` and the resume guards apply as for a top-level interrupt. A resume
-  contended on the child's own `with_lock`/`with_semaphore` fails and rolls back the run. Only
-  contention on the top-level reactor's lock leaves it paused. `Reactor.undo`
+  contended on the child's own `with_lock`/`with_semaphore` fails and rolls back the run. Contention
+  on the top-level reactor's lock hands the resume to a worker. `Reactor.undo`
   of the paused run rolls back the child's completed steps, then the parent's. A composed child
   refuses a `continue` of its own. New `Reactor#ready_interrupt_steps` lists the pending
   interrupts (Symbols, and paths for nested ones). `be_paused_at`, `have_ready_interrupts` and

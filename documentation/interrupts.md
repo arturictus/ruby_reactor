@@ -252,9 +252,10 @@ Everything else works as for a top-level interrupt, driven by the child interrup
 * **Validation and `max_attempts`**: once the attempts run out, the whole run is rolled back from
   the top level and marked `failed`.
 * **`resume: :background`**: the remainder runs in the top-level run's worker.
-* **Refusals**: a resume of a run that is not paused, or was cancelled, is refused.
+* **Refusals**: a resume of a run that is finished, rolling back, aborted or cancelled is refused.
 * **Lock contention**: a resume that cannot take the top-level reactor's `with_lock` or
-  `with_semaphore` raises its `AcquisitionError` and leaves the run paused, ready to retry. The
+  `with_semaphore` is accepted and handed to a worker (a `DispatchResult` comes back), as for a
+  top-level interrupt. The
   child's own `with_lock`/`with_semaphore` is different: it is taken inside the compose step. A
   resume that finds it contended, inline or with `resume: :background`, fails the compose step,
   and the whole run rolls back and ends `failed`, losing the payload. When an approval must

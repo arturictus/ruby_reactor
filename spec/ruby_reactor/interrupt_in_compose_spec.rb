@@ -117,7 +117,10 @@ RSpec.describe "interrupt inside a composed child" do
       end
       context = stored(fx::ValidatedRetryRoot, id)
       expect(context.status.to_s).to eq("paused")
-      expect(context.private_data[:interrupt_attempts][:"fulfil.approve"]).to eq(2)
+      # Counted in its own record, not the context (010 R-08): the next one is the 3rd.
+      expect(RubyReactor.configuration.storage_adapter.increment_interrupt_attempts(
+               id, RubyReactor.reactor_storage_name(fx::ValidatedRetryRoot), :"fulfil.approve"
+             )).to eq(3)
 
       fx::ValidatedRetryRoot.continue(id: id, payload: payload, step_name: path)
       expect(stored(fx::ValidatedRetryRoot, id).status.to_s).to eq("completed")
@@ -158,19 +161,17 @@ RSpec.describe "interrupt inside a composed child" do
       expect(log.count("run:middle.r2")).to eq(1)
     end
 
-    it "leaves the run paused when the resume is contended on the root's lock, so it can be retried" do
+    it "hands the resume to a worker when it is contended on the root's lock" do
       id = fx::LockedRoot.run({}).execution_id
       holder = RubyReactor::Lock.new("interrupt-in-compose:locked", owner: "another-run", auto_extend: false)
       holder.acquire
 
-      expect { fx::LockedRoot.continue(id: id, payload: payload, step_name: path) }
-        .to raise_error(RubyReactor::Lock::AcquisitionError)
-      expect(stored(fx::LockedRoot, id).status.to_s).to eq("paused")
+      result = fx::LockedRoot.continue(id: id, payload: payload, step_name: path)
 
+      expect(result).to be_a(RubyReactor::DispatchResult)
+      expect(stored(fx::LockedRoot, id).status.to_s).to eq("running")
+      expect(log).not_to include("run:r2")
       holder.release
-      fx::LockedRoot.continue(id: id, payload: payload, step_name: path)
-      expect(stored(fx::LockedRoot, id).status.to_s).to eq("completed")
-      expect(log).to eq(%w[run:r1 run:child.c1 run:child.c2 run:r2])
     end
 
     it "refuses a second resume while the first is executing" do
@@ -184,7 +185,7 @@ RSpec.describe "interrupt inside a composed child" do
 
       fx::Root.continue(id: id, payload: payload, step_name: path)
 
-      expect(errors.map(&:message)).to contain_exactly(/running, not paused/)
+      expect(errors.map(&:message)).to contain_exactly(/already resumed/)
       expect(stored(fx::Root, id).status.to_s).to eq("completed")
     end
 
