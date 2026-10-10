@@ -247,8 +247,24 @@ namespace :demo do
     puts "\n✅ INTERRUPT DEMO COMPLETE"
   end
  
+  desc "ActiveRecord storage history: runs kept in the database and found by input value (011 US4)"
+  task active_record_history: [:environment, :flush_redis] do
+    unless RubyReactor.configuration.storage.adapter == :active_record
+      puts "⏭  SKIPPED: needs RUBY_REACTOR_STORAGE=active_record"
+      next
+    end
+
+    ids = [[100, false], [100, true], [200, false]].map do |user_id, decline|
+      result = ActiveRecordHistoryReactor.run(user_id: user_id, card_token: "tok_#{user_id}", decline: decline)
+      report_demo_result(result)
+      result.execution_id
+    end
+    puts "Kept #{ids.size} runs: #{ids.join(', ')}"
+    puts "Find user 100's runs: http://localhost:3000/ruby_reactor/api/reactors?input[user_id]=100"
+  end
+
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups, :active_record_history] do
     puts "excuting all reactors"
   end
 

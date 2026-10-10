@@ -324,6 +324,8 @@ run RubyReactor::Web::Application
 
 ![RubyReactor Dashboard Screenshot](documentation/images/failed_order_processing.png)
 
+With the [ActiveRecord storage adapter](documentation/storage_adapters.md#history-and-dashboard-filters), the dashboard keeps every run and can filter them by reactor class, status, time range and input value (`input[user_id]=100`). Inputs declared `redact: true` are always shown as `[REDACTED]`.
+
 You can secure the dashboard using standard Rails authentication methods (e.g., wrapping the `mount` line in an `authenticate` block with Devise, or in a `constraints` block).
 
 ## Usage

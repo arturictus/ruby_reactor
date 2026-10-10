@@ -2,6 +2,19 @@
 
 require "spec_helper"
 
+module QueryContractSpec
+  class Charge < RubyReactor::Reactor
+    input :user_id
+    input :card_token, redact: true, optional: true
+    input :meta, optional: true
+    input :note, optional: true
+  end
+
+  class Refund < RubyReactor::Reactor
+    input :user_id
+  end
+end
+
 # The storage adapter contract (specs/011 contracts/storage-adapter.md). It runs
 # against whichever adapter the suite selected (RUBY_REACTOR_TEST_STORAGE), so
 # CI's storage matrix proves every adapter honors the same semantics.
@@ -379,6 +392,67 @@ RSpec.describe "Storage adapter contract" do # rubocop:disable RSpec/DescribeCla
       adapter.period_mark(key, RubyReactor::Period.ttl_seconds(:year), context_id: "ctx-1")
 
       expect(adapter.period_seen?(key)).to be(true)
+    end
+  end
+
+  # 011 US4, R-11/R-18: the dashboard's filtered listing over all history.
+  describe "query_executions", :active_record_only do
+    let(:models) { RubyReactor::Storage::ActiveRecordAdapter }
+    let!(:ids) do
+      {
+        a: store(QueryContractSpec::Charge, { user_id: 100 }, :completed),
+        b: store(QueryContractSpec::Charge, { user_id: 200 }, :failed),
+        c: store(QueryContractSpec::Refund, { user_id: 100 }, :paused),
+        d: store(QueryContractSpec::Charge, { user_id: 100, card_token: "tok", meta: { plan: "pro" },
+                                              note: "n" * 300 }, :completed)
+      }
+    end
+
+    def store(klass, inputs, status)
+      context = RubyReactor::Context.new(inputs, klass)
+      context.status = status
+      adapter.store_context(context.context_id, RubyReactor::ContextSerializer.serialize(context), klass.name)
+      context.context_id
+    end
+
+    def query(**filters) = adapter.query_executions(filters: filters, cursor: "0", count: 50)[:reactors].map { |r| r[:id] }
+
+    it "filters by input value, class and status, alone and combined" do
+      expect(query(inputs: { "user_id" => "100" })).to contain_exactly(ids[:a], ids[:c], ids[:d])
+      expect(query(reactor_class: QueryContractSpec::Charge.name, inputs: { "user_id" => "100" }))
+        .to contain_exactly(ids[:a], ids[:d])
+      expect(query(status: "completed")).to contain_exactly(ids[:a], ids[:d])
+      expect(query(reactor_class: QueryContractSpec::Refund.name)).to eq([ids[:c]])
+      expect(query(status: "failed", inputs: { "user_id" => "100" })).to be_empty
+    end
+
+    it "filters by start time, newest first" do
+      times = { a: 3.hours.ago, b: 2.hours.ago, c: 1.hour.ago, d: 10.minutes.ago }
+      times.each { |key, time| models::Execution.where(id: ids[key]).update_all(started_at: time) }
+
+      expect(query(from: 150.minutes.ago)).to eq([ids[:d], ids[:c], ids[:b]])
+      expect(query(from: 150.minutes.ago, to: 30.minutes.ago)).to eq([ids[:c], ids[:b]])
+    end
+
+    it "pages through every match exactly once" do
+      first = adapter.query_executions(filters: {}, cursor: "0", count: 3)
+      second = adapter.query_executions(filters: {}, cursor: first[:cursor], count: 3)
+
+      expect(first[:reactors].size).to eq(3)
+      expect((first[:reactors] + second[:reactors]).map { |r| r[:id] }).to contain_exactly(*ids.values)
+      expect(second[:cursor]).to eq("0")
+    end
+
+    it "never matches redacted, non-scalar or overlong inputs" do
+      expect(query(inputs: { "card_token" => "tok" })).to be_empty
+      expect(query(inputs: { "note" => "n" * 300 })).to be_empty
+      expect(models::ExecutionInput.where(execution_id: ids[:d]).pluck(:name)).to eq(["user_id"])
+    end
+
+    it "keeps executions older than context_ttl" do
+      models::Execution.update_all(updated_at: Time.current - RubyReactor.configuration.context_ttl - 60)
+
+      expect(query(inputs: { "user_id" => "200" })).to eq([ids[:b]])
     end
   end
 

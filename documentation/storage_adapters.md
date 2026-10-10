@@ -105,6 +105,36 @@ heartbeat. Every storage call checks a connection out only for its own duration.
 `gssencmode=disable` to the connection URL (`postgres://…/db?gssencmode=disable`). libpq's GSSAPI
 initialisation crashes in forked children on macOS. Linux is unaffected.
 
+## History and dashboard filters
+
+With the ActiveRecord adapter, every run stays in the database: successful, failed,
+halted and paused runs, with their step results, map results and rollback records. The
+dashboard lists all of them and shows a filter bar, which it hides on Redis
+(`GET /api/capabilities` says which applies). The filters are:
+
+| Filter | API parameter | Matches |
+| --- | --- | --- |
+| Reactor class | `class=ChargeReactor` | the exact class name |
+| Status | `status=failed` | `pending running paused completed failed rolling_back halted aborted cancelled` |
+| Time range | `from=…&to=…` (ISO-8601) | the run's start time, inclusive |
+| Input value | `input[user_id]=100` (repeat for more) | equality on a top-level input |
+
+Filters combine with AND, and results come newest first, paged with the same opaque
+`X-Next-Cursor` header as the unfiltered listing. On the Redis adapter a filtered request
+returns `422`.
+
+**Which inputs can be filtered on.** Top-level inputs whose value is a string, number,
+boolean or nil, of 255 characters or fewer. Inputs declared `redact: true` are never
+indexed, so they can't be filtered on, and the dashboard shows them as `"[REDACTED]"` on
+both adapters.
+
+In specs, `be_findable_by` runs the same query:
+
+```ruby
+expect(subject).to be_findable_by(user_id: 100)
+expect(subject).not_to be_findable_by(card_token: "tok") # redacted
+```
+
 ## Differences between the adapters
 
 The ActiveRecord adapter keeps execution history instead of expiring it. Everything else behaves the

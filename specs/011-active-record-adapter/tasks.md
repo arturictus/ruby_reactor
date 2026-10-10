@@ -436,7 +436,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
 ### Tests for User Story 4 (write first, confirm FAIL) ⚠️
 
-- [ ] T048 [P] [US4] Add a `query_executions` section to `spec/ruby_reactor/storage/adapter_contract_spec.rb` (`:active_record_only`).
+- [X] T048 [P] [US4] Add a `query_executions` section to `spec/ruby_reactor/storage/adapter_contract_spec.rb` (`:active_record_only`).
   - **Seeding**: executions of two classes, with statuses `completed`/`failed`/`paused`, `user_id` inputs `100`/`200`, one input declared `redact: true`, one Hash input, and one 300-character input.
   - **Assertions**:
     - each filter alone and combined returns exactly the matching ids, ordered `started_at DESC, id DESC`;
@@ -444,41 +444,41 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
     - a filter on the redacted input, the Hash input or the 300-character input returns `[]`;
     - an execution whose `updated_at` is older than `context_ttl` is still returned (FR-014);
     - `ExecutionInput` rows exist only for scalar, non-redacted values of 255 characters or fewer (R-11).
-- [ ] T049 [P] [US4] Extend `spec/ruby_reactor/web/api_spec.rb` with these examples (DA):
+- [X] T049 [P] [US4] Extend `spec/ruby_reactor/web/api_spec.rb` with these examples (DA):
   - `GET /api/capabilities` returns `{"execution_query": true}` on AR and `false` on Redis;
   - `GET /api/reactors?input[user_id]=100&status=completed` returns only matches on AR and `422` with the DA message on Redis;
   - an invalid `status` or `from` returns `400`;
   - without filters, the response is unchanged on both adapters;
   - `GET /api/reactors/:id` shows `"[REDACTED]"` for a `redact: true` input on **both** adapters (FR-021).
-- [ ] T050 [P] [US4] Write `spec/ruby_reactor/storage/active_record/query_performance_spec.rb` (`:slow`, `:active_record_only`, skip on SQLite). Seed 100,000 executions with `insert_all` in batches, plus their input rows. The first page of `query_executions(filters: { inputs: { "user_id" => "100" } }, count: 50)` must return in under 2 s (SC-007).
-- [ ] T051 [P] [US4] Write a GUI test in `gui/src/components/__tests__/Dashboard.test.tsx`: the filter bar is rendered only when `/api/capabilities` returns `execution_query: true`, and submitting it requests `/api/reactors` with `class`, `status`, `from`, `to` and `input[name]` params.
+- [X] T050 [P] [US4] Write `spec/ruby_reactor/storage/active_record/query_performance_spec.rb` (`:slow`, `:active_record_only`, skip on SQLite). Seed 100,000 executions with `insert_all` in batches, plus their input rows. The first page of `query_executions(filters: { inputs: { "user_id" => "100" } }, count: 50)` must return in under 2 s (SC-007).
+- [X] T051 [P] [US4] Write a GUI test in `gui/src/components/__tests__/Dashboard.test.tsx`: the filter bar is rendered only when `/api/capabilities` returns `execution_query: true`, and submitting it requests `/api/reactors` with `class`, `status`, `from`, `to` and `input[name]` params.
 
 ### Implementation for User Story 4
 
-- [ ] T052 [US4] Add the input index write to `store_context` in `lib/ruby_reactor/storage/active_record/contexts.rb`, on every store, with duplicates skipped by `insert_all` (R-11, DM §3). Inputs never change after the first store, so repeats are no-ops. That costs one extra statement per checkpoint, which is a known ceiling. The upgrade path is to cache indexed ids per process.
+- [X] T052 [US4] Add the input index write to `store_context` in `lib/ruby_reactor/storage/active_record/contexts.rb`, on every store, with duplicates skipped by `insert_all` (R-11, DM §3). Inputs never change after the first store, so repeats are no-ops. That costs one extra statement per checkpoint, which is a known ceiling. The upgrade path is to cache indexed ids per process.
   - Resolve the redacted input names via `RubyReactor::Context.resolve_reactor_class(data["reactor_class"])&.inputs&.select { |_, c| c[:redact] }&.keys`. If the class cannot be resolved, index nothing.
   - Deserialize `data["inputs"]` with `ContextSerializer.deserialize_value`, and keep top-level `String`/`Integer`/`Float`/`true`/`false`/`nil` values whose `to_s` is 255 characters or fewer (`nil` becomes `"null"`).
   - Write them with `ExecutionInput.insert_all`, skipping duplicates.
-- [ ] T053 [US4] Add `query_executions(filters:, cursor:, count:)` to `lib/ruby_reactor/storage/active_record/contexts.rb` (R-18).
+- [X] T053 [US4] Add `query_executions(filters:, cursor:, count:)` to `lib/ruby_reactor/storage/active_record/contexts.rb` (R-18).
   - Filters: `reactor_class`, `status`, `from` and `to` on `started_at`, and one `EXISTS (SELECT 1 FROM ruby_reactor_execution_inputs WHERE execution_id = executions.id AND name = ? AND value = ?)` per input.
   - Exclude children, as `scan_reactors_page` does, and reuse its keyset cursor and row shape.
   - Make T048 and T050 green.
-- [ ] T054 [US4] Update `lib/ruby_reactor/web/api.rb`:
+- [X] T054 [US4] Update `lib/ruby_reactor/web/api.rb`:
   - add `r.on "capabilities"`, which returns `{ execution_query: adapter.respond_to?(:query_executions) }`;
   - in `GET /reactors`, if any of `class status from to input` is present, validate (`400`), return `422` when the adapter lacks `query_executions`, otherwise call it and set `X-Next-Cursor`;
   - in `GET /reactors/:id`, mask `inputs` keys declared `redact: true` on the resolved class with `RubyReactor::Step::InputContract::REDACTED`, including the `inputs` of hydrated `composed_contexts`. Step results are out of scope (FR-021).
 
   Make T049 green. Note the Redis-visible masking change for the CHANGELOG (plan, Spec Deltas).
-- [ ] T055 [US4] Add a filter bar to `gui/src/components/Dashboard.tsx`, with a `fetchCapabilities` and a filter-param builder in `gui/src/lib/reactors.ts`. The bar has class, status, from/to and repeatable input name=value fields, and renders only when `execution_query` is true. Make T051 green. Rebuild the assets into `lib/ruby_reactor/web/public/` with the project's existing build script.
-- [ ] T056 [P] [US4] Add the matcher `be_findable_by(**inputs)` to `lib/ruby_reactor/rspec/matchers.rb`, applied to a `test_reactor` subject (Constitution VI: extend the shared surface).
+- [X] T055 [US4] Add a filter bar to `gui/src/components/Dashboard.tsx`, with a `fetchCapabilities` and a filter-param builder in `gui/src/lib/reactors.ts`. The bar has class, status, from/to and repeatable input name=value fields, and renders only when `execution_query` is true. Make T051 green. Rebuild the assets into `lib/ruby_reactor/web/public/` with the project's existing build script.
+- [X] T056 [P] [US4] Add the matcher `be_findable_by(**inputs)` to `lib/ruby_reactor/rspec/matchers.rb`, applied to a `test_reactor` subject (Constitution VI: extend the shared surface).
   - It passes when `storage_adapter.query_executions(filters: { reactor_class: subject's class name, inputs: inputs.transform_values(&:to_s) }, cursor: "0", count: 50)[:reactors]` includes the subject's execution id.
   - It raises a clear error when the adapter lacks `query_executions`.
   - Add a matcher spec in `spec/ruby_reactor/rspec/matchers_spec.rb`, under `:active_record_only`.
-- [ ] T057 [US4] Write the demo:
+- [X] T057 [US4] Write the demo:
   - `demo_app/app/reactors/active_record_history_reactor.rb`: class-based steps, `input :user_id`, `input :card_token, redact: true`; a `charge` step with `compensate`, plus a failing variant input to show the failure path;
   - a rake task `demo:active_record_history` (`[:environment, :flush_redis]`) that runs it for `user_id` 100, 100 and 200, prints the ids, and prints the `/ruby_reactor/api/reactors?input[user_id]=100` URL. Under Redis it prints `⏭  SKIPPED: needs RUBY_REACTOR_STORAGE=active_record` and returns, so `demo:all` stays green. Add it to the `demo:all` prerequisites;
   - `demo_app/spec/reactors/active_record_history_reactor_spec.rb` (`type: :reactor`, `:active_record_only` via the T044 hook), using only `test_reactor`, `be_success`/`be_failure` and `be_findable_by(user_id: 100)`, plus `expect(reactor).not_to be_findable_by(card_token: "tok")` for the redacted input.
-- [ ] T058 [US4] Add a "History and dashboard filters" section to `documentation/storage_adapters.md`: what is kept, the filter params, which inputs are indexed (scalar, non-redacted, 255 characters or fewer), redaction masking, and the `be_findable_by` matcher. Also update the `README.md` dashboard paragraph and `documentation/testing.md` (matcher).
+- [X] T058 [US4] Add a "History and dashboard filters" section to `documentation/storage_adapters.md`: what is kept, the filter params, which inputs are indexed (scalar, non-redacted, 255 characters or fewer), redaction masking, and the `be_findable_by` matcher. Also update the `README.md` dashboard paragraph and `documentation/testing.md` (matcher).
 
 **Checkpoint**: US4 is complete. History is browsable and queryable from the dashboard.
 

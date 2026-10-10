@@ -92,6 +92,23 @@ module RubyReactor
           page(top_level(Execution.all, include_dispatched_children), cursor, count)
         end
 
+        # The dashboard's filtered listing over all history (R-18). Filters:
+        # reactor_class, status, from/to (on started_at) and inputs
+        # ({ name => value }, equality on the indexed top-level inputs).
+        def query_executions(filters:, cursor: "0", count: 50)
+          scope = top_level(Execution.all, false)
+          scope = scope.where(reactor_class: filters[:reactor_class].to_s) if filters[:reactor_class]
+          scope = scope.where(status: filters[:status].to_s) if filters[:status]
+          scope = scope.where(started_at: filters[:from]..) if filters[:from]
+          scope = scope.where(started_at: ..filters[:to]) if filters[:to]
+          (filters[:inputs] || {}).each do |name, value|
+            scope = scope.where(ExecutionInput.where("#{ExecutionInput.table_name}.execution_id = " \
+                                                     "#{Execution.table_name}.id")
+                                              .where(name: name.to_s, value: value.to_s).arel.exists)
+          end
+          page(scope, cursor, count)
+        end
+
         private
 
         def page(scope, cursor, count)
@@ -142,8 +159,28 @@ module RubyReactor
           nil
         end
 
-        # Search index for the dashboard (R-11); filled in by US4.
-        def index_inputs(_context_id, _data); end
+        INDEXABLE_INPUT = [String, Integer, Float, TrueClass, FalseClass, NilClass].freeze
+
+        # The dashboard's input index (R-11): top-level scalar inputs of 255
+        # characters or fewer, never the reactor's `redact: true` ones. Written
+        # on every store; inputs don't change, so repeats skip as duplicates.
+        def index_inputs(context_id, data)
+          rows = indexable_inputs(data).map { |name, value| { execution_id: context_id, name: name, value: value } }
+          ExecutionInput.insert_all(rows) if rows.any?
+        end
+
+        def indexable_inputs(data)
+          reactor_class = RubyReactor::Context.resolve_reactor_class(data["reactor_class"])
+          return {} unless reactor_class.respond_to?(:inputs) && data["inputs"].is_a?(Hash)
+
+          redacted = reactor_class.inputs.select { |_, config| config[:redact] }.keys.map(&:to_s)
+          ContextSerializer.deserialize_value(data["inputs"]).each_with_object({}) do |(name, value), indexed|
+            next if redacted.include?(name.to_s) || INDEXABLE_INPUT.none? { |type| value.is_a?(type) }
+
+            text = value.nil? ? "null" : value.to_s
+            indexed[name.to_s] = text if text.length <= 255
+          end
+        end
 
         # MySQL rejects statements larger than max_allowed_packet; fail with the
         # serializer's own error instead of a driver error (R-10).

@@ -500,6 +500,19 @@ expect(subject).to have_validation_error(:age)
 
 ---
 
+### History Matchers
+
+With the ActiveRecord storage adapter, `be_findable_by` checks that the run can be found by
+its inputs, the same query the dashboard's input filter runs. Redacted and non-scalar
+inputs never match. On Redis it raises, since Redis can't query history.
+
+```ruby
+subject = test_reactor(ChargeReactor, { user_id: 100, card_token: "tok" })
+
+expect(subject).to be_findable_by(user_id: 100)
+expect(subject).not_to be_findable_by(card_token: "tok")
+```
+
 ## Testing Interrupts
 
 RubyReactor provides comprehensive test helpers for testing reactors that use the `interrupt` DSL for pause/resume workflows.

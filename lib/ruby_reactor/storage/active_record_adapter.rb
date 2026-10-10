@@ -55,20 +55,6 @@ module RubyReactor
         verify_schema!
       end
 
-      # The installed schema version is the DEFAULT of ruby_reactor_schema.version
-      # (R-16): it survives db/schema.rb loads and truncation, which a data row
-      # would not. Checked once per adapter, i.e. at first storage use, before
-      # anything is read or written.
-      def verify_schema!
-        installed = with_db do |conn|
-          next nil unless conn.table_exists?("ruby_reactor_schema")
-
-          conn.columns("ruby_reactor_schema").find { |column| column.name == "version" }&.default.to_i
-        end
-        return if installed == SCHEMA_VERSION
-
-        raise Error::StorageSchemaError, schema_error_message(installed)
-      end
 
       # (Re)points the shared pool only when the config changes: re-running
       # establish_connection drops the live pool, which would fail any thread
@@ -98,6 +84,21 @@ module RubyReactor
       end
 
       private
+
+      # The installed schema version is the DEFAULT of ruby_reactor_schema.version
+      # (R-16): it survives db/schema.rb loads and truncation, which a data row
+      # would not. Checked once per adapter, i.e. at first storage use, before
+      # anything is read or written.
+      def verify_schema!
+        installed = with_db do |conn|
+          next nil unless conn.table_exists?("ruby_reactor_schema")
+
+          conn.columns("ruby_reactor_schema").find { |column| column.name == "version" }&.default.to_i
+        end
+        return if installed == SCHEMA_VERSION
+
+        raise Error::StorageSchemaError, schema_error_message(installed)
+      end
 
       def schema_error_message(installed)
         install = "run `bin/rails generate ruby_reactor:install` then `bin/rails db:migrate` " \
