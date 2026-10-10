@@ -13,6 +13,35 @@ services:
       timeout: 3s
       retries: 5
 
+  # Databases for the gem's RSpec suite under the ActiveRecord storage adapter
+  # (RUBY_REACTOR_TEST_STORAGE=active_record). No container_name, so several
+  # worktrees can each run their own compose project without colliding.
+  test-postgres:
+    image: postgres:16-alpine
+    ports:
+      - "6781:5432"
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ruby_reactor_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  test-mysql:
+    image: mysql:8.4
+    ports:
+      - "6782:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ruby_reactor_test
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # Dedicated Redis for the demo Rails app (storage + Sidekiq).
   demo-redis:
     image: redis:7-alpine
