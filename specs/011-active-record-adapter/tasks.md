@@ -105,12 +105,12 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   - Add `claim_idempotency_key(key, context_id, reactor_class_name)` to `lib/ruby_reactor/storage/redis_adapter.rb`: `SET reactor:<C>:idempotency:<sha256(key)> context_id NX EX context_ttl`, returning `nil` when claimed and otherwise the stored id (R-15).
 
   Then T004's new-behavior examples pass on Redis.
-- [ ] T006 [P] Write `spec/ruby_reactor/storage/active_record/loading_spec.rb` (`:active_record_only`, except the first example).
+- [X] T006 [P] Write `spec/ruby_reactor/storage/active_record/loading_spec.rb` (`:active_record_only`, except the first example).
   - The first example runs under any adapter. A fresh `ruby -Ilib -e 'require "ruby_reactor"; RubyReactor.configure { |c| c.storage.adapter = :redis }; RubyReactor.configuration.storage_adapter; exit(defined?(ActiveRecord) ? 1 : 0)'` subprocess exits 0 (FR-002).
   - In a subprocess run with `-I spec/fixtures/no_active_record`, a directory whose `active_record.rb` raises `LoadError` and shadows the bundled gem, selecting `:active_record` raises `LoadError` whose message names `activerecord` and the Gemfile line (FR-003). Bundler provides the gem, so `RUBYOPT` cannot hide it.
   - `storage.database` accepts all three forms (FR-005): a URL String, a Hash (`{ adapter: "sqlite3", database: "tmp/x.sqlite3" }`), and a Symbol naming an entry the spec registers in `ActiveRecord::Base.configurations`. Each resolves to `Record.connection_db_config` with the expected database.
   - `Zeitwerk::Loader.eager_load_all` in a Redis-only process does not load `RubyReactor::Storage::ActiveRecordAdapter`.
-- [ ] T007 Loading and configuration (R-01, R-02, PA "Configuration"):
+- [X] T007 Loading and configuration (R-01, R-02, PA "Configuration"):
   - **`lib/ruby_reactor.rb`**: `loader.ignore("#{__dir__}/ruby_reactor/storage/active_record_adapter.rb", "#{__dir__}/ruby_reactor/storage/active_record", "#{__dir__}/generators")`.
   - **`lib/ruby_reactor/storage/configuration.rb`**: add `attr_accessor :database`, default `nil`.
   - **`lib/ruby_reactor/configuration.rb`**: `storage_adapter` gains `when :active_record`, which runs `require_relative "storage/active_record_adapter"` and then `RubyReactor::Storage::ActiveRecordAdapter.new(database: storage.database)`.
@@ -121,20 +121,20 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
     - `class ActiveRecordAdapter < Adapter` including the modules from Phase 3. Every AR-side constant (models, `Record`, `Coordination`, the modules) is nested **inside** this class. Never define `RubyReactor::Storage::ActiveRecord`, which would shadow `::ActiveRecord` (R-01). Write `::ActiveRecord::…` explicitly;
     - `SCHEMA_VERSION = 1`;
     - `def self.migrations_path = File.expand_path("active_record/migrations", __dir__)`.
-- [ ] T008 Write `lib/ruby_reactor/storage/active_record/record.rb` and `lib/ruby_reactor/storage/active_record/models.rb` (R-02, DM).
+- [X] T008 Write `lib/ruby_reactor/storage/active_record/record.rb` and `lib/ruby_reactor/storage/active_record/models.rb` (R-02, DM).
   - `ActiveRecordAdapter::Record < ::ActiveRecord::Base` with `self.abstract_class = true`.
   - `ActiveRecordAdapter#initialize(database:)` calls `Record.establish_connection(database || ::ActiveRecord::Base.connection_db_config)`. That creates a **dedicated pool**, so reactor writes never join a host transaction (FR-010).
   - A private `with_db { |conn| … }` = `Record.connection_pool.with_connection`. **Every** adapter method goes through it, so long-lived threads never hold a connection.
   - One model class per table in DM §1–§13, each a single line plus `self.table_name` and `self.primary_key` where it isn't `id`: `Schema, Execution, ExecutionInput, StepResult, MapOperation, MapElement, MapResult, MapRollback, MapRollbackOutcome, CorrelationId, InterruptResume, PeriodMarker, IdempotencyKey, CoordinationEntry`.
   - `ActiveRecordAdapter::MODELS = [...]` lists them for reset. All models are `ActiveRecordAdapter::<Name>`.
-- [ ] T009 Write `lib/ruby_reactor/storage/active_record/migrations/001_create_ruby_reactor_tables.rb`, `class CreateRubyReactorTables < ActiveRecord::Migration[8.0]`.
+- [X] T009 Write `lib/ruby_reactor/storage/active_record/migrations/001_create_ruby_reactor_tables.rb`, `class CreateRubyReactorTables < ActiveRecord::Migration[8.0]`.
   - Create every table, column, primary key, unique index and index exactly as in DM §1–§13.
   - `context` uses `size: :long` (LONGTEXT on MySQL, ignored elsewhere, R-10).
   - Composite primary keys use `primary_key: [...]`.
   - `datetime` columns use `precision: 6`.
   - `ruby_reactor_schema` is created with `t.integer :version, null: false, default: 1` and no rows. The column **default** is the installed version (R-16), so it survives `db/schema.rb` loads and truncation.
   - `down` drops every table.
-- [ ] T010 Write `spec/ruby_reactor/storage/active_record/coordination_spec.rb` (`:active_record_only`). It runs the same verb sequence against real Redis (`redis` helper) and against `Coordination.atomically([...]) { |kv| … }`, and compares results for:
+- [X] T010 Write `spec/ruby_reactor/storage/active_record/coordination_spec.rb` (`:active_record_only`). It runs the same verb sequence against real Redis (`redis` helper) and against `Coordination.atomically([...]) { |kv| … }`, and compares results for:
   - `get set(nx:/ex:/keepttl:) incr incrby decr exists del expire ttl`;
   - `hget hset hdel hincrby hexists hkeys hlen`;
   - `lpop rpush llen`;
@@ -147,7 +147,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   - `ActiveRecord::LockWaitTimeout` is never retried;
   - two threads incrementing the same key 500 times each end at 1000;
   - `Coordination.peek([key])` returns the same values as `atomically` reads, treats expired rows as absent, inserts no rows, and does not block while another connection holds an `atomically` row lock on PostgreSQL and MySQL.
-- [ ] T011 Write `lib/ruby_reactor/storage/active_record/coordination.rb` (R-04–R-07). `atomically(keys)`:
+- [X] T011 Write `lib/ruby_reactor/storage/active_record/coordination.rb` (R-04–R-07). `atomically(keys)`:
   1. digests the keys (`Digest::SHA256.hexdigest`);
   2. `CoordinationEntry.insert_all(missing rows, value: nil)`, skipping duplicates;
   3. `lock.where(key_digest:).order(:key_digest)`;
@@ -162,7 +162,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   Also add `peek(keys)`: a read-only `SELECT` of the rows plus the same `now_ms` read and expiry rule, yielding a read-only `KV`. It does no insert, takes no lock and opens no transaction. The read-only inspectors use it (R-04).
 
   Also add `purge_expired_coordination(limit:)`, which deletes up to `limit` rows `WHERE value IS NULL OR expires_at_ms <= now_ms` and returns the count. Run T010 until green.
-- [ ] T012 Adapter selection in the gem suite (R-17, PA "Environment variables"):
+- [X] T012 Adapter selection in the gem suite (R-17, PA "Environment variables"):
   - **`spec/support/storage_selection.rb`**:
     - define `STORAGE_UNDER_TEST = ENV.fetch("RUBY_REACTOR_TEST_STORAGE", "redis")`;
     - under `active_record`:
@@ -171,8 +171,8 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
       - run `ActiveRecord::MigrationContext.new(ActiveRecordAdapter.migrations_path).migrate` once on `Record`'s connection;
     - `config.before(:each, :redis_only)` calls `skip("Redis internals: #{metadata reason or 'raw keys/TTL'}")` unless the suite is on Redis, and `:active_record_only` mirrors it.
   - **`spec/spec_helper.rb`**: the `RubyReactor.configure` block stops hard-coding `adapter = :redis` and delegates to `storage_selection.rb`. The global `before` keeps `redis.flushdb`, because Redis is still the scratchpad and queue, and adds `RubyReactor.configuration.storage_adapter.reset!` when on AR.
-- [ ] T013 [P] Add `ActiveRecordAdapterReset#reset!` to `lib/ruby_reactor/rspec/storage_reset.rb`. It runs `ActiveRecordAdapter::MODELS - [ActiveRecordAdapter::Schema]`, each `.delete_all` inside `with_db`, and is prepended to `ActiveRecordAdapter` in `install!` only `if defined?(::RubyReactor::Storage::ActiveRecordAdapter)`. `install!` must also run when the AR adapter is loaded after `RSpec.configure`: call `StorageReset.install!` again from the end of `active_record_adapter.rb` when `defined?(::RubyReactor::RSpec::StorageReset)`.
-- [ ] T014 [P] Make `spec/support/sidekiq_boot.rb` configure the child Sidekiq process's storage from the same environment variables as T012. The real-Sidekiq specs must share the parent's storage under both adapters.
+- [X] T013 [P] Add `ActiveRecordAdapterReset#reset!` to `lib/ruby_reactor/rspec/storage_reset.rb`. It runs `ActiveRecordAdapter::MODELS - [ActiveRecordAdapter::Schema]`, each `.delete_all` inside `with_db`, and is prepended to `ActiveRecordAdapter` in `install!` only `if defined?(::RubyReactor::Storage::ActiveRecordAdapter)`. `install!` must also run when the AR adapter is loaded after `RSpec.configure`: call `StorageReset.install!` again from the end of `active_record_adapter.rb` when `defined?(::RubyReactor::RSpec::StorageReset)`.
+- [X] T014 [P] Make `spec/support/sidekiq_boot.rb` configure the child Sidekiq process's storage from the same environment variables as T012. The real-Sidekiq specs must share the parent's storage under both adapters.
 
 **Checkpoint**:
 
@@ -189,23 +189,23 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
 ### Tests for User Story 1 (write first, confirm FAIL) ⚠️
 
-- [ ] T015 [P] [US1] Write `spec/ruby_reactor/storage/active_record/transaction_independence_spec.rb` (`:active_record_only`, FR-010).
+- [X] T015 [P] [US1] Write `spec/ruby_reactor/storage/active_record/transaction_independence_spec.rb` (`:active_record_only`, FR-010).
   - A reactor run inside `ActiveRecord::Base.transaction { …; raise ActiveRecord::Rollback }` leaves its `Execution` row behind, with status `completed`.
   - A `with_lock` reactor run inside an open host transaction holds a lock that a second thread's `storage_adapter.lock_held?` sees **before** the host transaction ends.
   - On SQLite, skip with reason "SQLite serializes writers; documented limitation (R-02)" when the host transaction has already written.
 
   The spec needs `ActiveRecord::Base` connected to the same test database. Establish that in the spec's `before(:all)`.
-- [ ] T016 [P] [US1] Write `spec/ruby_reactor/storage/active_record/history_window_spec.rb` (`:active_record_only`, R-08). Executions, step results, map operations and map rollbacks whose `updated_at` is set (`update_columns`) to `context_ttl + 60` seconds ago are:
+- [X] T016 [P] [US1] Write `spec/ruby_reactor/storage/active_record/history_window_spec.rb` (`:active_record_only`, R-08). Executions, step results, map operations and map rollbacks whose `updated_at` is set (`update_columns`) to `context_ttl + 60` seconds ago are:
   - **absent** from `scan_reactors`, `scan_step_results`, `scan_maps` and `scan_map_rollbacks`;
   - still returned by `retrieve_context`, `find_context_by_id` and `scan_reactors_page`.
 
   A stranded `running` execution older than `context_ttl` is **not** re-enqueued by `RubyReactor::Sweeper.new.run_once`, which matches Redis, where it would have expired.
-- [ ] T017 [P] [US1] Write `spec/ruby_reactor/storage/active_record/failure_modes_spec.rb` (`:active_record_only`):
+- [X] T017 [P] [US1] Write `spec/ruby_reactor/storage/active_record/failure_modes_spec.rb` (`:active_record_only`):
   - **Database unreachable**: point `Record` at an unreachable URL (`postgres://127.0.0.1:1/x`). A reactor `run` returns or raises exactly as the Redis-unreachable case does in `spec/ruby_reactor/step_coordination/lock_spec.rb` (the `redis://127.0.0.1:1` example), never a silent success.
   - **MySQL only** (skip elsewhere): a context larger than `@@max_allowed_packet` raises `RubyReactor::Error::ContextTooLargeError`, and no row is written (R-10).
   - **SQLite contention** (SQLite only, G3): one connection holds a write transaction, and an adapter write from another connection with `timeout: 200` surfaces a busy/timeout error, not a silent success or corrupt state. After the holder commits, the same write succeeds.
   - **Pool exhaustion guard**: with pool size 2, 10 concurrent `with_lock(auto_extend: true)` reactors across threads complete without `ActiveRecord::ConnectionTimeoutError`. This proves `with_db` returns connections (R-02).
-- [ ] T018 [P] [US1] Write `spec/ruby_reactor/storage/active_record/stress_spec.rb` (`:stress`, `:active_record_only`; add `config.filter_run_excluding :stress` alongside `:slow` in `spec/spec_helper.rb`; SC-006). 4 `fork`ed processes, each reconnecting `Record`, make 250 attempts each on:
+- [X] T018 [P] [US1] Write `spec/ruby_reactor/storage/active_record/stress_spec.rb` (`:stress`, `:active_record_only`; add `config.filter_run_excluding :stress` alongside `:slow` in `spec/spec_helper.rb`; SC-006). 4 `fork`ed processes, each reconnecting `Record`, make 250 attempts each on:
   - one lock key: at most one holder at any instant, checked by a holder-count row incremented and decremented inside the critical section, with a max of 1;
   - one semaphore with limit 3: never more than 3 holders;
   - one rate limit of 100 per 3600 s window: exactly 100 allowed. The long window prevents a rollover during the test;
@@ -215,7 +215,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
 ### Implementation for User Story 1
 
-- [ ] T019 [P] [US1] Write `lib/ruby_reactor/storage/active_record/contexts.rb`, module `ActiveRecordContexts` (DM §2, §9; R-08, R-09).
+- [X] T019 [P] [US1] Write `lib/ruby_reactor/storage/active_record/contexts.rb`, module `ActiveRecordContexts` (DM §2, §9; R-08, R-09).
   - `store_context`:
     - `JSON.parse` once;
     - `Execution.upsert` with `id, storage_name, reactor_class, status: determine_status(data), parent_context_id, root_context_id, correlation_id, dispatched_child: !!data.dig("private_data","async_dispatched"), context, started_at`;
@@ -231,15 +231,15 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
     - return rows in the same `{id:, class:, status:, created_at:, failure:}` shape as `RedisReactorScan#fetch_and_filter_reactors`, with `failure` read from the parsed context.
   - `scan_reactors_page`: keyset over all history ordered by `(started_at DESC, id DESC)`, children excluded as above. The cursor is `Base64.urlsafe_encode64("#{started_at.iso8601(6)}|#{id}")`, and `"0"` means start or end.
   - `expire`: a no-op.
-- [ ] T020 [P] [US1] Write `lib/ruby_reactor/storage/active_record/step_results.rb`: `store_step_result` is an upsert on `(storage_name, context_id, step_name)` with `status: record["status"]`; `retrieve_step_result`; `scan_step_results(count:)` is limited to the R-08 window and ordered by `updated_at` (DM §4).
-- [ ] T021 [P] [US1] Write `lib/ruby_reactor/storage/active_record/maps.rb` with every SA "Maps" method over `MapOperation`, `MapElement` and `MapResult` (DM §5–§7; R-12).
+- [X] T020 [P] [US1] Write `lib/ruby_reactor/storage/active_record/step_results.rb`: `store_step_result` is an upsert on `(storage_name, context_id, step_name)` with `status: record["status"]`; `retrieve_step_result`; `scan_step_results(count:)` is limited to the R-08 window and ordered by `updated_at` (DM §4).
+- [X] T021 [P] [US1] Write `lib/ruby_reactor/storage/active_record/maps.rb` with every SA "Maps" method over `MapOperation`, `MapElement` and `MapResult` (DM §5–§7; R-12).
   - `ensure_map(map_id, C)` runs `insert_all` skipping duplicates, then a row-locked read-modify-write for each counter and offset method, returning the post-change value.
   - `initialize_map_operation` stores the same metadata hash `RedisAdapter#initialize_map_operation` builds, including `created_at`, and sets `counter`.
   - `store_map_element_context_id` locks the map row, inserts `position = element_count`, and increments it.
   - Tail and `LINDEX` reads use the same index arithmetic as `RedisMapRollback#retrieve_map_element_context_ids_from_tail` and `LINDEX`.
   - `claim_map_owner_signal` ensures the row, then `MapOperation.where(id:, owner_signalled_at: nil).update_all(owner_signalled_at: Time.current) == 1`. `store_map_failed_context_id` follows the same pattern on `failed_context_id` (R-13).
   - `scan_maps` is limited to the R-08 window.
-- [ ] T022 [P] [US1] Write `lib/ruby_reactor/storage/active_record/map_rollback.rb` with every SA "Map rollback" method (DM §8, R-13).
+- [X] T022 [P] [US1] Write `lib/ruby_reactor/storage/active_record/map_rollback.rb` with every SA "Map rollback" method (DM §8, R-13).
   - `start_map_rollback`: insert, and on `RecordNotUnique` return `[false, existing_meta]`.
   - `claim_map_rollback_positions`: row-locked `offset += count`, returning `(stop - count)...[stop, total].min`.
   - `store_map_rollback_outcome`: insert the outcome, `RecordNotUnique` → `false`.
@@ -247,18 +247,18 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   - `map_rollback_summary`: two aggregate `COUNT` queries, with `FAILED_OUTCOMES` from `RedisMapRollback`. Reference the constant; don't copy it.
   - `each_map_rollback_outcome`: `find_each`-style batches of 500 ordered by position.
   - `scan_map_rollbacks`: limited to the R-08 window.
-- [ ] T023 [P] [US1] Write `lib/ruby_reactor/storage/active_record/claims.rb` for interrupt resumes (DM §10, R-13).
+- [X] T023 [P] [US1] Write `lib/ruby_reactor/storage/active_record/claims.rb` for interrupt resumes (DM §10, R-13).
   - `claim_interrupt_resume`: ensure the row, then `InterruptResume.where(pk…, payload: nil).update_all(payload:) == 1` means claimed.
   - `retrieve_interrupt_resumes`: `where(step_name: names).where.not(payload: nil).pluck(:step_name, :payload).to_h`.
   - `increment_interrupt_attempts`: row-locked `+= 1`, returning the new value.
   - `claim_idempotency_key`: insert into `IdempotencyKey`; on `RecordNotUnique` return the existing `context_id`, otherwise `nil` (DM §12). It is used by US6 and lives here with the other claims.
-- [ ] T024 [US1] Write `lib/ruby_reactor/storage/active_record/locking.rb`. It holds Ruby twins of `LOCK_ACQUIRE_SCRIPT`, `LOCK_RELEASE_SCRIPT`, `LOCK_EXTEND_SCRIPT`, `SEM_ACQUIRE_SCRIPT`, `SEM_RELEASE_SCRIPT` and `RATE_LIMIT_SCRIPT` from `lib/ruby_reactor/storage/redis_locking.rb`.
+- [X] T024 [US1] Write `lib/ruby_reactor/storage/active_record/locking.rb`. It holds Ruby twins of `LOCK_ACQUIRE_SCRIPT`, `LOCK_RELEASE_SCRIPT`, `LOCK_EXTEND_SCRIPT`, `SEM_ACQUIRE_SCRIPT`, `SEM_RELEASE_SCRIPT` and `RATE_LIMIT_SCRIPT` from `lib/ruby_reactor/storage/redis_locking.rb`.
   - Each twin is one `atomically(KEYS) { |kv| … }` block that keeps the Lua's statement order, branches and comments. Put a `# twin of RedisLocking::<NAME>` header on each so reviewers can diff them.
   - Non-script **writes** go through `atomically`: `semaphore_init` (NX init plus token push, `SEMAPHORE_TTL`) and `semaphore_reset`.
   - Read-only inspectors go through `Coordination.peek`, with no lock and no insert: `semaphore_held`/`semaphore_held?`, `semaphore_exists?`, `lock_held?`, `lock_info`, `lock_ttl`, `semaphore_state`, `rate_limit_count`, `rate_limit_ttl`.
   - `semaphore_acquire(key, timeout:)` with `timeout > 0` polls `SEM_ACQUIRE` every 50 ms until `timeout` elapses. That replaces `BLPOP`; see the memory note on single-connection stalls.
   - Periods: `period_seen?`, `period_marker?` (`PeriodMarker.exists?(key_digest:)`); `period_mark(key, ttl, context_id: nil)`, which inserts `PeriodMarker` with first insert winning and `ttl` ignored (R-15); and `period_ttl`, which returns `-1` when the marker exists and `-2` otherwise.
-- [ ] T025 [US1] Write `lib/ruby_reactor/storage/active_record/ordered_locking.rb`. It holds Ruby twins of `ASSIGN_SCRIPT`, `CAN_PROCEED_SCRIPT`, `ADVANCE_SCRIPT`, `HEARTBEAT_SCRIPT` and `SKIP_SCRIPT`, plus `ordered_lock_reset` (`atomically`, deleting the five keys), `ordered_lock_peek` (`Coordination.peek`) and `ordered_lock_keys`, from `lib/ruby_reactor/storage/redis_ordered_locking.rb`. `ordered_lock_keys` is pure: it returns the same five key names as Redis and does no database access. Reuse `RedisOrderedLocking#ordered_lock_keys`; don't copy it.
+- [X] T025 [US1] Write `lib/ruby_reactor/storage/active_record/ordered_locking.rb`. It holds Ruby twins of `ASSIGN_SCRIPT`, `CAN_PROCEED_SCRIPT`, `ADVANCE_SCRIPT`, `HEARTBEAT_SCRIPT` and `SKIP_SCRIPT`, plus `ordered_lock_reset` (`atomically`, deleting the five keys), `ordered_lock_peek` (`Coordination.peek`) and `ordered_lock_keys`, from `lib/ruby_reactor/storage/redis_ordered_locking.rb`. `ordered_lock_keys` is pure: it returns the same five key names as Redis and does no database access. Reuse `RedisOrderedLocking#ordered_lock_keys`; don't copy it.
   - Use the same key names (`ordered_lock:{<key>}:next|last_completed|assigned_at|first_failed|epoch`), each one coordination row with its own TTL.
   - Preserve exactly:
     - the stale-epoch fence;
@@ -268,13 +268,13 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
     - GC that leaves `epoch` alone;
     - every return tuple and its string state.
   - This is the highest-risk port. Do it after T024 is green. It needs a second reviewer pass, comparing each twin against its Lua line by line before merge (Constitution II).
-- [ ] T026 [US1] Complete the adapter in `lib/ruby_reactor/storage/active_record_adapter.rb`.
+- [X] T026 [US1] Complete the adapter in `lib/ruby_reactor/storage/active_record_adapter.rb`.
   - Include `ActiveRecordContexts`, `ActiveRecordStepResults`, `ActiveRecordMaps`, `ActiveRecordMapRollback`, `ActiveRecordClaims`, `ActiveRecordLocking`, `ActiveRecordOrderedLocking` and `Coordination`.
   - `publish` is a no-op. `subscribe` does `loop { sleep 3600 }`, and `AsyncWaiter` kills the thread (R-14).
   - On MySQL, cache `@@max_allowed_packet` on first use and raise `Error::ContextTooLargeError` in `store_context` above it (R-10).
 
   Run T004 under AR on all three engines until it is green, including the surface guard.
-- [ ] T027 [US1] Call `RubyReactor.configuration.storage_adapter.purge_expired_coordination` once per `run_once` in `lib/ruby_reactor/sweeper.rb`, rescuing errors and logging them as a key=value line, `ruby_reactor.sweeper op=purge_expired_coordination error=<class> message=<msg>`, so a purge failure never stops a sweep (R-07, Constitution IV). Add an example to `spec/ruby_reactor/sweeper_spec.rb`: under AR an expired coordination row is deleted after `run_once`, and under Redis the call returns 0.
+- [X] T027 [US1] Call `RubyReactor.configuration.storage_adapter.purge_expired_coordination` once per `run_once` in `lib/ruby_reactor/sweeper.rb`, rescuing errors and logging them as a key=value line, `ruby_reactor.sweeper op=purge_expired_coordination error=<class> message=<msg>`, so a purge failure never stops a sweep (R-07, Constitution IV). Add an example to `spec/ruby_reactor/sweeper_spec.rb`: under AR an expired coordination row is deleted after `run_once`, and under Redis the call returns 0.
 - [ ] T028 [US1] Classify the Redis-coupled specs. **Rule**: an assertion on storage *behavior* moves to the public adapter API, which runs on both adapters. An assertion on Redis *layout, TTL or simulated expiry* becomes `:redis_only` with a reason, and its semantics must already be covered by T004.
 
   **Move to the public adapter API**:

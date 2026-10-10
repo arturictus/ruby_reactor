@@ -3,7 +3,7 @@
 require "spec_helper"
 require "ruby_reactor/storage/redis_adapter"
 
-RSpec.describe RubyReactor::Storage::RedisAdapter do
+RSpec.describe RubyReactor::Storage::RedisAdapter, redis_only: "Redis key layout and TTLs" do
   let(:redis_url) { REDIS_TEST_URL }
   let(:redis_client) { redis } # from spec_helper's RedisHelpers
   let(:adapter) { described_class.new(url: redis_url) }

@@ -1,6 +1,6 @@
 # Locks, Semaphores, Rate Limits, Periods & Ordered Locks
 
-RubyReactor ships with five Redis-backed coordination primitives — each tackling a different problem:
+RubyReactor ships with five store-backed coordination primitives — each tackling a different problem:
 
 | Primitive           | Question it answers                                                                                  |
 | ------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -11,6 +11,8 @@ RubyReactor ships with five Redis-backed coordination primitives — each tackli
 | `with_ordered_lock` | "Is my turn yet?" — strict sequential ordering via a monotonically increasing nonce.                 |
 
 They are orthogonal and composable: a reactor can declare any combination.
+
+> **Storage adapters:** this guide describes the internals in Redis terms (keys, `INCR`, `EXPIRE`). The [ActiveRecord adapter](storage_adapters.md) keeps the same keys as database rows, each with its own TTL, and runs every operation with the same atomicity. TTLs are judged by the store's own server clock in both cases. The one behavioral difference: on ActiveRecord, `with_period` markers are permanent instead of expiring with the period.
 
 > **A note on terminology below:** contention/snooze behavior is described in terms of "the Sidekiq worker" throughout this guide since Sidekiq is the default `config.async_router`. Everything described applies identically on the ActiveJob adapter (`RubyReactor::Adapters::ActiveJob::Router`) — read "Sidekiq worker" as "background worker" wherever it appears.
 

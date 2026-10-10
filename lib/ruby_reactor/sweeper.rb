@@ -45,6 +45,7 @@ module RubyReactor
     # Scans stored top-level reactors and re-enqueues the running-but-unlocked
     # ones. Returns the number of contexts re-enqueued.
     def run_once(limit: DEFAULT_LIMIT)
+      purge_expired_coordination
       reenqueued = 0
 
       @storage.scan_reactors(count: limit, include_dispatched_children: true).each do |reactor|
@@ -61,6 +62,17 @@ module RubyReactor
       end
 
       reenqueued
+    end
+
+    private
+
+    # Table-backed adapters keep expired locks/semaphores/rate windows until
+    # purged (Redis expires them itself; its purge is a no-op). Never lets a
+    # purge failure stop the sweep (011 R-07).
+    def purge_expired_coordination
+      @storage.purge_expired_coordination
+    rescue StandardError => e
+      @logger.warn("ruby_reactor.sweeper op=purge_expired_coordination error=#{e.class} message=#{e.message.inspect}")
     end
   end
 end

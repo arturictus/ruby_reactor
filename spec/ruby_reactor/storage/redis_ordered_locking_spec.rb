@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe RubyReactor::Storage::RedisOrderedLocking, type: :reactor do
+RSpec.describe "ordered locking storage primitives", type: :reactor do # rubocop:disable RSpec/DescribeClass
   let(:adapter) { RubyReactor.configuration.storage_adapter }
   let(:key) { "test_key" }
 
@@ -115,11 +115,11 @@ RSpec.describe RubyReactor::Storage::RedisOrderedLocking, type: :reactor do
       # Out-of-order terminal advance of nonce 2 deletes its assigned_at entry.
       adapter.ordered_lock_advance(key, nonce: 2)
       _next_k, _last_k, at_k = adapter.ordered_lock_keys(key)
-      expect(redis.hexists(at_k, "2")).to be(false)
+      expect(coordination(:hexists, at_k, "2")).to be(false)
 
       # A late gate check for nonce 2 must NOT recreate the entry (hexists guard).
       adapter.ordered_lock_can_proceed(key, nonce: 2, poison_pill_timeout: 60, now: 1100)
-      expect(redis.hexists(at_k, "2")).to be(false)
+      expect(coordination(:hexists, at_k, "2")).to be(false)
     end
   end
 
@@ -143,10 +143,10 @@ RSpec.describe RubyReactor::Storage::RedisOrderedLocking, type: :reactor do
     it "does not resurrect a timer a terminal advance already deleted" do
       adapter.ordered_lock_advance(key, nonce: 1) # advances cursor, hdels nonce 1
       _next_k, _last_k, at_k = adapter.ordered_lock_keys(key)
-      expect(redis.hexists(at_k, "1")).to be(false)
+      expect(coordination(:hexists, at_k, "1")).to be(false)
 
       expect(adapter.ordered_lock_heartbeat(key, nonce: 1, now: 1100)).to eq(0)
-      expect(redis.hexists(at_k, "1")).to be(false)
+      expect(coordination(:hexists, at_k, "1")).to be(false)
     end
 
     it "is fenced out when the caller's epoch no longer matches (stale batch)" do
@@ -174,7 +174,7 @@ RSpec.describe RubyReactor::Storage::RedisOrderedLocking, type: :reactor do
       adapter.ordered_lock_skip(key, nonce: 1)
       # Plain SET would drop the TTL to -1 (persist), leaking the key forever for
       # a sequence that never drains.
-      expect(redis.ttl(last_k)).to be > 0
+      expect(coordination(:ttl, last_k)).to be > 0
     end
   end
 
@@ -281,7 +281,7 @@ RSpec.describe RubyReactor::Storage::RedisOrderedLocking, type: :reactor do
       # Simulate nonce 1's timer being deleted (out-of-order advance hdel, or the
       # assigned_at hash expiring). The gate must not treat a missing timer as a
       # live blocker and wait forever.
-      redis.hdel(at_k, "1")
+      coordination(:hdel, at_k, "1")
 
       state, _retry, last = adapter.ordered_lock_can_proceed(
         key, nonce: 2, poison_pill_timeout: 60, now: 1010
@@ -296,7 +296,7 @@ RSpec.describe RubyReactor::Storage::RedisOrderedLocking, type: :reactor do
 
     it "does not wipe live counters when next_key has expired" do
       next_k, = adapter.ordered_lock_keys(key)
-      redis.del(next_k) # simulate next_key TTL expiry mid-sequence
+      coordination(:del, next_k) # simulate next_key TTL expiry mid-sequence
 
       adapter.ordered_lock_advance(key, nonce: 1) # in-order advance, nxt reads 0
       # Without the `nxt > 0` guard, `last >= 0` would GC everything back to 0.
@@ -448,7 +448,7 @@ RSpec.describe RubyReactor::Storage::RedisOrderedLocking, type: :reactor do
 
       adapter.ordered_lock_advance(key, nonce: 1)
       # `set last_key, my` without KEEPTTL would drop the TTL to -1 (persist).
-      expect(redis.ttl(last_k)).to be > 0
+      expect(coordination(:ttl, last_k)).to be > 0
     end
   end
 end

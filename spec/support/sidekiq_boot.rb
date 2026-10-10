@@ -21,8 +21,15 @@ Sidekiq.configure_server do |config|
 end
 
 RubyReactor.configure do |config|
-  config.storage.adapter = :redis
-  config.storage.redis_url = REDIS_URL
+  # Same storage as the spec process that booted us (spec/support/storage_selection.rb
+  # reads the same env vars); Redis stays the queue either way.
+  if ENV["RUBY_REACTOR_TEST_STORAGE"] == "active_record"
+    config.storage.adapter = :active_record
+    config.storage.database = ENV.fetch("RUBY_REACTOR_TEST_DATABASE_URL", "sqlite3:tmp/ruby_reactor_test.sqlite3")
+  else
+    config.storage.adapter = :redis
+    config.storage.redis_url = REDIS_URL
+  end
   config.async_router = RubyReactor::Adapters::Sidekiq::Router
 end
 

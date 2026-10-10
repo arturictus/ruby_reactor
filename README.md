@@ -5,7 +5,7 @@
 
 # RubyReactor
 
-A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq or ActiveJob** for background execution and **Redis** for state persistence.
+A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq or ActiveJob** for background execution and **Redis** or a **relational database (via ActiveRecord)** for state persistence.
 
 ![Payment workflow reactor](documentation/images/payment_workflow.png)
 
@@ -25,7 +25,7 @@ The key value is **Reliability**: if any part of your workflow fails with an err
 - **Compensation**: Automatic rollback of completed steps when any error occurs after them, including a raising argument transform or an exception that is not a `StandardError`.
 - **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
-- **Distributed Locks, Semaphores, Rate Limits, Periods & Ordered Locks**: Coordinate across processes with Redis-backed primitives — exclusive locks for at-most-one-runner, semaphores for capacity caps, fixed-window rate limits for external APIs (single or multi-window like "3/sec AND 100/min"), `with_period` to dedup reactors to once per calendar bucket, and `with_ordered_lock` for strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Background jobs snooze on contention with smart `retry_after` instead of consuming retry budget.
+- **Distributed Locks, Semaphores, Rate Limits, Periods & Ordered Locks**: Coordinate across processes with store-backed primitives (Redis or your database) — exclusive locks for at-most-one-runner, semaphores for capacity caps, fixed-window rate limits for external APIs (single or multi-window like "3/sec AND 100/min"), `with_period` to dedup reactors to once per calendar bucket, and `with_ordered_lock` for strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Background jobs snooze on contention with smart `retry_after` instead of consuming retry budget.
 
 ## Comparison
 
@@ -108,10 +108,16 @@ it changes nothing, so it doubles as a reference of every knob.
 
 ```ruby
 RubyReactor.configure do |config|
-  ## === Storage (Redis) ===
+  ## === Storage (Redis or ActiveRecord) ===
 
-  ## Storage adapter. Default: :redis (the only adapter shipped today).
+  ## Storage adapter: :redis (default) or :active_record (PostgreSQL, MySQL,
+  ## SQLite; needs activerecord >= 8.0 in your Gemfile and its schema
+  ## installed). See documentation/storage_adapters.md.
   # config.storage.adapter = :redis
+
+  ## ActiveRecord only: database for the adapter's own pool — a database.yml
+  ## name, URL or Hash. Default: nil, the app's primary database.
+  # config.storage.database = nil
 
   ## Redis URL. Default: "redis://localhost:6379/0".
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
@@ -160,6 +166,8 @@ RubyReactor.configure do |config|
 
   ## Retention TTL (seconds) for stored reactor/map state. Must exceed your
   ## worst-case snooze/retry window; re-stamped on every write. Default: 86_400.
+  ## ActiveRecord keeps history permanently; there this is only the window
+  ## the sweeper looks back over for stranded runs.
   # config.context_ttl = 86_400
 
   ## TTL (seconds) for the per-context liveness lock. A live worker auto-extends
@@ -590,7 +598,7 @@ rules.
 
 ### Durability & Recovery
 
-Background reactors are durable: state lives in Redis, not in the job payload. Before
+Background reactors are durable: state lives in the storage adapter (Redis or your database), not in the job payload. Before
 any background job is enqueued the root context is persisted, and after every
 completed step a checkpoint advances the stored blob — so a crash re-runs at most
 one step, never the whole reactor. Each running reactor also holds a short
@@ -721,7 +729,7 @@ raising, so a webhook's resume is never lost. See [Resuming Execution](documenta
 
 ### Locks, Semaphores & Ordered Locks
 
-Coordinate across processes with Redis-backed primitives:
+Coordinate across processes with store-backed primitives (Redis or your database — same semantics):
 
 - **`with_lock`** — at-most-one runner per key at a time (concurrency control).
 - **`with_semaphore`** — cap total concurrent runners per key (capacity control).
@@ -1585,7 +1593,7 @@ Comprehensive guide to testing reactors with RubyReactor's testing utilities. Le
 
 ### [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md)
 
-Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Every primitive is also available [declared on a step](documentation/locks_and_semaphores.md#step-scoped-coordination) instead of the whole reactor, keying the critical section down to one operation. Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
+Coordinate access to shared resources across processes with store-backed primitives (Redis or your database): exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Every primitive is also available [declared on a step](documentation/locks_and_semaphores.md#step-scoped-coordination) instead of the whole reactor, keying the critical section down to one operation. Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
 
 ### [Middlewares & OpenTelemetry](documentation/middlewares.md)
 

@@ -49,7 +49,7 @@ RSpec.describe "Step Result Record storage" do
     expect(storage.retrieve_step_result(other, :a, reactor_class_name)).to be_nil
   end
 
-  it "stamps the record with context_ttl so it cannot outlive its parent" do
+  it "stamps the record with context_ttl so it cannot outlive its parent", redis_only: "Redis TTL; ActiveRecord keeps history" do
     storage.store_step_result(context_id, :send_email, { "status" => "dispatched" }, reactor_class_name)
 
     key = redis.keys("*#{context_id}*step_result*").first

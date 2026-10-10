@@ -265,7 +265,9 @@ identically. Only *where the body runs* changes.
 Referencing `result(:async_step_name)` is what makes a step wait. The wait is a
 **notified wait**: the finishing worker writes its durable outcome and then
 publishes a completion signal, and the waiting step wakes on that signal (with a
-coarse fallback re-check in case the signal is lost). It is never unbounded, and
+coarse fallback re-check in case the signal is lost). The signal is Redis pub/sub;
+the [ActiveRecord adapter](storage_adapters.md) has none, so there the waiter relies
+on the fallback re-check alone. It is never unbounded, and
 it takes one of two forms depending on where the reader runs:
 
 - **Synchronous caller** (a request thread, a rake task, a plain `.call`): the

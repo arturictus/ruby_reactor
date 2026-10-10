@@ -18,13 +18,15 @@ gem install ruby_reactor
 
 ## Configuration
 
-RubyReactor uses Redis for state persistence and a background job backend for
-background execution — Sidekiq by default, or ActiveJob. Configure storage and the
-job queue before running any reactors:
+RubyReactor keeps state in a storage adapter (Redis by default, or your relational
+database through the ActiveRecord adapter, see [Storage Adapters](storage_adapters.md))
+and runs background work on a job backend: Sidekiq by default, or ActiveJob. Configure
+storage and the job queue before running any reactors:
 
 ```ruby
 RubyReactor.configure do |config|
   # Redis configuration for state persistence
+  # (or `config.storage.adapter = :active_record`, see storage_adapters.md)
   config.storage.adapter = :redis
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
   config.storage.redis_options = { timeout: 1 }

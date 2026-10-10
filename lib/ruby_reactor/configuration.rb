@@ -164,6 +164,9 @@ module RubyReactor
       @storage_adapter ||= case storage.adapter
                            when :redis
                              RubyReactor::Storage::RedisAdapter.new(url: storage.redis_url, **storage.redis_options)
+                           when :active_record
+                             require_relative "storage/active_record_adapter"
+                             RubyReactor::Storage::ActiveRecordAdapter.new(database: storage.database)
                            else
                              raise "Unknown storage adapter: #{storage.adapter}"
                            end

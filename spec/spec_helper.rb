@@ -74,10 +74,10 @@ Sidekiq.configure_client do |config|
 end
 
 RubyReactor.configure do |config|
-  config.storage.adapter = :redis
-  config.storage.redis_url = REDIS_TEST_URL
+  StorageSelection.configure!(config)
   config.async_router = RubyReactor::Adapters::Sidekiq::Router
 end
+StorageSelection.prepare!
 
 RSpec.configure do |config|
   RubyReactor::RSpec.configure(config)
@@ -90,6 +90,8 @@ RSpec.configure do |config|
 
   # `:slow` examples (e.g. the 10,000-element map rollback) run only with `--tag slow`.
   config.filter_run_excluding :slow unless config.inclusion_filter.rules.key?(:slow)
+  # `:stress` (multi-process contention, 011 SC-006) runs only with `--tag stress`.
+  config.filter_run_excluding :stress unless config.inclusion_filter.rules.key?(:stress)
 
   config.expect_with :rspec do |c|
     c.syntax = :expect
@@ -103,7 +105,10 @@ RSpec.configure do |config|
 
     # Each test starts with a clean Redis so lock owners, semaphore tokens,
     # rate-limit counters and period markers from prior tests can't leak.
+    # Under the ActiveRecord adapter Redis is only the queue and scratchpad,
+    # and the storage tables are reset instead.
     redis.flushdb
+    RubyReactor.configuration.storage_adapter.reset! if StorageSelection.active_record?
 
     # Reset snooze/jitter/cap knobs to documented defaults so a test that
     # overrides them doesn't bleed into the next.
