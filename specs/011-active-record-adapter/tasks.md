@@ -75,7 +75,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T004 Write `spec/ruby_reactor/storage/adapter_contract_spec.rb`: `RSpec.shared_examples "a RubyReactor storage adapter"` run against `RubyReactor.configuration.storage_adapter`, one `describe` per SA section. Write it **before** T005. On Redis, the examples for existing methods pass, and the examples for the new Redis behavior (`claim_idempotency_key`, and `period_mark(context_id:)` storing the id) are confirmed FAILING before T005 implements them (Constitution III).
+- [X] T004 Write `spec/ruby_reactor/storage/adapter_contract_spec.rb`: `RSpec.shared_examples "a RubyReactor storage adapter"` run against `RubyReactor.configuration.storage_adapter`, one `describe` per SA section. Write it **before** T005. On Redis, the examples for existing methods pass, and the examples for the new Redis behavior (`claim_idempotency_key`, and `period_mark(context_id:)` storing the id) are confirmed FAILING before T005 implements them (Constitution III).
 
   **Surface guard**:
 
@@ -93,7 +93,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   - **Semaphores**: limit enforced; double release refused; over-cap push refused; `semaphore_acquire(timeout: 0.3)` returns a token released by another thread mid-wait, and returns `nil` after the timeout.
   - **Rate limits**: multi-window all-or-none, and `retry_after`.
   - **Signals**: `subscribe` blocks until killed and `publish` never raises.
-- [ ] T005 Make `RubyReactor::Storage::Adapter` declare **every** method listed in SA. The method names come from that file's tables: maps, coordination inspectors, ordered locks, `claim_idempotency_key`, `purge_expired_coordination`. Each raises `NotImplementedError`, except:
+- [X] T005 Make `RubyReactor::Storage::Adapter` declare **every** method listed in SA. The method names come from that file's tables: maps, coordination inspectors, ordered locks, `claim_idempotency_key`, `purge_expired_coordination`. Each raises `NotImplementedError`, except:
   - `purge_expired_coordination(limit: 1000)`, which returns `0` on the base class;
   - `query_executions`, which is **not** declared, because it is capability-detected (R-18);
   - `period_marker_info`, which is declared by T061 (US5), not here.

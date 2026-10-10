@@ -65,23 +65,6 @@ module RubyReactor
         { reactors: fetch_and_filter_reactors(window, include_dispatched_children), cursor: next_cursor }
       end
 
-      def determine_status(data)
-        status = data["status"].to_s == "skipped" ? "halted" : data["status"].to_s # "skipped" is the legacy halt name
-        return status if %w[failed paused completed running rolling_back halted pending aborted].include?(status)
-        return "cancelled" if data["cancelled"]
-        # Heuristic
-        return "failed" if data["retry_count"]&.positive? && !data["current_step"].nil?
-        return "running" if data["current_step"]
-        return "completed" if execution_evidence?(data)
-
-        "pending"
-      end
-
-      def execution_evidence?(data)
-        (data["execution_trace"] || []).any? ||
-          (data["intermediate_results"] || {}).any?
-      end
-
       private
 
       def fetch_and_filter_reactors(keys, include_dispatched_children = false)
@@ -97,20 +80,9 @@ module RubyReactor
           # (context:#{id}:step_result:#{name}) but aren't a reactor context.
           next unless data["reactor_class"]
 
-          {
-            id: data["context_id"],
-            class: data["reactor_class"],
-            status: determine_status(data),
-            created_at: data["started_at"],
-            failure: data["failure_reason"]
-          }
+          reactor_row(data)
         end.compact
       end
-
-      # An `async_reactor` child owns its own job, so a lost job strands it like
-      # a top-level reactor. Compose children (inline) and map elements
-      # (Map::Sweeper's) carry no marker, so neither is swept.
-      def dispatched_child?(data) = data.dig("private_data", "async_dispatched")
     end
   end
 end

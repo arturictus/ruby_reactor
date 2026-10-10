@@ -169,8 +169,10 @@ module RubyReactor
         @redis.exists?(key)
       end
 
-      def period_mark(key, ttl)
-        @redis.set(key, "1", ex: ttl)
+      # The value names the claiming execution when the caller knows it
+      # (`period_marker_info`); "1" keeps older callers working.
+      def period_mark(key, ttl, context_id: nil)
+        @redis.set(key, context_id || "1", ex: ttl)
       end
 
       # Rate Limit Primitives — fixed-window counter, supports multiple
