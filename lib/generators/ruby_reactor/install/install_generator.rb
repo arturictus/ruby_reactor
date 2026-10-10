@@ -17,14 +17,15 @@ module RubyReactor
       source_root RubyReactor::Storage::ActiveRecordAdapter.migrations_path
 
       def copy_migrations
-        Dir[File.join(RubyReactor::Storage::ActiveRecordAdapter.migrations_path, "*.rb")].sort.each do |source|
+        Dir[File.join(RubyReactor::Storage::ActiveRecordAdapter.migrations_path, "*.rb")].each do |source|
           name = File.basename(source, ".rb").sub(/\A\d+_/, "")
           if Dir[File.join(destination_root, db_migrate_path, "*_#{name}.rb")].any?
             say_status :exist, "#{db_migrate_path}/*_#{name}.rb", :blue
             next
           end
 
-          copy_file File.basename(source), File.join(db_migrate_path, "#{next_migration_number(db_migrate_path)}_#{name}.rb")
+          copy_file File.basename(source),
+                    File.join(db_migrate_path, "#{next_migration_number(db_migrate_path)}_#{name}.rb")
         end
       end
 

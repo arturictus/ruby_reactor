@@ -404,6 +404,13 @@ module RubyReactor
     end
   end
 
+  # Marks the result of a run that reused an idempotency key: no step ran, and
+  # the result is the original run's (011 US6). Results of first runs don't
+  # respond to `idempotent_replay?`.
+  module IdempotentReplay
+    def idempotent_replay? = true
+  end
+
   # Global helper methods
   # A step returning its own inputs (`Success(inputs)`) stores the Hash.
   def self.Success(value = nil)

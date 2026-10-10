@@ -500,6 +500,20 @@ expect(subject).to have_validation_error(:age)
 
 ---
 
+### Idempotency Matchers
+
+`test_reactor` takes the same `idempotency_key:` as `run`. A repeat replays the original run, and the
+subject inspects that original:
+
+```ruby
+first = test_reactor(ChargeReactor, { order_id: 7, amount: 100 }, idempotency_key: "charge-7")
+again = test_reactor(ChargeReactor, { order_id: 7, amount: 100 }, idempotency_key: "charge-7")
+
+expect(first).to be_success
+expect(again).to be_idempotent_replay
+expect(again).to be_success
+```
+
 ### History Matchers
 
 With the ActiveRecord storage adapter, `be_findable_by` checks that the run can be found by

@@ -5,7 +5,7 @@ require "digest"
 require "yaml"
 
 # 011 FR-018: released migrations are append-only, enforced by checksum.
-RSpec.describe "ActiveRecord storage migrations" do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "ActiveRecord storage migrations" do
   let(:dir) { File.expand_path("../../../../lib/ruby_reactor/storage/active_record/migrations", __dir__) }
   let(:locked) { YAML.safe_load_file(File.join(dir, "migrations.lock")) }
   let(:shipped) { Dir[File.join(dir, "*.rb")].map { |path| File.basename(path) }.sort }

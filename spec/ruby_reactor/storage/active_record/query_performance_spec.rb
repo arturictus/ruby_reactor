@@ -5,7 +5,7 @@ require "securerandom"
 
 # 011 SC-007: an input-value filter over 100,000 executions returns its first
 # page in under 2 s. Release checklist (quickstart §8): `--tag slow`.
-RSpec.describe "ActiveRecord history query performance", :active_record_only, :slow do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "ActiveRecord history query performance", :active_record_only, :slow do
   let(:models) { RubyReactor::Storage::ActiveRecordAdapter }
 
   before do
@@ -24,7 +24,9 @@ RSpec.describe "ActiveRecord history query performance", :active_record_only, :s
           context: { "context_id" => row[:id], "reactor_class" => "Perf" }.to_json,
           started_at: now - row[:user], created_at: now, updated_at: now }
       end)
-      models::ExecutionInput.insert_all(rows.map { |row| { execution_id: row[:id], name: "user_id", value: row[:user].to_s } })
+      models::ExecutionInput.insert_all(rows.map do |row|
+        { execution_id: row[:id], name: "user_id", value: row[:user].to_s }
+      end)
     end
     adapter = RubyReactor.configuration.storage_adapter
 

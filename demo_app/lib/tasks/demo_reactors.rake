@@ -274,8 +274,23 @@ namespace :demo do
     puts "Claimed by #{claim[:context_id]}#{" at #{claim[:claimed_at]}" if claim[:claimed_at]}"
   end
 
+  desc "Run-level idempotency keys: one charge per key, repeats replay the original (011 US6)"
+  task idempotent_charge: [:environment, :flush_redis] do
+    IdempotentChargeReactor::Ledger.reset!
+    { "ok" => false, "declined" => true }.each do |label, decline|
+      order_id = "ord_#{label}_#{SecureRandom.hex(3)}"
+      key = "charge-order-#{order_id}"
+      first = IdempotentChargeReactor.run({ order_id: order_id, amount: 100, decline: decline }, idempotency_key: key)
+      puts first.success? ? "✅ charged #{order_id}" : "❌ failed (reserve released): #{first.error}"
+      again = IdempotentChargeReactor.run({ order_id: order_id, amount: 100 }, idempotency_key: key)
+      kind = again.success? ? "replayed (no second charge)" : "replayed failure"
+      puts "🔁 #{kind}, execution #{again.execution_id}"
+    end
+    puts "Ledger: #{IdempotentChargeReactor::Ledger.entries.inspect}"
+  end
+
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups, :active_record_history, :yearly_report] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups, :active_record_history, :yearly_report, :idempotent_charge] do
     puts "excuting all reactors"
   end
 

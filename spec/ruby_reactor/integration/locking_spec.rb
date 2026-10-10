@@ -578,7 +578,8 @@ RSpec.describe "Locking Integration", type: :reactor do
         worker.perform(store_fresh_context(PeriodicReactor, { org_id: 70 }), "PeriodicReactor")
 
         expect(PeriodicCounters.runs).to eq(1)
-        expect(RubyReactor.configuration.storage_adapter.period_seen?(RubyReactor::Period.key("daily_report:70", :day))).to be true
+        expect(RubyReactor.configuration.storage_adapter.period_seen?(RubyReactor::Period.key("daily_report:70",
+                                                                                              :day))).to be true
       end
 
       it "skips a fresh worker pass when the bucket is already marked" do

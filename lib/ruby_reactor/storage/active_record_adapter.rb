@@ -55,7 +55,6 @@ module RubyReactor
         verify_schema!
       end
 
-
       # (Re)points the shared pool only when the config changes: re-running
       # establish_connection drops the live pool, which would fail any thread
       # mid-query with ConnectionNotDefined.
@@ -116,7 +115,7 @@ module RubyReactor
 
       # Every operation leases a connection only for its own duration, so
       # long-lived threads (lock auto-extend, heartbeats) never pin one.
-      def with_db(&) = Record.connection_pool.with_connection(&)
+      def with_db(&block) = Record.connection_pool.with_connection(&block)
 
       # Update-then-insert, portable across engines: last writer wins, and
       # `insert_only` columns are written once. A racing insert falls back to

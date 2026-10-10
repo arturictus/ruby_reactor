@@ -361,7 +361,8 @@ Avoid retry storms by:
 
 - **Worker threads**: Retries don't block workers, improving utilization
 - **Memory**: Context serialization adds memory overhead
-- **Redis**: Job storage and queue management
+- **Storage and queue**: retry state lives in the storage adapter (Redis or ActiveRecord); scheduled
+  retries live in the job backend (Sidekiq's Redis, or your ActiveJob queue)
 - **Database**: Potential increased load from idempotent operations
 
 ### Tuning Guidelines

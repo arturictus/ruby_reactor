@@ -8,8 +8,9 @@ module RubyReactor
       # `ruby_reactor_map_operations` row; NULL stands for "key absent".
       module Maps
         # rubocop:disable Metrics/ParameterLists
-        def initialize_map_operation(map_id, count, parent_reactor_class_name, reactor_class_info:, strict_ordering: true,
-                                     parent_context_id: nil, step_name: nil, parent_is_map_element: false,
+        def initialize_map_operation(map_id, count, parent_reactor_class_name, reactor_class_info:,
+                                     strict_ordering: true, parent_context_id: nil, step_name: nil,
+                                     parent_is_map_element: false,
                                      outer_map_id: nil, outer_index: nil, owner_context_id: nil,
                                      owner_reactor_class_name: nil, batch_size: nil, atomic: nil)
           # Same metadata as RedisAdapter#initialize_map_operation.
@@ -44,8 +45,15 @@ module RubyReactor
           set_map_column(map_id, reactor_class_name, :counter, count)
         end
 
-        def increment_map_counter(map_id, reactor_class_name) = add_to_map_column(map_id, reactor_class_name, :counter, 1)
-        def decrement_map_counter(map_id, reactor_class_name) = add_to_map_column(map_id, reactor_class_name, :counter, -1)
+        def increment_map_counter(map_id,
+                                  reactor_class_name)
+          add_to_map_column(map_id, reactor_class_name, :counter, 1)
+        end
+
+        def decrement_map_counter(map_id,
+                                  reactor_class_name)
+          add_to_map_column(map_id, reactor_class_name, :counter, -1)
+        end
 
         def decrement_map_counter_by(map_id, amount, reactor_class_name)
           add_to_map_column(map_id, reactor_class_name, :counter, -amount)
@@ -170,7 +178,10 @@ module RubyReactor
 
         private
 
-        def map_scope(map_id, reactor_class_name) = MapOperation.where(storage_name: reactor_class_name.to_s, map_id: map_id)
+        def map_scope(map_id,
+                      reactor_class_name)
+          MapOperation.where(storage_name: reactor_class_name.to_s, map_id: map_id)
+        end
 
         def results_scope(map_id, reactor_class_name)
           MapResult.where(map_operation_id: map_scope(map_id, reactor_class_name).select(:id))
@@ -183,7 +194,8 @@ module RubyReactor
         # The map's row id, creating the row (all keys absent) on first use.
         def ensure_map(map_id, reactor_class_name)
           now = Time.current
-          MapOperation.insert_all([{ storage_name: reactor_class_name.to_s, map_id: map_id, created_at: now, updated_at: now }])
+          MapOperation.insert_all([{ storage_name: reactor_class_name.to_s, map_id: map_id, created_at: now,
+                                     updated_at: now }])
           map_scope(map_id, reactor_class_name).pick(:id)
         end
 

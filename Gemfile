@@ -24,9 +24,9 @@ group :development, :test do
   gem "activejob", ">= 8.0", "< 9"
   # ActiveRecord storage adapter (optional at runtime; never in the gemspec).
   gem "activerecord", ">= 8.0", "< 9"
+  gem "opentelemetry-api"
+  gem "opentelemetry-sdk"
   gem "pg", "~> 1.5"
   gem "sqlite3", "~> 2.1"
   gem "trilogy", "~> 2.9"
-  gem "opentelemetry-api"
-  gem "opentelemetry-sdk"
 end

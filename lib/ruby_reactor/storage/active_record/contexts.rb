@@ -7,6 +7,7 @@ module RubyReactor
       # R-08, R-09).
       module Contexts
         TERMINAL_STATUSES = %w[completed failed halted aborted cancelled].freeze
+        INDEXABLE_INPUT = [String, Integer, Float, TrueClass, FalseClass, NilClass].freeze
 
         # Last writer wins, like Redis SET. The query columns are projected from
         # the context; `started_at` and `created_at` are written once.
@@ -18,13 +19,16 @@ module RubyReactor
           attrs = {
             storage_name: reactor_class_name.to_s, reactor_class: (data["reactor_class"] || reactor_class_name).to_s,
             status: status, parent_context_id: data["parent_context_id"], root_context_id: data["root_context_id"],
-            correlation_id: data["correlation_id"]&.to_s, dispatched_child: dispatched_child?(data) ? true : false,
+            correlation_id: data["correlation_id"]&.to_s, dispatched_child: dispatched_child?(data) || false,
             context: serialized_context, updated_at: now
           }
           with_db do
             write_row(Execution, { id: context_id }, attrs,
                       insert_only: { started_at: parse_time(data["started_at"]) || now, created_at: now })
-            Execution.where(id: context_id, finished_at: nil).update_all(finished_at: now) if TERMINAL_STATUSES.include?(status)
+            if TERMINAL_STATUSES.include?(status)
+              Execution.where(id: context_id,
+                              finished_at: nil).update_all(finished_at: now)
+            end
             index_inputs(context_id, data)
           end
         end
@@ -116,7 +120,9 @@ module RubyReactor
             started_at, id = position
             scope = scope.where("started_at < ? OR (started_at = ? AND id < ?)", started_at, started_at, id)
           end
-          records = with_db { scope.order(started_at: :desc, id: :desc).limit(count + 1).pluck(:started_at, :id, :context) }
+          records = with_db do
+            scope.order(started_at: :desc, id: :desc).limit(count + 1).pluck(:started_at, :id, :context)
+          end
           more = records.size > count
           records = records.first(count)
           next_cursor = more ? encode_cursor(records.last[0], records.last[1]) : "0"
@@ -158,8 +164,6 @@ module RubyReactor
         rescue ArgumentError
           nil
         end
-
-        INDEXABLE_INPUT = [String, Integer, Float, TrueClass, FalseClass, NilClass].freeze
 
         # The dashboard's input index (R-11): top-level scalar inputs of 255
         # characters or fewer, never the reactor's `redact: true` ones. Written

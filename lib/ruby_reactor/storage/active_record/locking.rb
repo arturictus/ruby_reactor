@@ -11,7 +11,7 @@ module RubyReactor
         # -- twin of RedisLocking::LOCK_ACQUIRE_SCRIPT
         def lock_acquire(key, owner, ttl)
           owner = owner.to_s
-          Coordination.atomically([key], op: "lock_acquire") do |kv|
+          Coordination.atomically([key], operation: "lock_acquire") do |kv|
             if !kv.exists(key)
               kv.hset(key, "owner", owner)
               kv.hset(key, "count", 1)
@@ -29,7 +29,7 @@ module RubyReactor
 
         # -- twin of RedisLocking::LOCK_RELEASE_SCRIPT
         def lock_release(key, owner)
-          Coordination.atomically([key], op: "lock_release") do |kv|
+          Coordination.atomically([key], operation: "lock_release") do |kv|
             if kv.hget(key, "owner") == owner.to_s
               new_count = kv.hincrby(key, "count", -1)
               kv.del(key) if new_count <= 0
@@ -42,7 +42,7 @@ module RubyReactor
 
         # -- twin of RedisLocking::LOCK_EXTEND_SCRIPT
         def lock_extend(key, owner, ttl)
-          Coordination.atomically([key], op: "lock_extend") do |kv|
+          Coordination.atomically([key], operation: "lock_extend") do |kv|
             if kv.hget(key, "owner") == owner.to_s
               kv.expire(key, ttl)
               true
@@ -56,7 +56,7 @@ module RubyReactor
         # <key>:init — the RedisLocking layout.
         def semaphore_init(key, limit)
           init = "#{key}:init"
-          Coordination.atomically([key, init], op: "semaphore_init") do |kv|
+          Coordination.atomically([key, init], operation: "semaphore_init") do |kv|
             next false unless kv.set(init, limit, nx: true, ex: RedisLocking::SEMAPHORE_TTL)
 
             kv.rpush(key, *Array.new(limit) { SecureRandom.uuid })
@@ -67,7 +67,7 @@ module RubyReactor
 
         def semaphore_reset(key)
           keys = [key, "#{key}:held", "#{key}:init"]
-          Coordination.atomically(keys, op: "semaphore_reset") { |kv| keys.sum { |k| kv.del(k) } }
+          Coordination.atomically(keys, operation: "semaphore_reset") { |kv| keys.sum { |k| kv.del(k) } }
         end
 
         def semaphore_held(key, token)
@@ -93,7 +93,7 @@ module RubyReactor
           return false unless token
 
           held_key = "#{key}:held"
-          Coordination.atomically([key, held_key], op: "semaphore_release") do |kv|
+          Coordination.atomically([key, held_key], operation: "semaphore_release") do |kv|
             if kv.srem(held_key, token).zero? || kv.llen(key) >= limit.to_i
               false
             else
@@ -112,7 +112,7 @@ module RubyReactor
         # Returns [allowed (1|0), retry_after_seconds, failed_index].
         def rate_limit_check_and_increment(keys, argv)
           now = argv[0].to_i
-          Coordination.atomically(keys, op: "rate_limit") do |kv|
+          Coordination.atomically(keys, operation: "rate_limit") do |kv|
             denied = keys.each_with_index.lazy.filter_map do |bucket, i|
               base = 1 + (i * 3)
               period = argv[base].to_i
@@ -199,7 +199,7 @@ module RubyReactor
         # RedisLocking#semaphore_acquire applies after it.
         def semaphore_acquire_once(key)
           held_key = "#{key}:held"
-          Coordination.atomically([key, held_key], op: "semaphore_acquire") do |kv|
+          Coordination.atomically([key, held_key], operation: "semaphore_acquire") do |kv|
             token = kv.lpop(key)
             next nil unless token
 

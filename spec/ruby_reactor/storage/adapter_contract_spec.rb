@@ -18,7 +18,7 @@ end
 # The storage adapter contract (specs/011 contracts/storage-adapter.md). It runs
 # against whichever adapter the suite selected (RUBY_REACTOR_TEST_STORAGE), so
 # CI's storage matrix proves every adapter honors the same semantics.
-RSpec.describe "Storage adapter contract" do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "Storage adapter contract" do
   let(:adapter) { RubyReactor.configuration.storage_adapter }
   let(:klass) { "ContractSpec::Reactor" }
 
@@ -407,13 +407,15 @@ RSpec.describe "Storage adapter contract" do # rubocop:disable RSpec/DescribeCla
     it "keeps the first claim forever, with its time", :active_record_only do
       jan = Time.utc(2026, 1, 1, 0, 5)
       dec = Time.utc(2026, 12, 31, 23, 55)
-      expect(RubyReactor::Period.key("annual", :year, now: jan)).to eq(RubyReactor::Period.key("annual", :year, now: dec))
+      expect(RubyReactor::Period.key("annual", :year,
+                                     now: jan)).to eq(RubyReactor::Period.key("annual", :year, now: dec))
 
       adapter.period_mark(RubyReactor::Period.key("annual", :year, now: jan), 60, context_id: "first")
       adapter.period_mark(RubyReactor::Period.key("annual", :year, now: dec), 60, context_id: "second")
 
       expect(adapter.period_marker?("annual", :year, now: dec)).to be(true)
-      expect(adapter.period_marker_info("annual", :year, now: dec)).to match(context_id: "first", claimed_at: be_a(Time))
+      expect(adapter.period_marker_info("annual", :year,
+                                        now: dec)).to match(context_id: "first", claimed_at: be_a(Time))
       expect(adapter.period_ttl("annual", :year, now: dec)).to eq(-1)
     end
   end
@@ -438,7 +440,11 @@ RSpec.describe "Storage adapter contract" do # rubocop:disable RSpec/DescribeCla
       context.context_id
     end
 
-    def query(**filters) = adapter.query_executions(filters: filters, cursor: "0", count: 50)[:reactors].map { |r| r[:id] }
+    def query(**filters)
+      adapter.query_executions(filters: filters, cursor: "0", count: 50)[:reactors].map do |r|
+        r[:id]
+      end
+    end
 
     it "filters by input value, class and status, alone and combined" do
       expect(query(inputs: { "user_id" => "100" })).to contain_exactly(ids[:a], ids[:c], ids[:d])
@@ -462,7 +468,7 @@ RSpec.describe "Storage adapter contract" do # rubocop:disable RSpec/DescribeCla
       second = adapter.query_executions(filters: {}, cursor: first[:cursor], count: 3)
 
       expect(first[:reactors].size).to eq(3)
-      expect((first[:reactors] + second[:reactors]).map { |r| r[:id] }).to contain_exactly(*ids.values)
+      expect((first[:reactors] + second[:reactors]).map { |r| r[:id] }).to match_array(ids.values)
       expect(second[:cursor]).to eq("0")
     end
 

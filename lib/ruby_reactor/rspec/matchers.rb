@@ -7,6 +7,21 @@ module RubyReactor
       extend ::RSpec::Matchers::DSL
 
       # rubocop:disable Metrics/BlockLength
+      # The run reused an idempotency key: nothing ran, and the result is the
+      # original run's (011 US6). Works on a `test_reactor` subject or a result.
+      #
+      #   expect(test_reactor(ChargeReactor, inputs, idempotency_key: "k")).to be_idempotent_replay
+      matcher :be_idempotent_replay do
+        match do |subject|
+          subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
+          result = subject.respond_to?(:run_result) ? subject.run_result : subject
+          result.respond_to?(:idempotent_replay?) && result.idempotent_replay?
+        end
+
+        failure_message { "expected an idempotent replay (a repeated idempotency_key), but the run executed" }
+        failure_message_when_negated { "expected the run to execute, but it replayed an earlier run with the same key" }
+      end
+
       matcher :be_success do
         match do |subject|
           subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
@@ -451,7 +466,8 @@ module RubyReactor
         end
 
         failure_message_when_negated do |subject|
-          "expected execution #{subject.reactor_instance.context.context_id} not to be found by inputs #{inputs.inspect}"
+          id = subject.reactor_instance.context.context_id
+          "expected execution #{id} not to be found by inputs #{inputs.inspect}"
         end
       end
 

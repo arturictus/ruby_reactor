@@ -5,7 +5,7 @@ require "open3"
 
 # 011 R-01/R-02: ActiveRecord is opt-in, loaded only when selected, and never a
 # runtime dependency.
-RSpec.describe "ActiveRecord storage adapter loading" do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "ActiveRecord storage adapter loading" do
   def ruby(code, load_path: [])
     lib = File.expand_path("../../../../lib", __dir__)
     args = [RbConfig.ruby, *load_path.flat_map { |dir| ["-I", dir] }, "-I", lib, "-e", code]

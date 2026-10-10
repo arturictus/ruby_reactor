@@ -12,7 +12,7 @@ module RubyReactor
         # -- twin of RedisOrderedLocking::ASSIGN_SCRIPT
         def ordered_lock_assign(key, ttl: 86_400, now: Time.now.to_i)
           next_k, last_k, at_k, _fail_k, epoch_k = ordered_lock_keys(key)
-          Coordination.atomically([next_k, last_k, at_k, epoch_k], op: "ordered_lock_assign") do |kv|
+          Coordination.atomically([next_k, last_k, at_k, epoch_k], operation: "ordered_lock_assign") do |kv|
             nonce = kv.incr(next_k)
             kv.expire(next_k, ttl)
 
@@ -32,7 +32,9 @@ module RubyReactor
         end
 
         # -- twin of RedisOrderedLocking::CAN_PROCEED_SCRIPT
-        def ordered_lock_can_proceed(key, nonce:, poison_pill_timeout:, epoch: 0, now: Time.now.to_i) # rubocop:disable Metrics/MethodLength
+        # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+        # (a twin keeps its Lua original's branches one for one)
+        def ordered_lock_can_proceed(key, nonce:, poison_pill_timeout:, epoch: 0, now: Time.now.to_i)
           keys = ordered_lock_keys(key)
           next_k, last_k, at_k, fail_k, epoch_k = keys
           my = nonce.to_i
@@ -40,7 +42,7 @@ module RubyReactor
           pp = poison_pill_timeout.to_i
           my_epoch = epoch.to_i
 
-          Coordination.atomically(keys, op: "ordered_lock_can_proceed") do |kv|
+          Coordination.atomically(keys, operation: "ordered_lock_can_proceed") do |kv|
             last = kv.get(last_k).to_i
             first_failed = kv.get(fail_k).to_i
 
@@ -73,6 +75,7 @@ module RubyReactor
             ["wait", [hint, 1].max, last, first_failed]
           end
         end
+        # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
         # -- twin of RedisOrderedLocking::ADVANCE_SCRIPT
         def ordered_lock_advance(key, nonce:, failed: false, epoch: 0, ttl: 86_400)
@@ -81,7 +84,7 @@ module RubyReactor
           my = nonce.to_i
           my_epoch = epoch.to_i
 
-          Coordination.atomically(keys, op: "ordered_lock_advance") do |kv|
+          Coordination.atomically(keys, operation: "ordered_lock_advance") do |kv|
             cur_epoch = kv.get(epoch_k).to_i
             next kv.get(last_k).to_i if my_epoch.positive? && my_epoch != cur_epoch
 
@@ -114,7 +117,7 @@ module RubyReactor
           _next_k, _last_k, at_k, _fail_k, epoch_k = ordered_lock_keys(key)
           my_epoch = epoch.to_i
 
-          Coordination.atomically([at_k, epoch_k], op: "ordered_lock_heartbeat") do |kv|
+          Coordination.atomically([at_k, epoch_k], operation: "ordered_lock_heartbeat") do |kv|
             cur_epoch = kv.get(epoch_k).to_i
             next 0 if my_epoch.positive? && my_epoch != cur_epoch
 
@@ -132,7 +135,7 @@ module RubyReactor
           next_k, last_k, at_k, fail_k, = ordered_lock_keys(key)
           my = nonce.to_i
 
-          Coordination.atomically([next_k, last_k, at_k, fail_k], op: "ordered_lock_skip") do |kv|
+          Coordination.atomically([next_k, last_k, at_k, fail_k], operation: "ordered_lock_skip") do |kv|
             next 0 if !kv.exists(next_k) && !kv.exists(last_k)
 
             kv.set(last_k, my, keepttl: true) if my > kv.get(last_k).to_i
@@ -147,7 +150,7 @@ module RubyReactor
 
         def ordered_lock_reset(key)
           keys = ordered_lock_keys(key)
-          Coordination.atomically(keys, op: "ordered_lock_reset") { |kv| keys.sum { |k| kv.del(k) } }
+          Coordination.atomically(keys, operation: "ordered_lock_reset") { |kv| keys.sum { |k| kv.del(k) } }
         end
 
         def ordered_lock_peek(key)

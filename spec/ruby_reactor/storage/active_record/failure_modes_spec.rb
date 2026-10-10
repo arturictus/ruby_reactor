@@ -16,7 +16,7 @@ end
 # 011 spec edge cases: an unreachable database, MySQL's packet limit, SQLite
 # write contention and pool exhaustion all fail loudly — never as silent
 # success or lost state.
-RSpec.describe "ActiveRecord storage failure modes", :active_record_only do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "ActiveRecord storage failure modes", :active_record_only do
   let(:adapter_class) { RubyReactor::Storage::ActiveRecordAdapter }
   let(:engine) { ActiveRecord::Base.connection_db_config.adapter }
 
@@ -25,7 +25,7 @@ RSpec.describe "ActiveRecord storage failure modes", :active_record_only do # ru
 
   it "raises, never succeeds silently, when the database is unreachable" do
     adapter_class.connect({ adapter: "postgresql", host: "127.0.0.1", port: 1, database: "x",
-                                  connect_timeout: 1 })
+                            connect_timeout: 1 })
 
     expect { RubyReactor.configuration.storage_adapter.store_context("ctx-1", "{}", "X") }
       .to raise_error(ActiveRecord::ConnectionNotEstablished)

@@ -30,7 +30,7 @@ end
 
 # 011 FR-010, R-02: reactor storage has its own pool, so its writes commit
 # independently of any transaction the host app has open.
-RSpec.describe "ActiveRecord storage inside a host transaction", :active_record_only do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "ActiveRecord storage inside a host transaction", :active_record_only do
   before do
     if ActiveRecord::Base.connection_db_config.adapter == "sqlite3"
       skip "SQLite serializes writers: a host transaction blocks reactor writes (documented limitation, R-02)"

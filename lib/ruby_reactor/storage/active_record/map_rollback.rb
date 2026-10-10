@@ -105,7 +105,8 @@ module RubyReactor
         def claim_map_rollback_signal(map_id, reactor_class_name)
           with_db do
             ensure_rollback(map_id, reactor_class_name)
-            rollback_scope(map_id, reactor_class_name).where(signalled_at: nil).update_all(signalled_at: Time.current) == 1
+            rollback_scope(map_id,
+                           reactor_class_name).where(signalled_at: nil).update_all(signalled_at: Time.current) == 1
           end
         end
 
@@ -124,10 +125,11 @@ module RubyReactor
 
         # Every started map rollback, for Map::Sweeper (S-5), within the R-08 window.
         def scan_map_rollbacks(count: 1000)
-          with_db do
+          rows = with_db do
             recent(ActiveRecordAdapter::MapRollback).where.not(metadata: nil).order(:updated_at).limit(count)
                                                     .pluck(:metadata)
-          end.map { |json| JSON.parse(json) }
+          end
+          rows.map { |json| JSON.parse(json) }
         end
 
         private

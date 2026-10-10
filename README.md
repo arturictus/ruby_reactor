@@ -598,6 +598,30 @@ the parent holds fails at dispatch with an explanatory error rather than
 deadlocking. See [Background & Async Execution](documentation/background_and_async.md) for the full
 rules.
 
+### Idempotent runs
+
+Pass `idempotency_key:` to run a reactor **at most once per key**. A repeated call with the same key
+(a double click, a redelivered webhook, a retried request) runs no step and saves nothing; it returns
+the original run's result, with the original `execution_id`:
+
+```ruby
+first = ChargeReactor.run({ order_id: 7, amount: 100 }, idempotency_key: "charge-order-7")
+again = ChargeReactor.run({ order_id: 7, amount: 100 }, idempotency_key: "charge-order-7")
+
+again.idempotent_replay? # => true
+again.execution_id == first.execution_id # => true
+```
+
+- Keys are scoped per reactor class, and are claimed only once the inputs pass validation.
+- The repeat's inputs are ignored: the key identifies the run.
+- A completed original replays as its `Success`, a failed one as its `Failure`, a paused one as its
+  interrupt result, and one still running in the background as a `DispatchResult`.
+- Concurrent calls with the same key run once; every other caller gets the replay.
+- Retention: permanent with the ActiveRecord storage adapter; `context_ttl` with Redis, after which the
+  key starts a new run.
+- Inputs can still be passed braceless (`run(order_id: 7)`); pass a Hash when an input is itself named
+  `idempotency_key`.
+
 ### Choosing a storage adapter
 
 State lives in Redis by default. To keep it in your relational database instead (PostgreSQL,
@@ -1611,6 +1635,9 @@ Learn how to pause and resume reactors to handle long-running processes, manual 
 ### [Testing with RSpec](documentation/testing.md)
 Comprehensive guide to testing reactors with RubyReactor's testing utilities. Learn about the `TestSubject` class for reactor execution and introspection, step mocking for isolating dependencies, testing nested and composed reactors, and custom RSpec matchers like `be_success`, `have_run_step`, and `have_retried_step`.
 
+### [Storage Adapters](documentation/storage_adapters.md)
+Redis (default) or a relational database through ActiveRecord: installation, schema upgrades, supported engines, execution history, dashboard filters, idempotency keys, and the differences between the adapters.
+
 ### [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md)
 
 Coordinate access to shared resources across processes with store-backed primitives (Redis or your database): exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Every primitive is also available [declared on a step](documentation/locks_and_semaphores.md#step-scoped-coordination) instead of the whole reactor, keying the critical section down to one operation. Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
@@ -1634,9 +1661,9 @@ Hook into the execution lifecycle with observer middlewares. Covers the full set
 - [X] Middlewares
 - [ ] Async ruby to parallelize same level steps
 - [x] Web dashboard to inspect reactor results and errors
-- [ ] Multiple storage adapters
+- [X] Multiple storage adapters
   - [X] Redis
-  - [ ] ActiveRecord
+  - [X] ActiveRecord (PostgreSQL, MySQL, SQLite)
 - [X] Multiple background job adapters
   - [X] Sidekiq
   - [X] ActiveJob

@@ -6,7 +6,7 @@ require "stringio"
 # 011 FR-019, R-16: the installed schema version is the default of
 # ruby_reactor_schema.version; a missing or mismatched schema fails at the
 # adapter's first use, before anything is read or written.
-RSpec.describe "ActiveRecord storage schema", :active_record_only do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "ActiveRecord storage schema", :active_record_only do
   let(:adapter_class) { RubyReactor::Storage::ActiveRecordAdapter }
   let(:url) { RubyReactor.configuration.storage.database }
   let(:connection) { ActiveRecord::Base.lease_connection }
@@ -28,7 +28,7 @@ RSpec.describe "ActiveRecord storage schema", :active_record_only do # rubocop:d
     connection.columns("ruby_reactor_schema").find { |column| column.name == "version" }.default.to_i
   end
 
-  def set_version(version)
+  def change_version_default(version)
     connection.change_column_default(:ruby_reactor_schema, :version, version)
     adapter_class::Record.connection_pool.schema_cache.clear!
   end
@@ -64,17 +64,18 @@ RSpec.describe "ActiveRecord storage schema", :active_record_only do # rubocop:d
   end
 
   it "fails with both versions and the upgrade steps when the schema is behind the gem" do
-    set_version(0)
+    change_version_default(0)
 
+    install = "run `bin/rails generate ruby_reactor:install` then `bin/rails db:migrate`"
     expect { adapter_class.new(database: url) }.to raise_error(
       RubyReactor::Error::StorageSchemaError,
-      /version 0, this gem needs #{adapter_class::SCHEMA_VERSION}: run `bin\/rails generate ruby_reactor:install` then `bin\/rails db:migrate`/
+      /version 0, this gem needs #{adapter_class::SCHEMA_VERSION}: #{Regexp.escape(install)}/
     )
     expect(adapter_class::Execution.count).to eq(0)
   end
 
   it "fails telling you to upgrade the gem when the schema is ahead of it" do
-    set_version(adapter_class::SCHEMA_VERSION + 1)
+    change_version_default(adapter_class::SCHEMA_VERSION + 1)
 
     expect { adapter_class.new(database: url) }
       .to raise_error(RubyReactor::Error::StorageSchemaError, /newer than this gem's.*upgrade the ruby_reactor gem/)

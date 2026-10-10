@@ -128,7 +128,8 @@ RSpec.describe "map undo_all (010 US7)" do
       expect(RollbackRecorder.log.last).to eq("undo:a")
     end
 
-    it "reports a result slot that expired, and passes the rest", redis_only: "simulates Redis TTL expiry; ActiveRecord keeps history" do
+    it "reports a result slot that expired, and passes the rest",
+       redis_only: "simulates Redis TTL expiry; ActiveRecord keeps history" do
       id = MapUndoAllSpec::FanOutOk.run(items: (0...6).to_a).execution_id
       drain
       redis.hdel("reactor:MapUndoAllSpec::FanOutOk:map:#{id}:m:results", "3")

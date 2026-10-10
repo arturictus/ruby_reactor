@@ -68,7 +68,7 @@ end
 When a reactor encounters an `interrupt`:
 
 1.  It executes any dependencies.
-2.  It persists the full `Context` (results of previous steps) to the configured storage (e.g., Redis).
+2.  It persists the full `Context` (results of previous steps) to the configured storage adapter (Redis or ActiveRecord).
 3.  It returns an `InterruptResult` and halts execution.
 
 ```ruby

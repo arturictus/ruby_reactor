@@ -9,8 +9,9 @@ module RubyReactor
           now = Time.current
           status = (record["status"] || record[:status]).to_s
           with_db do
-            write_row(StepResult, { storage_name: reactor_class_name.to_s, context_id: context_id, step_name: step_name.to_s },
-                      { status: status, record: JSON.generate(record), updated_at: now }, insert_only: { created_at: now })
+            key = { storage_name: reactor_class_name.to_s, context_id: context_id, step_name: step_name.to_s }
+            write_row(StepResult, key, { status: status, record: JSON.generate(record), updated_at: now },
+                      insert_only: { created_at: now })
           end
         end
 

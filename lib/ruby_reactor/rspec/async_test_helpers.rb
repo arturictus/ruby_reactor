@@ -39,10 +39,10 @@ module RubyReactor
       # jobs then sit in the ActiveJob :test queue, so that is the one to drain.
       def self.backend
         active_job_router = ::RubyReactor.configuration.async_router.to_s.start_with?("RubyReactor::Adapters::ActiveJob")
-        if active_job_router && active_job_testing? then :active_job
-        elsif sidekiq_testing? then :sidekiq
-        elsif active_job_testing? then :active_job
-        end
+        return :active_job if active_job_router && active_job_testing?
+        return :sidekiq if sidekiq_testing?
+
+        :active_job if active_job_testing?
       end
     end
   end

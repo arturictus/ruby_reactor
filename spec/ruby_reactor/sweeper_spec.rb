@@ -102,10 +102,11 @@ RSpec.describe RubyReactor::Sweeper do
     it "purges expired coordination state (a no-op on Redis)" do
       storage.lock_acquire("lock:sweeper-expiring", "gone", 1)
       sleep 1.2
+      allow(storage).to receive(:purge_expired_coordination).and_call_original
 
-      expect(storage).to receive(:purge_expired_coordination).and_call_original
       sweeper.run_once
 
+      expect(storage).to have_received(:purge_expired_coordination)
       if StorageSelection.active_record?
         expect(RubyReactor::Storage::ActiveRecordAdapter::CoordinationEntry.where(key: "lock:sweeper-expiring"))
           .not_to exist

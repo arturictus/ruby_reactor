@@ -216,7 +216,8 @@ RSpec.describe "map rollback (fan-out)" do
       end).to eq(["undo e.e1[2] failed", "undo e.e1[0] failed"])
     end
 
-    it "reports every element when the map's element index expired before a later failure", redis_only: "simulates Redis TTL expiry; ActiveRecord keeps history" do
+    it "reports every element when the map's element index expired before a later failure",
+       redis_only: "simulates Redis TTL expiry; ActiveRecord keeps history" do
       id = MapFanOutSettleSpec::LaterFailure.run(items).execution_id
       perform_element_jobs
       redis.del("reactor:MapFanOutSettleSpec::LaterFailure:map:#{id}:m:element_contexts")

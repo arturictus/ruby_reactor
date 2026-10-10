@@ -31,7 +31,7 @@ module RubyReactor
         # locks nothing) in digest order — deadlock-free — then yields a `KV`
         # and writes back what changed. Retried whole on deadlock/serialization
         # failure; the block must be pure over its `kv` (R-05).
-        def atomically(keys, op: "atomically")
+        def atomically(keys, operation: "atomically")
           attempts = 0
           begin
             attempts += 1
@@ -52,10 +52,10 @@ module RubyReactor
               sleep(rand(0.01..0.05))
               retry
             end
-            log_failure(op, keys.size, e)
+            log_failure(operation, keys.size, e)
             raise
           rescue ::ActiveRecord::ActiveRecordError => e
-            log_failure(op, keys.size, e)
+            log_failure(operation, keys.size, e)
             raise
           end
         end
@@ -93,7 +93,10 @@ module RubyReactor
               locked[row.key_digest] = row
             end
           end
-          raise ::ActiveRecord::StatementInvalid, "coordination rows vanished while locking" if locked.size < digests.size
+          if locked.size < digests.size
+            raise ::ActiveRecord::StatementInvalid,
+                  "coordination rows vanished while locking"
+          end
 
           keys.map { |key| row_for(key, locked[digest(key)]) }
         end
@@ -102,14 +105,14 @@ module RubyReactor
           { key: key.to_s, digest: digest(key), value: record&.value, expires_at_ms: record&.expires_at_ms }
         end
 
-        def log_failure(op, key_count, error)
+        def log_failure(operation, key_count, error)
           engine = begin
             Record.connection_db_config.adapter
           rescue ::ActiveRecord::ActiveRecordError
             "unknown"
           end
           RubyReactor.configuration.logger.error(
-            "ruby_reactor.storage op=#{op} engine=#{engine} keys=#{key_count} error=#{error.class}"
+            "ruby_reactor.storage op=#{operation} engine=#{engine} keys=#{key_count} error=#{error.class}"
           )
         end
 
@@ -117,7 +120,9 @@ module RubyReactor
         # Values are Redis-typed: strings for strings/integers, Hash for hashes,
         # Array for lists and sets. An empty hash/list/set deletes its key, as in
         # Redis; an expired key reads as absent.
-        class KV # rubocop:disable Metrics/ClassLength
+        # rubocop:disable Naming/PredicateMethod, Naming/MethodParameterName
+        # (Redis verb names and options: `exists`, `set(nx:, ex:)`, … mirror redis-rb.)
+        class KV
           attr_reader :now_ms
 
           def initialize(rows, now_ms, read_only: false)
@@ -273,6 +278,7 @@ module RubyReactor
             r[:dirty] = true
           end
         end
+        # rubocop:enable Naming/PredicateMethod, Naming/MethodParameterName
       end
     end
   end

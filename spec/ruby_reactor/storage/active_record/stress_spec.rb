@@ -4,7 +4,7 @@ require "spec_helper"
 
 # 011 SC-006: coordination guarantees under real multi-process contention.
 # Run with `--tag stress` on PostgreSQL and MySQL (release checklist, quickstart §8).
-RSpec.describe "ActiveRecord coordination under multi-process contention", :active_record_only, :stress do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "ActiveRecord coordination under multi-process contention", :active_record_only, :stress do
   let(:adapter) { RubyReactor.configuration.storage_adapter }
   let(:coordination) { RubyReactor::Storage::ActiveRecordAdapter::Coordination }
   let(:processes) { 4 }

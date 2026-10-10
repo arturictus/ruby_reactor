@@ -23,7 +23,8 @@ RSpec.describe RubyReactor::InterruptClaims do
   describe "storage" do
     let(:id) { SecureRandom.uuid }
 
-    it "claims an interrupt once, for the context's TTL", redis_only: "Redis TTL; claim semantics in adapter_contract_spec" do
+    it "claims an interrupt once, for the context's TTL",
+       redis_only: "Redis TTL; claim semantics in adapter_contract_spec" do
       expect(storage.claim_interrupt_resume(id, klass_name, :approval, "{}")).to be(true)
       expect(storage.claim_interrupt_resume(id, klass_name, :approval, "{}")).to be(false)
 

@@ -216,7 +216,7 @@ module RubyReactor
         filters = {}
         filters[:reactor_class] = params["class"] unless params["class"].to_s.empty?
         unless params["status"].to_s.empty?
-          return [nil, "unknown status '#{params['status']}'"] unless FILTER_STATUSES.include?(params["status"])
+          return [nil, "unknown status '#{params["status"]}'"] unless FILTER_STATUSES.include?(params["status"])
 
           filters[:status] = params["status"]
         end

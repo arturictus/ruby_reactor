@@ -213,7 +213,8 @@ RSpec.describe "step-scoped `with_lock`", :step_coordination, type: :reactor do
   end
 
   # The ActiveRecord twin is spec/ruby_reactor/storage/active_record/failure_modes_spec.rb.
-  describe "the coordination backend is unreachable", redis_only: "Redis outage; see failure_modes_spec for ActiveRecord" do
+  describe "the coordination backend is unreachable",
+           redis_only: "Redis outage; see failure_modes_spec for ActiveRecord" do
     it "fails the step with the connection error, and the body never runs" do
       original_url = RubyReactor.configuration.storage.redis_url
       RubyReactor.configuration.storage.redis_url = "redis://127.0.0.1:1"

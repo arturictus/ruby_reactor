@@ -135,6 +135,12 @@ expect(subject).to be_findable_by(user_id: 100)
 expect(subject).not_to be_findable_by(card_token: "tok") # redacted
 ```
 
+## Idempotency keys
+
+`Reactor.run(inputs, idempotency_key: "k")` runs at most once per key and reactor class (see
+[Idempotency Keys](core_concepts.md#idempotency-keys)). The claim is stored with the run:
+permanently on the ActiveRecord adapter, for `context_ttl` on Redis.
+
 ## Differences between the adapters
 
 The ActiveRecord adapter keeps execution history instead of expiring it. Everything else behaves the
@@ -146,6 +152,7 @@ choice:
 | Contexts, step results, map results, rollback records | expire `context_ttl` after their last write | kept permanently |
 | Map rollback reporting `reason: :context_unavailable` because an element's context **expired** | happens after `context_ttl` | cannot happen; the context is still there |
 | Period markers (`with_period`) | live for the period's length | permanent, and record the claiming execution |
+| Idempotency keys | expire after `context_ttl` | kept permanently |
 | Locks, semaphores, rate-limit windows, ordered locks | expire on their TTL | expire on their TTL, identically; expired rows are purged by the sweeper |
 | Sweeper recovery of a stranded run | only runs younger than `context_ttl` (older ones expired) | only runs written within `context_ttl`, the same set |
 | Completion signal for `result(:async_step)` waits | pub/sub wakes the waiter early | the waiter re-checks every `async_wait_timeout / 10` (1–5 s) |

@@ -13,6 +13,7 @@ module RubyReactor
       include RedisPubSub
       include RedisReactorScan
       include RedisMapRollback
+      include RedisIdempotency
 
       def initialize(redis_config)
         super()
@@ -312,16 +313,6 @@ module RubyReactor
 
         values = @redis.mget(*names.map { |name| interrupt_resume_key(context_id, reactor_class_name, name) })
         names.zip(values).to_h.compact
-      end
-
-      # Run-level idempotency (011 R-15): the first caller claims `key` for its
-      # run; later callers get that run's id back. Kept for `context_ttl`, the
-      # same horizon as the run it points at.
-      def claim_idempotency_key(key, context_id, reactor_class_name)
-        redis_key = "reactor:#{reactor_class_name}:idempotency:#{Digest::SHA256.hexdigest(key.to_s)}"
-        return nil if @redis.set(redis_key, context_id, nx: true, ex: durability_ttl)
-
-        @redis.get(redis_key)
       end
 
       # Invalid resume payloads counted per interrupt (010 DM §3), kept out of

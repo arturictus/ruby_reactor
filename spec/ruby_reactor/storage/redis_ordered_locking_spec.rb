@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe "ordered locking storage primitives", type: :reactor do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "ordered locking storage primitives", type: :reactor do
   let(:adapter) { RubyReactor.configuration.storage_adapter }
   let(:key) { "test_key" }
 

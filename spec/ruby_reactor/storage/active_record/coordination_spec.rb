@@ -5,7 +5,7 @@ require "spec_helper"
 # 011 R-04–R-07: the Redis-shaped KV that the coordination scripts are ported
 # onto. Each verb sequence runs against real Redis and against
 # `Coordination.atomically`, and the results must match.
-RSpec.describe "ActiveRecord coordination store", :active_record_only do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "ActiveRecord coordination store", :active_record_only do
   let(:coordination) { RubyReactor::Storage::ActiveRecordAdapter::Coordination }
   let(:entries) { RubyReactor::Storage::ActiveRecordAdapter::CoordinationEntry }
 
@@ -31,14 +31,14 @@ RSpec.describe "ActiveRecord coordination store", :active_record_only do # ruboc
     redis.public_send(verb, *args)
   end
 
-  def kv_call(kv, verb, *args)
+  def kv_call(store, verb, *args)
     case verb
     when :set
       key, val, opts = args
-      return kv.set(key, val, **(opts || {}))
-    when :rpush then return kv.rpush(args[0], *args[1..])
+      return store.set(key, val, **(opts || {}))
+    when :rpush then return store.rpush(args[0], *args[1..])
     end
-    kv.public_send(verb, *args)
+    store.public_send(verb, *args)
   end
 
   it "matches Redis for strings and counters" do
@@ -153,7 +153,9 @@ RSpec.describe "ActiveRecord coordination store", :active_record_only do # ruboc
   end
 
   it "peeks without waiting for a row another transaction has locked" do
-    skip "SQLite has no row locks; its writers are serialized" if ActiveRecord::Base.connection_db_config.adapter == "sqlite3"
+    if ActiveRecord::Base.connection_db_config.adapter == "sqlite3"
+      skip "SQLite has no row locks; its writers are serialized"
+    end
     coordination.atomically(%w[k]) { |kv| kv.set("k", "v") }
     locked = Queue.new
     release = Queue.new

@@ -525,7 +525,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
 ### Tests for User Story 6 (write first, confirm FAIL) ⚠️
 
-- [ ] T066 [P] [US6] Write `spec/ruby_reactor/idempotency_spec.rb` (PA "Run-level idempotency"). Both adapters unless noted:
+- [X] T066 [P] [US6] Write `spec/ruby_reactor/idempotency_spec.rb` (PA "Run-level idempotency"). Both adapters unless noted:
   - **Outcomes**:
     - a completed run, then a repeat with the same key and **different** inputs, returns `Success` with the original value, the same `execution_id` and `idempotent_replay? == true`, and a step-counter fixture shows no step ran again;
     - a failed original → a `Failure` replay with the original reason;
@@ -538,20 +538,20 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   - **Retention**:
     - `:redis_only`: with `context_ttl = 1` and `sleep 1.2`, the key runs again;
     - `:active_record_only`: with the claim row's `created_at` moved past `context_ttl`, it still replays.
-- [ ] T067 [P] [US6] Add `be_idempotent_replay` to `spec/ruby_reactor/rspec/matchers_spec.rb`: passes for an `extend`ed result, fails with a clear message otherwise.
+- [X] T067 [P] [US6] Add `be_idempotent_replay` to `spec/ruby_reactor/rspec/matchers_spec.rb`: passes for an `extend`ed result, fails with a clear message otherwise.
 
 ### Implementation for User Story 6
 
-- [ ] T068 [US6] Add `module RubyReactor::IdempotentReplay; def idempotent_replay? = true; end` to `lib/ruby_reactor.rb`, next to `DispatchResult`.
-- [ ] T069 [US6] Add `run(inputs = {}, idempotency_key: nil)` to `lib/ruby_reactor/dsl/reactor.rb` and `lib/ruby_reactor/reactor.rb` (R-15).
+- [X] T068 [US6] Add `module RubyReactor::IdempotentReplay; def idempotent_replay? = true; end` to `lib/ruby_reactor.rb`, next to `DispatchResult`.
+- [X] T069 [US6] Add `run(inputs = {}, idempotency_key: nil)` to `lib/ruby_reactor/dsl/reactor.rb` and `lib/ruby_reactor/reactor.rb` (R-15).
   - Claim the key **after** `validate_inputs` succeeds and **before** `assign_ordered_lock_nonce!` and any `save_context`, using `storage_adapter.claim_idempotency_key(key, @context.context_id, RubyReactor.reactor_storage_name(self.class))`.
   - If an existing id comes back, poll `self.class.find(existing)` every 100 ms for up to 2 s, rescuing `ValidationError` "not found".
     - **Found**: take `reactor.result`. If it is `:unexecuted`, which means running or pending, use `DispatchResult.new(job_id: nil, execution_id: existing)`.
     - **Not found** after 2 s: `DispatchResult.new(job_id: nil, execution_id: existing)`.
     - Either way, `result.extend(IdempotentReplay)`, `attach_execution_id!`, and return without saving anything.
   - Make T066 green.
-- [ ] T070 [US6] Add `be_idempotent_replay` to `lib/ruby_reactor/rspec/matchers.rb`. Let `test_reactor(klass, inputs, idempotency_key: nil)` and `TestSubject` (`lib/ruby_reactor/rspec/helpers.rb`, `lib/ruby_reactor/rspec/test_subject.rb`) forward `idempotency_key:` to `run`. Make T067 green.
-- [ ] T071 [US6] Write the demo:
+- [X] T070 [US6] Add `be_idempotent_replay` to `lib/ruby_reactor/rspec/matchers.rb`. Let `test_reactor(klass, inputs, idempotency_key: nil)` and `TestSubject` (`lib/ruby_reactor/rspec/helpers.rb`, `lib/ruby_reactor/rspec/test_subject.rb`) forward `idempotency_key:` to `run`. Make T067 green.
+- [X] T071 [US6] Write the demo:
   - `demo_app/app/reactors/idempotent_charge_reactor.rb`: class-based `reserve` and `charge` steps, each with `compensate`; inputs `order_id`, `amount` and `decline` (boolean, default false). `charge` fails when `decline` is true;
   - a rake task `demo:idempotent_charge` (`[:environment, :flush_redis]`) with two scenarios, each run twice with `idempotency_key: "charge-order-#{order_id}"`:
     - a successful order prints `charged`, then `replayed (no second charge), execution <id>`;
@@ -560,7 +560,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   - `demo_app/spec/reactors/idempotent_charge_reactor_spec.rb`, which runs under both adapters:
     - success path: the first call `be_success` and `have_run_step(:charge)`; the second `be_idempotent_replay` and `be_success` with the same `execution_id`;
     - failure path (Principle VI): the first call `be_failure` and shows `reserve` compensated through the shipped matchers; the second, with the same key, `be_failure` and `be_idempotent_replay`, and nothing runs again.
-- [ ] T072 [US6] Document `idempotency_key:` in `README.md` (core usage section near `run`), `documentation/core_concepts.md` and `documentation/storage_adapters.md`: semantics, replay result types, retention per adapter, inputs ignored on a repeat, concurrency, and the `be_idempotent_replay` matcher in `documentation/testing.md`.
+- [X] T072 [US6] Document `idempotency_key:` in `README.md` (core usage section near `run`), `documentation/core_concepts.md` and `documentation/storage_adapters.md`: semantics, replay result types, retention per adapter, inputs ignored on a repeat, concurrency, and the `be_idempotent_replay` matcher in `documentation/testing.md`.
 
 **Checkpoint**: All six user stories are complete.
 
@@ -568,8 +568,8 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T073 [P] Update the remaining Redis-specific wording wherever the claim is adapter-neutral, in `documentation/README.md`, `documentation/interrupts.md` and `documentation/retry_configuration.md`. Check with `grep -n Redis documentation/*.md README.md`: every remaining hit must be Redis-specific.
-- [ ] T074 [P] Add a `CHANGELOG.md` **Features** entry:
+- [X] T073 [P] Update the remaining Redis-specific wording wherever the claim is adapter-neutral, in `documentation/README.md`, `documentation/interrupts.md` and `documentation/retry_configuration.md`. Check with `grep -n Redis documentation/*.md README.md`: every remaining hit must be Redis-specific.
+- [X] T074 [P] Add a `CHANGELOG.md` **Features** entry:
   - the ActiveRecord storage adapter (PostgreSQL, MySQL, SQLite), with install and upgrade;
   - dashboard history filters and `/api/capabilities`;
   - permanent period markers and `be_period_marked.by`;
@@ -577,8 +577,8 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   - `be_findable_by`.
 
   Add a **Bug Fixes** entry: the dashboard detail now masks `redact: true` inputs.
-- [ ] T075 Audit SC-002. Write `specs/011-active-record-adapter/checklists/claims.md`: one row per behavioral claim in `README.md` and `documentation/*.md` (locks, semaphores, rate limits, periods, ordered locks, durability, recovery, rollback, interrupts, maps, signals, retention). Each row names the spec that covers it under both adapters, or the documented per-adapter difference (`documentation/storage_adapters.md`). Any claim with neither is a gap: fix the code, the spec or the documentation before merge.
-- [ ] T076 Run `bundle exec rubocop` on all new and changed Ruby files. The Lua-twin methods may carry the same `rubocop:disable` set as their Redis modules (`Metrics/*`, `Naming/PredicateMethod`); nothing else.
+- [X] T075 Audit SC-002. Write `specs/011-active-record-adapter/checklists/claims.md`: one row per behavioral claim in `README.md` and `documentation/*.md` (locks, semaphores, rate limits, periods, ordered locks, durability, recovery, rollback, interrupts, maps, signals, retention). Each row names the spec that covers it under both adapters, or the documented per-adapter difference (`documentation/storage_adapters.md`). Any claim with neither is a gap: fix the code, the spec or the documentation before merge.
+- [X] T076 Run `bundle exec rubocop` on all new and changed Ruby files. The Lua-twin methods may carry the same `rubocop:disable` set as their Redis modules (`Metrics/*`, `Naming/PredicateMethod`); nothing else.
 - [ ] T077 Execute quickstart §1–§7 end to end on a clean checkout, plus the §8 release checklist (stress, slow query, SC-008 timing). Record any deviation in `specs/011-active-record-adapter/quickstart.md`.
 - [ ] T078 Run the `demo-app-e2e-verify` skill twice, once with Redis+Sidekiq and once with `RUBY_REACTOR_STORAGE=active_record RUBY_REACTOR_QUEUE=active_job`. Fix every finding in `lib/`, or record why it is out of scope.
 

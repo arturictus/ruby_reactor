@@ -12,7 +12,7 @@ bundle install                                              # Gemfile dev group:
 | engine | `RUBY_REACTOR_TEST_DATABASE_URL` |
 |---|---|
 | SQLite | `sqlite3:tmp/ruby_reactor_test.sqlite3` |
-| PostgreSQL | `postgres://postgres:postgres@localhost:6781/ruby_reactor_test` |
+| PostgreSQL | `postgres://postgres:postgres@localhost:6781/ruby_reactor_test` (on macOS append `?gssencmode=disable`: forked specs crash in libpq otherwise) |
 | MySQL | `trilogy://root:root@127.0.0.1:6782/ruby_reactor_test` |
 
 ## 1. Gem suite parity (US1, US3, SC-001)
@@ -30,13 +30,22 @@ RUBY_REACTOR_TEST_STORAGE=active_record RUBY_REACTOR_TEST_DATABASE_URL=trilogy:/
 - Skips appear only for `:redis_only` (under AR) or `:active_record_only` (under Redis), each with a reason.
 - `spec/ruby_reactor/storage/adapter_contract_spec.rb` runs under all four runs.
 
+Give each target its own Redis database (`RUBY_REACTOR_TEST_REDIS_URL=redis://localhost:6780/<db>`) when
+running several targets at once: every run flushes its Redis before each example.
+
+**Verified 2026-10-10:**
+
+- Redis: 0 failures.
+- AR/PostgreSQL: 0 failures.
+- AR/SQLite and AR/MySQL: 1 timing flake each while three suites ran in parallel; both passed when rerun alone.
+
 ## 2. Contention stress (SC-006)
 
 ```bash
 RUBY_REACTOR_TEST_STORAGE=active_record RUBY_REACTOR_TEST_DATABASE_URL=postgres://… bundle exec rspec --tag stress
 ```
 
-**Expect**: 0 violations across 1,000 contended acquisitions from ≥ 4 forked processes, for locks, semaphores, rate limits and ordered locks. Repeat with the MySQL URL.
+**Expect**: 0 violations across 1,000 contended acquisitions from ≥ 4 forked processes, for locks, semaphores, rate limits and ordered locks. Repeat with the MySQL URL. *Verified 2026-10-10 on PostgreSQL and MySQL.*
 
 ## 3. Schema install, mismatch and append-only (US2, SC-009)
 
@@ -58,9 +67,14 @@ In demo_app: `bin/rails generate ruby_reactor:install` copies the migrations. Ru
 ```bash
 cd demo_app
 bundle exec rspec                                                     # Redis + Sidekiq (today)
-RUBY_REACTOR_STORAGE=active_record RUBY_REACTOR_QUEUE=active_job bin/rails db:prepare
-RUBY_REACTOR_STORAGE=active_record RUBY_REACTOR_QUEUE=active_job bundle exec rspec
-RUBY_REACTOR_STORAGE=active_record RUBY_REACTOR_QUEUE=active_job DATABASE_URL=postgres://… bundle exec rspec
+# Redis-free: point REDIS_URL at nothing to prove no connection is attempted
+export REDIS_URL=redis://127.0.0.1:1 RUBY_REACTOR_STORAGE=active_record RUBY_REACTOR_QUEUE=active_job
+bin/rails db:prepare && bundle exec rspec                               # SQLite
+DATABASE_URL=postgres://postgres:postgres@localhost:6781/demo_test bin/rails db:prepare
+DATABASE_URL=postgres://postgres:postgres@localhost:6781/demo_test bundle exec rspec
+DATABASE_URL=trilogy://root:root@127.0.0.1:6782/demo_test bin/rails db:prepare
+DATABASE_URL=trilogy://root:root@127.0.0.1:6782/demo_test bundle exec rspec
+bin/rails demo:all                                                       # acceptance run, Redis-free
 ```
 
 Redis-free acceptance (SC-005). Stop every Redis first:
@@ -74,6 +88,12 @@ docker compose run --rm --no-deps -e RUBY_REACTOR_STORAGE=active_record -e RUBY_
 
 - Every `demo:` task prints its documented outcome.
 - No connection to Redis is attempted (FR-006).
+
+*Verified 2026-10-10:*
+
+- Redis+Sidekiq: 168 examples, 0 failures.
+- AR+ActiveJob on SQLite, PostgreSQL and MySQL: 0 failures each.
+- `demo:all` completes Redis-free on SQLite.
 
 ## 5. History and dashboard queries (US4, SC-007, SC-010)
 
@@ -94,7 +114,7 @@ curl -si 'localhost:3000/ruby_reactor/api/reactors?input[user_id]=100&status=com
 - Only executions with `user_id = 100` and `completed` status are returned.
 - A filter on a redacted input returns `[]`.
 - On Redis, the same request returns `422`.
-- With 100,000 seeded executions (`--tag slow`), the first page takes under 2 s on PostgreSQL and MySQL.
+- With 100,000 seeded executions (`--tag slow`), the first page takes under 2 s on PostgreSQL and MySQL. *Verified 2026-10-10 on both.*
 
 ## 6. Permanent period and idempotency (US5, US6)
 

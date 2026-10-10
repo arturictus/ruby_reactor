@@ -5,7 +5,7 @@ require "spec_helper"
 # 011 R-08/FR-016: history is never expired, but the sweeper-facing scans only
 # see rows written within context_ttl — what Redis would still hold — so old
 # stranded work is never revived.
-RSpec.describe "ActiveRecord history and the sweeper window", :active_record_only do # rubocop:disable RSpec/DescribeClass
+RSpec.describe "ActiveRecord history and the sweeper window", :active_record_only do
   let(:adapter) { RubyReactor.configuration.storage_adapter }
   let(:models) { RubyReactor::Storage::ActiveRecordAdapter }
   let(:aged) { Time.current - RubyReactor.configuration.context_ttl - 60 }
