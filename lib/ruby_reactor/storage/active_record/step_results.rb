@@ -9,14 +9,14 @@ module RubyReactor
           now = Time.current
           status = (record["status"] || record[:status]).to_s
           with_db do
-            write_row(StepResult, { storage_name: reactor_class_name, context_id: context_id, step_name: step_name.to_s },
+            write_row(StepResult, { storage_name: reactor_class_name.to_s, context_id: context_id, step_name: step_name.to_s },
                       { status: status, record: JSON.generate(record), updated_at: now }, insert_only: { created_at: now })
           end
         end
 
         def retrieve_step_result(context_id, step_name, reactor_class_name)
           json = with_db do
-            StepResult.where(storage_name: reactor_class_name, context_id: context_id, step_name: step_name.to_s)
+            StepResult.where(storage_name: reactor_class_name.to_s, context_id: context_id, step_name: step_name.to_s)
                       .pick(:record)
           end
           json && JSON.parse(json)

@@ -47,10 +47,8 @@ RSpec.describe "Map Infinite Loop Prevention", type: :reactor do
     expect(results.size).to eq(10)
     expect(results.sort).to eq(items)
 
-    # Extra verification: Check offset in Redis
-    offset_key = "reactor:LoopTestReactor:map:#{map_id}:offset"
-    redis_url = RubyReactor.configuration.storage.redis_url
-    final_offset = Redis.new(url: redis_url).get(offset_key).to_i
+    # Extra verification: check the stored dispatch offset
+    final_offset = RubyReactor.configuration.storage_adapter.retrieve_map_offset(map_id, "LoopTestReactor").to_i
 
     # It should be at least 10.
     expect(final_offset).to be >= 10

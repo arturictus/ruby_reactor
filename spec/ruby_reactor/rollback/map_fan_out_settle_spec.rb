@@ -177,7 +177,8 @@ RSpec.describe "map rollback (fan-out)" do
       map_id = "#{id}:m"
       results = storage.retrieve_map_results(map_id, "MapFanOutSettleSpec::Batched")
       expect(results[2..]).to eq([{ "_skipped" => true }] * 4)
-      expect(redis.get("reactor:MapFanOutSettleSpec::Batched:map:#{map_id}:counter").to_i).to eq(0)
+      # DECRBY 0 reads the counter on either adapter without changing it.
+      expect(storage.decrement_map_counter_by(map_id, 0, "MapFanOutSettleSpec::Batched")).to eq(0)
       trace = MapFanOutSettleSpec::Batched.find(id).context.execution_trace
       expect(trace.count { |e| e[:type].to_s == "compensate" && e[:step].to_s == "m" }).to eq(1)
       expect(RubyReactor::Map::Sweeper.run_once[:redispatched]).to eq(0)
@@ -215,7 +216,7 @@ RSpec.describe "map rollback (fan-out)" do
       end).to eq(["undo e.e1[2] failed", "undo e.e1[0] failed"])
     end
 
-    it "reports every element when the map's element index expired before a later failure" do
+    it "reports every element when the map's element index expired before a later failure", redis_only: "simulates Redis TTL expiry; ActiveRecord keeps history" do
       id = MapFanOutSettleSpec::LaterFailure.run(items).execution_id
       perform_element_jobs
       redis.del("reactor:MapFanOutSettleSpec::LaterFailure:map:#{id}:m:element_contexts")

@@ -6,6 +6,7 @@
 # be exactly the mock/real blurring the lane exists to avoid.
 
 require "sidekiq"
+require "redis" # fixtures' cross-process scratchpad; loaded by RedisAdapter only under Redis storage
 require "ruby_reactor"
 
 REDIS_URL = ENV.fetch("RUBY_REACTOR_TEST_REDIS_URL", "redis://localhost:6780")
@@ -23,12 +24,12 @@ end
 RubyReactor.configure do |config|
   # Same storage as the spec process that booted us (spec/support/storage_selection.rb
   # reads the same env vars); Redis stays the queue either way.
+  config.storage.redis_url = REDIS_URL # fixtures' scratchpad under both adapters
   if ENV["RUBY_REACTOR_TEST_STORAGE"] == "active_record"
     config.storage.adapter = :active_record
     config.storage.database = ENV.fetch("RUBY_REACTOR_TEST_DATABASE_URL", "sqlite3:tmp/ruby_reactor_test.sqlite3")
   else
     config.storage.adapter = :redis
-    config.storage.redis_url = REDIS_URL
   end
   config.async_router = RubyReactor::Adapters::Sidekiq::Router
 end

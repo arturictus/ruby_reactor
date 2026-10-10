@@ -20,7 +20,7 @@ module RubyReactor
           return {} if names.empty?
 
           with_db do
-            InterruptResume.where(storage_name: reactor_class_name, context_id: context_id, step_name: names)
+            InterruptResume.where(storage_name: reactor_class_name.to_s, context_id: context_id, step_name: names)
                            .where.not(payload: nil).pluck(:step_name, :payload).to_h
           end
         end
@@ -41,18 +41,18 @@ module RubyReactor
         def claim_idempotency_key(key, context_id, reactor_class_name)
           digest = Coordination.digest(key)
           with_db do
-            IdempotencyKey.insert!({ storage_name: reactor_class_name, key_digest: digest, key: key.to_s,
+            IdempotencyKey.insert!({ storage_name: reactor_class_name.to_s, key_digest: digest, key: key.to_s,
                                      context_id: context_id, created_at: Time.current })
             nil
           rescue ::ActiveRecord::RecordNotUnique
-            IdempotencyKey.where(storage_name: reactor_class_name, key_digest: digest).pick(:context_id)
+            IdempotencyKey.where(storage_name: reactor_class_name.to_s, key_digest: digest).pick(:context_id)
           end
         end
 
         private
 
         def ensure_resume(context_id, reactor_class_name, step_name)
-          key = { storage_name: reactor_class_name, context_id: context_id, step_name: step_name.to_s }
+          key = { storage_name: reactor_class_name.to_s, context_id: context_id, step_name: step_name.to_s }
           InterruptResume.insert_all([key])
           InterruptResume.where(key)
         end

@@ -282,7 +282,7 @@ RSpec.describe "map rollback (inline)" do
     )
   end
 
-  it "reports every element when the map's element index expired, never skipping them silently" do
+  it "reports every element when the map's element index expired, never skipping them silently", redis_only: "simulates Redis TTL expiry; ActiveRecord keeps history" do
     result = MapRollbackSpec::IndexExpiresThenFails.run(MapRollbackSpec::ITEMS)
 
     expect(RollbackRecorder.log).to end_with("run:b", "compensate:b", "undo:a")
@@ -402,7 +402,7 @@ RSpec.describe "map rollback (inline)" do
           )
         end
 
-        it "reports every element when the map's element index expired" do
+        it "reports every element when the map's element index expired", redis_only: "simulates Redis TTL expiry; ActiveRecord keeps history" do
           result = run(fixture(:IndexExpires))
 
           expect(log.grep(/\Aundo:e\./)).to be_empty

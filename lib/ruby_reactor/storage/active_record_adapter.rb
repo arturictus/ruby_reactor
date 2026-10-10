@@ -47,9 +47,23 @@ module RubyReactor
 
       # `database`: a database.yml name (Symbol), a URL or a Hash; nil means the
       # host's primary database. Either way the adapter gets its own pool.
+      CONNECT_LOCK = Mutex.new
+
       def initialize(database: nil)
         super()
-        Record.establish_connection(database || ::ActiveRecord::Base.connection_db_config)
+        self.class.connect(database || ::ActiveRecord::Base.connection_db_config)
+      end
+
+      # (Re)points the shared pool only when the config changes: re-running
+      # establish_connection drops the live pool, which would fail any thread
+      # mid-query with ConnectionNotDefined.
+      def self.connect(config)
+        CONNECT_LOCK.synchronize do
+          return if @connected_config == config
+
+          Record.establish_connection(config)
+          @connected_config = config
+        end
       end
 
       def purge_expired_coordination(limit: 1000)

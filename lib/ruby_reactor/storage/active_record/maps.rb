@@ -170,7 +170,7 @@ module RubyReactor
 
         private
 
-        def map_scope(map_id, reactor_class_name) = MapOperation.where(storage_name: reactor_class_name, map_id: map_id)
+        def map_scope(map_id, reactor_class_name) = MapOperation.where(storage_name: reactor_class_name.to_s, map_id: map_id)
 
         def results_scope(map_id, reactor_class_name)
           MapResult.where(map_operation_id: map_scope(map_id, reactor_class_name).select(:id))
@@ -183,7 +183,7 @@ module RubyReactor
         # The map's row id, creating the row (all keys absent) on first use.
         def ensure_map(map_id, reactor_class_name)
           now = Time.current
-          MapOperation.insert_all([{ storage_name: reactor_class_name, map_id: map_id, created_at: now, updated_at: now }])
+          MapOperation.insert_all([{ storage_name: reactor_class_name.to_s, map_id: map_id, created_at: now, updated_at: now }])
           map_scope(map_id, reactor_class_name).pick(:id)
         end
 

@@ -17,12 +17,14 @@ module StorageSelection
   def active_record? = STORAGE == "active_record"
 
   def configure!(config)
+    # Fixtures build their cross-process scratchpad from this URL under both
+    # adapters, so it always points at the test Redis.
+    config.storage.redis_url = REDIS_TEST_URL
     if active_record?
       config.storage.adapter = :active_record
       config.storage.database = DATABASE_URL
     else
       config.storage.adapter = :redis
-      config.storage.redis_url = REDIS_TEST_URL
     end
   end
 

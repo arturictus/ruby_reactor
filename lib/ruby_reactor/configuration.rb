@@ -160,16 +160,24 @@ module RubyReactor
       @storage ||= RubyReactor::Storage::Configuration.new
     end
 
+    STORAGE_ADAPTER_LOCK = Mutex.new
+
+    # Built once per process even when worker threads race for it: an adapter
+    # may own process-wide resources (the ActiveRecord adapter's pool).
     def storage_adapter
-      @storage_adapter ||= case storage.adapter
-                           when :redis
-                             RubyReactor::Storage::RedisAdapter.new(url: storage.redis_url, **storage.redis_options)
-                           when :active_record
-                             require_relative "storage/active_record_adapter"
-                             RubyReactor::Storage::ActiveRecordAdapter.new(database: storage.database)
-                           else
-                             raise "Unknown storage adapter: #{storage.adapter}"
-                           end
+      @storage_adapter || STORAGE_ADAPTER_LOCK.synchronize { @storage_adapter ||= build_storage_adapter }
+    end
+
+    def build_storage_adapter
+      case storage.adapter
+      when :redis
+        RubyReactor::Storage::RedisAdapter.new(url: storage.redis_url, **storage.redis_options)
+      when :active_record
+        require_relative "storage/active_record_adapter"
+        RubyReactor::Storage::ActiveRecordAdapter.new(database: storage.database)
+      else
+        raise "Unknown storage adapter: #{storage.adapter}"
+      end
     end
 
     def middlewares

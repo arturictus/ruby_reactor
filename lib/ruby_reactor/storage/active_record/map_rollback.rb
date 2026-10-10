@@ -133,7 +133,7 @@ module RubyReactor
         private
 
         def rollback_scope(map_id, reactor_class_name)
-          ActiveRecordAdapter::MapRollback.where(storage_name: reactor_class_name, map_id: map_id)
+          ActiveRecordAdapter::MapRollback.where(storage_name: reactor_class_name.to_s, map_id: map_id)
         end
 
         def outcomes_scope(map_id, reactor_class_name)
@@ -142,7 +142,7 @@ module RubyReactor
 
         def ensure_rollback(map_id, reactor_class_name)
           now = Time.current
-          ActiveRecordAdapter::MapRollback.insert_all([{ storage_name: reactor_class_name, map_id: map_id,
+          ActiveRecordAdapter::MapRollback.insert_all([{ storage_name: reactor_class_name.to_s, map_id: map_id,
                                                          created_at: now, updated_at: now }])
           rollback_scope(map_id, reactor_class_name).pick(:id)
         end

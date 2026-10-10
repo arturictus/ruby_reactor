@@ -16,7 +16,7 @@ module RubyReactor
           now = Time.current
           status = determine_status(data)
           attrs = {
-            storage_name: reactor_class_name, reactor_class: (data["reactor_class"] || reactor_class_name).to_s,
+            storage_name: reactor_class_name.to_s, reactor_class: (data["reactor_class"] || reactor_class_name).to_s,
             status: status, parent_context_id: data["parent_context_id"], root_context_id: data["root_context_id"],
             correlation_id: data["correlation_id"]&.to_s, dispatched_child: dispatched_child?(data) ? true : false,
             context: serialized_context, updated_at: now
@@ -30,7 +30,7 @@ module RubyReactor
         end
 
         def retrieve_context(context_id, reactor_class_name)
-          json = with_db { Execution.where(id: context_id, storage_name: reactor_class_name).pick(:context) }
+          json = with_db { Execution.where(id: context_id, storage_name: reactor_class_name.to_s).pick(:context) }
           json && JSON.parse(json)
         end
 
@@ -41,7 +41,7 @@ module RubyReactor
 
         def delete_context(context_id, reactor_class_name)
           with_db do
-            deleted = Execution.where(id: context_id, storage_name: reactor_class_name).delete_all
+            deleted = Execution.where(id: context_id, storage_name: reactor_class_name.to_s).delete_all
             ExecutionInput.where(execution_id: context_id).delete_all if deleted.positive?
             deleted
           end
@@ -52,7 +52,7 @@ module RubyReactor
         end
 
         def store_correlation_id(correlation_id, context_id, reactor_class_name)
-          key = { storage_name: reactor_class_name, correlation_digest: Coordination.digest(correlation_id) }
+          key = { storage_name: reactor_class_name.to_s, correlation_digest: Coordination.digest(correlation_id) }
           with_db do
             CorrelationId.insert!(key.merge(correlation_id: correlation_id.to_s, context_id: context_id))
           rescue ::ActiveRecord::RecordNotUnique
@@ -65,14 +65,14 @@ module RubyReactor
 
         def retrieve_context_id_by_correlation_id(correlation_id, reactor_class_name)
           with_db do
-            CorrelationId.where(storage_name: reactor_class_name,
+            CorrelationId.where(storage_name: reactor_class_name.to_s,
                                 correlation_digest: Coordination.digest(correlation_id)).pick(:context_id)
           end
         end
 
         def delete_correlation_id(correlation_id, reactor_class_name)
           with_db do
-            CorrelationId.where(storage_name: reactor_class_name,
+            CorrelationId.where(storage_name: reactor_class_name.to_s,
                                 correlation_digest: Coordination.digest(correlation_id)).delete_all
           end
         end

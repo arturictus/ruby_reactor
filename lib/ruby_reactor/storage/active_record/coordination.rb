@@ -103,7 +103,11 @@ module RubyReactor
         end
 
         def log_failure(op, key_count, error)
-          engine = Record.connection_db_config&.adapter
+          engine = begin
+            Record.connection_db_config.adapter
+          rescue ::ActiveRecord::ActiveRecordError
+            "unknown"
+          end
           RubyReactor.configuration.logger.error(
             "ruby_reactor.storage op=#{op} engine=#{engine} keys=#{key_count} error=#{error.class}"
           )

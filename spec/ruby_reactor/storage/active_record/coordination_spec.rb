@@ -180,7 +180,9 @@ RSpec.describe "ActiveRecord coordination store", :active_record_only do # ruboc
     end
     sleep 1.2
 
-    expect(coordination.purge_expired(limit: 10)).to eq(2)
-    expect(entries.pluck(:key)).to eq(["live"])
+    # Other rows may exist (a live worker from another example); check ours.
+    expect(coordination.purge_expired(limit: 100)).to be >= 2
+    expect(entries.where(key: %w[old empty])).not_to exist
+    expect(entries.where(key: "live")).to exist
   end
 end
