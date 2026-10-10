@@ -1647,9 +1647,11 @@ After checking out the repo, run `bin/setup` to install dependencies. Then, run 
 
 To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
 
-### Running Redis for the test suite
+### Running the test suite
 
-The gem's RSpec suite expects Redis on port `6780` (see [spec/spec_helper.rb](spec/spec_helper.rb)). Start it via Docker Compose:
+The gem's RSpec suite needs Ruby ≥ 3.2 (its ActiveRecord 8 dev dependency) and expects Redis on
+port `6780` (see [spec/spec_helper.rb](spec/spec_helper.rb)). Redis is always needed: it is the storage
+by default, and the Sidekiq queue in every run. Start it via Docker Compose:
 
 ```bash
 docker compose up -d redis-test
@@ -1661,6 +1663,23 @@ Then run the suite:
 bundle exec rspec
 ```
 
+To run it against the ActiveRecord storage adapter, pick a database. SQLite needs nothing else;
+PostgreSQL and MySQL come from Compose:
+
+```bash
+docker compose up -d test-postgres test-mysql
+
+RUBY_REACTOR_TEST_STORAGE=active_record bundle exec rspec   # SQLite (tmp/ruby_reactor_test.sqlite3)
+RUBY_REACTOR_TEST_STORAGE=active_record \
+  RUBY_REACTOR_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:6781/ruby_reactor_test bundle exec rspec
+RUBY_REACTOR_TEST_STORAGE=active_record \
+  RUBY_REACTOR_TEST_DATABASE_URL=trilogy://root:root@127.0.0.1:6782/ruby_reactor_test bundle exec rspec
+```
+
+Specs that test one adapter's internals are tagged `:redis_only` or `:active_record_only` and are
+skipped, with the reason, under the other. On macOS, add `?gssencmode=disable` to the PostgreSQL
+URL (forked specs crash in libpq otherwise). Multi-process contention specs run with `--tag stress`.
+
 Stop it when done:
 
 ```bash
@@ -1668,6 +1687,17 @@ docker compose stop redis-test
 ```
 
 ### Running the demo Rails app
+
+The demo picks its storage and queue backend from `RUBY_REACTOR_STORAGE` (`redis` or
+`active_record`, default `redis`) and `RUBY_REACTOR_QUEUE` (`sidekiq` or `active_job`, default
+`sidekiq`); `DATABASE_URL` picks the database engine. With `active_record` + `active_job` it runs
+without any Redis — the `demo:all` rake task is the acceptance run:
+
+```bash
+docker compose stop redis-test demo-redis
+docker compose run --rm --no-deps -e RUBY_REACTOR_STORAGE=active_record -e RUBY_REACTOR_QUEUE=active_job \
+  demo-app bash -c "bin/rails db:prepare && bin/rails demo:all"
+```
 
 The demo Rails app under [demo_app/](demo_app/) has its own Redis (port `6380`) and bind-mounts the repo so edits to `lib/` are live. Two ways to run it:
 

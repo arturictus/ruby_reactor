@@ -1,9 +1,18 @@
 namespace :demo do
   
-  desc "flush redis"
+  # Keeps its historical name (Constitution VI): resets whichever storage is
+  # configured, so every demo starts clean on either adapter.
+  desc "reset reactor storage (Redis or ActiveRecord)"
   task flush_redis: :environment do
-    puts "Fushing redis at #{RubyReactor.configuration.storage.redis_url}"
-    Redis.new(url: RubyReactor.configuration.storage.redis_url).flushdb
+    if RubyReactor.configuration.storage.adapter == :active_record
+      puts "Resetting ActiveRecord reactor storage"
+      models = RubyReactor.configuration.storage_adapter.class
+      (models::MODELS - [models::Schema]).each(&:delete_all)
+    end
+    if DemoLog.redis_in_use?
+      puts "Flushing redis at #{RubyReactor.configuration.storage.redis_url}"
+      Redis.new(url: RubyReactor.configuration.storage.redis_url).flushdb
+    end
     Product.delete_all
     # Sidekiq shares this database, so the flush also drops the schedule zset
     # holding the sweeper's next self-scheduled tick. Without re-kicking, the

@@ -130,8 +130,3 @@ module RubyReactor
     end
   end
 end
-
-# The RSpec storage reset is installed at RSpec.configure time, which can run
-# before this adapter is first selected and loaded. Guarded on RSpec itself so
-# production never autoloads the test helpers.
-RubyReactor::RSpec::StorageReset.install! if defined?(::RSpec::Core)

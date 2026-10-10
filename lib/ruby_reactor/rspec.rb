@@ -53,6 +53,8 @@ module RubyReactor
       ::ActiveJob::Base.queue_adapter.enqueued_jobs.clear if AsyncTestHelpers.active_job_testing?
 
       adapter = ::RubyReactor.configuration.storage_adapter
+      # Re-run: the ActiveRecord adapter loads lazily, after RSpec.configure.
+      StorageReset.install!
       adapter.reset! if adapter.respond_to?(:reset!)
 
       ::RubyReactor.configuration.lock_snooze_base_delay = DEFAULT_SNOOZE_BASE_DELAY

@@ -57,6 +57,39 @@ services:
       timeout: 3s
       retries: 5
 
+  # Databases for running demo_app on the ActiveRecord storage adapter:
+  #   RUBY_REACTOR_STORAGE=active_record DATABASE_URL=postgres://postgres:postgres@demo-postgres:5432/demo_app
+  #   RUBY_REACTOR_STORAGE=active_record DATABASE_URL=trilogy://root:root@demo-mysql:3306/demo_app
+  demo-postgres:
+    image: postgres:16-alpine
+    ports:
+      - "6783:5432"
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: demo_app
+    volumes:
+      - demo_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  demo-mysql:
+    image: mysql:8.4
+    ports:
+      - "6784:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: demo_app
+    volumes:
+      - demo_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # demo_app development container — builds with the local gem source bind-mounted
   # so edits to `lib/` are picked up immediately.
   demo-app:
@@ -72,6 +105,13 @@ services:
     environment:
       RAILS_ENV: development
       REDIS_URL: redis://demo-redis:6379/1
+      # Storage/queue selection (specs/011). A Redis-free acceptance run:
+      #   docker compose stop redis-test demo-redis
+      #   docker compose run --rm --no-deps -e RUBY_REACTOR_STORAGE=active_record \
+      #     -e RUBY_REACTOR_QUEUE=active_job demo-app bash -c "bin/rails db:prepare && bin/rails demo:all"
+      RUBY_REACTOR_STORAGE: ${RUBY_REACTOR_STORAGE:-redis}
+      RUBY_REACTOR_QUEUE: ${RUBY_REACTOR_QUEUE:-sidekiq}
+      DATABASE_URL: # passed through only when set in your shell
       BUNDLE_PATH: /bundle
       OTEL_TRACES_EXPORTER: otlp
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://teley:3000/r/ruby_reactor_session
@@ -96,6 +136,13 @@ services:
     environment:
       RAILS_ENV: development
       REDIS_URL: redis://demo-redis:6379/1
+      # Storage/queue selection (specs/011). A Redis-free acceptance run:
+      #   docker compose stop redis-test demo-redis
+      #   docker compose run --rm --no-deps -e RUBY_REACTOR_STORAGE=active_record \
+      #     -e RUBY_REACTOR_QUEUE=active_job demo-app bash -c "bin/rails db:prepare && bin/rails demo:all"
+      RUBY_REACTOR_STORAGE: ${RUBY_REACTOR_STORAGE:-redis}
+      RUBY_REACTOR_QUEUE: ${RUBY_REACTOR_QUEUE:-sidekiq}
+      DATABASE_URL: # passed through only when set in your shell
       BUNDLE_PATH: /bundle
       OTEL_TRACES_EXPORTER: otlp
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://teley:3000/r/ruby_reactor_session
@@ -124,5 +171,7 @@ services:
 
 volumes:
   demo_redis_data:
+  demo_postgres_data:
+  demo_mysql_data:
   bundle_cache:
   teley_data:

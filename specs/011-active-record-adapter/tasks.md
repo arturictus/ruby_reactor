@@ -386,43 +386,43 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
 ### Tests for User Story 3 (write first, confirm FAIL) ⚠️
 
-- [ ] T040 [P] [US3] Write `demo_app/spec/config/storage_selection_spec.rb`.
+- [X] T040 [P] [US3] Write `demo_app/spec/config/storage_selection_spec.rb`.
   - With `RUBY_REACTOR_STORAGE=active_record`, `RubyReactor.configuration.storage_adapter` is an `ActiveRecordAdapter`.
   - With `RUBY_REACTOR_QUEUE=active_job`, `async_router` is `RubyReactor::Adapters::ActiveJob::Router`.
   - In that mode, a full `test_reactor` run of an async demo reactor opens **no** Redis connection. Assert it by running the spec with `REDIS_URL=redis://127.0.0.1:1` and expecting success (FR-006).
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Make `demo_app/config/initializers/ruby_reactor.rb` read `ENV.fetch("RUBY_REACTOR_STORAGE", "redis")` and `ENV.fetch("RUBY_REACTOR_QUEUE", "sidekiq")`:
+- [X] T041 [US3] Make `demo_app/config/initializers/ruby_reactor.rb` read `ENV.fetch("RUBY_REACTOR_STORAGE", "redis")` and `ENV.fetch("RUBY_REACTOR_QUEUE", "sidekiq")`:
   - `:active_record` storage leaves `storage.database` nil (primary DB);
   - `active_job` sets `config.async_router = RubyReactor::Adapters::ActiveJob::Router` and `Rails.application.config.active_job.queue_adapter = Rails.env.test? ? :test : :async`. `:test` makes `drain_async_jobs` work. `:async` runs jobs in-process, so the rake and docker demo needs no worker container. The Sidekiq initializer stays, and is used only when the queue is `sidekiq`;
   - the Redis settings stay but are only used when selected.
 
   Add `gem "pg"` and `gem "trilogy"` to `demo_app/Gemfile`. `DATABASE_URL` selects the engine through Rails' standard merge; `database.yml` is unchanged.
-- [ ] T042 [US3] In `demo_app/spec/support/redis_helpers.rb`, run `redis.flushdb` only when `RubyReactor.configuration.storage.adapter == :redis` or `ENV.fetch("RUBY_REACTOR_QUEUE", "sidekiq") == "sidekiq"`. A Redis-free run otherwise fails before the first example (FR-006).
-- [ ] T043 [US3] Make the `demo:flush_redis` task in `demo_app/lib/tasks/demo_reactors.rake` storage-agnostic. Keep its name, because Constitution VI references it, and update its `desc` to "reset reactor storage".
+- [X] T042 [US3] In `demo_app/spec/support/redis_helpers.rb`, run `redis.flushdb` only when `RubyReactor.configuration.storage.adapter == :redis` or `ENV.fetch("RUBY_REACTOR_QUEUE", "sidekiq") == "sidekiq"`. A Redis-free run otherwise fails before the first example (FR-006).
+- [X] T043 [US3] Make the `demo:flush_redis` task in `demo_app/lib/tasks/demo_reactors.rake` storage-agnostic. Keep its name, because Constitution VI references it, and update its `desc` to "reset reactor storage".
   - Under `:redis`: today's `flushdb`.
   - Under `:active_record`: `(RubyReactor::Storage::ActiveRecordAdapter::MODELS - [RubyReactor::Storage::ActiveRecordAdapter::Schema]).each(&:delete_all)`. No `Redis.new` is created.
   - Always: `Product.delete_all` and `RubyReactor.start_sweeper!`.
 
   `demo:all` **already exists** (`demo_reactors.rake` ~line 241). Do not redefine it, because Rake would merge the definitions and run tasks twice. Append the three new tasks to its existing prerequisite list as their stories land (`:active_record_history`, `:yearly_report`, `:idempotent_charge`).
-- [ ] T044 [US3] Run `demo_app` specs under `RUBY_REACTOR_STORAGE=active_record RUBY_REACTOR_QUEUE=active_job` on SQLite, then on PostgreSQL and MySQL via `DATABASE_URL`. Fix adapter gaps in `lib/`.
+- [X] T044 [US3] Run `demo_app` specs under `RUBY_REACTOR_STORAGE=active_record RUBY_REACTOR_QUEUE=active_job` on SQLite, then on PostgreSQL and MySQL via `DATABASE_URL`. Fix adapter gaps in `lib/`.
   - A demo spec that is inherently Sidekiq-specific gets the `:sidekiq_only` tag, with a skip hook added to `demo_app/spec/rails_helper.rb` keyed on `RUBY_REACTOR_QUEUE`, and a reason.
   - A demo spec that is inherently Redis-specific gets `:redis_only`, using the same hook pattern.
   - Confirm that `DatabaseCleaner` truncation (`demo_app/spec/rails_helper.rb`) empties the `ruby_reactor_*` tables between examples without breaking the schema check. The version is a column default (R-16), so truncation can't remove it.
   - Make T040 green.
-- [ ] T045 [P] [US3] Update `docker-compose.yml`:
+- [X] T045 [P] [US3] Update `docker-compose.yml`:
   - add `demo-postgres` (`postgres:16-alpine`, port 6783) and `demo-mysql` (`mysql:8.4`, port 6784), with healthchecks and volumes;
   - pass `RUBY_REACTOR_STORAGE`, `RUBY_REACTOR_QUEUE` and `DATABASE_URL` through to `demo-app` and `demo-sidekiq` with `${VAR:-default}`.
 
   The Redis-free run is documented as `docker compose run --rm --no-deps -e RUBY_REACTOR_STORAGE=active_record -e RUBY_REACTOR_QUEUE=active_job demo-app bin/rails db:prepare demo:all`, with `docker compose stop redis-test demo-redis` first (quickstart §4, SC-005).
-- [ ] T046 [US3] Update `.github/workflows/main.yml`.
+- [X] T046 [US3] Update `.github/workflows/main.yml`.
   - **`build`** (gem suite): add `matrix.storage: [redis, sqlite, postgres, mysql]`, keeping the Ruby matrix. Add `postgres:16` and `mysql:8.4` services, keep the `redis-stack-server` service, and set `RUBY_REACTOR_TEST_STORAGE` and `RUBY_REACTOR_TEST_DATABASE_URL` per matrix entry.
   - **`demo_app`**: add `matrix.combo`:
     - `redis-sidekiq`, with the Redis service, as today;
     - `ar-sqlite`, `ar-postgres` and `ar-mysql`, each with **no Redis service**, `RUBY_REACTOR_STORAGE=active_record`, `RUBY_REACTOR_QUEUE=active_job` and `DATABASE_URL`. Each runs `bin/rails db:prepare`, `bundle exec rspec` and `bin/rails demo:all`.
   - The `:stress` (SC-006) and `:slow` (SC-007) specs and the SC-008 timing are **not** PR-CI steps. They are the release checklist in quickstart §8.
-- [ ] T047 [US3] Update the `README.md` development section (lines 1610–1660: test databases, the four test targets, the environment variables, the Redis-free demo run, and the Ruby ≥ 3.2 needed to run the suite) and `documentation/testing.md` (`RUBY_REACTOR_TEST_STORAGE`, `RUBY_REACTOR_TEST_DATABASE_URL`, the `:redis_only` and `:active_record_only` tags, storage reset per adapter).
+- [X] T047 [US3] Update the `README.md` development section (lines 1610–1660: test databases, the four test targets, the environment variables, the Redis-free demo run, and the Ruby ≥ 3.2 needed to run the suite) and `documentation/testing.md` (`RUBY_REACTOR_TEST_STORAGE`, `RUBY_REACTOR_TEST_DATABASE_URL`, the `:redis_only` and `:active_record_only` tags, storage reset per adapter).
 
 **Checkpoint**: US3 is complete. Both adapters are proven on every PR, and a Redis-free deployment is proven continuously.
 
