@@ -41,6 +41,23 @@ RSpec.describe "ActiveRecord history and the sweeper window", :active_record_onl
     expect(enqueued).to be_empty
   end
 
+  # Review F4: on a busy app, finished runs must not crowd a fresh strand out
+  # of the sweeper's capped scan.
+  it "re-enqueues a stranded run among more finished runs than the sweep's limit" do
+    3.times do |n|
+      context = RubyReactor::Context.new({ n: n }, reactor_class)
+      context.status = :completed
+      adapter.store_context(context.context_id, RubyReactor::ContextSerializer.serialize(context), reactor_class.name)
+    end
+    stranded = store_running_context
+    enqueued = []
+    router = Class.new { define_singleton_method(:perform_async) { |*args| enqueued << args } }
+
+    RubyReactor::Sweeper.new(storage: adapter, async_router: router).run_once(limit: 2)
+
+    expect(enqueued.map(&:first)).to eq([stranded])
+  end
+
   it "ages step results, maps and map rollbacks out of their scans" do
     adapter.store_step_result("ctx-1", "send", { "status" => "dispatched" }, "P")
     adapter.initialize_map_operation("p1:m", 2, "P", reactor_class_info: {})

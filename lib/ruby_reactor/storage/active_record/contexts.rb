@@ -81,9 +81,12 @@ module RubyReactor
 
         # The sweeper's view: only runs written within `context_ttl` — exactly
         # what Redis would still hold — so keeping history never revives work
-        # stranded longer ago (R-08). `pattern` is a Redis glob; unused here.
-        def scan_reactors(pattern: nil, count: 50, include_dispatched_children: false) # rubocop:disable Lint/UnusedMethodArgument
+        # stranded longer ago (R-08). `statuses:` (the sweeper's) is applied in
+        # SQL, before the cap, so finished runs can't crowd a fresh strand out
+        # on a busy app (review F4). `pattern` is a Redis glob; unused here.
+        def scan_reactors(pattern: nil, count: 50, include_dispatched_children: false, statuses: nil) # rubocop:disable Lint/UnusedMethodArgument
           scope = recent(Execution)
+          scope = scope.where(status: statuses) if statuses
           scope = top_level(scope, include_dispatched_children)
           rows_for(with_db { scope.order(:updated_at).limit(count).pluck(:context) })
         end

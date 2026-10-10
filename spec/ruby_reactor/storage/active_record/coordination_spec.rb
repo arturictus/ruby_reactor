@@ -175,6 +175,24 @@ RSpec.describe "ActiveRecord coordination store", :active_record_only do
     holder&.join
   end
 
+  # Review F2: a key re-acquired between the purge's scan and its delete must
+  # survive, or two processes could hold the same lock.
+  it "never purges a row that was re-acquired after the scan" do
+    adapter = RubyReactor.configuration.storage_adapter
+    adapter.lock_acquire("lock:purge-race", "first", 1)
+    sleep 1.2
+    now, stale = RubyReactor::Storage::ActiveRecordAdapter::Record.connection_pool.with_connection do |conn|
+      now = coordination.now_ms(conn)
+      [now, coordination.stale_digests(now: now, limit: 100)]
+    end
+    expect(stale).to include(coordination.digest("lock:purge-race"))
+
+    expect(adapter.lock_acquire("lock:purge-race", "second", 30)).to be(true)
+    coordination.delete_stale(stale, now: now)
+
+    expect(adapter.lock_info("lock:purge-race")).to eq(owner: "second", count: 1)
+  end
+
   it "purges expired and emptied rows" do
     coordination.atomically(%w[old empty live]) do |kv|
       kv.set("old", "1", ex: 1)

@@ -617,6 +617,9 @@ again.execution_id == first.execution_id # => true
 - A completed original replays as its `Success`, a failed one as its `Failure`, a paused one as its
   interrupt result, and one still running in the background as a `DispatchResult`.
 - Concurrent calls with the same key run once; every other caller gets the replay.
+- A first call that fails before its run is ever saved (for example, its lock is held elsewhere)
+  gives the key back, so a retry runs. If its process died before saving, a repeat finds no run and no
+  live worker after a 2-second wait and takes the key over.
 - Retention: permanent with the ActiveRecord storage adapter; `context_ttl` with Redis, after which the
   key starts a new run.
 - Inputs can still be passed braceless (`run(order_id: 7)`); pass a Hash when an input is itself named

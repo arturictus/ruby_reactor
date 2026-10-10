@@ -19,7 +19,7 @@ Notation:
 | `find_context_by_id(id)` → Hash \| nil | Lookup by id across all classes. |
 | `delete_context(id, C)` | Removes the context. AR also removes its input-index rows. |
 | `determine_status(data)` → String | **Moves to `Adapter`** and is shared verbatim. |
-| `scan_reactors(pattern:, count:, include_dispatched_children:)` → [Hash] | Sweeper input. The row shape is `{id, class, status, created_at, failure}`, unchanged. AR: R-08 window. |
+| `scan_reactors(pattern:, count:, include_dispatched_children:)` → [Hash] | Sweeper input. The row shape is `{id, class, status, created_at, failure}`, unchanged. Optional `statuses:` keeps only those statuses, filtered before the cap (both adapters; the sweeper passes `running`/`rolling_back`, review F4). AR: R-08 window. |
 | `scan_reactors_page(pattern:, cursor:, count:, include_dispatched_children:)` → `{reactors:, cursor:}` | Dashboard listing. `cursor` is opaque; `"0"` means start, and in a response it means end. AR lists all history. |
 | `expire(key, seconds)` | No caller outside storage. AR: no-op. |
 
@@ -37,7 +37,7 @@ Notation:
 |---|---|
 | `store_step_result(id, step, record, C)` | Last writer wins. |
 | `retrieve_step_result(id, step, C)` → Hash \| nil | |
-| `scan_step_results(count:)` → [Hash] | AR: R-08 window. |
+| `scan_step_results(count:, status: nil)` → [Hash] | Optional `status:` keeps only those records, filtered before the cap (the StepSweeper passes `"dispatched"`, review F4). AR: R-08 window. |
 
 ## Maps
 
@@ -118,5 +118,7 @@ These are ported line by line from Lua for AR (R-04). Return values are unchange
 | Method | Redis | ActiveRecord |
 |---|---|---|
 | `claim_idempotency_key(key, id, C)` → nil \| String | `SET NX EX context_ttl`; returns the existing id when lost | permanent row; returns the existing id when lost |
+| `release_idempotency_key(key, id, C)` → Boolean | compare-and-delete (Lua) | compare-and-delete on `context_id` |
+| `reclaim_idempotency_key(key, from_id, to_id, C)` → Boolean | compare-and-set (Lua), TTL reset | compare-and-set on `context_id` |
 | `purge_expired_coordination(limit: 1000)` → Integer | `0` (no-op) | deletes expired and NULL coordination rows (R-07) |
 | `query_executions(filters:, cursor:, count:)` → `{reactors:, cursor:}` | **not defined** (capability absent) | keyset-paged filtered listing (R-18) |

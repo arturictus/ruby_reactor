@@ -20,7 +20,7 @@ were timing flakes from running the three suites at the same time. Redis: 0 fail
 
 - [x] CA-01 Saga rollback: compensation of the failing step, then undo in reverse order (README "Error Handling and Compensation", `core_concepts.md` "The Rollback Rule"). Specs: `spec/ruby_reactor/compensation_*`, `spec/ruby_reactor/error_handling_spec.rb`, `spec/ruby_reactor/rollback/`.
 - [x] CA-02 Retries and backoff, inline and background (`retry_configuration.md`). Specs: `spec/async_retry_*`, `spec/ruby_reactor/executor/`.
-- [x] CA-03 Durability and crash recovery: checkpoints, liveness lock, sweeper re-enqueue (README "Durability & Recovery"). Specs: `spec/ruby_reactor/checkpoint_spec.rb`, `context_lock_spec.rb`, `caller_process_liveness_spec.rb`, `sweeper_spec.rb`, `step_sweeper_spec.rb`, `spec/map/map_recovery_spec.rb`.
+- [x] CA-03 Durability and crash recovery: checkpoints, liveness lock, sweeper re-enqueue (README "Durability & Recovery"). On AR this also holds under load: the sweeper scans skip finished rows (review F4, `history_window_spec.rb`). Specs: `spec/ruby_reactor/checkpoint_spec.rb`, `context_lock_spec.rb`, `caller_process_liveness_spec.rb`, `sweeper_spec.rb`, `step_sweeper_spec.rb`, `spec/map/map_recovery_spec.rb`.
 - [x] CA-04 Async steps and async reactors: notified wait, bounded timeout, single writer (`background_and_async.md`). Specs: `spec/ruby_reactor/dsl/async_step_spec.rb`, `async_reactor_spec.rb`, `async_step_single_writer_spec.rb`, `async_waiter_spec.rb` (the fallback re-check example).
 - [x] CA-05 Interrupts: pause, resume by id or correlation id, one resume per interrupt, max attempts, composed children (`interrupts.md`). Specs: `spec/ruby_reactor/interrupt*_spec.rb`, `spec/ruby_reactor/interrupts/`, `spec/integration/interrupt_*`.
 - [x] CA-06 Maps: inline, fan-out, batching, atomic, recovery, rollback, `undo_all` (`data_pipelines.md`). Specs: `spec/map/`, `spec/ruby_reactor/map/`, `spec/ruby_reactor/rollback/`.
@@ -35,7 +35,7 @@ were timing flakes from running the three suites at the same time. Redis: 0 fail
 - [x] CA-15 Dashboard API and redaction (README "Web Dashboard", `contracts/dashboard-api.md`). Specs: `spec/ruby_reactor/web/`.
 - [x] CA-16 RSpec helpers and matchers (`testing.md`). Specs: `spec/ruby_reactor/rspec/`, plus every `demo_app/spec/reactors/*_spec.rb`, which runs on Redis+Sidekiq and on AR+ActiveJob across all three engines.
 - [x] CA-17 Middlewares and OpenTelemetry (`middlewares.md`). Specs: `spec/ruby_reactor/telemetry_spec.rb`, middleware specs.
-- [x] CA-18 Idempotency keys (both adapters, different retention). Specs: `spec/ruby_reactor/idempotency_spec.rb`, `rspec/idempotent_replay_matcher_spec.rb`, demo `idempotent_charge_reactor_spec.rb`.
+- [x] CA-18 Idempotency keys (both adapters, different retention). This includes giving back the key of a run that never saved, and taking over a dead claim (review F1). Specs: `spec/ruby_reactor/idempotency_spec.rb`, `rspec/idempotent_replay_matcher_spec.rb`, demo `idempotent_charge_reactor_spec.rb`.
 - [x] CA-19 Storage adapter contract: every adapter method's semantics. Spec: `spec/ruby_reactor/storage/adapter_contract_spec.rb`.
 
 ## Part 2: Redis-only examples → documented differences

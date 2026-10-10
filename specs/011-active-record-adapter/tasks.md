@@ -584,6 +584,22 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
 ---
 
+## Phase 10: Review remediation (`/speckit-review`, 2026-10-10)
+
+**Purpose**: Fix the review's 3 blockers and 2 findings, test-first.
+
+- [X] T079 [US1] F2 (blocker, G5). `Coordination.purge_expired` deleted rows by digest without re-checking expiry, so a lock re-acquired between the scan and the delete was removed, and two holders could get the same lock. Split it into `stale_digests` and `delete_stale`, and have `delete_stale` repeat the `value IS NULL OR expires_at_ms <= now` predicate. Regression: `spec/ruby_reactor/storage/active_record/coordination_spec.rb`, re-acquired between the two steps, still held.
+- [X] T080 [US6] F1 (blocker, G1). A run that failed before its first save left its idempotency key claimed for an execution that never existed, so later retries never ran.
+  - `Reactor#run` releases a key it claimed when its context was never saved (`release_idempotency_key`, compare-and-delete).
+  - A repeat that still finds no execution after `IDEMPOTENCY_WAIT`, and no live liveness lock (`async:<id>`), takes the claim over (`reclaim_idempotency_key`, compare-and-set) and runs.
+  - Both adapters, both methods in the contract.
+  - Regression: `spec/ruby_reactor/idempotency_spec.rb` (lock contention, then a successful retry; a dead claim taken over; a live claim not taken over) and `adapter_contract_spec.rb`.
+- [X] T081 [US1] F4 (finding, G1). On a busy app the sweeper scans returned the oldest completed rows first, delaying recovery of fresh strands by up to `context_ttl`. The scans take an opt-in filter, applied before the cap on both adapters: `scan_reactors(statuses:)`, which `Sweeper` calls with `SWEEPABLE`, and `scan_step_results(status:)`, which `StepSweeper` calls with `"dispatched"`. The unfiltered general listing is unchanged; the first attempt, an unconditional AR filter, broke specs that rely on it. Regression: `adapter_contract_spec.rb` (both adapters), and `history_window_spec.rb` (a stranded run re-enqueued among more finished runs than the sweep limit).
+- [X] T082 [US1] F3 (blocker, G1). The docs said MySQL contexts are bounded by `max_allowed_packet`, but the code rejects above half of it (statement headroom). Fix `documentation/storage_adapters.md` and the contract. Regression: `failure_modes_spec.rb` (MySQL), just above half the packet raises.
+- [X] T083 F5 (finding). The RuboCop `Layout/LineLength` offense at `spec/support/sidekiq_boot.rb:30`.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase dependencies

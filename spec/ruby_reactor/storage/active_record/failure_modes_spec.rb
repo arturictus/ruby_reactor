@@ -41,6 +41,16 @@ RSpec.describe "ActiveRecord storage failure modes", :active_record_only do
     expect(adapter_class::Execution.where(id: "big")).not_to exist
   end
 
+  # Review F3: the documented bound is half of max_allowed_packet.
+  it "rejects a MySQL context just above half of max_allowed_packet" do
+    skip "MySQL only" unless engine.match?(/mysql|trilogy/)
+    adapter = RubyReactor.configuration.storage_adapter
+    half = ActiveRecord::Base.lease_connection.select_value("SELECT @@max_allowed_packet").to_i / 2
+    context = { "context_id" => "half", "reactor_class" => "X", "blob" => "x" * half }.to_json
+
+    expect { adapter.store_context("half", context, "X") }.to raise_error(RubyReactor::Error::ContextTooLargeError)
+  end
+
   it "surfaces SQLite write contention as an error, and succeeds once the writer commits" do
     skip "SQLite only" unless engine == "sqlite3"
     adapter = RubyReactor.configuration.storage_adapter

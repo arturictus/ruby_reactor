@@ -27,12 +27,15 @@ module RubyReactor
 
       # Every record, for StepSweeper — a unit whose job was lost leaves nothing
       # else behind to find it by, since the parent only parks on the read side.
-      def scan_step_results(count: 1000)
+      # `status:` (the StepSweeper's "dispatched") keeps only those records,
+      # filtered before the cap (review F4).
+      def scan_step_results(count: 1000, status: nil)
         records = []
 
         @redis.scan_each(match: "reactor:*:context:*:step_result:*", count: 100) do |key|
           json = @redis.get(key)
-          records << JSON.parse(json) if json
+          record = json && JSON.parse(json)
+          records << record if record && (status.nil? || record["status"] == status)
           return records if records.size >= count
         end
 

@@ -70,13 +70,25 @@ module RubyReactor
           end
         end
 
+        STALE = "value IS NULL OR expires_at_ms <= ?"
+
         # Deletes up to `limit` expired or emptied rows; returns how many.
         def purge_expired(limit: 1000)
           Record.connection_pool.with_connection do |conn|
             now = now_ms(conn)
-            stale = CoordinationEntry.where("value IS NULL OR expires_at_ms <= ?", now).limit(limit).pluck(:key_digest)
-            stale.empty? ? 0 : CoordinationEntry.where(key_digest: stale).delete_all
+            delete_stale(stale_digests(now: now, limit: limit), now: now)
           end
+        end
+
+        def stale_digests(now:, limit:) = CoordinationEntry.where(STALE, now).limit(limit).pluck(:key_digest)
+
+        # Re-checks staleness at delete time: a row another process re-acquired
+        # after the scan is live again and must survive (review F2). The
+        # database re-evaluates the predicate against the committed row.
+        def delete_stale(digests, now:)
+          return 0 if digests.empty?
+
+          CoordinationEntry.where(key_digest: digests).where(STALE, now).delete_all
         end
 
         def lock_rows(keys)

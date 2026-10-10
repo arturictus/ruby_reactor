@@ -90,6 +90,14 @@ RSpec.describe "Storage adapter contract" do
       expect(adapter.scan_reactors(count: 10).first).to include(class: klass, status: "running")
     end
 
+    # Review F4: the sweeper scans only what it acts on, before the cap.
+    it "scans only runs in the given statuses, before the cap" do
+      %w[a b c].each { |id| adapter.store_context(id, context_json(id, status: "completed"), klass) }
+      adapter.store_context("stranded", context_json("stranded"), klass)
+
+      expect(adapter.scan_reactors(count: 1, statuses: %w[running]).map { |r| r[:id] }).to eq(["stranded"])
+    end
+
     it "pages through every top-level run exactly once" do
       %w[a b c].each { |id| adapter.store_context(id, context_json(id), klass) }
 
@@ -129,6 +137,14 @@ RSpec.describe "Storage adapter contract" do
       expect(adapter.retrieve_step_result("ctx-1", "send", klass)).to eq("status" => "completed", "value" => 1)
       expect(adapter.retrieve_step_result("ctx-1", "other", klass)).to be_nil
       expect(adapter.scan_step_results(count: 10)).to include("status" => "completed", "value" => 1)
+    end
+
+    # Review F4: the StepSweeper scans only what it acts on, before the cap.
+    it "scans only the records in a given status, before the cap" do
+      3.times { |n| adapter.store_step_result("ctx-#{n}", "send", { "status" => "completed" }, klass) }
+      adapter.store_step_result("ctx-9", "send", { "status" => "dispatched", "n" => 9 }, klass)
+
+      expect(adapter.scan_step_results(count: 1, status: "dispatched")).to eq([{ "status" => "dispatched", "n" => 9 }])
     end
   end
 
@@ -281,6 +297,24 @@ RSpec.describe "Storage adapter contract" do
       expect(adapter.claim_idempotency_key("charge-7", "ctx-1", klass)).to be_nil
       expect(adapter.claim_idempotency_key("charge-7", "ctx-2", klass)).to eq("ctx-1")
       expect(adapter.claim_idempotency_key("charge-7", "ctx-3", "Other")).to be_nil
+    end
+
+    # Review F1: a claim whose run never saved can be released or taken over,
+    # but only by naming the run that holds it.
+    it "releases a key only for the run that holds it" do
+      adapter.claim_idempotency_key("charge-8", "ctx-1", klass)
+
+      expect(adapter.release_idempotency_key("charge-8", "ctx-2", klass)).to be(false)
+      expect(adapter.release_idempotency_key("charge-8", "ctx-1", klass)).to be(true)
+      expect(adapter.claim_idempotency_key("charge-8", "ctx-3", klass)).to be_nil
+    end
+
+    it "hands a key over only from the run that holds it" do
+      adapter.claim_idempotency_key("charge-9", "ghost", klass)
+
+      expect(adapter.reclaim_idempotency_key("charge-9", "someone-else", "ctx-2", klass)).to be(false)
+      expect(adapter.reclaim_idempotency_key("charge-9", "ghost", "ctx-2", klass)).to be(true)
+      expect(adapter.claim_idempotency_key("charge-9", "ctx-3", klass)).to eq("ctx-2")
     end
   end
 

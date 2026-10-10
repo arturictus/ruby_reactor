@@ -56,6 +56,19 @@ module IdempotencySpec
     end
   end
 
+  class Locked < RubyReactor::Reactor
+    input :order_id
+    with_lock(ttl: 30) { |inputs| "idempotency-spec:#{inputs[:order_id]}" }
+
+    step :work do
+      argument :order_id, input(:order_id)
+      run do |args, _ctx|
+        IdempotencySpec.ran(:locked)
+        RubyReactor.Success(args.order_id)
+      end
+    end
+  end
+
   class Background < RubyReactor::Reactor
     background all: true
     input :order_id
@@ -156,6 +169,51 @@ RSpec.describe "Run-level idempotency keys" do
       expect(IdempotencySpec::Refund.run(order_id: 8)).to be_a(RubyReactor::Success)
       expect(IdempotencySpec::Refund.run(order_id: 9, idempotency_key: "refund-9")).to be_a(RubyReactor::Success)
       expect(IdempotencySpec::Refund.run(order_id: 9, idempotency_key: "refund-9").idempotent_replay?).to be(true)
+    end
+  end
+
+  # Review F1: a claim must never outlive a run that was never saved.
+  describe "a claim whose run was never saved" do
+    let(:storage) { RubyReactor.configuration.storage_adapter }
+    let(:refund_name) { RubyReactor.reactor_storage_name(IdempotencySpec::Refund) }
+
+    it "is released when the first run fails before saving, so a retry runs" do
+      holder = RubyReactor::Lock.new("idempotency-spec:12", owner: "elsewhere", ttl: 30, wait: 0, auto_extend: false)
+      holder.acquire
+      expect { IdempotencySpec::Locked.run({ order_id: 12 }, idempotency_key: "locked-12") }
+        .to raise_error(RubyReactor::Lock::AcquisitionError)
+      holder.release
+
+      retried = IdempotencySpec::Locked.run({ order_id: 12 }, idempotency_key: "locked-12")
+
+      expect(retried).to be_a(RubyReactor::Success)
+      expect(retried.respond_to?(:idempotent_replay?)).to be(false)
+      expect(IdempotencySpec.runs(:locked)).to eq(1)
+    end
+
+    it "is taken over when its run died before saving (no live liveness lock)" do
+      storage.claim_idempotency_key("refund-13", "dead-run", refund_name)
+
+      result = IdempotencySpec::Refund.run({ order_id: 13 }, idempotency_key: "refund-13")
+
+      expect(result).to be_a(RubyReactor::Success)
+      expect(result.respond_to?(:idempotent_replay?)).to be(false)
+      expect(storage.claim_idempotency_key("refund-13", "x", refund_name)).to eq(result.execution_id)
+    end
+
+    it "is left alone while its run is alive but not saved yet" do
+      storage.claim_idempotency_key("refund-14", "live-run", refund_name)
+      liveness = RubyReactor::Lock.new("async:live-run", owner: "live-run", ttl: 30, wait: 0, auto_extend: false)
+      liveness.acquire
+
+      result = IdempotencySpec::Refund.run({ order_id: 14 }, idempotency_key: "refund-14")
+
+      expect(result).to be_a(RubyReactor::DispatchResult)
+      expect(result.idempotent_replay?).to be(true)
+      expect(result.execution_id).to eq("live-run")
+      expect(IdempotencySpec.runs(:refund)).to eq(0)
+    ensure
+      liveness&.release
     end
   end
 

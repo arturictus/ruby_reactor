@@ -8,7 +8,9 @@ module RubyReactor
     # so a client can page through a large result set in batches instead of
     # one capped call).
     module RedisReactorScan
-      def scan_reactors(pattern: "reactor:*:context:*", count: 50, include_dispatched_children: false)
+      # `statuses:` (the sweeper's) keeps only rows in those statuses, filtered
+      # before the cap so other rows can't crowd them out (review F4).
+      def scan_reactors(pattern: "reactor:*:context:*", count: 50, include_dispatched_children: false, statuses: nil)
         # Use SCAN to find keys matching the pattern
         results = []
         batch_keys = []
@@ -20,7 +22,7 @@ module RubyReactor
 
           # specific batch size for MGET processing
           if batch_keys.size >= 50
-            results.concat(fetch_and_filter_reactors(batch_keys, include_dispatched_children))
+            results.concat(with_statuses(fetch_and_filter_reactors(batch_keys, include_dispatched_children), statuses))
             batch_keys = []
 
             # Stop if we have enough results
@@ -29,7 +31,9 @@ module RubyReactor
         end
 
         # Process remaining keys
-        results.concat(fetch_and_filter_reactors(batch_keys, include_dispatched_children)) if batch_keys.any?
+        if batch_keys.any?
+          results.concat(with_statuses(fetch_and_filter_reactors(batch_keys, include_dispatched_children), statuses))
+        end
 
         results.take(count)
       end
@@ -66,6 +70,8 @@ module RubyReactor
       end
 
       private
+
+      def with_statuses(rows, statuses) = statuses ? rows.select { |row| statuses.include?(row[:status]) } : rows
 
       def fetch_and_filter_reactors(keys, include_dispatched_children = false)
         return [] if keys.empty?

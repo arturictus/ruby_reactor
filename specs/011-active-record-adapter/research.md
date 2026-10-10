@@ -158,7 +158,7 @@ Every decision below serves the spec's first priority: the relational adapter mu
 
 **Decision**:
 - `context` is `text` on PostgreSQL (up to 1 GB) and SQLite, and `LONGTEXT` on MySQL (`size: :long`).
-- On MySQL, the adapter reads `@@max_allowed_packet` once and raises `ContextTooLargeError` before writing any context larger than it.
+- On MySQL, the adapter reads `@@max_allowed_packet` once and raises `ContextTooLargeError` before writing any context larger than **half** of it. The other half is headroom for the rest of the statement and its escaping.
 
 **Rationale**:
 - MySQL's default packet size (64 MB) is below the serializer's 512 MB cap. Silent truncation is impossible with `LONGTEXT`, but a driver error would be confusing.

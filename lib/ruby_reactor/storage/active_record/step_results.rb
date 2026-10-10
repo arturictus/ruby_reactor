@@ -23,9 +23,14 @@ module RubyReactor
           json && JSON.parse(json)
         end
 
-        # StepSweeper's input, within the R-08 window.
-        def scan_step_results(count: 1000)
-          with_db { recent(StepResult).order(:updated_at).limit(count).pluck(:record) }.map { |json| JSON.parse(json) }
+        # StepSweeper's input, within the R-08 window. `status:` (its
+        # "dispatched") is applied before the cap, so completed records can't
+        # crowd a lost unit out (review F4).
+        def scan_step_results(count: 1000, status: nil)
+          scope = recent(StepResult)
+          scope = scope.where(status: status) if status
+          rows = with_db { scope.order(:updated_at).limit(count).pluck(:record) }
+          rows.map { |json| JSON.parse(json) }
         end
       end
     end

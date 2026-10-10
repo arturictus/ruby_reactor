@@ -226,7 +226,7 @@ Each phase leaves the suite green under Redis.
 
 ## Spec Deltas (applied to spec.md on 2026-10-10)
 
-- **Edge case "Large contexts"**: on MySQL, the accepted size is bounded by `max_allowed_packet`, which operators configure. Above it, the adapter always raises `ContextTooLargeError` and never truncates (R-10).
+- **Edge case "Large contexts"**: on MySQL, the accepted size is bounded by half of `max_allowed_packet`, which operators configure. Above it, the adapter always raises `ContextTooLargeError` and never truncates (R-10).
 - **FR-021**: masking redacted inputs in the dashboard detail view also changes the Redis dashboard. Today it shows stored inputs raw. The change is intended because FR-021 says "never displayed"; it is called out in the CHANGELOG.
 - **Values that are not indexed** (non-scalar, or longer than 255 characters) cannot be filtered on. This narrows the spec's "input key/value equality" assumption and is documented (R-11).
 

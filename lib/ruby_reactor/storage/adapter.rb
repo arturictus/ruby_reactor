@@ -145,7 +145,7 @@ module RubyReactor
       %i[retrieve_map_metadata scan_maps missing_map_indices count_map_results retrieve_map_results_batch
          set_last_queued_index increment_last_queued_index set_map_offset set_map_offset_if_not_exists
          retrieve_map_offset increment_map_offset store_map_failed_context_id retrieve_map_failed_context_id
-         retrieve_map_element_context_id claim_idempotency_key
+         retrieve_map_element_context_id claim_idempotency_key release_idempotency_key reclaim_idempotency_key
          lock_acquire lock_release lock_extend lock_held? lock_info lock_ttl
          semaphore_init semaphore_reset semaphore_held semaphore_held? semaphore_acquire semaphore_release
          semaphore_exists? semaphore_state

@@ -49,7 +49,24 @@ module RubyReactor
           end
         end
 
+        # Compare-and-delete: only the run holding the claim can release it.
+        def release_idempotency_key(key, context_id, reactor_class_name)
+          with_db { idempotency_scope(key, reactor_class_name).where(context_id: context_id).delete_all == 1 }
+        end
+
+        # Compare-and-set: take over a claim from a run seen dead (review F1).
+        def reclaim_idempotency_key(key, from_context_id, to_context_id, reactor_class_name)
+          with_db do
+            claim = idempotency_scope(key, reactor_class_name).where(context_id: from_context_id)
+            claim.update_all(context_id: to_context_id, created_at: Time.current) == 1
+          end
+        end
+
         private
+
+        def idempotency_scope(key, reactor_class_name)
+          IdempotencyKey.where(storage_name: reactor_class_name.to_s, key_digest: Coordination.digest(key))
+        end
 
         def ensure_resume(context_id, reactor_class_name, step_name)
           key = { storage_name: reactor_class_name.to_s, context_id: context_id, step_name: step_name.to_s }

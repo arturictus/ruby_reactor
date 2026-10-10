@@ -279,8 +279,9 @@ Every breaking or shape-changing item of the rollback work, with what to change.
 * **Run-level idempotency keys.** `Reactor.run(inputs, idempotency_key: "k")` runs at most once
   per key and reactor class; a repeat returns the original run's result (with
   `idempotent_replay?`) and runs nothing. Keys are permanent on ActiveRecord and kept for
-  `context_ttl` on Redis. New matcher `be_idempotent_replay`; `test_reactor` accepts
-  `idempotency_key:`.
+  `context_ttl` on Redis. A first call that fails before saving its run gives the key back, and
+  a key whose run died before saving is taken over by the next call. New matcher
+  `be_idempotent_replay`; `test_reactor` accepts `idempotency_key:`.
 * **Period markers name the claiming run.** `period_marker_info(base, every)` returns the run
   that claimed a `with_period` bucket (and, on ActiveRecord, when); the dashboard shows it, and
   `be_period_marked.for(every).by(execution_id)` asserts it. On ActiveRecord, markers are permanent.
