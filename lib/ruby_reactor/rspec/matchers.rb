@@ -207,6 +207,55 @@ module RubyReactor
         end
       end
 
+      # The subject's last `resume` was accepted and handed to a worker (010
+      # FR-009, FR-019): it returned a DispatchResult and the run is `running`.
+      # Use with `resume(..., process_jobs: false)`, before draining.
+      ::RSpec::Matchers.define :be_resume_deferred do
+        match do |subject|
+          subject.ensure_executed!
+          subject.last_resume_result.is_a?(RubyReactor::DispatchResult) &&
+            subject.reactor_instance.context.status.to_s == "running"
+        end
+
+        failure_message do |subject|
+          "expected the last resume to be deferred to a worker (DispatchResult, status running), but it " \
+            "returned #{subject.last_resume_result.class} and the status is " \
+            "#{subject.reactor_instance.context.status}"
+        end
+
+        failure_message_when_negated do |_subject|
+          "expected the last resume not to be deferred, but it was handed to a worker"
+        end
+      end
+
+      # The map rolled its completed elements back with one `undo_all` call
+      # (010 US7); `.with_elements(n)` checks how many results it was given.
+      ::RSpec::Matchers.define :have_run_undo_all do |step_name|
+        chain(:with_elements) { |count| @count = count }
+
+        match do |subject|
+          subject.ensure_executed!
+          @entries = subject.reactor_instance.context.execution_trace.select do |entry|
+            fetch = ->(key) { entry[key] || entry[key.to_s] }
+            fetch.call(:type).to_s == "undo_all" && fetch.call(:step).to_s == step_name.to_s
+          end
+          @entries.any? && (@count.nil? || @entries.any? { |e| (e[:count] || e["count"]).to_i == @count })
+        end
+
+        failure_message do |_subject|
+          counts = @entries.map { |e| e[:count] || e["count"] }
+          if @entries.empty?
+            "expected map :#{step_name} to have run undo_all, but it did not"
+          else
+            "expected map :#{step_name}'s undo_all to get #{@count} elements, but it got #{counts.inspect}"
+          end
+        end
+
+        failure_message_when_negated do |_subject|
+          "expected map :#{step_name} not to have run undo_all, but it did"
+        end
+      end
+
       # Matcher to check if reactor is paused at a specific interrupt step
       # Works with both single and multiple concurrent interrupts
       matcher :be_paused_at do |*step_names|

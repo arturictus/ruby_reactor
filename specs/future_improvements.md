@@ -59,8 +59,8 @@ Found while auditing for 005 R-19:
 | `Worker#handle_deserialization_failure` | before any executor | Writes a failed payload with no lock. |
 | ~~Map collector, failure branch~~ | ~~`Map::Helpers#resume_parent_execution`~~ | Fixed by 009 R-03: the collector writes no context; it signals the owner run, whose Worker adopts the map's outcome. |
 | `Reactor.cancel` | any process (app code, console) | `find` → mutate → `save_context`: a blind write racing a live worker. (`Reactor.undo` holds the run's `async:` lock since 009 R-12.) |
-| `Reactor#continue` (interrupt resume) | web request / app code | Writes the payload before `resume_execution` takes the lock. |
-| Synchronous `Reactor.run` / `Executor#execute` | caller's process | Never takes the context lock, so its saves are unfenced. |
+| ~~`Reactor#continue` (interrupt resume)~~ | ~~web request / app code~~ | Fixed by 010 R-04/R-05: the payload is claimed in its own key; the run is written only after taking its lock and reloading it (or by the Worker it hands off to). |
+| ~~Synchronous `Reactor.run` / `Executor#execute`~~ | ~~caller's process~~ | Fixed by 010 R-01: it holds the run's `async:` lock for its whole run and saves before releasing it. |
 
 Writers that already belong to the owning execution:
 - `Executor#save_context` and `#checkpoint!` on the worker path;
@@ -116,6 +116,10 @@ create-only `SET NX` equivalent. It covers `Reactor#save_context` at enqueue and
 `async_reactor` child's first row.
 
 #### 2. Lock, then load
+
+**Status (010):** done for `Worker#perform` (R-02), `Reactor#continue` (R-05) and `Reactor#undo`
+(R-09); a synchronous `Reactor.run` holds the lock for its whole run (R-01). Versioned writes
+(part 1) and the remaining writers above are still open.
 
 - A worker takes the context lock **before** it reads the context. The restructure:
   `Worker#perform` acquires `async:<root id>`, then retrieves and deserializes, then hands
@@ -272,3 +276,14 @@ Raised while implementing specs/008-rollback-reliability. None blocks it.
   saves `running` are separated only by the per-run context lock, which inline Sidekiq testing
   skips. Accepted for now (008 review, 2026-09-27). Direction: claim the resume with an atomic
   status compare-and-set.
+## Interrupt inside a composed child
+
+**Status:** unsupported on main, found while implementing 009 (US2-AS2). An `interrupt` in a
+`compose`d child does not pause the root: `ComposeStep#handle_execution_result` calls `success?` on
+the child's `InterruptResult`, and the compose step fails with `NoMethodError`. It fails the same
+way with or without a fan-out map in the child.
+
+Direction: propagate the child's `InterruptResult` as the compose step's result, so the root
+pauses; let `Reactor.continue` and the `be_paused_at` matcher name the nested interrupt (a step
+path such as `:fulfil, :approve`); and resume through `ComposeStep#run`, which already re-enters
+an admitted child. Spec: `spec/map/map_compose_fan_out_spec.rb` keeps a `pending` example for it.

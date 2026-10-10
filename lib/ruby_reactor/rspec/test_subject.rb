@@ -6,7 +6,7 @@ module RubyReactor
     class TestSubject
       include ::RSpec::Mocks::ExampleMethods
 
-      attr_reader :reactor_instance, :run_result
+      attr_reader :reactor_instance, :run_result, :last_resume_result
 
       def initialize(reactor_class:, inputs:, context: {}, async: nil, process_jobs: true)
         @reactor_class = reactor_class
@@ -405,6 +405,12 @@ module RubyReactor
         @reactor_instance.context.status.to_s == "paused"
       end
 
+      # Paused at an interrupt, or running (a resume or background work in
+      # progress): either takes a resume for a ready interrupt (010 FR-017).
+      def resumable?
+        %w[paused running].include?(@reactor_instance.context.status.to_s)
+      end
+
       # Whether the run's rollback handed off at a fan-out map and has not
       # finished (009). Reloads, so it reflects jobs performed since.
       def rolling_back?
@@ -441,23 +447,28 @@ module RubyReactor
       #   or the step path of one inside a composed child (e.g. `[:fulfil, :approve]`).
       #   Required when multiple interrupts are ready. If not provided and only
       #   one interrupt is ready, that step will be used.
+      # @param process_jobs [Boolean, nil] false leaves a hand-off pending (to
+      #   assert `be_resume_deferred`); nil keeps the subject's setting
       # @return [TestSubject] self for chaining and introspection
       # @raise [Error::ValidationError] if the reactor is not paused, step is ambiguous, or payload is invalid
-      def resume(payload: {}, step: nil)
+      def resume(payload: {}, step: nil, process_jobs: nil)
         ensure_executed!
 
-        unless paused?
+        # A paused run, or a running one with a ready interrupt, mirroring
+        # `continue` (010 FR-017).
+        unless resumable?
           raise RubyReactor::Error::ValidationError,
-                "Cannot resume: reactor is not paused (status: #{@reactor_instance.context.status})"
+                "Cannot resume: reactor is not paused or running (status: #{@reactor_instance.context.status})"
         end
 
         step_name = determine_resume_step(step)
 
         # Use the reactor's continue method
-        @reactor_instance.continue(payload: payload, step_name: step_name)
+        @last_resume_result = @reactor_instance.continue(payload: payload, step_name: step_name)
 
         # Process any pending async jobs
-        process_pending_jobs if @process_jobs && AsyncTestHelpers.active?
+        drain = process_jobs.nil? ? @process_jobs : process_jobs
+        process_pending_jobs if drain && AsyncTestHelpers.active?
 
         # Reload the reactor instance to get updated state
         @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)

@@ -82,6 +82,31 @@ describe('ReactorDetail', () => {
     expect(screen.getByTestId('dag-error')).toHaveTextContent('Something went wrong');
   });
 
+  // 010 R-11: an aborted run whose failing step's compensate was cut off.
+  it('names the compensate an aborted run still owes', () => {
+    vi.mocked(useSWR).mockReturnValue({
+      data: {
+        id: "test-reactor-123",
+        class: "TestReactor",
+        status: "aborted",
+        error: null,
+        inputs: {},
+        structure: {},
+        steps: [],
+        pending_compensation: { step: "charge_card" }
+      },
+      error: null,
+      isLoading: false,
+      mutate: vi.fn()
+    } as unknown as ReturnType<typeof useSWR>);
+
+    render(<ReactorDetail />);
+
+    expect(screen.getByTestId('pending-compensation')).toHaveTextContent(
+      'Compensation of step charge_card did not finish; run undo to complete it.'
+    );
+  });
+
   it('renders success status correctly', () => {
     const mockData = {
       id: "test-reactor-123",

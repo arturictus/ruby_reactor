@@ -133,11 +133,11 @@ The behavior on a "lock already held" condition depends on **where** the reactor
 | Inline (`Reactor.run`)           | Raises `RubyReactor::Lock::AcquisitionError`. The caller decides whether to retry, switch to background, or give up. |
 | Background worker (Sidekiq/ActiveJob) | Snoozes the job via `perform_in(delay, ...)`. **Does not** consume the backend's retry budget.                  |
 
-An interrupt's inline `continue` behaves like `Reactor.run`: a contended resume raises and the run stays paused, so the caller can retry it ([Resuming Execution](interrupts.md#resuming-execution)).
+An interrupt's inline `continue` does **not** raise on contention: the payload is validated first (an invalid one is answered at once), then the accepted resume is handed to a worker, `continue` returns a `DispatchResult`, and the worker waits for the lock or semaphore and finishes the run ([Resuming Execution](interrupts.md#resuming-execution)). A webhook that never retries loses nothing.
 
 The background path also force-disables `wait:` (no `sleep`/BLPOP inside a worker thread) — better to snooze the job than to tie up a worker.
 
-After `lock_snooze_max_attempts` snoozes, the worker stops re-enqueuing and marks the context as failed. See [Snooze configuration](#snooze-configuration).
+After `lock_snooze_max_attempts` snoozes, the worker stops re-enqueuing and marks the context as failed — but only for a run that has not yet been admitted (its first run, before any step ran). Marking a run `failed` does not roll it back, so a run already admitted (a resume, deferred or `resume: :background`, or a re-entry after a hand-off) is never escalated: it keeps snoozing until the lock or semaphore frees, and logs one `event="ruby_reactor.resume.waiting"` warning when it passes the limit. A leaked semaphore slot shows up there. See [Snooze configuration](#snooze-configuration).
 
 A **composed child's** own `with_lock` / `with_semaphore` / `with_rate_limit` gets the same background behavior: when it is busy, the whole execution parks — every level above the child keeps its own holds through the gap, as in [Step Contention](#step-contention) — and the job snoozes, instead of the busy key failing the `compose` step. The bound is counted on the child: after `lock_snooze_max_attempts` parks, its contention error fails the `compose` step like any other step failure, so the parent rolls back its completed steps and releases its holds. One exception: under an inline (non-`fan_out`) `map` element the child's contention stays an ordinary failure of that element, because a park there would re-run the whole map step.
 

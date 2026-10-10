@@ -49,6 +49,11 @@ RSpec.describe RubyReactor::Adapters::ActiveJob::Worker do
       allow(RubyReactor::ContextSerializer).to receive(:deserialize_hash).and_return(context)
       allow(RubyReactor::Executor).to receive(:new).and_return(executor)
       allow(context).to receive(:inline_async_execution=)
+      # The Worker takes the run's lock before it loads (010 R-02), hands its
+      # owner to the executor, and snoozes an admitted run uncapped (R-07).
+      allow(adapter).to receive_messages(lock_acquire: true, lock_release: true, lock_extend: true)
+      allow(executor).to receive(:context_lock_owner=)
+      allow(context).to receive(:admitted?).and_return(false)
     end
 
     it "rehydrates by id and resumes the reactor" do

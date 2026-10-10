@@ -185,7 +185,7 @@ In fan-out mode, elements already running when the failure happens finish first.
 
 ### Rollback
 
-A map rolls back like a composed reactor. The elements that **completed** are rolled back by replaying each element's own step `undo`s, newest step first, **highest element index first**. There is no map-level rollback DSL: the `undo` blocks you already write on the element reactor's steps are the element's rollback. This happens:
+A map rolls back like a composed reactor. The elements that **completed** are rolled back by replaying each element's own step `undo`s, newest step first, **highest element index first**. The `undo` blocks you already write on the element reactor's steps are the element's rollback, unless the map declares [`undo_all`](#undo_all-one-bulk-rollback). This happens:
 
 - **When the map fails** (an element fails in an atomic map, or the `collect` block raises): every element that completed is rolled back, then the steps before the map are undone. The failing element already rolled itself back (its failing step compensated, its earlier steps undone).
 - **When a later step fails, or the run is undone manually** (`Reactor.undo(id)`): every completed element is rolled back at the map's position in the parent's reverse-completion order.
@@ -219,6 +219,30 @@ Things to know:
 - **`context_ttl` is the rollback horizon.** Each element's rollback reads its stored context, found through the map's element index. Both are kept for `context_ttl` from the element's run, while the parent's own TTL restarts on every save. If either expired before the rollback, each element that ran is reported with `reason: :context_unavailable` and its `element_index`, never skipped silently. (A fan-out map that failed skipped some elements, so there an expired row is reported with `element_index: nil`.)
 - **A duplicate still running is left alone.** If an element's liveness lock is still held when its rollback reaches it (a duplicate delivery), a fan-out rollback job requeues itself up to `lock_snooze_max_attempts` times before reporting it with `reason: :element_in_flight`; an inline rollback waits once.
 - **Lost rollback jobs are recovered.** `RubyReactor::Map::Sweeper` re-dispatches an element rollback whose job was lost and claims a throw whose trigger was lost; `RubyReactor::Sweeper` re-enqueues a `rolling_back` run whose resume was lost.
+
+### `undo_all`: one bulk rollback
+
+When an API can roll back many elements in one call (a bulk refund, a batch delete), declare `undo_all` on the map. Every rollback of the map (an atomic map's failure, a later step's failure, a manual `Reactor.undo`) then calls the block **once** with the completed elements' results, **instead of** replaying each element's own undos:
+
+```ruby
+map :charges, ChargeReactor do
+  source input(:payments)
+  argument :payment, element(:charges)
+  fan_out batch_size: 100
+
+  undo_all do |charges|
+    Payments.bulk_refund(charges.map { |charge| charge[:id] }.to_a)
+  end
+end
+```
+
+- **What the block gets.** A lazy `Enumerable` of the results of the elements that **completed**, in element index order: each element's `returns` step result, or all its step results when it declares no `returns` (the same value the map collects). It is read in chunks, never all at once: a fan-out map reads its stored result slots 1,000 at a time; an inline map loads one element context at a time.
+- **What is left out.** A failed element rolled itself back already (its failing step compensated, its earlier steps undone); halted and skipped elements did nothing. An inline element that an interruption left `aborted` has no result: it replays its own completed steps, as without `undo_all`, before the bulk call. A missing result slot or element context is reported as `reason: :context_unavailable`, never skipped silently.
+- **Fan-out maps dispatch nothing.** No `MapElementRollbackWorker` jobs and no rollback records: the call runs in the execution that rolls the run back, and the steps before the map are undone right after it.
+- **Not called when nothing completed.**
+- **Failure.** A block that raises or returns a `RubyReactor::Failure` is reported as one rollback failure, `{ step: <map>, kind: :undo_all, reason: :raised | :returned_failure, message: }`; the steps before the map are still undone. There is no retry policy for it, as for any undo.
+- **At least once.** The map's undo entry leaves the undo stack only once the call returns, so an execution killed mid-call runs it again on recovery. Make it idempotent.
+- **Observability.** `event="ruby_reactor.map.rollback.undo_all.started"` and `.completed` log lines (reactor, run, map step, `count`, `failed`) and an `:undo_all` execution-trace entry. In specs, `expect(subject).to have_run_undo_all(:charges).with_elements(6)`.
 
 ### Collecting Results (Successes & Failures)
 

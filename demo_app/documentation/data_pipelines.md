@@ -135,6 +135,10 @@ map :strict_processing do
 end
 ```
 
+### `undo_all`: one bulk rollback
+
+A map can declare `undo_all { |completed_results| ... }`. Every rollback of the map then calls the block once with the completed elements' results (a lazy Enumerable, in index order) instead of replaying each element's own undos; a fan-out map dispatches no element rollback jobs for it. See `BulkRefundDemoReactor` (`bin/rails demo:map_undo_all`) and [the full description](../../documentation/data_pipelines.md#undo_all-one-bulk-rollback).
+
 ### Collecting Partial Results
 
 If you want to process all elements regardless of failures, set `atomic false`. You can then use a `collect` block to handle successes and failures separately.

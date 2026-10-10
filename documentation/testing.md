@@ -591,6 +591,39 @@ expect(subject).to be_failure
 `pending_async_jobs` and `drain_async_jobs` work on whichever test backend is active (Sidekiq fake
 mode or the ActiveJob `:test` adapter), and `worker_class` names a pending job's class on both.
 
+#### `be_resume_deferred`
+
+Assert that the last `resume` was accepted but handed to a worker (the reactor's lock or semaphore
+was held, the run was busy, or the interrupt resumes in the background): `continue` returned a
+`DispatchResult` and the run is `running`. Pass `process_jobs: false` to `resume` so the hand-off
+is still pending when you look:
+
+```ruby
+subject = test_reactor(ApprovalReactor, { request_id: 1 }, process_jobs: false)
+subject.run
+
+hold_lock("approval:1", owner: "another-run") do
+  subject.resume(payload: { approved: true }, process_jobs: false)
+end
+
+expect(subject).to be_resume_deferred
+drain_async_jobs
+expect(subject).to be_success
+```
+
+`resume` also accepts a `running` subject that has a ready interrupt, as `continue` does: resume a
+second interrupt while the first one's resume is pending, and both are applied once.
+
+#### `have_run_undo_all`
+
+Assert that a map was rolled back through its `undo_all` block, optionally with how many completed
+results it received:
+
+```ruby
+expect(subject).to be_failure
+expect(subject).to have_run_undo_all(:charges).with_elements(6)
+```
+
 #### `be_paused_at`
 
 Assert that a reactor is paused with specific interrupt(s) ready:

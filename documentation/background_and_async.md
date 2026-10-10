@@ -172,6 +172,15 @@ In a linear chain the two coincide. **In a DAG they do not** — if `:audit` and
 - `before:` naming the very first step is legal, and is **not** the same as
   `background all: true`: input validation still happens in the calling
   process, so invalid inputs fail the caller synchronously.
+- **Who owns the run.** While the run executes in the calling process it holds
+  its liveness lock (`async:<id>`), renewed while it runs, exactly as a worker
+  does: the recovery sweeper sees it as live however long a step takes, and
+  recovers it only if that process dies (the lock lapses within
+  `context_lock_ttl`). The calling process saves its final state **before** it
+  releases the lock, and the worker takes the lock (waiting up to 2s) **before**
+  it reads the run. So the worker always resumes from the caller's final save,
+  and its own saves never race it. The same holds for a fan-out map's hand-off
+  and for a manual `undo`.
 
 ### Execution flow
 

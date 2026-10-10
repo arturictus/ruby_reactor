@@ -112,6 +112,23 @@ module RubyReactor
         raise NotImplementedError
       end
 
+      def retrieve_map_result_slots(map_id, reactor_class_name, indexes)
+        raise NotImplementedError
+      end
+
+      # Interrupt resume claims and attempt counts (010 DM §2, §3).
+      def claim_interrupt_resume(context_id, reactor_class_name, step_name, serialized_payload)
+        raise NotImplementedError
+      end
+
+      def retrieve_interrupt_resumes(context_id, reactor_class_name, step_names)
+        raise NotImplementedError
+      end
+
+      def increment_interrupt_attempts(context_id, reactor_class_name, step_name)
+        raise NotImplementedError
+      end
+
       # Map rollback records (009 DM §5); see RedisMapRollback.
       %i[count_map_element_context_ids retrieve_map_element_context_ids_from_tail start_map_rollback
          retrieve_map_rollback_metadata claim_map_rollback_positions retrieve_map_rollback_offset

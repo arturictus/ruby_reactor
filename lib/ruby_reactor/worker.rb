@@ -8,7 +8,13 @@ module RubyReactor
   # `Adapters::ActiveJob::Compat` on ActiveJob::Base) — nothing here references
   # a specific backend.
   module Worker
-    TERMINAL_STATUSES = %w[completed failed cancelled skipped aborted].freeze
+    TERMINAL_STATUSES = %w[completed failed cancelled skipped halted aborted].freeze
+
+    # Seconds a Worker waits for the run's lock before it reads the run (010
+    # R-02). The usual holder is the caller that enqueued this job, a few
+    # milliseconds from its final save and release; a snooze would cost a whole
+    # scheduled-set poll instead. Same bound as `Map::Collector::COLLECT_LOCK_WAIT`.
+    CONTEXT_LOCK_WAIT = 2
 
     # Use the error's `retry_after_seconds` hint when available
     # (RateLimit::ExceededError carries the time until the bucket rolls);
@@ -81,16 +87,58 @@ module RubyReactor
     # Identity-only payload: storage is the source of truth. Rehydrate the live
     # context from storage by id, then resume. A nil read means the context was
     # swept, expired, or already terminal-and-collected — nothing to resume.
+    #
+    # Lock, then load (010 R-02, J-2): the run's `async:` lock is taken BEFORE
+    # the read, so this job sees the last save of whoever held it — a caller
+    # that just handed off, a manual undo, another worker — and its own later
+    # save can never replace newer progress. The executor re-enters the lock.
     def perform(context_id, reactor_class_name = nil, snooze_count = 0)
       # Normalize so a nil/omitted name resolves to the same storage key the
       # enqueue path wrote (always via reactor_storage_name). Without this a
       # nil here builds "reactor::context:<id>" and misses the stored
       # "reactor:AnonymousReactor:context:<id>", silently no-op'ing.
       reactor_class_name ||= RubyReactor.reactor_storage_name(nil)
+      lock = lock_run(context_id, reactor_class_name, snooze_count)
+      return if lock == :snoozed
+
+      begin
+        perform_locked(context_id, reactor_class_name, snooze_count, lock&.owner)
+      ensure
+        lock&.release
+      end
+    end
+
+    private
+
+    # nil in inline job-testing mode, where a nested re-entry would contend
+    # with itself (as `Executor#acquire_context_lock`). Another live holder
+    # after the wait: snooze, uncapped, having read and written nothing.
+    def lock_run(context_id, reactor_class_name, snooze_count)
+      return nil if inline_testing_mode?
+
+      lock = RubyReactor::Lock.new("async:#{context_id}", owner: SecureRandom.uuid,
+                                                          ttl: RubyReactor.configuration.context_lock_ttl,
+                                                          wait: CONTEXT_LOCK_WAIT, auto_extend: true)
+      lock.acquire
+      lock
+    rescue RubyReactor::Lock::AcquisitionError => e
+      contention = RubyReactor::Lock::ContextLockContention.new(e.message, context_lock_key: "async:#{context_id}")
+      handle_snooze(context_id, reactor_class_name, nil, snooze_count, contention)
+      :snoozed
+    end
+
+    def inline_testing_mode?
+      defined?(::Sidekiq::Testing) && ::Sidekiq::Testing.respond_to?(:inline?) && ::Sidekiq::Testing.inline?
+    end
+
+    def perform_locked(context_id, reactor_class_name, snooze_count, lock_owner)
       data = RubyReactor.configuration.storage_adapter.retrieve_context(context_id, reactor_class_name)
       return if data.nil?
-      # An aborted run is never resumed forward: only a manual undo applies (008 R-08).
-      return if (data["status"] || data[:status]).to_s == "aborted"
+
+      status = (data["status"] || data[:status]).to_s
+      # Finished, cancelled or aborted: nothing to resume (an aborted run takes
+      # only a manual undo, 008 R-08). A stray or duplicate job does nothing.
+      return if TERMINAL_STATUSES.include?(status)
 
       begin
         context = ContextSerializer.deserialize_hash(data)
@@ -115,6 +163,10 @@ module RubyReactor
         return
       end
 
+      # A paused run advances only with a claimed payload (010 R-06): a stray
+      # job must never run the steps that follow the interrupt without one.
+      return if status == "paused" && InterruptClaims.unapplied(context).empty?
+
       # Mark that we're executing inline to prevent nested async calls
       context.inline_async_execution = true
 
@@ -122,7 +174,8 @@ module RubyReactor
         # Resume execution from the failed step — or, for a run whose rollback
         # handed off at a fan-out map, finish that rollback (009 R-04).
         executor = Executor.new(context.reactor_class, {}, context)
-        rolling_back = (data["status"] || data[:status]).to_s == "rolling_back"
+        executor.context_lock_owner = lock_owner
+        rolling_back = status == "rolling_back"
         rolling_back ? executor.resume_rollback : executor.resume_execution
         # No explicit save here: resume_execution's ensure block already persists
         # the final root state (`save_context unless skip_context_persist?`), and
@@ -154,8 +207,6 @@ module RubyReactor
         escalate_snooze(context, snooze_count, e)
       end
     end
-
-    private
 
     # If reactor_class_name is provided, use it to get the reactor class.
     # This handles cases where the class can't be found via const_get.
@@ -203,6 +254,16 @@ module RubyReactor
                  error.is_a?(RubyReactor::Lock::ContextLockContention) ||
                  error.is_a?(RubyReactor::Error::ExecutionParked))
 
+      # Escalation marks the run `failed` WITHOUT rolling back: harmless before
+      # admission, when nothing ran, but a run already admitted (a resume,
+      # deferred or `resume: :background`, or a re-entry after a hand-off) has
+      # completed steps whose effects would be stranded. It keeps waiting
+      # instead, and says so once (010 R-07, J-8).
+      if capped && context&.admitted?
+        warn_still_waiting(context, snooze_count, error) if max != :infinity && snooze_count == max
+        capped = false
+      end
+
       if capped && max != :infinity && snooze_count >= max
         escalate_snooze(context, snooze_count, error)
         return
@@ -212,6 +273,12 @@ module RubyReactor
       # Re-enqueue by id: the context is already persisted in storage, so the
       # rescheduled job rehydrates fresh state (no stale blob).
       self.class.perform_in(delay, context_id, reactor_class_name, snooze_count + 1)
+    end
+
+    def warn_still_waiting(context, snooze_count, error)
+      fields = { event: "ruby_reactor.resume.waiting", reactor: RubyReactor.reactor_storage_name(context.reactor_class),
+                 context_id: context.context_id, error: error.message, snooze_count: snooze_count }
+      RubyReactor.configuration.logger.warn(fields.map { |k, v| "#{k}=#{v.inspect}" }.join(" "))
     end
 
     # Instance methods delegate to the module functions above — worker

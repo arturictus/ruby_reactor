@@ -21,6 +21,12 @@ module RubyReactor
     attr_reader :reactor_class, :context, :dependency_graph, :compensation_manager, :retry_manager, :result_handler,
                 :step_executor, :result, :middlewares
 
+    # The owner of a run lock (`async:<id>`) the caller already holds: a Worker
+    # or `continue` that locked the run before loading it (010 R-02, R-03).
+    # `acquire_context_lock` then re-enters it (the lock counts by owner), and
+    # the outer holder releases last.
+    attr_writer :context_lock_owner
+
     def initialize(reactor_class, inputs = {}, context = nil)
       # Resume, map, compose and background workers build an Executor without
       # going through Reactor#run; the inferred wiring must exist there too.
@@ -109,6 +115,12 @@ module RubyReactor
       input_validator = InputValidator.new(@reactor_class, @context)
       input_validator.validate!
 
+      # A run in the caller's process holds its liveness lock too (010 R-01),
+      # so the sweeper never mistakes it for a dead worker's run and a Worker
+      # resumed by its hand-off waits for its final save. In a worker the
+      # executor runs `resume_execution`, which takes it there.
+      acquire_context_lock unless @context.inline_async_execution
+
       reset_held_lock_keys!
       acquire_locks_with_telemetry
 
@@ -168,6 +180,10 @@ module RubyReactor
       release_locks unless @parked
       leave_ordered_lock_scope
       save_context if persist_context? && !skip_context_persist?
+      # Released only after that save (J-3, 009 R-13): a Worker waiting on the
+      # lock then reads this run's final state.
+      @acquired_context_lock&.release
+      @acquired_context_lock = nil
 
       emit_lifecycle_completion(completed)
     end
@@ -221,6 +237,10 @@ module RubyReactor
       # holds it — composed/nested children resume inline under the root worker
       # and must not contend on the root's own key.
       acquire_context_lock
+      # The only place a claimed resume payload enters a context (010 R-04,
+      # J-5): under the run's lock, before the reactor-level lock or
+      # semaphore, so a contended resume still saves the payload it applied.
+      InterruptClaims.apply!(@context) if (@context.root_context || @context).equal?(@context)
 
       reset_held_lock_keys!
 
@@ -249,7 +269,6 @@ module RubyReactor
       @context.admit!
       prepare_for_resume
       save_context
-      @past_gates = true
 
       @result = if @context.current_step
                   execute_current_step_and_continue
@@ -313,6 +332,7 @@ module RubyReactor
     def undo_all(&after_pop)
       saved = @context.rollback && @context.rollback["failures"]
       @compensation_manager.restore_rollback_failures(saved) if saved
+      compensate_pending!
       @compensation_manager.rollback_completed_steps(&after_pop)
       clear_saved_rollback_failures
     rescue Error::RollbackHandedOff
@@ -390,12 +410,6 @@ module RubyReactor
                                                            RubyReactor.reactor_storage_name(@reactor_class))
     end
 
-    # True once `resume_execution` is past its reactor-level gates (context
-    # lock, lock, semaphore, period): from there on it may have run steps.
-    def past_gates?
-      @past_gates == true
-    end
-
     # Reached only by an interruption — a signal, an exit, out of memory, an
     # enclosing timeout (008 R-08, R-16); every other exception was rescued as
     # `Error::Rescuable` and rolled back. Running user rollback code now is
@@ -404,7 +418,13 @@ module RubyReactor
     # `Reactor#undo`; the `ensure` persists it, best effort. A worker run stays
     # `running` and its job is redelivered.
     def mark_aborted
-      @context.status = :aborted unless @context.inline_async_execution
+      return if @context.inline_async_execution
+
+      @context.status = :aborted
+      # The failing step's `compensate`, if the interruption cut it off: a
+      # manual undo runs it again before the undo stack (010 R-10, J-9).
+      record = @compensation_manager.pending_record
+      @context.rollback = record if record
     end
 
     # A rollback run from a `rescue Error::Rescuable` body is outside the
@@ -663,6 +683,8 @@ module RubyReactor
     # defeat the guard. Only the root executor acquires — a composed/nested child
     # resumes inline under the root worker and shares the root's lock, so it must
     # not try to re-acquire the same key with a different owner (self-deadlock).
+    # Held by a worker's resume and by a run in the caller's process alike (010
+    # R-01); an outer holder's owner, when set, is re-entered (R-03).
     def acquire_context_lock
       root = @context.root_context || @context
       return unless root.equal?(@context) # only the root executor holds it
@@ -980,7 +1002,7 @@ module RubyReactor
     # gives (I-7).
     def finish_rollback(state)
       @compensation_manager.restore_rollback_failures(state["failures"])
-      return finish_undo if state["trigger"] == "undo"
+      return finish_undo(state) if state["trigger"] == "undo"
 
       failure = ContextSerializer.deserialize_value(state["failure"])
       step_config = state["step"] && @reactor_class.steps[state["step"].to_sym]
@@ -998,8 +1020,38 @@ module RubyReactor
       @result_handler.handle_execution_error(e)
     end
 
-    def finish_undo
+    # A manual undo ends `cancelled`, or `failed` when it was the failure of
+    # an interrupt whose payload attempts ran out (010 R-08).
+    # An aborted run's failing step whose `compensate` an interruption cut off
+    # (010 R-10, J-9): run it again, with the recorded arguments and reason,
+    # before the undo stack. Only that record carries `arguments`; 009's
+    # hand-off states, which name the same keys, are finished elsewhere.
+    def compensate_pending!
+      state = @context.rollback
+      return unless state.is_a?(Hash) && state.key?("arguments") && state["compensated"] == false
+
+      step_config = state["step"] && @reactor_class.steps[state["step"].to_sym]
+      return unless step_config
+
+      @compensation_manager.compensate(step_config, recorded_reason(state["error"]),
+                                       ContextSerializer.deserialize_value(state["arguments"]))
+      state["compensated"] = true
+    end
+
+    def recorded_reason(error)
+      return error unless error.is_a?(Hash)
+
+      Error::RecordedFailure.new(error["message"], original_class: error["class"])
+    end
+
+    def finish_undo(state)
       @compensation_manager.rollback_completed_steps
+      if state["failure_reason"]
+        @context.status = "failed"
+        @context.failure_reason = state["failure_reason"]
+        return nil
+      end
+
       @context.cancelled = true
       @context.cancellation_reason = "Undo triggered"
       @context.status = "cancelled"

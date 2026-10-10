@@ -59,7 +59,7 @@ end
 *   **`correlation_id`**: A block that returns a unique string to identify this execution. This allows you to resume the reactor using a business key (e.g., order ID) instead of the internal execution UUID.
 *   **`timeout`**: Set a time limit for the interrupt.
 *   **`validate`**: A `dry-validation` schema block to validate the payload provided when resuming.
-*   **`max_attempts`**: Limit the number of times `continue` can be called with an invalid payload before the reactor is automatically cancelled and compensated. Defaults to 1. Set to `:infinity` for unlimited retries.
+*   **`max_attempts`**: Limit the number of times `continue` can be called with an invalid payload before the reactor is automatically compensated and marked failed. Defaults to 1. Set to `:infinity` for unlimited retries. Attempts are counted per interrupt in their own record (`reactor:<Class>:context:<id>:resume_attempts:<step>`), never by writing the run, so counting cannot disturb a resume that is executing. Runs paused before 0.9 start counting again from 0.
 
 > An `interrupt` step refuses `with_lock`/`with_semaphore`/`with_rate_limit`/`with_period`/`with_ordered_lock` — it raises at class-definition time, since the step's body is split across the pause and a hold would span the gap. Declare coordination on the reactor instead (see [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](locks_and_semaphores.md)).
 
@@ -85,13 +85,39 @@ end
 
 You can resume a paused reactor using its UUID or the defined `correlation_id`.
 
-Only a reactor **paused at an interrupt** takes a resume. A resume that arrives while the reactor is
-executing or rolling back (compensating/undoing), or after it finished, was cancelled or was
-aborted, raises `RubyReactor::Error::ValidationError` ("Cannot resume: the reactor is running, not
-paused at an interrupt") and changes nothing. An accepted resume marks the run `running` before it
-executes, so a second resume that arrives meanwhile fails the same way. A resume that cannot take
-the reactor's `with_lock` or `with_semaphore` raises its `AcquisitionError`, as `Reactor.run` does,
-and leaves the run paused: retry it once the holder is done.
+A resume goes through three steps:
+
+1.  **Validation, in the calling process.** An invalid payload is answered with its validation
+    failure (`Reactor.continue` raises `InputValidationError`; the instance method returns a
+    `Failure` with `invalid_payload?`). Nothing is stored and nothing is enqueued.
+2.  **The claim.** A valid payload claims its interrupt. The first claim wins, in every execution
+    mode (including `Sidekiq::Testing.inline!`): a second resume of the same interrupt, concurrent
+    or later, raises `RubyReactor::Error::ValidationError` ("Cannot resume: interrupt :x was
+    already resumed") and writes nothing. The claim holds the payload until the run applies it.
+3.  **The run.** If the run is paused and free, `continue` takes it, reloads it and resumes inline,
+    as before. Otherwise the accepted resume is **handed to a worker** and `continue` returns a
+    `RubyReactor::DispatchResult`:
+    *   the reactor's `with_lock` or `with_semaphore` is held by another run. The run is marked
+        `running`; the worker waits for the holder (a run already admitted is never failed by
+        `lock_snooze_max_attempts` for waiting) and finishes the run. A webhook that does not retry
+        loses nothing;
+    *   the run is executing: another interrupt's resume, its first run, or a wait on background
+        work. The worker applies the payload once the run is free. Before that the run may briefly
+        pause at the interrupt again; it never stays paused at an accepted one.
+
+    Each hand-off logs one `event="ruby_reactor.resume.deferred"` line with the reactor, run id,
+    step, `reason` (`lock`, `semaphore`, `run_busy`, `background`) and the contended `key`. A
+    deferred resume is never validated again, so it cannot fail validation after the caller was
+    told it was accepted.
+
+A resume for a run that finished, was cancelled, is `aborted` or is rolling back raises
+`RubyReactor::Error::ValidationError` and changes nothing, as does one for an interrupt whose
+dependencies have not completed.
+
+**Several interrupts at once.** A reactor paused at several ready interrupts (two approvals, say)
+accepts their resumes in any order and at the same time: each is applied once. In inline
+job-testing mode the run takes no lock, so overlapping resumes from several threads are only
+separated with real workers; resuming one after another behaves the same in every mode.
 
 ### By UUID
 
@@ -134,8 +160,9 @@ With `resume: :background`, `continue`:
     invalid payload is rejected immediately (attempt counting and
     `max_attempts` compensation work exactly as with inline resume), and
     nothing is enqueued.
-2.  On a valid payload, stores it, persists the context, enqueues the resume
-    via the configured `async_router`, and returns an `DispatchResult`.
+2.  On a valid payload, claims the interrupt, applies the payload and marks the
+    run `running` under the run's lock, enqueues the resume via the configured
+    `async_router`, and returns a `DispatchResult`.
 
 The caller never executes post-interrupt steps, so a webhook can acknowledge
 instantly even when heavy work follows the interrupt.
@@ -225,9 +252,10 @@ Everything else works as for a top-level interrupt, driven by the child interrup
 * **Validation and `max_attempts`**: once the attempts run out, the whole run is rolled back from
   the top level and marked `failed`.
 * **`resume: :background`**: the remainder runs in the top-level run's worker.
-* **Refusals**: a resume of a run that is not paused, or was cancelled, is refused.
+* **Refusals**: a resume of a run that is finished, rolling back, aborted or cancelled is refused.
 * **Lock contention**: a resume that cannot take the top-level reactor's `with_lock` or
-  `with_semaphore` raises its `AcquisitionError` and leaves the run paused, ready to retry. The
+  `with_semaphore` is accepted and handed to a worker (a `DispatchResult` comes back), as for a
+  top-level interrupt. The
   child's own `with_lock`/`with_semaphore` is different: it is taken inside the compose step. A
   resume that finds it contended, inline or with `resume: :background`, fails the compose step,
   and the whole run rolls back and ends `failed`, losing the payload. When an approval must
@@ -282,6 +310,15 @@ exception, a `StandardError` or not (`NotImplementedError`, a custom `Exception`
 step's own failure and rolls back like one. No worker or sweeper resumes
 it. `ReportReactor.undo(id)` rolls it back and marks it cancelled. A run inside a worker is not
 marked: its job is redelivered and resumes from its last checkpoint.
+
+If the interruption cut off the **failing step's own `compensate`**, the aborted run records that
+step, the arguments it ran with and its failure. `undo` runs that `compensate` again first, with the
+same arguments (the reason is the original string, or a `RubyReactor::Error::RecordedFailure` carrying
+the original exception's `message` and `original_class`), then undoes the completed steps. A
+`compensate` that had returned before the interruption is not run again. This holds at any depth:
+a cut-off `compensate` inside a composed child or an inline map element is re-run before that
+child's or element's undos. Make `compensate` safe to run twice. The dashboard shows "Compensation of
+step `x` did not finish" on such a run until it is undone.
 
 ## Common Use Cases
 

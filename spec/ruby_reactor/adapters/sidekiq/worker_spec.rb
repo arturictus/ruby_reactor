@@ -38,6 +38,11 @@ RSpec.describe RubyReactor::Adapters::Sidekiq::Worker do
     allow(executor).to receive(:checkpoint!)
     allow(executor).to receive(:skip_context_persist?).and_return(false)
     allow(context).to receive(:inline_async_execution=)
+    # The Worker takes the run's lock before it loads (010 R-02), hands its
+    # owner to the executor, and snoozes an admitted run uncapped (R-07).
+    allow(adapter).to receive_messages(lock_acquire: true, lock_release: true, lock_extend: true)
+    allow(executor).to receive(:context_lock_owner=)
+    allow(context).to receive(:admitted?).and_return(false)
     # Deterministic delay for assertions
     RubyReactor.configuration.lock_snooze_base_delay = 5
     RubyReactor.configuration.lock_snooze_jitter = 0

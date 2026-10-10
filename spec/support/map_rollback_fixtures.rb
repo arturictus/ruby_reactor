@@ -60,11 +60,12 @@ module MapRollbackFixtures
   # `a` → map `m` → `b`, with `m` inline or fan-out.
   # rubocop:disable Metrics/ParameterLists
   def self.parent(namespace, name, element_class, fan_out: false, batch_size: nil, b_fails: false, atomic: true,
-                  collect: nil)
+                  collect: nil, undo_all: nil)
     distributed = fan_out
     size = batch_size
     collector = collect
     policy = atomic
+    bulk = undo_all
     klass = Class.new(RollbackRecorder::Reactor) do
       input :items
       input :fail_at, optional: true
@@ -76,6 +77,7 @@ module MapRollbackFixtures
         atomic(policy)
         fan_out(batch_size: size) if distributed
         collect(&collector) if collector
+        undo_all(&bulk) if bulk
       end
       recording_step :b, after: :m, fail: b_fails
     end

@@ -239,7 +239,7 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups] do
     puts "excuting all reactors"
   end
 
@@ -1123,6 +1123,83 @@ namespace :demo do
       puts "❌ FAIL: expected a cancelled root, with the stock released before the refund"
     end
   end
+
+  desc "ContendedApprovalDemoReactor — a resume arriving while another run holds the reactor's lock is " \
+       "accepted (DispatchResult) and finished by a worker once the lock is free"
+  task contended_resume: [:environment, :flush_redis] do
+    puts "\n>>> Running ContendedApprovalDemoReactor(request_id: 1)"
+    reactor = ContendedApprovalDemoReactor.new
+    reactor.run(request_id: 1)
+    id = reactor.context.context_id
+    puts "   paused at :approve (status: #{reactor.context.status})"
+
+    held = RubyReactor::Lock.new("demo:approval:1", owner: "other-run", ttl: 30, auto_extend: false)
+    held.acquire
+    puts "   another run holds the lock demo:approval:1"
+    result = ContendedApprovalDemoReactor.continue(id: id, payload: { approved: true }, step_name: :approve)
+    status = ContendedApprovalDemoReactor.find(id).context.status
+    puts "   resume accepted (#{result.class.name.split("::").last}) while the lock is held; status: #{status}"
+    held.release
+    puts "   lock released"
+
+    final = await_terminal(ContendedApprovalDemoReactor, id)
+    approve = ContendedApprovalDemoReactor.find(id).context.get_result(:approve)
+    puts "   final: #{final}, approve result: #{approve.inspect}"
+    if result.is_a?(RubyReactor::DispatchResult) && final == "completed"
+      puts "✅ SUCCESS: the contended resume was deferred to a worker, not lost"
+    else
+      puts "❌ FAIL: expected a DispatchResult and a completed run"
+    end
+  end
+
+  desc "DualApprovalDemoReactor — two approvals answered at once: :finance resumes in the background, " \
+       ":legal is accepted while the run is busy, and each is applied once"
+  task concurrent_interrupts: [:environment, :flush_redis] do
+    puts "\n>>> Running DualApprovalDemoReactor(request_id: 7)"
+    reactor = DualApprovalDemoReactor.new
+    reactor.run(request_id: 7)
+    id = reactor.context.context_id
+    puts "   paused, waiting for :finance and :legal"
+
+    finance = DualApprovalDemoReactor.continue(id: id, payload: { approved: true }, step_name: :finance)
+    status = DualApprovalDemoReactor.find(id).context.status
+    puts "   finance accepted (background): #{finance.class.name.split("::").last}, status: #{status}"
+    legal = DualApprovalDemoReactor.continue(id: id, payload: { approved: true }, step_name: :legal)
+    puts "   legal accepted while running: #{legal.class.name.split("::").last}"
+
+    final = await_terminal(DualApprovalDemoReactor, id)
+    result = DualApprovalDemoReactor.find(id).context.get_result(:approve_all)
+    puts "   final: #{final}, approve_all: #{result.inspect}"
+    if final == "completed" && result == { finance: true, legal: true }
+      puts "✅ SUCCESS: both approvals were accepted and applied once"
+    else
+      puts "❌ FAIL: expected a completed run with both approvals"
+    end
+  end
+
+  desc "BulkRefundDemoReactor — a map declaring undo_all is rolled back with one bulk refund call " \
+       "instead of one refund per element"
+  task map_undo_all: [:environment, :flush_redis] do
+    puts "\n>>> Running BulkRefundDemoReactor(count: 12, fail_settle: true) [fan_out batch_size: 5, undo_all]"
+    BulkRefundDemoReactor.reset!
+    dispatch = BulkRefundDemoReactor.run(count: 12, fail_settle: true)
+    id = dispatch.execution_id
+    status = await_terminal(BulkRefundDemoReactor, id)
+    bulk = BulkRefundDemoReactor.log(:bulk_refunds)
+    singles = BulkRefundDemoReactor.log(:single_refunds)
+    charges = bulk.first.to_s.split(",")
+    puts "   bulk refund called #{bulk.size == 1 ? "once" : "#{bulk.size} times"} with #{charges.size} charges"
+    puts "   per-element refunds: #{singles.size}"
+    puts "   final: #{status}"
+    if status == "failed" && bulk.size == 1 && charges.size == 12 && singles.empty?
+      puts "✅ SUCCESS: one undo_all call refunded every charge; no element undo ran"
+    else
+      puts "❌ FAIL: expected one bulk refund of 12 charges, no per-element refund, and a failed run"
+    end
+  end
+
+  desc "Rollback and resume follow-ups (010): undo_all, contended resume, concurrent interrupts"
+  task rollback_follow_ups: %i[environment flush_redis map_undo_all contended_resume concurrent_interrupts]
 
   desc "Distributed map rollback, composed fan-out, default batch size"
   task map_execution_undo: [:environment, :flush_redis, :distributed_map_rollback, :composed_fan_out,

@@ -9,6 +9,12 @@ module RubyReactor
     # Seconds a manual undo waits for the run's context lock (009 R-12).
     UNDO_LOCK_WAIT = 5
 
+    # Statuses a resume is accepted in: a run paused at an interrupt (008
+    # FR-032), or one executing (another resume, its first run, a wait on
+    # background work) for an interrupt that has not run yet (010 FR-017). A
+    # finished, `aborted` or rolling-back run is never run forward.
+    RESUMABLE_STATUSES = %w[paused running].freeze
+
     attr_reader :context, :result, :undo_trace, :execution_trace
 
     def self.find(id)
@@ -155,66 +161,36 @@ module RubyReactor
       @result
     end
 
+    # Accepting a resume (010 R-05, contracts/resume-protocol.md P-2–P-4):
+    #
+    # 1. checks on the loaded snapshot, then the payload is validated here, in
+    #    the caller's process. An invalid payload stores and enqueues nothing;
+    # 2. the interrupt is claimed (`SET NX`): one resume per interrupt, in every
+    #    execution mode. The claim holds the payload;
+    # 3. if the run's lock is free, this process owns the run: it reloads it and
+    #    resumes inline, as before. Otherwise (another execution is live, the
+    #    reactor's lock or semaphore is held, or a background-resume interrupt)
+    #    the resume is handed to a Worker, which applies the claim under the
+    #    run's lock, and a `DispatchResult` comes back.
+    #
+    # The payload is never validated again (J-7), so an accepted resume cannot
+    # fail validation later.
     def continue(payload:, step_name:, idempotency_key: nil)
       _ = idempotency_key
 
-      unless @context.current_step
-        raise Error::ValidationError, "Cannot resume: context does not have a current step (was it interrupted?)"
-      end
-
-      # A composed child pauses only inside its root, which owns the run (010 R-07).
-      if @context.private_data[:composed] || @context.private_data["composed"]
-        raise Error::ValidationError, "Cannot resume: #{self.class.name} is a composed child; continue its root run"
-      end
-
-      if @context.cancelled
-        raise Error::ValidationError,
-              "Cannot resume: reactor has been cancelled (Reason: #{@context.cancellation_reason})"
-      end
-
-      # Only a reactor paused at an interrupt takes a resume (008 FR-032): one
-      # that is executing or rolling back (`running`), finished, or `aborted`
-      # must not be run forward from its stored state.
-      unless @context.status.to_s == "paused"
-        raise Error::ValidationError,
-              "Cannot resume: the reactor is #{@context.status}, not paused at an interrupt"
-      end
-
       path = Array(self.class.interrupt_key(step_name))
-      target_context, step_config = resolve_interrupt_target!(path)
+      _, step_config = ensure_resumable!(path)
+
+      # A claimed resume is accepted: a later payload, valid or not, must not
+      # count against `max_attempts` and undo the run it is about to complete.
+      raise_already_resumed(path) if InterruptClaims.claimed?(@context, path)
 
       failure = validate_continue_payload(payload, step_config, path)
       return failure if failure
 
-      target_context.set_result(path.last, payload) # the context that paused (010 R-06)
+      raise_already_resumed(path) unless InterruptClaims.claim!(@context, path, payload)
 
-      # `interrupt :x, resume: :background` — payload is validated and stored
-      # (above, in this process); the remaining work goes to a worker instead
-      # of running inline in the delivering process.
-      if step_config.respond_to?(:background_resume?) && step_config.background_resume?
-        return @result = enqueue_background_resume
-      end
-
-      # Claim the resume before running it, so a `continue` that arrives while
-      # this one executes or rolls back reads `running` and fails (FR-032).
-      @context.status = :running
-      save_context
-
-      # Resume execution
-      executor = Executor.new(self.class, {}, @context)
-      @result = executor.resume_execution
-
-      @context = executor.context
-      @undo_trace = executor.undo_trace
-      @execution_trace = executor.execution_trace
-
-      @result
-    rescue Lock::AcquisitionError, Semaphore::AcquisitionError => e
-      # Contended at the resume's own gates: nothing ran, so the run is still
-      # paused and the caller may retry, as with `Reactor.run`. A context-lock
-      # contention means a live resume holds the run: leave it alone.
-      reopen_paused unless executor&.past_gates? || e.is_a?(Lock::ContextLockContention)
-      raise
+      resume_claimed(path, step_config, payload)
     rescue Error::InputValidationError => e
       # This might catch other validations, but here we specifically want payload validation.
       # The block above handles payload validation explicitly.
@@ -225,12 +201,31 @@ module RubyReactor
     # resumes it meanwhile (009 R-12). Returns `:handed_off` when a fan-out
     # map's rollback continues in its element jobs: the run is then
     # `rolling_back`, and a worker finishes it as `cancelled`.
-    def undo
+    #
+    # Lock, then load (010 R-09): the run is reloaded once the lock is held, so
+    # an undo built from an older snapshot never undoes stale state. With
+    # `failure:` the run ends `failed` with that reason (an interrupt's payload
+    # attempts ran out, R-08) instead of being left for `cancel`.
+    def undo(failure: nil)
       raise Error::ValidationError, "rollback already in progress" if @context.rolling_back?
 
       lock = acquire_undo_lock
+      @context = self.class.find(@context.context_id).context
+      raise Error::ValidationError, "rollback already in progress" if @context.rolling_back?
+
       executor = Executor.new(self.class, {}, @context)
+      # An aborted run may record a `compensate` the interruption cut off:
+      # keep it, so `undo_all` runs it first (010 R-10).
+      cut_off = if @context.status.to_s == "aborted" && @context.rollback.is_a?(Hash) &&
+                   @context.rollback.key?("arguments")
+                  @context.rollback
+                else
+                  {}
+                end
       @context.rollback = { "trigger" => "undo", "compensated" => true, "failures" => [] }
+                          .merge(cut_off.slice("step", "compensated", "arguments", "error"))
+      # A hand-off finishes in a worker (`Executor#finish_undo`), which applies it.
+      @context.rollback["failure_reason"] = failure if failure
       begin
         executor.undo_all
       rescue Error::RollbackHandedOff => e
@@ -240,6 +235,10 @@ module RubyReactor
         return :handed_off
       end
       @context.rollback = nil
+      if failure
+        @context.status = "failed"
+        @context.failure_reason = failure
+      end
       executor.save_context
     ensure
       lock&.release
@@ -259,7 +258,7 @@ module RubyReactor
     # for one of this reactor's own, and the step path from here (the compose
     # step names, then the interrupt) for one inside a composed child.
     def ready_interrupt_steps
-      return [] unless @context.status.to_s == "paused"
+      return [] unless RESUMABLE_STATUSES.include?(@context.status.to_s)
 
       pending_interrupts(self.class, @context, [])
     end
@@ -277,15 +276,154 @@ module RubyReactor
       RubyReactor::Configuration.instance
     end
 
-    def reopen_paused
-      @context.status = :paused
+    # Returns the context that paused at the interrupt `path` and its config.
+    def ensure_resumable!(path)
+      if @context.status.to_s == "paused" && !@context.current_step
+        raise Error::ValidationError, "Cannot resume: context does not have a current step (was it interrupted?)"
+      end
+
+      # A composed child pauses only inside its root, which owns the run (010 R-07).
+      if @context.private_data[:composed] || @context.private_data["composed"]
+        raise Error::ValidationError, "Cannot resume: #{self.class.name} is a composed child; continue its root run"
+      end
+
+      if @context.cancelled
+        raise Error::ValidationError,
+              "Cannot resume: reactor has been cancelled (Reason: #{@context.cancellation_reason})"
+      end
+
+      unless RESUMABLE_STATUSES.include?(@context.status.to_s)
+        raise Error::ValidationError,
+              "Cannot resume: the reactor is #{@context.status}, not paused or running at an interrupt"
+      end
+
+      target_context, step_config = resolve_interrupt_target!(path)
+      raise_already_resumed(path) if target_context.has_result?(path.last)
+
+      [target_context, step_config]
+    end
+
+    def raise_already_resumed(path)
+      raise Error::ValidationError, "Cannot resume: interrupt :#{path.join(".")} was already resumed"
+    end
+
+    # Owns a paused run if its lock is free (lock, then load), else hands off.
+    # A running run is another execution's: the resume joins it through a
+    # Worker and never runs it here. The lock is released before any hand-off
+    # enqueues, so the Worker never waits on it; a crash in between leaves a
+    # `running` run the sweeper recovers.
+    def resume_claimed(path, step_config, payload)
+      lock = @context.status.to_s == "paused" ? try_run_lock : :contended
+      return hand_off_resume(path, reason: :run_busy) if lock == :contended
+
+      begin
+        reload_for_resume!
+        # This process owns the run: apply the caller's payload as given, as
+        # an inline resume always did (the claim's copy went through
+        # serialization). Other claims are applied from storage at resume.
+        if @context.status.to_s == "paused"
+          path[0...-1].reduce(@context) { |context, name| paused_child(context, name) }
+                      &.set_result(path.last, payload)
+        end
+        if @context.status.to_s != "paused"
+          reason = :run_busy
+        elsif background_resume?(step_config)
+          prepare_background_resume
+          reason = :background
+        else
+          return resume_inline(lock)
+        end
+      rescue Lock::AcquisitionError, Semaphore::AcquisitionError => e
+        # The run's own lock is held here, so this is the reactor's `with_lock`
+        # or `with_semaphore`: the resume, already saved `running` with its
+        # payload applied, waits in a worker instead (FR-009).
+        raise if e.is_a?(Lock::ContextLockContention)
+
+        reason = e.is_a?(Semaphore::AcquisitionError) ? :semaphore : :lock
+      ensure
+        lock&.release
+      end
+      hand_off_resume(path, reason: reason, key: contended_key(reason))
+    end
+
+    # nil in inline job-testing mode (no run lock there, as in the executor);
+    # :contended while another execution holds it.
+    def try_run_lock
+      return nil if inline_testing_mode?
+
+      lock = RubyReactor::Lock.new("async:#{@context.context_id}", owner: SecureRandom.uuid,
+                                                                   ttl: configuration.context_lock_ttl,
+                                                                   wait: 0, auto_extend: true)
+      lock.acquire
+      lock
+    rescue Lock::AcquisitionError
+      :contended
+    end
+
+    def reload_for_resume!
+      @context = self.class.find(@context.context_id).context
+      return unless @context.cancelled || @context.finished? || @context.rolling_back? ||
+                    @context.status.to_s == "aborted"
+
+      raise Error::ValidationError,
+            "Cannot resume: the reactor is #{@context.status}, not paused at an interrupt"
+    end
+
+    def resume_inline(lock)
+      executor = Executor.new(self.class, {}, @context)
+      executor.context_lock_owner = lock&.owner
+      @result = executor.resume_execution
+      @context = executor.context
+      @undo_trace = executor.undo_trace
+      @execution_trace = executor.execution_trace
+      @result
+    end
+
+    def background_resume?(step_config)
+      step_config.respond_to?(:background_resume?) && step_config.background_resume?
+    end
+
+    # `interrupt :x, resume: :background`: the payload is applied and the run
+    # saved `running` under its lock; the remaining work goes to a worker.
+    def prepare_background_resume
+      InterruptClaims.apply!(@context)
+      @context.status = :running
+      Executor.middlewares_for(self.class).on(:before_async_enqueue, @context)
       save_context
+    end
+
+    def hand_off_resume(path, reason:, key: nil)
+      log_resume_deferred(path, reason, key)
+      @result = configuration.async_router.perform_async(@context.context_id,
+                                                         RubyReactor.reactor_storage_name(self.class),
+                                                         intermediate_results: @context.intermediate_results)
+      check_for_inline_completion || @result
+    end
+
+    def log_resume_deferred(path, reason, key)
+      fields = { event: "ruby_reactor.resume.deferred", reactor: RubyReactor.reactor_storage_name(self.class),
+                 context_id: @context.context_id, step: path.join("."), reason: reason.to_s, key: key }
+      configuration.logger.info(fields.map { |k, v| "#{k}=#{v.inspect}" }.join(" "))
+    end
+
+    def contended_key(reason)
+      config = case reason
+               when :lock then self.class.respond_to?(:lock_config) && self.class.lock_config
+               when :semaphore then self.class.respond_to?(:semaphore_config) && self.class.semaphore_config
+               end
+      config ? config[:key_proc].call(@context.inputs).to_s : nil
+    rescue StandardError
+      nil
+    end
+
+    def inline_testing_mode?
+      defined?(Sidekiq::Testing) && Sidekiq::Testing.respond_to?(:inline?) && Sidekiq::Testing.inline?
     end
 
     # Raises `Lock::AcquisitionError` while a live run or rollback holds it.
     # Skipped in inline job-testing mode, as `Executor#acquire_context_lock`.
     def acquire_undo_lock
-      return if defined?(Sidekiq::Testing) && Sidekiq::Testing.respond_to?(:inline?) && Sidekiq::Testing.inline?
+      return if inline_testing_mode?
 
       lock = RubyReactor::Lock.new("async:#{@context.context_id}", owner: SecureRandom.uuid,
                                                                    ttl: configuration.context_lock_ttl,
@@ -399,21 +537,6 @@ module RubyReactor
       save_context
     end
 
-    # Mirror of perform_async_run for the interrupt-resume path: persist the
-    # context (now carrying the validated payload) BEFORE enqueue — the job
-    # payload is identity-only (F2) — then hand the remainder to a worker.
-    def enqueue_background_resume
-      @context.status = :running
-      Executor.middlewares_for(self.class).on(:before_async_enqueue, @context)
-      save_context
-
-      @result = configuration.async_router.perform_async(@context.context_id,
-                                                         RubyReactor.reactor_storage_name(self.class),
-                                                         intermediate_results: @context.intermediate_results)
-
-      check_for_inline_completion || @result
-    end
-
     def perform_async_run
       @context.status = :running
       # Persist BEFORE enqueue — the job payload is identity-only (F2).
@@ -509,33 +632,25 @@ module RubyReactor
 
       return unless validation.failure?
 
-      # Track attempts
-      @context.private_data[:interrupt_attempts] ||= {}
-      @context.private_data[:interrupt_attempts][step_name] ||= 0
-      @context.private_data[:interrupt_attempts][step_name] += 1
-
-      save_context # Persist the attempt count
-
-      current_attempts = @context.private_data[:interrupt_attempts][step_name]
+      # Counted in its own record (010 R-08): writing the snapshot here could
+      # overwrite a resume that is executing the run right now.
+      current_attempts = configuration.storage_adapter.increment_interrupt_attempts(
+        @context.context_id, RubyReactor.reactor_storage_name(self.class), step_name
+      )
       max_attempts = step_config.max_attempts
 
       if max_attempts != :infinity && current_attempts >= max_attempts
-        # Max attempts reached - Fail and Compensate
-        undo
-
-        # Instead of cancelling, we mark as failed so it shows up as failed in UI
-        @context.status = "failed"
-        @context.failure_reason = {
-          message: "Validation failed after #{max_attempts} attempts",
-          step_name: step_name,
-          errors: validation.errors.to_h,
-          payload: payload,
-          step_arguments: payload,
-          attempts: current_attempts,
-          validation_errors: validation.errors.to_h
-        }
-
-        save_context
+        # Max attempts reached: undo, and mark the run failed (not cancelled)
+        # so it shows up as failed in the UI. Both under the run's lock (R-09).
+        undo(failure: {
+               message: "Validation failed after #{max_attempts} attempts",
+               step_name: step_name,
+               errors: validation.errors.to_h,
+               payload: payload,
+               step_arguments: payload,
+               attempts: current_attempts,
+               validation_errors: validation.errors.to_h
+             })
 
         return RubyReactor::Failure(
           "Validation failed after #{max_attempts} attempts",

@@ -115,6 +115,127 @@ module RubyReactor
         missing.map { |index| rollback_entry(index, :context_unavailable, "context expired") }
       end
 
+      # 010 R-13 (P-6): one call to the map's `undo_all` block, with the
+      # completed elements' results (index order, read lazily, never all at
+      # once), instead of replaying each element. A fan-out map reads its
+      # result slots and dispatches no rollback jobs; an inline map reads its
+      # element contexts one at a time, and an element an interruption left
+      # `aborted` still replays its own completed steps (it has no result).
+      def bulk_rollback(map_id, step_name, block)
+        failures, count, results =
+          dispatched_map_id(step_name) ? fan_out_completed(map_id) : inline_completed(map_id, step_name)
+        failures << call_undo_all(block, results, step_name, count) if count.positive?
+        finish_rollback(step_name, count, failures.compact)
+      end
+
+      def fan_out_completed(map_id)
+        meta = rollback_storage.retrieve_map_metadata(map_id, context.reactor_class.name)
+        return [[rollback_entry(nil, :context_unavailable, "map records expired")], 0, []] unless meta
+
+        total = meta["count"].to_i
+        failures = []
+        count = 0
+        each_result_slot(map_id, total) do |index, raw|
+          next failures << rollback_entry(index, :context_unavailable, "context expired") if raw.nil?
+
+          count += 1 if completed_slot?(raw)
+        end
+        results = Enumerator.new do |yielder|
+          each_result_slot(map_id, total) do |_index, raw|
+            yielder << ContextSerializer.deserialize_value(raw) if raw && completed_slot?(raw)
+          end
+        end
+        [failures, count, results.lazy]
+      end
+
+      # ponytail: 1,000 slots per HMGET bounds memory; raise it if round trips dominate.
+      def each_result_slot(map_id, total, &block)
+        (0...total).each_slice(RubyReactor::Map::ResultEnumerator::DEFAULT_BATCH_SIZE) do |indexes|
+          slots = rollback_storage.retrieve_map_result_slots(map_id, context.reactor_class.name, indexes)
+          indexes.zip(slots).each(&block)
+        end
+      end
+
+      def completed_slot?(raw)
+        !(raw.is_a?(Hash) && (raw.key?("_error") || raw.key?("_halt") || raw.key?("_skipped")))
+      end
+
+      # Pass 1 replays aborted elements and counts completed ones; the lazy
+      # pass 2 is what the block reads.
+      def inline_completed(map_id, step_name)
+        total = rollback_storage.count_map_element_context_ids(map_id, context.reactor_class.name)
+        failures = []
+        seen = Set.new
+        unnamed = 0
+        count = 0
+        each_element(map_id, total) do |id, element|
+          next unnamed += 1 unless element
+
+          seen << Utils::FetchIndifferent.call(element.map_metadata || {}, :index).to_i
+          case element.status.to_s
+          when "completed" then count += 1
+          when "aborted"
+            outcome = inline_element_rollback(map_id, id, step_name)
+            failures.concat(ContextSerializer.deserialize_value(outcome["failures"]))
+          end
+        end
+        unseen = ->(indexes) { indexes.reject { |index| seen.include?(index) } }
+        results = Enumerator.new do |yielder|
+          each_element(map_id, total) do |_id, element|
+            yielder << element_result(element) if element && element.status.to_s == "completed"
+          end
+        end
+        [unavailable_entries(step_name, unnamed, unseen) + failures, count, results.lazy]
+      end
+
+      # Element contexts in index order (head of the index first), one loaded
+      # at a time, `Map::ROLLBACK_CHUNK` ids per read.
+      def each_element(map_id, total)
+        storage_name = RubyReactor.reactor_storage_name(element_class)
+        (0...total).each_slice(RubyReactor::Map::ROLLBACK_CHUNK) do |heads|
+          ids = rollback_storage.retrieve_map_element_context_ids_from_tail(
+            map_id, context.reactor_class.name, total - 1 - heads.last, heads.size, total: total
+          ).reverse
+          ids.each do |id|
+            data = rollback_storage.retrieve_context(id, storage_name)
+            yield id, data && Context.deserialize_from_retry(data)
+          end
+        end
+      end
+
+      # What the element returned, as the map collected it
+      # (`ResultHandler#final_result`): its `returns` step, else every result.
+      def element_result(element)
+        klass = element.reactor_class || element_class
+        klass.return_step ? element.get_result(klass.return_step) : element.intermediate_results
+      end
+
+      def call_undo_all(block, results, step_name, count)
+        log_rollback("undo_all.started", step_name, count: count)
+        outcome = begin
+          block.call(results)
+        rescue RubyReactor::Error::Rescuable => e
+          e
+        end
+        failure = undo_all_failure(step_name, outcome)
+        context.append_execution_trace({ type: :undo_all, step: step_name, count: count, timestamp: Time.now,
+                                         result: failure ? failure[:message] : :ok })
+        log_rollback("undo_all.completed", step_name, count: count, failed: failure ? 1 : 0)
+        failure
+      end
+
+      def undo_all_failure(step_name, outcome)
+        return unless outcome.is_a?(Exception) || outcome.is_a?(RubyReactor::Failure)
+
+        error = outcome.is_a?(RubyReactor::Failure) ? outcome.error : outcome
+        { step: step_name.to_sym, kind: :undo_all, reason: outcome.is_a?(Exception) ? :raised : :returned_failure,
+          message: error.respond_to?(:message) ? error.message : error.to_s }
+      end
+
+      def rollback_storage
+        RubyReactor.configuration.storage_adapter
+      end
+
       def finish_rollback(step_name, total, failures)
         log_rollback("completed", step_name, total: total, failed: failures.size)
         return RubyReactor.Success() if failures.empty?

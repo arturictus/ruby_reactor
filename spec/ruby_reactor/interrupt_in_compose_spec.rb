@@ -117,10 +117,28 @@ RSpec.describe "interrupt inside a composed child" do
       end
       context = stored(fx::ValidatedRetryRoot, id)
       expect(context.status.to_s).to eq("paused")
-      expect(context.private_data[:interrupt_attempts][:"fulfil.approve"]).to eq(2)
+      # Counted in its own record, not the context (010 R-08): the next one is the 3rd.
+      expect(RubyReactor.configuration.storage_adapter.increment_interrupt_attempts(
+               id, RubyReactor.reactor_storage_name(fx::ValidatedRetryRoot), :"fulfil.approve"
+             )).to eq(3)
 
       fx::ValidatedRetryRoot.continue(id: id, payload: payload, step_name: path)
       expect(stored(fx::ValidatedRetryRoot, id).status.to_s).to eq("completed")
+    end
+
+    it "does not count an invalid payload against a nested interrupt that already has a claim" do
+      id = fx::ValidatedRetryRoot.run({}).execution_id
+      RubyReactor::InterruptClaims.claim!(stored(fx::ValidatedRetryRoot, id), path, payload)
+
+      3.times do
+        expect { fx::ValidatedRetryRoot.continue(id: id, payload: { ok: "x" }, step_name: path) }
+          .to raise_error(RubyReactor::Error::ValidationError, /already resumed/)
+      end
+
+      expect(stored(fx::ValidatedRetryRoot, id).status.to_s).to eq("paused")
+      expect(RubyReactor.configuration.storage_adapter.increment_interrupt_attempts(
+               id, RubyReactor.reactor_storage_name(fx::ValidatedRetryRoot), :"fulfil.approve"
+             )).to eq(1)
     end
 
     it "pauses again at the child's next interrupt" do
@@ -158,19 +176,17 @@ RSpec.describe "interrupt inside a composed child" do
       expect(log.count("run:middle.r2")).to eq(1)
     end
 
-    it "leaves the run paused when the resume is contended on the root's lock, so it can be retried" do
+    it "hands the resume to a worker when it is contended on the root's lock" do
       id = fx::LockedRoot.run({}).execution_id
       holder = RubyReactor::Lock.new("interrupt-in-compose:locked", owner: "another-run", auto_extend: false)
       holder.acquire
 
-      expect { fx::LockedRoot.continue(id: id, payload: payload, step_name: path) }
-        .to raise_error(RubyReactor::Lock::AcquisitionError)
-      expect(stored(fx::LockedRoot, id).status.to_s).to eq("paused")
+      result = fx::LockedRoot.continue(id: id, payload: payload, step_name: path)
 
+      expect(result).to be_a(RubyReactor::DispatchResult)
+      expect(stored(fx::LockedRoot, id).status.to_s).to eq("running")
+      expect(log).not_to include("run:r2")
       holder.release
-      fx::LockedRoot.continue(id: id, payload: payload, step_name: path)
-      expect(stored(fx::LockedRoot, id).status.to_s).to eq("completed")
-      expect(log).to eq(%w[run:r1 run:child.c1 run:child.c2 run:r2])
     end
 
     it "refuses a second resume while the first is executing" do
@@ -184,8 +200,29 @@ RSpec.describe "interrupt inside a composed child" do
 
       fx::Root.continue(id: id, payload: payload, step_name: path)
 
-      expect(errors.map(&:message)).to contain_exactly(/running, not paused/)
+      expect(errors.map(&:message)).to contain_exactly(/already resumed/)
       expect(stored(fx::Root, id).status.to_s).to eq("completed")
+    end
+
+    it "accepts exactly one of two simultaneous resumes of the nested interrupt" do
+      id = fx::Root.run({}).execution_id
+      barrier = Concurrent::CyclicBarrier.new(2) if defined?(Concurrent)
+      barrier ||= ResumeFixtures.barrier(2)
+
+      outcomes = [{ ok: true }, { ok: false }].map do |body|
+        Thread.new do
+          barrier.wait
+          fx::Root.continue(id: id, payload: body, step_name: path)
+          :accepted
+        rescue RubyReactor::Error::ValidationError => e
+          e.message
+        end
+      end.map(&:value)
+
+      expect(outcomes.count(:accepted)).to eq(1)
+      expect(outcomes - [:accepted]).to all(match(/already resumed|not paused|ready steps/))
+      expect(stored(fx::Root, id).status.to_s).to eq("completed")
+      expect(log.count("run:child.c2")).to eq(1)
     end
 
     describe "undo and cancel" do

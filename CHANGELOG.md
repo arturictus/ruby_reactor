@@ -239,6 +239,25 @@ Every breaking or shape-changing item of the rollback work, with what to change.
 9. **`rollback_failures` entries may carry `map_step:` / `element_index:`** and the reasons
    `:context_unavailable` / `:element_in_flight` (additive).
 
+### Migration notes: rollback and resume follow-ups
+
+1. **A resume that meets the reactor's held `with_lock` or `with_semaphore` no longer raises.**
+   `continue` used to raise `Lock::AcquisitionError` / `Semaphore::AcquisitionError` and leave
+   the run paused. It now validates the payload, accepts the resume, and returns a
+   `RubyReactor::DispatchResult`; a worker waits for the lock and finishes the run. A `rescue` of
+   those errors around `continue` simply stops firing. An invalid payload is still answered at
+   once, as before.
+2. **A second resume of the same interrupt raises `ValidationError`** ("Cannot resume: interrupt
+   :x was already resumed"), in every execution mode, including `Sidekiq::Testing.inline!`.
+3. **A resume for another ready interrupt of a `running` run is accepted** (it used to raise "the
+   reactor is running") and returns a `DispatchResult`.
+4. **Interrupt attempt counts restart** for runs paused across the upgrade: they move out of the
+   run's context into their own record, so such a run may take up to `max_attempts - 1` extra
+   invalid payloads.
+5. **A synchronous `Reactor.run` holds the run's liveness lock** while it executes. A
+   `Reactor.undo(id)` of a run still executing in its caller's process now waits for it, then
+   raises `Lock::AcquisitionError`, as it does for a run executing in a worker.
+
 ### Features
 
 * **An `interrupt` inside a composed child pauses the top-level run.** Before, the compose step
@@ -248,8 +267,8 @@ Every breaking or shape-changing item of the rollback work, with what to change.
   then the interrupt (`continue(id:, payload:, step_name: [:approval, :wait_for_manager])`), by id
   or by the child interrupt's correlation id. Payload validation, `max_attempts`,
   `resume: :background` and the resume guards apply as for a top-level interrupt. A resume
-  contended on the child's own `with_lock`/`with_semaphore` fails and rolls back the run. Only
-  contention on the top-level reactor's lock leaves it paused. `Reactor.undo`
+  contended on the child's own `with_lock`/`with_semaphore` fails and rolls back the run. Contention
+  on the top-level reactor's lock hands the resume to a worker. `Reactor.undo`
   of the paused run rolls back the child's completed steps, then the parent's. A composed child
   refuses a `continue` of its own. New `Reactor#ready_interrupt_steps` lists the pending
   interrupts (Symbols, and paths for nested ones). `be_paused_at`, `have_ready_interrupts` and
@@ -258,6 +277,19 @@ Every breaking or shape-changing item of the rollback work, with what to change.
   `ValidationError`. An `interrupt` inside a `map` element now fails that element with "not
   supported inside a map element" instead of `NoMethodError`.
   See [Interrupts inside composed reactors](documentation/interrupts.md#interrupts-inside-composed-reactors).
+* **`undo_all` on a map: one call rolls back every completed element.** A map declaring
+  `undo_all { |completed_results| ... }` is rolled back (an atomic map's failure, a later step's
+  failure, or `Reactor.undo`) by calling the block once with a lazy, index-ordered Enumerable of
+  the completed elements' results, instead of replaying each element's own undos. A fan-out map
+  reads its stored results and dispatches no element rollback jobs; nothing is held in memory all
+  at once. Failed elements still roll themselves back; a block that raises or returns a
+  `Failure` is reported as one rollback failure (`kind: :undo_all`) and the steps before the map
+  are still undone. New matcher: `have_run_undo_all(:map).with_elements(n)`.
+* **A resume contended on the reactor's lock or semaphore is accepted, not lost** (see migration
+  note 1). New test helpers: `resume(..., process_jobs: false)` and the `be_resume_deferred`
+  matcher.
+* **Several interrupts can be resumed at once** (see migration note 3): each accepted resume is
+  applied once.
 * **`fan_out` without `batch_size` is back-pressured: at most 50 element jobs per throw**
   (`RubyReactor::Map::DEFAULT_BATCH_SIZE`), forward and rollback. Before, every element was
   enqueued at once. A map of more than 50 elements with no declared `batch_size` now runs in
@@ -359,6 +391,24 @@ Every breaking or shape-changing item of the rollback work, with what to change.
 
 ### Bug Fixes
 
+* **The recovery sweep no longer re-runs a run still executing in its caller's process.** A
+  synchronous `Reactor.run` (or an inline `continue`) now holds the run's liveness lock, renewed
+  while it executes, so a sweep during a long step leaves it alone; a killed process is still
+  recovered once the lock lapses (`context_lock_ttl`).
+* **A caller's final save no longer overwrites a worker's progress.** A synchronous run that hands
+  off at a fan-out map (or a `background` step) keeps its lock until its final save, and a Worker
+  now takes the run's lock (waiting up to 2s) before it reads the run, so it always resumes from
+  the caller's final state.
+* **Two resumes of one interrupt at the same instant: exactly one is accepted**, even in inline
+  job-testing mode, where both used to run.
+* **A resumed run waiting on a reactor lock or semaphore is no longer marked `failed` without
+  rolling back.** The snooze limit (`lock_snooze_max_attempts`) now applies only before a run is
+  admitted; an admitted run (a deferred or `resume: :background` resume) keeps waiting and logs
+  `ruby_reactor.resume.waiting` once.
+* **Manual undo finishes a `compensate` an interruption cut off.** A run aborted while its failing
+  step's `compensate` ran now records that step; `Reactor.undo(id)` runs the `compensate` again,
+  with the same arguments and reason, before undoing the completed steps (also inside composed
+  children and inline map elements). The dashboard flags such a run.
 * **A fan-out map inside a composed reactor no longer leaves the root running forever.** The map's
   completion resumed the child as a run of its own, and nothing resumed the root. Now the root
   resumes and finishes, and a failure of the map or of any later step rolls back through the root.

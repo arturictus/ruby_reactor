@@ -136,6 +136,17 @@ export default function ReactorDetail() {
         </div>
       )}
 
+      {reactor.status === 'aborted' && reactor.pending_compensation && (
+        <div className="px-2">
+          <div data-testid="pending-compensation" className="px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-300">
+              Compensation of step <span className="font-mono bg-amber-500/10 px-1 rounded">{reactor.pending_compensation.step}</span> did not finish; run undo to complete it.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
         <div className="lg:col-span-2 h-full">
           <DagVisualizer
