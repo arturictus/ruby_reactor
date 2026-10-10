@@ -62,7 +62,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   - `test-mysql`: `mysql:8.4`, port `6782:3306`, `MYSQL_ROOT_PASSWORD=root`, `MYSQL_DATABASE=ruby_reactor_test`, healthcheck `mysqladmin ping`.
 
   Add `tmp/*.sqlite3*` to `.gitignore` if `tmp/` is not already ignored.
-- [ ] T003 Run `/speckit-constitution` to amend `.specify/memory/constitution.md` to 1.4.0 (MINOR), per plan Complexity Tracking. It runs **before** any task that relies on Redis-free operation.
+- [X] T003 Run `/speckit-constitution` to amend `.specify/memory/constitution.md` to 1.4.0 (MINOR), per plan Complexity Tracking. It runs **before** any task that relies on Redis-free operation.
   - Technical Constraints: "Redis: Required for state persistence…" becomes "State and coordination live in the configured storage adapter: Redis (default) or a relational database via the ActiveRecord adapter (PostgreSQL, MySQL, SQLite)".
   - Principle III: "Redis MUST be reachable" becomes "the configured storage backend MUST be real and reachable; Redis is still required when it is the storage or queue backend".
   - Principle VI: `flush_redis` is "resets the configured storage".
