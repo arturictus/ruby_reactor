@@ -27,7 +27,7 @@ RubyReactor.configure do |config|
   config.storage.redis_url = REDIS_URL # fixtures' scratchpad under both adapters
   if ENV["RUBY_REACTOR_TEST_STORAGE"] == "active_record"
     config.storage.adapter = :active_record
-    config.storage.database = ENV.fetch("RUBY_REACTOR_TEST_DATABASE_URL", "sqlite3:tmp/ruby_reactor_test.sqlite3")
+    config.storage.database = ENV.fetch("RUBY_REACTOR_TEST_DATABASE_URL", "sqlite3:tmp/ruby_reactor_test.sqlite3?timeout=5000")
   else
     config.storage.adapter = :redis
   end

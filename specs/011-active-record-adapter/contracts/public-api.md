@@ -73,7 +73,7 @@ result = ChargeReactor.run({ order_id: 7, amount: 100 }, idempotency_key: "charg
 | variable | read by | values |
 |---|---|---|
 | `RUBY_REACTOR_TEST_STORAGE` | gem `spec/spec_helper.rb` | `redis` (default), `active_record` |
-| `RUBY_REACTOR_TEST_DATABASE_URL` | gem `spec/spec_helper.rb` | `sqlite3:tmp/ruby_reactor_test.sqlite3` (default under AR), `postgres://…`, `trilogy://…` |
+| `RUBY_REACTOR_TEST_DATABASE_URL` | gem `spec/spec_helper.rb` | `sqlite3:tmp/ruby_reactor_test.sqlite3?timeout=5000` (default under AR), `postgres://…`, `trilogy://…` |
 | `RUBY_REACTOR_STORAGE` | `demo_app/config/initializers/ruby_reactor.rb` | `redis` (default), `active_record` |
 | `RUBY_REACTOR_QUEUE` | `demo_app/config/initializers/ruby_reactor.rb` | `sidekiq` (default), `active_job` |
 | `DATABASE_URL` | Rails (demo_app) | overrides `database.yml` per engine |

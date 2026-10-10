@@ -25,10 +25,8 @@ module RubyReactor
           with_db do
             write_row(Execution, { id: context_id }, attrs,
                       insert_only: { started_at: parse_time(data["started_at"]) || now, created_at: now })
-            if TERMINAL_STATUSES.include?(status)
-              Execution.where(id: context_id,
-                              finished_at: nil).update_all(finished_at: now)
-            end
+            unfinished = Execution.where(id: context_id, finished_at: nil)
+            unfinished.update_all(finished_at: now) if TERMINAL_STATUSES.include?(status)
             index_inputs(context_id, data)
           end
         end

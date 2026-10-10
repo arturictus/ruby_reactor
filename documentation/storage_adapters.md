@@ -99,7 +99,7 @@ heartbeat. Every storage call checks a connection out only for its own duration.
 | --- | --- |
 | PostgreSQL ≥ 13 | Recommended for production. |
 | MySQL ≥ 8.0 | Contexts are bounded by the server's `max_allowed_packet` (default 64 MB). A larger context raises `RubyReactor::Error::ContextTooLargeError`; raise `max_allowed_packet` if you need more. |
-| SQLite ≥ 3.38 | Development, tests and single-host use only. SQLite serializes all writers, so don't start reactors inside an open write transaction: the reactor's own writes would wait for it, then time out. |
+| SQLite ≥ 3.38 | Development, tests and single-host use only. SQLite serializes all writers: configure a busy `timeout` (Rails' generated `database.yml` uses `timeout: 5000`; in a URL, `?timeout=5000`) so concurrent writers wait instead of failing with `database is locked`, and don't start reactors inside an open write transaction — the reactor's own writes would wait for it, then time out. |
 
 **macOS + PostgreSQL + forking servers** (Puma cluster mode, `fork` in specs): add
 `gssencmode=disable` to the connection URL (`postgres://…/db?gssencmode=disable`). libpq's GSSAPI

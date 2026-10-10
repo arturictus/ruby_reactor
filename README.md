@@ -1698,7 +1698,7 @@ PostgreSQL and MySQL come from Compose:
 ```bash
 docker compose up -d test-postgres test-mysql
 
-RUBY_REACTOR_TEST_STORAGE=active_record bundle exec rspec   # SQLite (tmp/ruby_reactor_test.sqlite3)
+RUBY_REACTOR_TEST_STORAGE=active_record bundle exec rspec   # SQLite (tmp/ruby_reactor_test.sqlite3, 5 s busy timeout)
 RUBY_REACTOR_TEST_STORAGE=active_record \
   RUBY_REACTOR_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:6781/ruby_reactor_test bundle exec rspec
 RUBY_REACTOR_TEST_STORAGE=active_record \

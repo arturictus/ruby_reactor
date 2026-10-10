@@ -11,7 +11,7 @@ bundle install                                              # Gemfile dev group:
 
 | engine | `RUBY_REACTOR_TEST_DATABASE_URL` |
 |---|---|
-| SQLite | `sqlite3:tmp/ruby_reactor_test.sqlite3` |
+| SQLite | `sqlite3:tmp/ruby_reactor_test.sqlite3?timeout=5000` |
 | PostgreSQL | `postgres://postgres:postgres@localhost:6781/ruby_reactor_test` (on macOS append `?gssencmode=disable`: forked specs crash in libpq otherwise) |
 | MySQL | `trilogy://root:root@127.0.0.1:6782/ruby_reactor_test` |
 
@@ -19,7 +19,7 @@ bundle install                                              # Gemfile dev group:
 
 ```bash
 bundle exec rspec                                                    # Redis, unchanged
-RUBY_REACTOR_TEST_STORAGE=active_record RUBY_REACTOR_TEST_DATABASE_URL=sqlite3:tmp/ruby_reactor_test.sqlite3 bundle exec rspec
+RUBY_REACTOR_TEST_STORAGE=active_record RUBY_REACTOR_TEST_DATABASE_URL=sqlite3:tmp/ruby_reactor_test.sqlite3?timeout=5000 bundle exec rspec
 RUBY_REACTOR_TEST_STORAGE=active_record RUBY_REACTOR_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:6781/ruby_reactor_test bundle exec rspec
 RUBY_REACTOR_TEST_STORAGE=active_record RUBY_REACTOR_TEST_DATABASE_URL=trilogy://root:root@127.0.0.1:6782/ruby_reactor_test bundle exec rspec
 ```
@@ -35,9 +35,8 @@ running several targets at once: every run flushes its Redis before each example
 
 **Verified 2026-10-10:**
 
-- Redis: 0 failures.
-- AR/PostgreSQL: 0 failures.
-- AR/SQLite and AR/MySQL: 1 timing flake each while three suites ran in parallel; both passed when rerun alone.
+- Final run: 1706 examples, 0 failures on Redis, AR/SQLite, AR/PostgreSQL and AR/MySQL.
+- An earlier SQLite run hit `database is locked` between the spec process and the live Sidekiq worker. The test URL lacked a busy timeout; it now carries `?timeout=5000`.
 
 ## 2. Contention stress (SC-006)
 
@@ -150,4 +149,4 @@ time RUBY_REACTOR_QUEUE=active_job bundle exec rspec spec/reactors        # Redi
 time RUBY_REACTOR_STORAGE=active_record RUBY_REACTOR_QUEUE=active_job DATABASE_URL=postgres://… bundle exec rspec spec/reactors
 ```
 
-**Expect**: the AR time is ≤ 2× the Redis time (same machine, same queue backend). Also run §2 (`--tag stress`) and the `--tag slow` query-performance spec (§5) on PostgreSQL and MySQL.
+**Expect**: the AR time is ≤ 2× the Redis time (same machine, same queue backend). *Measured 2026-10-10 on an Apple-silicon laptop: Redis 106 s, AR/PostgreSQL 132 s (1.25×).* Also run §2 (`--tag stress`) and the `--tag slow` query-performance spec (§5) on PostgreSQL and MySQL.

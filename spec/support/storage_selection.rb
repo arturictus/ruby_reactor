@@ -10,7 +10,7 @@
 # touches it.
 module StorageSelection
   STORAGE = ENV.fetch("RUBY_REACTOR_TEST_STORAGE", "redis")
-  DATABASE_URL = ENV.fetch("RUBY_REACTOR_TEST_DATABASE_URL", "sqlite3:tmp/ruby_reactor_test.sqlite3")
+  DATABASE_URL = ENV.fetch("RUBY_REACTOR_TEST_DATABASE_URL", "sqlite3:tmp/ruby_reactor_test.sqlite3?timeout=5000")
 
   module_function
 

@@ -579,7 +579,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   Add a **Bug Fixes** entry: the dashboard detail now masks `redact: true` inputs.
 - [X] T075 Audit SC-002. Write `specs/011-active-record-adapter/checklists/claims.md`: one row per behavioral claim in `README.md` and `documentation/*.md` (locks, semaphores, rate limits, periods, ordered locks, durability, recovery, rollback, interrupts, maps, signals, retention). Each row names the spec that covers it under both adapters, or the documented per-adapter difference (`documentation/storage_adapters.md`). Any claim with neither is a gap: fix the code, the spec or the documentation before merge.
 - [X] T076 Run `bundle exec rubocop` on all new and changed Ruby files. The Lua-twin methods may carry the same `rubocop:disable` set as their Redis modules (`Metrics/*`, `Naming/PredicateMethod`); nothing else.
-- [ ] T077 Execute quickstart §1–§7 end to end on a clean checkout, plus the §8 release checklist (stress, slow query, SC-008 timing). Record any deviation in `specs/011-active-record-adapter/quickstart.md`.
+- [X] T077 Execute quickstart §1–§7 end to end on a clean checkout, plus the §8 release checklist (stress, slow query, SC-008 timing). Record any deviation in `specs/011-active-record-adapter/quickstart.md`.
 - [ ] T078 Run the `demo-app-e2e-verify` skill twice, once with Redis+Sidekiq and once with `RUBY_REACTOR_STORAGE=active_record RUBY_REACTOR_QUEUE=active_job`. Fix every finding in `lib/`, or record why it is out of scope.
 
 ---

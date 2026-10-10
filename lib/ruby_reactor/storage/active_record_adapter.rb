@@ -45,10 +45,10 @@ module RubyReactor
       include Locking
       include OrderedLocking
 
-      # `database`: a database.yml name (Symbol), a URL or a Hash; nil means the
-      # host's primary database. Either way the adapter gets its own pool.
       CONNECT_LOCK = Mutex.new
 
+      # `database`: a database.yml name (Symbol), a URL or a Hash; nil means the
+      # host's primary database. Either way the adapter gets its own pool.
       def initialize(database: nil)
         super()
         self.class.connect(database || ::ActiveRecord::Base.connection_db_config)
