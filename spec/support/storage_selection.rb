@@ -40,8 +40,10 @@ module StorageSelection
     FileUtils.mkdir_p("tmp")
     ActiveRecord::Base.establish_connection(DATABASE_URL)
     ActiveRecord::Base.logger = nil
-    adapter_class = RubyReactor.configuration.storage_adapter.class
-    rebuild_schema!(adapter_class.migrations_path)
+    # Load the adapter class without building one: building verifies the
+    # schema, which doesn't exist yet.
+    require "ruby_reactor/storage/active_record_adapter"
+    rebuild_schema!(RubyReactor::Storage::ActiveRecordAdapter.migrations_path)
   end
 
   def rebuild_schema!(migrations_path)

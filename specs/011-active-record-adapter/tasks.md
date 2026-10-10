@@ -275,7 +275,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
   Run T004 under AR on all three engines until it is green, including the surface guard.
 - [X] T027 [US1] Call `RubyReactor.configuration.storage_adapter.purge_expired_coordination` once per `run_once` in `lib/ruby_reactor/sweeper.rb`, rescuing errors and logging them as a key=value line, `ruby_reactor.sweeper op=purge_expired_coordination error=<class> message=<msg>`, so a purge failure never stops a sweep (R-07, Constitution IV). Add an example to `spec/ruby_reactor/sweeper_spec.rb`: under AR an expired coordination row is deleted after `run_once`, and under Redis the call returns 0.
-- [ ] T028 [US1] Classify the Redis-coupled specs. **Rule**: an assertion on storage *behavior* moves to the public adapter API, which runs on both adapters. An assertion on Redis *layout, TTL or simulated expiry* becomes `:redis_only` with a reason, and its semantics must already be covered by T004.
+- [X] T028 [US1] Classify the Redis-coupled specs. **Rule**: an assertion on storage *behavior* moves to the public adapter API, which runs on both adapters. An assertion on Redis *layout, TTL or simulated expiry* becomes `:redis_only` with a reason, and its semantics must already be covered by T004.
 
   **Move to the public adapter API**:
 
@@ -309,12 +309,12 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
   - `spec/support/reactors/*.rb`, `spec/support/step_coordination_helpers.rb`, `spec/support/real_async_backend.rb`;
   - `spec/ruby_reactor/executor/resume_rollback_spec.rb`, `spec/ruby_reactor/step_coordination/{park,rollback_under_contention,ordering_parity}_spec.rb`;
   - the `instance_double(RedisAdapter)` unit specs (`map/result_summary_spec.rb`, `map/result_enumerator_spec.rb`, `web/api_spec.rb:435`, `adapters/{sidekiq,active_job}/worker_spec.rb`).
-- [ ] T029 [US1] Run the full gem suite under AR on SQLite, then PostgreSQL, then MySQL (quickstart §1). Fix every parity gap **in the AR adapter**, never by weakening a spec. Changing Redis code or a shared spec needs a note in the PR saying why the old assertion was Redis-specific.
+- [X] T029 [US1] Run the full gem suite under AR on SQLite, then PostgreSQL, then MySQL (quickstart §1). Fix every parity gap **in the AR adapter**, never by weakening a spec. Changing Redis code or a shared spec needs a note in the PR saying why the old assertion was Redis-specific.
 
   Re-verify against activerecord 8.0.x that `SQLite3Adapter` defaults `default_transaction_mode: :immediate`, as 8.1.1 does at `sqlite3_adapter.rb:162`. If it doesn't, force IMMEDIATE in `Coordination.atomically` and record the result in research R-01.
 
   Finish with T015–T018 green, and 0 failures plus only reasoned skips on all four targets (SC-001).
-- [ ] T030 [US1] Write the core of `documentation/storage_adapters.md`:
+- [X] T030 [US1] Write the core of `documentation/storage_adapters.md`:
   - when to choose each adapter;
   - configuration (`storage.adapter`, `storage.database`);
   - supported engines and versions, including **Ruby ≥ 3.2** for the AR adapter (ActiveRecord 8), the SQLite single-host limitation and the host-transaction caveat (R-02);
@@ -343,7 +343,7 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
 ### Tests for User Story 2 (write first, confirm FAIL) ⚠️
 
-- [ ] T031 [P] [US2] Write `spec/ruby_reactor/storage/active_record/schema_spec.rb` (`:active_record_only`, FR-019).
+- [X] T031 [P] [US2] Write `spec/ruby_reactor/storage/active_record/schema_spec.rb` (`:active_record_only`, FR-019).
   - After the migrations, the default of `ruby_reactor_schema.version` (`connection.columns("ruby_reactor_schema")`) equals `ActiveRecordAdapter::SCHEMA_VERSION`, and every DM table exists.
   - **`schema.rb` path** (U1): dump the migrated schema with `ActiveRecord::SchemaDumper`, drop every `ruby_reactor_*` table, load the dump, and the check passes. This is the `db:prepare` / `db:test:prepare` / `maintain_test_schema!` path.
   - On a **new** adapter instance:
@@ -352,22 +352,22 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
     - changing it to `SCHEMA_VERSION + 1` gives "upgrade the ruby_reactor gem";
     - in every case, `Execution.count` is unchanged.
   - Seeded history is readable after install. SC-009 (an N−1→N upgrade keeps history) gets its spec with migration 002; `down` drops the tables by design, so no round-trip assertion is made at version 1.
-- [ ] T032 [P] [US2] Write `spec/ruby_reactor/storage/active_record/migrations_lock_spec.rb`. It runs under any adapter and needs no database. For every file in `migrations_path`, its SHA-256 must equal its entry in `lib/ruby_reactor/storage/active_record/migrations/migrations.lock` (YAML `filename: sha256`), and every file must have an entry (FR-018).
-- [ ] T033 [P] [US2] Write `demo_app/spec/generators/ruby_reactor_install_generator_spec.rb`. Use `Rails::Generators::TestCase` semantics through `Rails.application.load_generators` and `Rails::Generators.invoke` into a tmp destination.
+- [X] T032 [P] [US2] Write `spec/ruby_reactor/storage/active_record/migrations_lock_spec.rb`. It runs under any adapter and needs no database. For every file in `migrations_path`, its SHA-256 must equal its entry in `lib/ruby_reactor/storage/active_record/migrations/migrations.lock` (YAML `filename: sha256`), and every file must have an entry (FR-018).
+- [X] T033 [P] [US2] Write `demo_app/spec/generators/ruby_reactor_install_generator_spec.rb`. Use `Rails::Generators::TestCase` semantics through `Rails.application.load_generators` and `Rails::Generators.invoke` into a tmp destination.
   - The first invoke creates `db/migrate/<ts>_create_ruby_reactor_tables.rb` with the same body as the shipped file.
   - A second invoke creates nothing.
 
 ### Implementation for User Story 2
 
-- [ ] T034 [P] [US2] Write `lib/ruby_reactor/error/storage_schema_error.rb`: `class StorageSchemaError < Base`. It is **not** `SchemaVersionError`, which `Worker` and `StepWorker` rescue as a deserialization failure (R-16).
-- [ ] T035 [US2] Add `ensure_schema!` to `lib/ruby_reactor/storage/active_record_adapter.rb`. `with_db` calls it on first use, memoized per adapter instance under a `Mutex`. It reads the default of the `version` column (`conn.columns("ruby_reactor_schema").find { _1.name == "version" }&.default&.to_i`), treating a missing table (`conn.table_exists?` false) as "missing", and raises `StorageSchemaError` with the three messages in R-16 before the caller's query runs. Make T031 green.
-- [ ] T036 [US2] Write `lib/ruby_reactor/storage/active_record/migrations/migrations.lock` with the SHA-256 of `001_create_ruby_reactor_tables.rb`. Make T032 green. Add a comment block at the top of the lock file: "Released migrations are append-only. Add 00N_…, end it with change_column_default on ruby_reactor_schema.version, bump SCHEMA_VERSION, add its line here."
-- [ ] T037 [US2] Write `lib/generators/ruby_reactor/install/install_generator.rb`, `class RubyReactor::Generators::InstallGenerator < Rails::Generators::Base` with `include ActiveRecord::Generators::Migration`.
+- [X] T034 [P] [US2] Write `lib/ruby_reactor/error/storage_schema_error.rb`: `class StorageSchemaError < Base`. It is **not** `SchemaVersionError`, which `Worker` and `StepWorker` rescue as a deserialization failure (R-16).
+- [X] T035 [US2] Add `ensure_schema!` to `lib/ruby_reactor/storage/active_record_adapter.rb`. `with_db` calls it on first use, memoized per adapter instance under a `Mutex`. It reads the default of the `version` column (`conn.columns("ruby_reactor_schema").find { _1.name == "version" }&.default&.to_i`), treating a missing table (`conn.table_exists?` false) as "missing", and raises `StorageSchemaError` with the three messages in R-16 before the caller's query runs. Make T031 green.
+- [X] T036 [US2] Write `lib/ruby_reactor/storage/active_record/migrations/migrations.lock` with the SHA-256 of `001_create_ruby_reactor_tables.rb`. Make T032 green. Add a comment block at the top of the lock file: "Released migrations are append-only. Add 00N_…, end it with change_column_default on ruby_reactor_schema.version, bump SCHEMA_VERSION, add its line here."
+- [X] T037 [US2] Write `lib/generators/ruby_reactor/install/install_generator.rb`, `class RubyReactor::Generators::InstallGenerator < Rails::Generators::Base` with `include ActiveRecord::Generators::Migration`.
   - For each file in `ActiveRecordAdapter.migrations_path`, sorted, skip it if `db/migrate/*_<name>.rb` already exists. Otherwise copy it as `<next_migration_number>_<name>.rb`, stripping the `NNN_` prefix.
   - Rails discovers the generator at `lib/generators/` through the gem's load path. It is ignored by Zeitwerk (T007).
   - Make T033 green.
-- [ ] T038 [US2] Run `bin/rails generate ruby_reactor:install` in `demo_app/` and commit the generated `demo_app/db/migrate/<ts>_create_ruby_reactor_tables.rb` and the updated `demo_app/db/schema.rb`.
-- [ ] T039 [US2] Add an "Install and upgrade" section to `documentation/storage_adapters.md`:
+- [X] T038 [US2] Run `bin/rails generate ruby_reactor:install` in `demo_app/` and commit the generated `demo_app/db/migrate/<ts>_create_ruby_reactor_tables.rb` and the updated `demo_app/db/schema.rb`.
+- [X] T039 [US2] Add an "Install and upgrade" section to `documentation/storage_adapters.md`:
   - Rails: `generate ruby_reactor:install` + `db:migrate`, and the same pair after every gem upgrade;
   - non-Rails: `ActiveRecord::MigrationContext.new(RubyReactor::Storage::ActiveRecordAdapter.migrations_path).migrate`;
   - what `StorageSchemaError` means and how to fix each message.

@@ -48,6 +48,40 @@ the gem's `>= 3.0` floor.
 Selecting `:active_record` without the `activerecord` gem installed raises a `LoadError` that names
 the gem to add. A Redis-only app never loads ActiveRecord.
 
+### Install and upgrade the schema
+
+The adapter's tables ship as versioned migrations inside the gem.
+
+**Rails:**
+
+```bash
+bin/rails generate ruby_reactor:install   # copies the migrations you don't have yet into db/migrate
+bin/rails db:migrate
+```
+
+Run the same two commands after every gem upgrade. The generator copies only migrations
+your app doesn't have yet, and never edits existing files. Released migrations are never
+changed; schema changes always arrive as new migrations, so your history is kept.
+
+**ActiveRecord without Rails:**
+
+```ruby
+ActiveRecord::MigrationContext.new(RubyReactor::Storage::ActiveRecordAdapter.migrations_path).migrate
+```
+
+**The schema check.** On first use, the adapter compares the installed schema version
+with the one the gem needs. It raises `RubyReactor::Error::StorageSchemaError` before
+reading or writing anything when:
+
+| Message | Fix |
+| --- | --- |
+| "storage tables are missing" | run the install commands above |
+| "schema is version N, this gem needs M" | run the install commands again, then migrate |
+| "schema is version N, newer than this gem's M" | upgrade the `ruby_reactor` gem (or roll the migration back) |
+
+The version marker is the default value of the `ruby_reactor_schema.version` column, so it
+survives `db/schema.rb` loads (`db:prepare`, `db:test:prepare`) and table truncation in tests.
+
 ### Its own connection pool
 
 The adapter opens a **dedicated pool**, even against your primary database. Reactor writes therefore

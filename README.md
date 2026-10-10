@@ -596,6 +596,24 @@ the parent holds fails at dispatch with an explanatory error rather than
 deadlocking. See [Background & Async Execution](documentation/background_and_async.md) for the full
 rules.
 
+### Choosing a storage adapter
+
+State lives in Redis by default. To keep it in your relational database instead (PostgreSQL,
+MySQL or SQLite), with full execution history and a searchable dashboard:
+
+```ruby
+# Gemfile: activerecord >= 8.0 and a driver (already there in a Rails app)
+RubyReactor.configure { |config| config.storage.adapter = :active_record }
+```
+
+```bash
+bin/rails generate ruby_reactor:install && bin/rails db:migrate
+```
+
+Both adapters run the same reactors with the same guarantees. See
+[Storage Adapters](documentation/storage_adapters.md) for installation without Rails, schema
+upgrades, supported engines, and the few differences that come from keeping history.
+
 ### Durability & Recovery
 
 Background reactors are durable: state lives in the storage adapter (Redis or your database), not in the job payload. Before

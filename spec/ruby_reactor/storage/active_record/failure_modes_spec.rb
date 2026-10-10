@@ -21,10 +21,10 @@ RSpec.describe "ActiveRecord storage failure modes", :active_record_only do # ru
   let(:engine) { ActiveRecord::Base.connection_db_config.adapter }
 
   # Re-point the shared pool back at the suite's database.
-  after { adapter_class.new(database: RubyReactor.configuration.storage.database) }
+  after { adapter_class.connect(RubyReactor.configuration.storage.database) }
 
   it "raises, never succeeds silently, when the database is unreachable" do
-    adapter_class.new(database: { adapter: "postgresql", host: "127.0.0.1", port: 1, database: "x",
+    adapter_class.connect({ adapter: "postgresql", host: "127.0.0.1", port: 1, database: "x",
                                   connect_timeout: 1 })
 
     expect { RubyReactor.configuration.storage_adapter.store_context("ctx-1", "{}", "X") }
@@ -60,7 +60,7 @@ RSpec.describe "ActiveRecord storage failure modes", :active_record_only do # ru
   it "returns pooled connections, so lock auto-extend threads never exhaust a small pool" do
     url = RubyReactor.configuration.storage.database
     config = ActiveRecord::Base.configurations.resolve(url).configuration_hash.merge(pool: 2, checkout_timeout: 2)
-    adapter_class.new(database: config)
+    adapter_class.connect(config)
 
     results = Array.new(10) { |n| Thread.new { FailureModesLockReactor.run(n: n) } }.map(&:value)
 

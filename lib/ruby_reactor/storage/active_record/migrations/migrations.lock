@@ -1,0 +1,6 @@
+# Released migrations are append-only (011 FR-018). To change the schema:
+# add 00N_<name>.rb ending with change_column_default on
+# ruby_reactor_schema.version, bump ActiveRecordAdapter::SCHEMA_VERSION, and add
+# its line here. spec/ruby_reactor/storage/active_record/migrations_lock_spec.rb
+# fails if a released migration's content changes.
+001_create_ruby_reactor_tables.rb: 5759b088dd16076763327fd66b005a50447ec603b9eadf5f384f7c035ae09e5b

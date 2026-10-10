@@ -47,16 +47,16 @@ RSpec.describe "ActiveRecord storage adapter loading" do # rubocop:disable RSpec
     let(:db_path) { File.expand_path("../../../../tmp/loading_spec.sqlite3", __dir__) }
 
     # Re-point the shared pool back at the suite's database.
-    after { adapter_class.new(database: RubyReactor.configuration.storage.database) }
+    after { adapter_class.connect(RubyReactor.configuration.storage.database) }
 
     it "accepts a URL" do
-      adapter_class.new(database: "sqlite3:#{db_path}")
+      adapter_class.connect("sqlite3:#{db_path}")
 
       expect(adapter_class::Record.connection_db_config.database).to eq(db_path)
     end
 
     it "accepts a Hash" do
-      adapter_class.new(database: { adapter: "sqlite3", database: db_path })
+      adapter_class.connect({ adapter: "sqlite3", database: db_path })
 
       expect(adapter_class::Record.connection_db_config.database).to eq(db_path)
     end
@@ -66,7 +66,7 @@ RSpec.describe "ActiveRecord storage adapter loading" do # rubocop:disable RSpec
       original = ActiveRecord::Base.configurations
       ActiveRecord::Base.configurations = { env => { "reactor_store" => { "adapter" => "sqlite3",
                                                                           "database" => db_path } } }
-      adapter_class.new(database: :reactor_store)
+      adapter_class.connect(:reactor_store)
 
       expect(adapter_class::Record.connection_db_config.database).to eq(db_path)
     ensure

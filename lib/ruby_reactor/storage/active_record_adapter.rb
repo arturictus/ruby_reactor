@@ -52,6 +52,22 @@ module RubyReactor
       def initialize(database: nil)
         super()
         self.class.connect(database || ::ActiveRecord::Base.connection_db_config)
+        verify_schema!
+      end
+
+      # The installed schema version is the DEFAULT of ruby_reactor_schema.version
+      # (R-16): it survives db/schema.rb loads and truncation, which a data row
+      # would not. Checked once per adapter, i.e. at first storage use, before
+      # anything is read or written.
+      def verify_schema!
+        installed = with_db do |conn|
+          next nil unless conn.table_exists?("ruby_reactor_schema")
+
+          conn.columns("ruby_reactor_schema").find { |column| column.name == "version" }&.default.to_i
+        end
+        return if installed == SCHEMA_VERSION
+
+        raise Error::StorageSchemaError, schema_error_message(installed)
       end
 
       # (Re)points the shared pool only when the config changes: re-running
@@ -82,6 +98,20 @@ module RubyReactor
       end
 
       private
+
+      def schema_error_message(installed)
+        install = "run `bin/rails generate ruby_reactor:install` then `bin/rails db:migrate` " \
+                  "(without Rails: ActiveRecord::MigrationContext.new(" \
+                  "RubyReactor::Storage::ActiveRecordAdapter.migrations_path).migrate)"
+        if installed.nil?
+          "RubyReactor storage tables are missing: #{install}."
+        elsif installed < SCHEMA_VERSION
+          "RubyReactor storage schema is version #{installed}, this gem needs #{SCHEMA_VERSION}: #{install}."
+        else
+          "RubyReactor storage schema is version #{installed}, newer than this gem's #{SCHEMA_VERSION}: " \
+            "upgrade the ruby_reactor gem."
+        end
+      end
 
       # Every operation leases a connection only for its own duration, so
       # long-lived threads (lock auto-extend, heartbeats) never pin one.
