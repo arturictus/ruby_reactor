@@ -561,19 +561,35 @@ module RubyReactor
       # Asserts that a `with_period` bucket has been marked. Use `.for(period)`.
       #
       #   expect("daily_report:7").to be_period_marked.for(:day)
+      #   expect("annual:sales").to be_period_marked.for(:year).by(first.execution_id)
       matcher :be_period_marked do
         match do |key_base|
           raise ArgumentError, "be_period_marked requires .for(period)" unless @period
 
-          Matchers.coordination_adapter.period_marker?(key_base, @period)
+          marked = Matchers.coordination_adapter.period_marker?(key_base, @period)
+          next marked unless marked && @claimed_by
+
+          Matchers.coordination_adapter.period_marker_info(key_base, @period)&.dig(:context_id) == @claimed_by
         end
 
         chain :for do |period|
           @period = period
         end
 
+        # The run that claimed the bucket (011 US5).
+        chain :by do |execution_id|
+          @claimed_by = execution_id
+        end
+
         failure_message do |key_base|
-          "expected period bucket #{RubyReactor::Period.key(key_base, @period).inspect} to be marked, but it is not"
+          bucket = RubyReactor::Period.key(key_base, @period).inspect
+          claim = Matchers.coordination_adapter.period_marker_info(key_base, @period)
+          if claim && @claimed_by
+            "expected period bucket #{bucket} to be claimed by #{@claimed_by.inspect}, " \
+              "but it was claimed by #{claim[:context_id].inspect}"
+          else
+            "expected period bucket #{bucket} to be marked, but it is not"
+          end
         end
 
         failure_message_when_negated do |key_base|

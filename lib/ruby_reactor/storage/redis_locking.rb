@@ -275,6 +275,14 @@ module RubyReactor
         @redis.ttl("rate:#{key_base}:#{every}:#{bucket}")
       end
 
+      # `{ context_id:, claimed_at: }` for a marked period bucket, or nil. Redis
+      # keeps no claim time, and a marker written without a context id ("1")
+      # names no run.
+      def period_marker_info(key_base, every, now: Time.now.utc)
+        value = @redis.get(RubyReactor::Period.key(key_base, every, now: now))
+        value && { context_id: value == "1" ? nil : value, claimed_at: nil }
+      end
+
       # TTL in seconds for a period marker (-2 if unset).
       def period_ttl(key_base, every, now: Time.now.utc)
         @redis.ttl(RubyReactor::Period.key(key_base, every, now: now))

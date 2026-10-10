@@ -43,7 +43,7 @@ interface PeriodCoordination {
   key: string | null;
   bucket_key?: string | null;
   key_error?: string;
-  state?: { marked: boolean; ttl: number };
+  state?: { marked: boolean; ttl: number; claimed_by?: string | null; claimed_at?: string | null };
 }
 
 interface StepCoordinationEntry {
@@ -239,6 +239,12 @@ function PeriodCard({ period }: { period: PeriodCoordination }) {
           <span className="ml-3">TTL: {formatTtl(period.state.ttl)}</span>
         )}
       </div>
+      {marked && period.state?.claimed_by && (
+        <p className="text-[11px] text-slate-500">
+          Claimed by <span className="font-mono text-slate-300">{period.state.claimed_by}</span>
+          {period.state.claimed_at && <span> at {period.state.claimed_at}</span>}
+        </p>
+      )}
     </div>
   );
 }

@@ -377,6 +377,17 @@ The block returns the **base key**. The final Redis marker is `period:<base>:<bu
 
 TTL is always **twice the period length** so the marker reliably dedups the next attempt, even with clock skew across the boundary.
 
+**On the ActiveRecord storage adapter, markers are permanent.** Each claimed bucket stays as a row, so
+`:year` dedup never depends on a marker outliving its TTL, and you keep a record of every period that ran.
+On both adapters the marker names the run that claimed it:
+
+```ruby
+RubyReactor.configuration.storage_adapter.period_marker_info("monthly_billing:42", :month)
+# => { context_id: "9fde83d6-…", claimed_at: 2026-05-01 00:03:12 UTC }  # claimed_at is nil on Redis
+```
+
+The dashboard's coordination panel shows the claiming run for the current bucket.
+
 ### When the marker is written
 
 The marker is written **only after a terminal `Success`** (and after the reactor's `mark_period_on_success` runs, which the executor handles automatically). This means:

@@ -492,26 +492,26 @@ Single gem project: `lib/ruby_reactor/`, `spec/`, `demo_app/`, `gui/`, `document
 
 ### Tests for User Story 5 (write first, confirm FAIL) ⚠️
 
-- [ ] T059 [P] [US5] Add examples to `spec/ruby_reactor/storage/adapter_contract_spec.rb`:
+- [X] T059 [P] [US5] Add examples to `spec/ruby_reactor/storage/adapter_contract_spec.rb`:
   - `period_marker_info(base, every)` returns `{ context_id:, claimed_at: }` after `period_mark(key, ttl, context_id: "c1")` on both adapters. On Redis, `claimed_at` is `nil`, and `context_id` is `nil` when the marker was written without one (the value `"1"`).
   - `:active_record_only`: a second `period_mark` for the same key keeps the first `context_id`; `period_ttl` is `-1`; the marker is still seen after `Period.ttl_seconds(:year)` would have elapsed. Use `RubyReactor::Period.key(base, :year, now:)` on Jan 1 and Dec 31 of the same year, giving the same key and the same marker (SC-010).
-- [ ] T060 [P] [US5] Extend `spec/ruby_reactor/step_coordination/period_spec.rb`, or the existing `with_period` spec found by `grep -rl with_period spec`: after a reactor-level and a step-level `with_period` run, `period_marker_info` names that run's `context_id`.
+- [X] T060 [P] [US5] Extend `spec/ruby_reactor/step_coordination/period_spec.rb`, or the existing `with_period` spec found by `grep -rl with_period spec`: after a reactor-level and a step-level `with_period` run, `period_marker_info` names that run's `context_id`.
 
 ### Implementation for User Story 5
 
-- [ ] T061 [US5] Pass `context_id: @context.context_id` to `period_mark` in `lib/ruby_reactor/executor.rb` (~line 645) and `lib/ruby_reactor/executor/step_coordination.rb` (~line 648).
+- [X] T061 [US5] Pass `context_id: @context.context_id` to `period_mark` in `lib/ruby_reactor/executor.rb` (~line 645) and `lib/ruby_reactor/executor/step_coordination.rb` (~line 648).
   - Add `period_marker_info(key_base, every, now: Time.now.utc)`:
     - Redis (`lib/ruby_reactor/storage/redis_locking.rb`): `GET` the key, so the value is the `context_id` or `"1"`, and return `nil` when absent;
     - AR (`lib/ruby_reactor/storage/active_record/locking.rb`): the marker row.
   - Declare it in `lib/ruby_reactor/storage/adapter.rb`.
   - Make T059 and T060 green.
-- [ ] T062 [US5] In `lib/ruby_reactor/web/coordination_serializer.rb` (~line 269), add `claimed_by:` and `claimed_at:` from `period_marker_info` to a marked period's entry. Render them in `gui/src/components/CoordinationPanel.tsx`, then rebuild the assets.
-- [ ] T063 [P] [US5] Add the chain `.by(execution_id)` to `be_period_marked` in `lib/ruby_reactor/rspec/matchers.rb`, comparing `period_marker_info(...)[:context_id]`. Add a matcher spec example.
-- [ ] T064 [US5] Write the demo:
+- [X] T062 [US5] In `lib/ruby_reactor/web/coordination_serializer.rb` (~line 269), add `claimed_by:` and `claimed_at:` from `period_marker_info` to a marked period's entry. Render them in `gui/src/components/CoordinationPanel.tsx`, then rebuild the assets.
+- [X] T063 [P] [US5] Add the chain `.by(execution_id)` to `be_period_marked` in `lib/ruby_reactor/rspec/matchers.rb`, comparing `period_marker_info(...)[:context_id]`. Add a matcher spec example.
+- [X] T064 [US5] Write the demo:
   - `demo_app/app/reactors/yearly_report_reactor.rb`: `with_period every: :year` keyed on `report_name`, with a class-based `build_report` step;
   - a rake task `demo:yearly_report` (`[:environment, :flush_redis]`) that runs it twice and prints `completed` then `halted (already ran this year)`. Add it to the `demo:all` prerequisites;
   - `demo_app/spec/reactors/yearly_report_reactor_spec.rb`, which runs under both adapters: the first run `be_success`, the second `be_halted`, and `expect("annual:#{name}").to be_period_marked.for(:year).by(first.execution_id)`.
-- [ ] T065 [US5] Update the `with_period` section of `documentation/locks_and_semaphores.md`: markers are permanent on AR and record the claiming execution; on Redis they live `Period.ttl_seconds`; the `.by(...)` matcher chain.
+- [X] T065 [US5] Update the `with_period` section of `documentation/locks_and_semaphores.md`: markers are permanent on AR and record the claiming execution; on Redis they live `Period.ttl_seconds`; the `.by(...)` matcher chain.
 
 **Checkpoint**: US5 is complete.
 

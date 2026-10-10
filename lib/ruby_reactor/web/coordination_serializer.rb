@@ -268,6 +268,8 @@ module RubyReactor
           bucket_key = RubyReactor::Period.key(key, every)
           marked = adapter.period_marker?(key, every)
           ttl = adapter.period_ttl(key, every)
+          # Which run claimed the bucket, and when (011 US5); nil when unknown.
+          claim = marked ? adapter.period_marker_info(key, every) : nil
 
           {
             configured: { every: every.to_s },
@@ -275,7 +277,9 @@ module RubyReactor
             bucket_key: bucket_key,
             state: {
               marked: marked,
-              ttl: ttl
+              ttl: ttl,
+              claimed_by: claim&.dig(:context_id),
+              claimed_at: claim&.dig(:claimed_at)&.iso8601
             }
           }
         rescue StandardError => e

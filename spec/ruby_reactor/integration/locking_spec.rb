@@ -121,6 +121,14 @@ RSpec.describe "Locking Integration", type: :reactor do
       expect(RubyReactor.configuration.storage_adapter.period_seen?(bucket_key)).to be true
     end
 
+    # 011 US5: the marker names the run that claimed the bucket.
+    it "records which run claimed the bucket" do
+      result = PeriodicReactor.run(org_id: 8)
+
+      info = RubyReactor.configuration.storage_adapter.period_marker_info("daily_report:8", :day)
+      expect(info[:context_id]).to eq(result.execution_id)
+    end
+
     it "halts subsequent runs in the same bucket without executing steps" do
       PeriodicReactor.run(org_id: 7)
       result = PeriodicReactor.run(org_id: 7)

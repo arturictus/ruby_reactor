@@ -150,7 +150,7 @@ module RubyReactor
          semaphore_init semaphore_reset semaphore_held semaphore_held? semaphore_acquire semaphore_release
          semaphore_exists? semaphore_state
          rate_limit_check_and_increment rate_limit_count rate_limit_ttl
-         period_seen? period_mark period_marker? period_ttl
+         period_seen? period_mark period_marker? period_ttl period_marker_info
          ordered_lock_assign ordered_lock_can_proceed ordered_lock_advance ordered_lock_skip
          ordered_lock_heartbeat ordered_lock_reset ordered_lock_peek ordered_lock_keys].each do |method|
         define_method(method) { |*, **| raise NotImplementedError }

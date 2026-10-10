@@ -393,6 +393,29 @@ RSpec.describe "Storage adapter contract" do # rubocop:disable RSpec/DescribeCla
 
       expect(adapter.period_seen?(key)).to be(true)
     end
+
+    # 011 US5.
+    it "names the execution that claimed the bucket" do
+      adapter.period_mark(RubyReactor::Period.key("report", :year), 60, context_id: "ctx-1")
+      adapter.period_mark(RubyReactor::Period.key("legacy", :year), 60)
+
+      expect(adapter.period_marker_info("report", :year)).to include(context_id: "ctx-1")
+      expect(adapter.period_marker_info("legacy", :year)).to include(context_id: nil)
+      expect(adapter.period_marker_info("never", :year)).to be_nil
+    end
+
+    it "keeps the first claim forever, with its time", :active_record_only do
+      jan = Time.utc(2026, 1, 1, 0, 5)
+      dec = Time.utc(2026, 12, 31, 23, 55)
+      expect(RubyReactor::Period.key("annual", :year, now: jan)).to eq(RubyReactor::Period.key("annual", :year, now: dec))
+
+      adapter.period_mark(RubyReactor::Period.key("annual", :year, now: jan), 60, context_id: "first")
+      adapter.period_mark(RubyReactor::Period.key("annual", :year, now: dec), 60, context_id: "second")
+
+      expect(adapter.period_marker?("annual", :year, now: dec)).to be(true)
+      expect(adapter.period_marker_info("annual", :year, now: dec)).to match(context_id: "first", claimed_at: be_a(Time))
+      expect(adapter.period_ttl("annual", :year, now: dec)).to eq(-1)
+    end
   end
 
   # 011 US4, R-11/R-18: the dashboard's filtered listing over all history.

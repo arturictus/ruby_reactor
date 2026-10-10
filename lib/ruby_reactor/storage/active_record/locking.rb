@@ -147,6 +147,13 @@ module RubyReactor
           period_seen?(RubyReactor::Period.key(key_base, every, now: now))
         end
 
+        # `{ context_id:, claimed_at: }` for a marked period bucket, or nil.
+        def period_marker_info(key_base, every, now: Time.now.utc)
+          digest = Coordination.digest(RubyReactor::Period.key(key_base, every, now: now))
+          context_id, claimed_at = with_db { PeriodMarker.where(key_digest: digest).pick(:context_id, :claimed_at) }
+          claimed_at && { context_id: context_id, claimed_at: claimed_at }
+        end
+
         # -1 (persistent) while the marker exists, -2 otherwise — Redis TTL codes.
         def period_ttl(key_base, every, now: Time.now.utc)
           period_marker?(key_base, every, now: now) ? -1 : -2

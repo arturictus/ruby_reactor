@@ -934,7 +934,15 @@ it "halts a second call in the same bucket" do
 end
 ```
 
-`be_period_marked.for(period)` checks the marker at the **current** bucket. To verify the marker's TTL behavior, drop to direct Redis: `redis.ttl(RubyReactor::Period.key("monthly_report:7", :month))`.
+`be_period_marked.for(period)` checks the marker at the **current** bucket. Chain `.by(execution_id)` to check which run claimed it:
+
+```ruby
+first = test_reactor(MonthlyReportReactor, org_id: 7)
+expect(first).to be_success
+expect("monthly_report:7").to be_period_marked.for(:month).by(first.reactor_instance.context.context_id)
+```
+
+Marker TTLs exist only on the Redis adapter (ActiveRecord markers are permanent); to check one, drop to direct Redis: `redis.ttl(RubyReactor::Period.key("monthly_report:7", :month))`.
 
 ### Asserting ordered-lock state
 

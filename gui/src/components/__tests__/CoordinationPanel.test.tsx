@@ -97,6 +97,22 @@ describe('CoordinationPanel', () => {
     expect(screen.getByText('daily_report:10')).toBeInTheDocument();
   });
 
+  it('names the run that claimed a period bucket (011 US5)', () => {
+    const coordination: CoordinationData = {
+      period: {
+        configured: { every: 'year' },
+        key: 'annual:sales',
+        bucket_key: 'period:annual:sales:2026',
+        state: { marked: true, ttl: -1, claimed_by: 'ctx-first', claimed_at: '2026-01-01T00:05:00Z' },
+      },
+    };
+
+    render(<CoordinationPanel coordination={coordination} />);
+
+    expect(screen.getByText('ctx-first')).toBeInTheDocument();
+    expect(screen.getByText(/2026-01-01T00:05:00Z/)).toBeInTheDocument();
+  });
+
   it('shows step-level coordination rows with a waiting badge (US7)', () => {
     const coordination: CoordinationData = {
       steps: [

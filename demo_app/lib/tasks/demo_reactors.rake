@@ -263,8 +263,19 @@ namespace :demo do
     puts "Find user 100's runs: http://localhost:3000/ruby_reactor/api/reactors?input[user_id]=100"
   end
 
+  desc "with_period every: :year — runs once a year and names the run that claimed it (011 US5)"
+  task yearly_report: [:environment, :flush_redis] do
+    name = "sales_#{SecureRandom.hex(3)}"
+    first = YearlyReportReactor.run(report_name: name)
+    puts first.success? ? "✅ completed: #{first.value.inspect}" : "❌ FAILED: #{first.error}"
+    second = YearlyReportReactor.run(report_name: name)
+    puts second.halted? ? "⏸  halted (already ran this year)" : "❌ expected a halt, got #{second.inspect}"
+    claim = RubyReactor.configuration.storage_adapter.period_marker_info("annual:#{name}", :year)
+    puts "Claimed by #{claim[:context_id]}#{" at #{claim[:claimed_at]}" if claim[:claimed_at]}"
+  end
+
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups, :active_record_history] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups, :active_record_history, :yearly_report] do
     puts "excuting all reactors"
   end
 
