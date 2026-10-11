@@ -358,7 +358,13 @@ RSpec.describe "Locking Integration", type: :reactor do
   end
 
   describe "Rate Limits" do
-    before { RateLimitCounters.reset }
+    # Buckets are keyed by Time.now; frozen, a slow runner (CI, AR round trips)
+    # can't roll a per-second bucket mid-example. Bucket TTLs (2x period) are
+    # still storage-clock real time, so an example must finish within 2 s.
+    before do
+      RateLimitCounters.reset
+      allow(Time).to receive(:now).and_return(Time.now)
+    end
 
     def capture_rate_limit_error
       yield
