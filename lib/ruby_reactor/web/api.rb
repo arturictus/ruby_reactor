@@ -11,6 +11,13 @@ module RubyReactor
       plugin :all_verbs
 
       route do |r|
+        # GET /api/capabilities — which dashboard features the storage adapter
+        # supports (011 R-18); the GUI shows the history filters only when
+        # execution_query is true.
+        r.get "capabilities" do
+          { execution_query: RubyReactor::Configuration.instance.storage_adapter.respond_to?(:query_executions) }
+        end
+
         r.on "reactors" do
           r.is do
             # GET /api/reactors?limit=N&cursor=C (default limit 50, capped at 500).
@@ -18,12 +25,30 @@ module RubyReactor
             # the next page's cursor rides in the X-Next-Cursor header ("0" means
             # there is no next page). A client that wants every reactor pages
             # through by re-requesting with ?cursor=<X-Next-Cursor> until it gets "0".
+            #
+            # Filters (ActiveRecord storage only, 011 R-18): class, status,
+            # from/to (ISO-8601, on the start time) and input[<name>]=<value>.
+            # Invalid values are 400; filters on the Redis adapter are 422.
             r.get do
               limit = self.class.scan_limit(r.params["limit"])
               cursor = r.params["cursor"] || "0"
 
               adapter = RubyReactor::Configuration.instance.storage_adapter
-              page = adapter.scan_reactors_page(cursor: cursor, count: limit)
+              filters, invalid = self.class.execution_filters(r.params)
+              if invalid
+                response.status = 400
+                next { error: invalid }
+              end
+              if filters && !adapter.respond_to?(:query_executions)
+                response.status = 422
+                next { error: "filters require the active_record storage adapter" }
+              end
+
+              page = if filters
+                       adapter.query_executions(filters: filters, cursor: cursor, count: limit)
+                     else
+                       adapter.scan_reactors_page(cursor: cursor, count: limit)
+                     end
               response.headers["X-Next-Cursor"] = page[:cursor]
               page[:reactors]
             rescue StandardError => e
@@ -62,7 +87,7 @@ module RubyReactor
                   data.dig(:retry_context, :step_attempts) || {}, runs
                 ),
                 created_at: data[:started_at],
-                inputs: data[:inputs],
+                inputs: self.class.mask_redacted(data[:inputs], reactor_class),
                 intermediate_results: self.class.with_map_summaries(
                   data[:intermediate_results] || {}, structure, data[:context_id], data[:reactor_class].to_s
                 ),
@@ -179,6 +204,43 @@ module RubyReactor
         return unless fetch.call(:compensated) == false
 
         { step: fetch.call(:step).to_s }
+      end
+
+      FILTER_STATUSES = %w[pending running paused completed failed rolling_back halted aborted cancelled].freeze
+
+      # `[filters, nil]`, `[nil, nil]` when no filter param is present, or
+      # `[nil, message]` when one is invalid.
+      def self.execution_filters(params)
+        return [nil, nil] unless (%w[class status from to input] & params.keys).any?
+
+        filters = {}
+        filters[:reactor_class] = params["class"] unless params["class"].to_s.empty?
+        unless params["status"].to_s.empty?
+          return [nil, "unknown status '#{params["status"]}'"] unless FILTER_STATUSES.include?(params["status"])
+
+          filters[:status] = params["status"]
+        end
+        %w[from to].each do |bound|
+          next if params[bound].to_s.empty?
+
+          filters[bound.to_sym] = Time.iso8601(params[bound])
+        rescue ArgumentError
+          return [nil, "'#{bound}' must be an ISO-8601 time"]
+        end
+        inputs = params["input"]
+        return [nil, "'input' must be input[<name>]=<value>"] if inputs && !inputs.is_a?(Hash)
+
+        filters[:inputs] = inputs.to_h { |name, value| [name.to_s, value.to_s] } if inputs
+        [filters, nil]
+      end
+
+      # Inputs as the dashboard shows them: every `redact: true` input of the
+      # reactor class replaced by "[REDACTED]" (011 FR-021).
+      def self.mask_redacted(inputs, reactor_class)
+        return inputs unless inputs.is_a?(Hash) && reactor_class.respond_to?(:inputs)
+
+        redacted = reactor_class.inputs.select { |_, config| config[:redact] }.keys.map(&:to_s)
+        inputs.to_h { |name, value| [name, redacted.include?(name.to_s) ? RubyReactor::Step::InputContract::REDACTED : value] }
       end
 
       def self.scan_limit(raw)
@@ -330,6 +392,7 @@ module RubyReactor
         class_name = RubyReactor.reactor_storage_name(child.reactor_class)
         runs = async_step_runs(child.composed_contexts, class_name)
         view = child.to_h.merge(
+          inputs: mask_redacted(child.inputs, child.reactor_class),
           execution_trace: with_async_step_runs(child.execution_trace, runs),
           composed_contexts: hydrate_composed_contexts(child.composed_contexts, class_name)
         )

@@ -39,6 +39,15 @@ end
 > messages and without the `ensure_executed!` nudge. Chained matchers
 > (`have_run_step(:x).returning(y)`, `be_locked.by(owner)`) fail loudly.
 
+### Storage adapters in tests
+
+The matchers and helpers work unchanged on both storage adapters (see
+[Storage Adapters](storage_adapters.md)). Before each `type: :reactor` example,
+RubyReactor empties its storage: Redis is flushed, and the ActiveRecord adapter's
+tables are cleared (the schema version marker is kept). With the ActiveRecord adapter
+and the ActiveJob backend, `drain_async_jobs` drains the ActiveJob `:test` queue, even
+when `sidekiq/testing` is also loaded.
+
 > For reactors that use `with_lock`, `with_semaphore`, `with_rate_limit`, `with_period`, or `with_ordered_lock`, see [Testing Coordination Primitives](#testing-coordination-primitives) — it covers the `be_halted`, `be_skipped`, `be_locked`, `have_available_tokens`, `have_held_tokens`, `have_rate_limit_count`, `be_period_marked`, `have_ordered_lock_next`, `have_ordered_lock_last_completed`, `have_ordered_lock_in_flight`, and `be_ordered_lock_drained` matchers, plus patterns for testing background snooze and escalation.
 
 > Examples elsewhere in the documentation mix class steps with inline blocks — class steps where the logic matters, inline blocks where a step is trivial. For production code, prefer [class-based steps](core_concepts.md#step-classes-preferred) and unit-test them directly — see [Testing Step Classes](#testing-step-classes) below.
@@ -491,6 +500,33 @@ expect(subject).to have_validation_error(:age)
 
 ---
 
+### Idempotency Matchers
+
+`test_reactor` takes the same `idempotency_key:` as `run`. A repeat replays the original run, and the
+subject inspects that original:
+
+```ruby
+first = test_reactor(ChargeReactor, { order_id: 7, amount: 100 }, idempotency_key: "charge-7")
+again = test_reactor(ChargeReactor, { order_id: 7, amount: 100 }, idempotency_key: "charge-7")
+
+expect(first).to be_success
+expect(again).to be_idempotent_replay
+expect(again).to be_success
+```
+
+### History Matchers
+
+With the ActiveRecord storage adapter, `be_findable_by` checks that the run can be found by
+its inputs, the same query the dashboard's input filter runs. Redacted and non-scalar
+inputs never match. On Redis it raises, since Redis can't query history.
+
+```ruby
+subject = test_reactor(ChargeReactor, { user_id: 100, card_token: "tok" })
+
+expect(subject).to be_findable_by(user_id: 100)
+expect(subject).not_to be_findable_by(card_token: "tok")
+```
+
 ## Testing Interrupts
 
 RubyReactor provides comprehensive test helpers for testing reactors that use the `interrupt` DSL for pause/resume workflows.
@@ -912,7 +948,15 @@ it "halts a second call in the same bucket" do
 end
 ```
 
-`be_period_marked.for(period)` checks the marker at the **current** bucket. To verify the marker's TTL behavior, drop to direct Redis: `redis.ttl(RubyReactor::Period.key("monthly_report:7", :month))`.
+`be_period_marked.for(period)` checks the marker at the **current** bucket. Chain `.by(execution_id)` to check which run claimed it:
+
+```ruby
+first = test_reactor(MonthlyReportReactor, org_id: 7)
+expect(first).to be_success
+expect("monthly_report:7").to be_period_marked.for(:month).by(first.reactor_instance.context.context_id)
+```
+
+Marker TTLs exist only on the Redis adapter (ActiveRecord markers are permanent); to check one, drop to direct Redis: `redis.ttl(RubyReactor::Period.key("monthly_report:7", :month))`.
 
 ### Asserting ordered-lock state
 

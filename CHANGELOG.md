@@ -260,6 +260,32 @@ Every breaking or shape-changing item of the rollback work, with what to change.
 
 ### Features
 
+* **ActiveRecord storage adapter.** `config.storage.adapter = :active_record` keeps reactor state
+  and coordination in PostgreSQL, MySQL or SQLite through ActiveRecord ≥ 8.0, which you add to
+  your own Gemfile (it is not a gem dependency). Every documented behavior holds on both
+  adapters: the gem's suite runs on Redis and on all three engines. Execution history is kept
+  permanently; locks, semaphores, rate limits and ordered locks keep their TTLs, judged by the
+  database clock. Storage writes use their own connection pool, so they never join a host
+  transaction. With the ActiveJob backend, an app needs no Redis at all. See
+  `documentation/storage_adapters.md`.
+* **Schema install and upgrades.** `bin/rails generate ruby_reactor:install` copies the adapter's
+  versioned migrations; run it again after upgrading the gem. A missing or mismatched schema
+  raises `RubyReactor::Error::StorageSchemaError` before anything is read or written. Without
+  Rails, migrate `RubyReactor::Storage::ActiveRecordAdapter.migrations_path`.
+* **Dashboard history filters.** With the ActiveRecord adapter, the dashboard lists every run and
+  filters by reactor class, status, time range and input value (`GET /api/reactors?input[user_id]=100`).
+  `GET /api/capabilities` reports whether the adapter supports filters; on Redis a filtered
+  request returns `422`. New matcher: `be_findable_by(**inputs)`.
+* **Run-level idempotency keys.** `Reactor.run(inputs, idempotency_key: "k")` runs at most once
+  per key and reactor class; a repeat returns the original run's result (with
+  `idempotent_replay?`) and runs nothing. Keys are permanent on ActiveRecord and kept for
+  `context_ttl` on Redis. A first call that fails before saving its run gives the key back, and
+  a key whose run died before saving is taken over by the next call. New matcher
+  `be_idempotent_replay`; `test_reactor` accepts `idempotency_key:`.
+* **Period markers name the claiming run.** `period_marker_info(base, every)` returns the run
+  that claimed a `with_period` bucket (and, on ActiveRecord, when); the dashboard shows it, and
+  `be_period_marked.for(every).by(execution_id)` asserts it. On ActiveRecord, markers are permanent.
+
 * **An `interrupt` inside a composed child pauses the top-level run.** Before, the compose step
   failed with `NoMethodError` and the run rolled back. Now the top-level run is stored `paused`, at
   any compose depth and after a `fan_out` map in the child, and the paused result carries its id.
@@ -390,6 +416,13 @@ Every breaking or shape-changing item of the rollback work, with what to change.
   version. See "Step Input Contracts" in the README for the migration.
 
 ### Bug Fixes
+
+* **The dashboard masks inputs declared `redact: true`.** The reactor detail view (including
+  composed children) now shows them as `"[REDACTED]"`; before, it showed stored inputs as-is.
+* **`drain_async_jobs` drains the queue your router uses.** An app with `sidekiq/testing` loaded
+  but reactors routed through ActiveJob now has its ActiveJob jobs drained.
+* **The storage adapter is built once per process**, even when worker threads race for it on
+  first use.
 
 * **The recovery sweep no longer re-runs a run still executing in its caller's process.** A
   synchronous `Reactor.run` (or an inline `continue`) now holds the run's liveness lock, renewed

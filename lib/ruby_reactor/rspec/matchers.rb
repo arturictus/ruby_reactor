@@ -7,6 +7,21 @@ module RubyReactor
       extend ::RSpec::Matchers::DSL
 
       # rubocop:disable Metrics/BlockLength
+      # The run reused an idempotency key: nothing ran, and the result is the
+      # original run's (011 US6). Works on a `test_reactor` subject or a result.
+      #
+      #   expect(test_reactor(ChargeReactor, inputs, idempotency_key: "k")).to be_idempotent_replay
+      matcher :be_idempotent_replay do
+        match do |subject|
+          subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
+          result = subject.respond_to?(:run_result) ? subject.run_result : subject
+          result.respond_to?(:idempotent_replay?) && result.idempotent_replay?
+        end
+
+        failure_message { "expected an idempotent replay (a repeated idempotency_key), but the run executed" }
+        failure_message_when_negated { "expected the run to execute, but it replayed an earlier run with the same key" }
+      end
+
       matcher :be_success do
         match do |subject|
           subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
@@ -434,6 +449,43 @@ module RubyReactor
       #
       #   expect("order:42").to be_locked
       #   expect("order:42").to be_locked.by("ctx-abc")
+      # Whether the history query finds a run by its inputs (011 US4):
+      # the dashboard's input filter, from a spec. Needs the ActiveRecord
+      # storage adapter; redacted or non-scalar inputs never match.
+      #
+      #   expect(subject).to be_findable_by(user_id: 100)
+      #   expect(subject).not_to be_findable_by(card_token: "tok")
+      matcher :be_findable_by do |inputs|
+        match do |subject|
+          subject.ensure_executed! if subject.respond_to?(:ensure_executed!)
+          Matchers.findable?(subject.reactor_instance.context, inputs)
+        end
+
+        failure_message do |subject|
+          "expected execution #{subject.reactor_instance.context.context_id} to be found by inputs #{inputs.inspect}"
+        end
+
+        failure_message_when_negated do |subject|
+          id = subject.reactor_instance.context.context_id
+          "expected execution #{id} not to be found by inputs #{inputs.inspect}"
+        end
+      end
+
+      def self.findable?(context, inputs)
+        adapter = coordination_adapter
+        unless adapter.respond_to?(:query_executions)
+          raise ArgumentError, "be_findable_by needs history queries: config.storage.adapter = :active_record"
+        end
+
+        filters = { reactor_class: context.reactor_class.name, inputs: inputs.to_h { |k, v| [k.to_s, v.to_s] } }
+        cursor = "0"
+        loop do
+          page = adapter.query_executions(filters: filters, cursor: cursor, count: 500)
+          return true if page[:reactors].any? { |row| row[:id] == context.context_id }
+          return false if (cursor = page[:cursor]) == "0"
+        end
+      end
+
       matcher :be_locked do
         match do |key|
           info = Matchers.coordination_adapter.lock_info("lock:#{key}")
@@ -525,19 +577,35 @@ module RubyReactor
       # Asserts that a `with_period` bucket has been marked. Use `.for(period)`.
       #
       #   expect("daily_report:7").to be_period_marked.for(:day)
+      #   expect("annual:sales").to be_period_marked.for(:year).by(first.execution_id)
       matcher :be_period_marked do
         match do |key_base|
           raise ArgumentError, "be_period_marked requires .for(period)" unless @period
 
-          Matchers.coordination_adapter.period_marker?(key_base, @period)
+          marked = Matchers.coordination_adapter.period_marker?(key_base, @period)
+          next marked unless marked && @claimed_by
+
+          Matchers.coordination_adapter.period_marker_info(key_base, @period)&.dig(:context_id) == @claimed_by
         end
 
         chain :for do |period|
           @period = period
         end
 
+        # The run that claimed the bucket (011 US5).
+        chain :by do |execution_id|
+          @claimed_by = execution_id
+        end
+
         failure_message do |key_base|
-          "expected period bucket #{RubyReactor::Period.key(key_base, @period).inspect} to be marked, but it is not"
+          bucket = RubyReactor::Period.key(key_base, @period).inspect
+          claim = Matchers.coordination_adapter.period_marker_info(key_base, @period)
+          if claim && @claimed_by
+            "expected period bucket #{bucket} to be claimed by #{@claimed_by.inspect}, " \
+              "but it was claimed by #{claim[:context_id].inspect}"
+          else
+            "expected period bucket #{bucket} to be marked, but it is not"
+          end
         end
 
         failure_message_when_negated do |key_base|

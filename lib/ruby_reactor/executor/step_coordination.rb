@@ -645,7 +645,8 @@ module RubyReactor
 
         result = yield
         if continuing_success?(result) && !chain_failed?(result)
-          storage_adapter.period_mark(key, RubyReactor::Period.ttl_seconds(config[:every]))
+          storage_adapter.period_mark(key, RubyReactor::Period.ttl_seconds(config[:every]),
+                                      context_id: @context.context_id)
         end
         result
       end

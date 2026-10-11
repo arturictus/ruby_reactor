@@ -35,10 +35,13 @@ end
 # The one locked position: at most one runner per account_id at a time.
 class StepLockChargeStep < RubyReactor::Step
   input :account_id, :string
+  # Seconds to hold the lock — lets a demo make two runs collide on purpose.
+  input :hold_seconds, optional: true
 
   with_lock(wait: 2) { |args| "demo:acct:#{args[:account_id]}" }
 
   def run
+    sleep inputs.hold_seconds.to_f if inputs.hold_seconds
     StepLockDemoLog.record(step: :charge, phase: :run, account_id: inputs.account_id,
                                                     at: Time.current.iso8601(3))
     Success(charged: true, account_id: inputs.account_id)
@@ -83,6 +86,7 @@ class StepLockDemoReactor < RubyReactor::Reactor
 
   input :account_id, :string
   input :fail_after_charge, optional: true
+  input :hold_seconds, optional: true
 
   step :audit, StepLockAuditStep do
     argument :account_id, input(:account_id)
@@ -90,6 +94,7 @@ class StepLockDemoReactor < RubyReactor::Reactor
 
   step :charge, StepLockChargeStep do
     argument :account_id, input(:account_id)
+    argument :hold_seconds, input(:hold_seconds)
     wait_for :audit
   end
 

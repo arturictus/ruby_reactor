@@ -21,8 +21,8 @@ RSpec.describe "Locking Integration", type: :reactor do
 
     it "fails synchronously when lock is held by someone else" do
       # Manually hold the lock
-      redis.hset("lock:user_1", "owner", "other_guy")
-      redis.hset("lock:user_1", "count", "1")
+      coordination(:hset, "lock:user_1", "owner", "other_guy")
+      coordination(:hset, "lock:user_1", "count", "1")
 
       expect do
         SimpleLockReactor.run(user_id: 1)
@@ -55,10 +55,10 @@ RSpec.describe "Locking Integration", type: :reactor do
         # Wait past the original TTL. Extender (interval = ttl/3 ≈ 0.67s)
         # should have refreshed the key at least twice.
         sleep 2.5
-        expect(redis.exists?("lock:extend_test")).to be true
+        expect(coordination(:exists, "lock:extend_test")).to be true
 
         lock.release
-        expect(redis.exists?("lock:extend_test")).to be false
+        expect(coordination(:exists, "lock:extend_test")).to be false
       end
 
       it "stops extending after release" do
@@ -73,19 +73,19 @@ RSpec.describe "Locking Integration", type: :reactor do
 
         # No more extender activity: another holder takes the key, and our
         # (dead) extender must not refresh someone else's lock.
-        redis.hset("lock:extend_stop_test", "owner", "someone_else")
-        redis.hset("lock:extend_stop_test", "count", "1")
-        redis.expire("lock:extend_stop_test", 1)
+        coordination(:hset, "lock:extend_stop_test", "owner", "someone_else")
+        coordination(:hset, "lock:extend_stop_test", "count", "1")
+        coordination(:expire, "lock:extend_stop_test", 1)
 
         sleep 1.2
-        expect(redis.exists?("lock:extend_stop_test")).to be false
+        expect(coordination(:exists, "lock:extend_stop_test")).to be false
       end
     end
 
     it "reschedules asynchronously when lock is held" do
       # Manually hold the lock
-      redis.hset("lock:user_1", "owner", "other_guy")
-      redis.hset("lock:user_1", "count", "1")
+      coordination(:hset, "lock:user_1", "owner", "other_guy")
+      coordination(:hset, "lock:user_1", "count", "1")
 
       RubyReactor.configuration.lock_snooze_base_delay = 5
       RubyReactor.configuration.lock_snooze_jitter = 0
@@ -118,7 +118,15 @@ RSpec.describe "Locking Integration", type: :reactor do
       expect(PeriodicCounters.runs).to eq(1)
 
       bucket_key = RubyReactor::Period.key("daily_report:7", :day)
-      expect(redis.exists?(bucket_key)).to be true
+      expect(RubyReactor.configuration.storage_adapter.period_seen?(bucket_key)).to be true
+    end
+
+    # 011 US5: the marker names the run that claimed the bucket.
+    it "records which run claimed the bucket" do
+      result = PeriodicReactor.run(org_id: 8)
+
+      info = RubyReactor.configuration.storage_adapter.period_marker_info("daily_report:8", :day)
+      expect(info[:context_id]).to eq(result.execution_id)
     end
 
     it "halts subsequent runs in the same bucket without executing steps" do
@@ -146,7 +154,7 @@ RSpec.describe "Locking Integration", type: :reactor do
       expect(first).to be_failure
 
       bucket_key = RubyReactor::Period.key("failing_daily:1", :day)
-      expect(redis.exists?(bucket_key)).to be false
+      expect(RubyReactor.configuration.storage_adapter.period_seen?(bucket_key)).to be false
 
       second = FailingPeriodicReactor.run(org_id: 1)
       expect(second).to be_failure
@@ -180,10 +188,10 @@ RSpec.describe "Locking Integration", type: :reactor do
       expect(result.reason).to eq(:period)
       expect(PeriodicCounters.locked_runs).to eq(0)
       # The lock must still be released on the skip path.
-      expect(redis.exists?("lock:locked_periodic:9")).to be false
+      expect(coordination(:exists, "lock:locked_periodic:9")).to be false
     end
 
-    it "uses TTL = 2x the period length" do
+    it "uses TTL = 2x the period length", redis_only: "ActiveRecord period markers are permanent" do
       PeriodicReactor.run(org_id: 7)
       bucket_key = RubyReactor::Period.key("daily_report:7", :day)
       ttl = redis.ttl(bucket_key)
@@ -223,8 +231,8 @@ RSpec.describe "Locking Integration", type: :reactor do
       let(:adapter) { RubyReactor.configuration.storage_adapter }
 
       it "matches a held lock" do
-        redis.hset("lock:order:42", "owner", "ctx-abc")
-        redis.hset("lock:order:42", "count", "1")
+        coordination(:hset, "lock:order:42", "owner", "ctx-abc")
+        coordination(:hset, "lock:order:42", "count", "1")
 
         expect("order:42").to be_locked
         expect("order:42").to be_locked.by("ctx-abc")
@@ -235,8 +243,8 @@ RSpec.describe "Locking Integration", type: :reactor do
       end
 
       it "rejects a wrong-owner assertion" do
-        redis.hset("lock:order:42", "owner", "ctx-abc")
-        redis.hset("lock:order:42", "count", "1")
+        coordination(:hset, "lock:order:42", "owner", "ctx-abc")
+        coordination(:hset, "lock:order:42", "count", "1")
 
         expect("order:42").not_to be_locked.by("someone-else")
       end
@@ -263,8 +271,8 @@ RSpec.describe "Locking Integration", type: :reactor do
 
       it "sums every bucket since the given time with .since" do
         now = Time.now.to_i
-        redis.set("rate:api:98:minute:#{(now / 60) - 1}", 1)
-        redis.set("rate:api:98:minute:#{now / 60}", 1)
+        coordination(:set, "rate:api:98:minute:#{(now / 60) - 1}", 1)
+        coordination(:set, "rate:api:98:minute:#{now / 60}", 1)
 
         expect("api:98").to have_rate_limit_count(1).for(:minute)
         expect("api:98").to have_rate_limit_count(2).for(:minute).since(now - 60)
@@ -350,7 +358,13 @@ RSpec.describe "Locking Integration", type: :reactor do
   end
 
   describe "Rate Limits" do
-    before { RateLimitCounters.reset }
+    # Buckets are keyed by Time.now; frozen, a slow runner (CI, AR round trips)
+    # can't roll a per-second bucket mid-example. Bucket TTLs (2x period) are
+    # still storage-clock real time, so an example must finish within 2 s.
+    before do
+      RateLimitCounters.reset
+      allow(Time).to receive(:now).and_return(Time.now)
+    end
 
     def capture_rate_limit_error
       yield
@@ -428,7 +442,7 @@ RSpec.describe "Locking Integration", type: :reactor do
       3.times { RateLimitedReactor.run(account_id: 1) }
 
       bucket_key = "rate:api:1:second:#{Time.now.to_i / 1}"
-      before_failed = redis.get(bucket_key).to_i
+      before_failed = coordination(:get, bucket_key).to_i
 
       raised = nil
       begin
@@ -438,7 +452,7 @@ RSpec.describe "Locking Integration", type: :reactor do
       end
       expect(raised).not_to be_nil
 
-      after_failed = redis.get(bucket_key).to_i
+      after_failed = coordination(:get, bucket_key).to_i
       expect(after_failed).to eq(before_failed)
     end
 
@@ -464,7 +478,7 @@ RSpec.describe "Locking Integration", type: :reactor do
         2.times { MultiWindowRateLimitedReactor.run(account_id: 5) }
 
         minute_key = "rate:multi_api:5:minute:#{Time.now.to_i / 60}"
-        before = redis.get(minute_key).to_i
+        before = coordination(:get, minute_key).to_i
 
         raised = nil
         begin
@@ -474,7 +488,7 @@ RSpec.describe "Locking Integration", type: :reactor do
         end
         expect(raised).not_to be_nil
 
-        after = redis.get(minute_key).to_i
+        after = coordination(:get, minute_key).to_i
 
         # Minute window still has headroom, but should not have been incremented
         # because the second window failed first.
@@ -570,7 +584,8 @@ RSpec.describe "Locking Integration", type: :reactor do
         worker.perform(store_fresh_context(PeriodicReactor, { org_id: 70 }), "PeriodicReactor")
 
         expect(PeriodicCounters.runs).to eq(1)
-        expect(redis.exists?(RubyReactor::Period.key("daily_report:70", :day))).to be true
+        expect(RubyReactor.configuration.storage_adapter.period_seen?(RubyReactor::Period.key("daily_report:70",
+                                                                                              :day))).to be true
       end
 
       it "skips a fresh worker pass when the bucket is already marked" do
@@ -672,8 +687,8 @@ RSpec.describe "Locking Integration", type: :reactor do
 
       # Pool started with 2 tokens; after 3 sequential runs all tokens should
       # still be available, proving release happened each time.
-      expect(redis.llen("semaphore:api_limit")).to eq(2)
-      expect(redis.scard("semaphore:api_limit:held")).to eq(0)
+      expect(coordination(:llen, "semaphore:api_limit")).to eq(2)
+      expect(coordination(:scard, "semaphore:api_limit:held")).to eq(0)
     end
 
     it "ignores double release without inflating the pool" do
@@ -682,8 +697,8 @@ RSpec.describe "Locking Integration", type: :reactor do
       expect(s.release).to be true
       expect(s.release).to be false
 
-      expect(redis.llen("semaphore:api_limit")).to eq(2)
-      expect(redis.scard("semaphore:api_limit:held")).to eq(0)
+      expect(coordination(:llen, "semaphore:api_limit")).to eq(2)
+      expect(coordination(:scard, "semaphore:api_limit:held")).to eq(0)
     end
 
     it "never grows past limit even under repeated releases" do
@@ -696,7 +711,7 @@ RSpec.describe "Locking Integration", type: :reactor do
       RubyReactor.configuration.storage_adapter.semaphore_release("semaphore:api_limit", token, 2)
       RubyReactor.configuration.storage_adapter.semaphore_release("semaphore:api_limit", token, 2)
 
-      expect(redis.llen("semaphore:api_limit")).to eq(2)
+      expect(coordination(:llen, "semaphore:api_limit")).to eq(2)
     end
   end
 end

@@ -23,7 +23,8 @@ RSpec.describe RubyReactor::InterruptClaims do
   describe "storage" do
     let(:id) { SecureRandom.uuid }
 
-    it "claims an interrupt once, for the context's TTL" do
+    it "claims an interrupt once, for the context's TTL",
+       redis_only: "Redis TTL; claim semantics in adapter_contract_spec" do
       expect(storage.claim_interrupt_resume(id, klass_name, :approval, "{}")).to be(true)
       expect(storage.claim_interrupt_resume(id, klass_name, :approval, "{}")).to be(false)
 
@@ -37,7 +38,7 @@ RSpec.describe RubyReactor::InterruptClaims do
       expect(storage.retrieve_interrupt_resumes(id, klass_name, %w[a b])).to eq("a" => '{"x":1}')
     end
 
-    it "counts attempts atomically, with a TTL" do
+    it "counts attempts atomically, with a TTL", redis_only: "Redis TTL; counting in adapter_contract_spec" do
       expect(storage.increment_interrupt_attempts(id, klass_name, :approval)).to eq(1)
       expect(storage.increment_interrupt_attempts(id, klass_name, :approval)).to eq(2)
       expect(redis.ttl("reactor:#{klass_name}:context:#{id}:resume_attempts:approval")).to be > 0

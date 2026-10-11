@@ -17,14 +17,14 @@ RSpec.describe "RubyReactor Interrupt Feature", type: :integration do
       expect(execution.correlation_id).to eq("approval-prepared-123")
       expect(execution.intermediate_results).to include(prepare: "prepared-123")
 
-      # 3. Verify state in Redis
+      # 3. Verify state in storage
       context_id = execution.execution_id
-      stored_context = redis.get("reactor:TestInterruptReactor:context:#{context_id}")
-      expect(stored_context).not_to be_nil
+      storage = RubyReactor.configuration.storage_adapter
+      expect(storage.retrieve_context(context_id, "TestInterruptReactor")).not_to be_nil
 
       # Verify correlation ID mapping
-      stored_id = redis.get("reactor:TestInterruptReactor:correlation:approval-prepared-123")
-      expect(stored_id).to eq(context_id)
+      expect(storage.retrieve_context_id_by_correlation_id("approval-prepared-123", "TestInterruptReactor"))
+        .to eq(context_id)
 
       # 4. Resume execution via continue
       payload = { status: "approved", approver: "admin" }

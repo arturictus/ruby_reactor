@@ -22,6 +22,7 @@ Most examples in this documentation mix class steps with inline blocks — class
 - [Composition](composition.md)
 - [Data Pipelines](data_pipelines.md)
 - [Retry Configuration](retry_configuration.md)
+- [Storage Adapters](storage_adapters.md) — Redis or ActiveRecord, history, dashboard filters, idempotency keys
 - [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](locks_and_semaphores.md) — including [step-scoped coordination](locks_and_semaphores.md#step-scoped-coordination)
 - [Interrupts](interrupts.md)
 - [Middlewares & OpenTelemetry](middlewares.md)
@@ -147,8 +148,9 @@ RubyReactor provides comprehensive error handling:
 
 ## Requirements
 
-- Ruby 3.0+
-- Redis (for background execution and state persistence)
+- Ruby 3.0+ (3.2+ for the ActiveRecord storage adapter)
+- A storage backend: Redis, or a relational database (PostgreSQL, MySQL, SQLite) through the
+  [ActiveRecord storage adapter](storage_adapters.md)
 - Sidekiq or ActiveJob (for background processing)
 - dry-validation (optional, for input/payload validation)
 

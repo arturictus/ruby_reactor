@@ -642,7 +642,7 @@ module RubyReactor
 
       config = @reactor_class.period_config
       ttl = RubyReactor::Period.ttl_seconds(config[:every])
-      RubyReactor.configuration.storage_adapter.period_mark(period_key(config), ttl)
+      RubyReactor.configuration.storage_adapter.period_mark(period_key(config), ttl, context_id: @context.context_id)
     end
 
     def period_key(config)

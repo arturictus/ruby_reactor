@@ -37,6 +37,12 @@ end
 
 loader = Zeitwerk::Loader.for_gem
 loader.inflector.inflect("api" => "API", "rspec" => "RSpec")
+# Opt-in integrations loaded explicitly, never by the gem's loader: the
+# ActiveRecord storage adapter (required only when selected, 011 R-01) and the
+# Rails generators (discovered by Rails itself).
+loader.ignore("#{__dir__}/ruby_reactor/storage/active_record_adapter.rb",
+              "#{__dir__}/ruby_reactor/storage/active_record",
+              "#{__dir__}/generators")
 loader.setup
 
 module RubyReactor
@@ -396,6 +402,13 @@ module RubyReactor
     def failure?
       false
     end
+  end
+
+  # Marks the result of a run that reused an idempotency key: no step ran, and
+  # the result is the original run's (011 US6). Results of first runs don't
+  # respond to `idempotent_replay?`.
+  module IdempotentReplay
+    def idempotent_replay? = true
   end
 
   # Global helper methods

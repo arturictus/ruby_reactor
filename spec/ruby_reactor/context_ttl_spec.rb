@@ -5,7 +5,7 @@ require "spec_helper"
 # Phase 4: storage is load-bearing, so a long-running / snoozed context must not
 # expire mid-flight. Every store_context write re-stamps the TTL with
 # config.context_ttl, so repeated checkpoints keep the key alive indefinitely.
-RSpec.describe "Context TTL refresh" do
+RSpec.describe "Context TTL refresh", redis_only: "Redis TTL; ActiveRecord keeps history (011 FR-014)" do
   let(:storage) { RubyReactor.configuration.storage_adapter }
   let(:reactor_class) { Class.new { def self.name = "TtlTestReactor" } }
 

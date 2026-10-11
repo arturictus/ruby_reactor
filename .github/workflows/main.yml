@@ -10,12 +10,30 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: Ruby ${{ matrix.ruby }}
+    name: Ruby ${{ matrix.ruby }} (${{ matrix.storage }})
     strategy:
+      fail-fast: false
       matrix:
         ruby:
           - '3.4.8'
           - '4.0.4'
+        # Storage adapter under test (specs/011): Redis, and the ActiveRecord
+        # adapter on each supported engine. Redis stays up in every job: it is
+        # the Sidekiq queue for the live-worker specs.
+        storage: [redis, sqlite, postgres, mysql]
+        include:
+          - storage: redis
+            test_storage: redis
+            database_url: ''
+          - storage: sqlite
+            test_storage: active_record
+            database_url: sqlite3:tmp/ruby_reactor_test.sqlite3?timeout=5000
+          - storage: postgres
+            test_storage: active_record
+            database_url: postgres://postgres:postgres@localhost:5432/ruby_reactor_test
+          - storage: mysql
+            test_storage: active_record
+            database_url: trilogy://root:root@127.0.0.1:3306/ruby_reactor_test
 
     services:
       redis:
@@ -27,6 +45,34 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ruby_reactor_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: ruby_reactor_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      RUBY_REACTOR_TEST_STORAGE: ${{ matrix.test_storage }}
+      RUBY_REACTOR_TEST_DATABASE_URL: ${{ matrix.database_url }}
 
     steps:
     - uses: actions/checkout@v4
@@ -43,10 +89,39 @@ jobs:
 
   demo_app:
     runs-on: ubuntu-latest
-    name: demo_app Rails Tests
+    name: demo_app Rails Tests (${{ matrix.combo }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # redis-sidekiq is today's stack. The ar-* combos use the ActiveRecord
+        # storage adapter with the ActiveJob queue and have NO Redis service,
+        # which proves a Redis-free deployment on every engine (011 SC-005).
+        combo: [redis-sidekiq, ar-sqlite, ar-postgres, ar-mysql]
+        include:
+          - combo: redis-sidekiq
+            storage: redis
+            queue: sidekiq
+            database_url: ''
+            redis_url: redis://localhost:6379/1
+          - combo: ar-sqlite
+            storage: active_record
+            queue: active_job
+            database_url: ''
+            redis_url: redis://127.0.0.1:1
+          - combo: ar-postgres
+            storage: active_record
+            queue: active_job
+            database_url: postgres://postgres:postgres@localhost:5432/demo_test
+            redis_url: redis://127.0.0.1:1
+          - combo: ar-mysql
+            storage: active_record
+            queue: active_job
+            database_url: trilogy://root:root@127.0.0.1:3306/demo_test
+            redis_url: redis://127.0.0.1:1
     services:
       redis:
-        image: redis:7-alpine
+        # Only the redis-sidekiq combo gets a Redis server.
+        image: ${{ matrix.combo == 'redis-sidekiq' && 'redis:7-alpine' || '' }}
         ports:
           - 6379:6379
         options: >-
@@ -54,11 +129,40 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      postgres:
+        image: ${{ matrix.combo == 'ar-postgres' && 'postgres:16' || '' }}
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      mysql:
+        image: ${{ matrix.combo == 'ar-mysql' && 'mysql:8.4' || '' }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     env:
       RAILS_ENV: test
-      REDIS_URL: redis://localhost:6379/1
+      REDIS_URL: ${{ matrix.redis_url }}
+      RUBY_REACTOR_STORAGE: ${{ matrix.storage }}
+      RUBY_REACTOR_QUEUE: ${{ matrix.queue }}
     steps:
     - uses: actions/checkout@v4
+    # Exported only when the combo names one: an empty DATABASE_URL would
+    # override database.yml (SQLite) with nothing.
+    - name: Select database
+      if: matrix.database_url != ''
+      run: echo "DATABASE_URL=${{ matrix.database_url }}" >> "$GITHUB_ENV"
     - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
@@ -67,10 +171,14 @@ jobs:
         working-directory: demo_app
     - name: Prepare database
       working-directory: demo_app
-      run: bin/rails db:test:prepare
+      run: bin/rails db:prepare
     - name: Run Rails specs
       working-directory: demo_app
       run: bundle exec rspec
+    - name: Run the demo acceptance tasks (Redis-free)
+      if: matrix.storage == 'active_record'
+      working-directory: demo_app
+      run: bin/rails demo:all
 
   frontend:
     runs-on: ubuntu-latest
