@@ -1029,12 +1029,12 @@ with `/speckit-demo-tests` and then checked against these tasks.
   `router:`. Fix stragglers.
 - [X] T073 Run `bundle exec rubocop` and fix offenses. Add no `--disable-pending-cops`, and add
   `rubocop:disable` only where existing files already do it for the same cop.
-- [ ] T074 Full suite on its own Redis DB: `RUBY_REACTOR_TEST_REDIS_URL=redis://localhost:6780/3
+- [X] T074 Full suite on its own Redis DB: `RUBY_REACTOR_TEST_REDIS_URL=redis://localhost:6780/3
   bundle exec rspec`. Compare with T004: no new failures, and the new example count is recorded
   (SC-002).
-- [ ] T075 Walk [quickstart.md](quickstart.md) §1–§6, run every listed command, and tick each table
+- [X] T075 Walk [quickstart.md](quickstart.md) §1–§6, run every listed command, and tick each table
   row in `pr-description.md`.
-- [ ] T076 Docker acceptance (Constitution VI.4), in an isolated project because the container
+- [X] T076 Docker acceptance (Constitution VI.4), in an isolated project because the container
   names are fixed:
   1. `docker compose -p rr-queues up -d demo-redis demo-sidekiq`;
   2. `docker compose -p rr-queues run --rm demo-app bin/rails demo:queues`. Confirm the printed
@@ -1045,7 +1045,7 @@ with `/speckit-demo-tests` and then checked against these tasks.
   5. `docker compose -p rr-queues down`.
 
   Optionally drive it with the `demo-app-e2e-verify` skill.
-- [ ] T077 Finish `specs/011-queue-config-background-override/pr-description.md`:
+- [X] T077 Finish `specs/011-queue-config-background-override/pr-description.md`:
   - a summary;
   - the spec revisions (R-17);
   - the migration notes (R-13);
@@ -1058,8 +1058,8 @@ with `/speckit-demo-tests` and then checked against these tasks.
 
 - **T013**: both routers are covered by one shared spec, `spec/ruby_reactor/adapters/router_queue_spec.rb`
   (`for_each_async_backend`), instead of a new Sidekiq file plus an edit to the ActiveJob one.
-- **T019/T020**: the existing mock-based `spec/ruby_reactor/adapters/{sidekiq,active_job}/worker_spec.rb`
-  gained `allow` stubs for the new collaborators (`current_queue=`, `clear_run_dispatch_wait`,
+- **T019/T020, T048**: the existing mock-based `spec/ruby_reactor/adapters/{sidekiq,active_job}/worker_spec.rb`
+  and `spec/ruby_reactor/step/map_step_spec.rb` gained `allow` stubs for the new collaborators (`current_queue=`, `clear_run_dispatch_wait`,
   `store_run_dispatch`). No expectation changed.
 - **T035 AS10**: the rollback crash windows live in `hop_crash_windows_spec.rb` (its `rollback` group),
   next to the forward ones.
@@ -1072,6 +1072,10 @@ with `/speckit-demo-tests` and then checked against these tasks.
 - **T056/T057**: an `async_step`'s terminal record keeps the queue it ran on (`run_fields["queue"]`).
 - **T064**: `gui/src/lib/reactors.ts` is unchanged — the detail response is untyped; `stepQueue` lives
   in `gui/src/lib/stepBackground.ts`.
+- **T074–T076**: the quickstart run surfaced that the Sidekiq `Worker`/`SweeperWorker` still read
+  `queue_name` at class load for their own snoozes (an order-dependent spec failure); both now
+  override Sidekiq's `get_sidekiq_options`, with a regression example in `backend_placement_spec.rb`.
+  The Docker run needs `bin/rails db:prepare` before `demo:queues` (quickstart §7 updated).
 - **T068**: the demo's manual undo uses a new `TestSubject#undo(process_jobs:)` helper (FR-021), with a
   gem spec in `spec/ruby_reactor/rspec/test_subject_undo_spec.rb`.
 

@@ -114,8 +114,9 @@ cd demo_app && REDIS_URL=redis://localhost:6780/5 bin/rails demo:queues
 
 # real Sidekiq, with the demo queues consumed. docker-compose.yml uses fixed container names,
 # so run an isolated project if another worktree's stack is up.
-docker compose -p rr-queues up -d demo-redis demo-sidekiq
-docker compose -p rr-queues run --rm demo-app bin/rails demo:queues
+docker compose -p rr-queues up -d --build demo-redis demo-sidekiq
+docker compose -p rr-queues run --rm demo-app bash -c "bin/rails db:prepare && bin/rails demo:queues"
+docker compose -p rr-queues down
 ```
 
 Expected `demo:queues` output: each step and its queue (`reserve`: caller; `charge`/`settle`:

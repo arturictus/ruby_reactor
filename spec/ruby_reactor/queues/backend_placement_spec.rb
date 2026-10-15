@@ -51,6 +51,14 @@ RSpec.describe "job placement without declarations" do
       expect(pending.map(&:queue)).to all(eq("critical"))
     end
 
+    it "snoozes a reactor Worker on the queue_name current at enqueue, not the one it loaded with" do
+      RubyReactor.configuration.queue_name = :critical
+      worker = async_backend == :sidekiq ? RubyReactor::Adapters::Sidekiq::Worker : RubyReactor::Adapters::ActiveJob::Worker
+      worker.perform_in(1, "ctx", "K", 1)
+
+      expect(pending.map(&:queue)).to eq(["critical"])
+    end
+
     it "adds no queue to any job's arguments" do
       run_everything
 

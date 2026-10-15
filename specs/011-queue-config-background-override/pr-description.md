@@ -48,16 +48,17 @@ protocols the gem already had:
 Baseline (T004), before any change (`7357a035`), on its own Redis DB:
 **1611 examples, 0 failures** (`slow` excluded).
 
-After (T074): see below.
+After (T074), same command: **1787 examples, 0 failures** (6m17s). `rubocop`: no offenses.
 
 New specs: `spec/ruby_reactor/queues/` (declaration, resolution, enqueue_run, Worker, US1 reactor
 queue, backend placement, compose hops, crash windows forward and rollback, rollback hops, manual
 undo hand-off, maps, child re-dispatches, step queues, definition rejections, waiting runs), router
 queues, the dispatch record, the lock lease, the RSpec additions, the API, and the GUI
-(`ReactorDetail`, `stepBackground`). `rubocop`: no offenses.
+(`ReactorDetail`, `stepBackground`; vitest 73 passed).
 
 Existing specs touched: `sweeper_spec` and `step_sweeper_spec` gained recorded-queue examples; the
-two mock-based Worker specs gained `allow` stubs for the new collaborators (no expectation changed).
+mock-based Worker specs and `map_step_spec` gained `allow` stubs for the new collaborators (no
+expectation changed).
 
 ## Demo (Constitution VI)
 
@@ -65,5 +66,43 @@ two mock-based Worker specs gained `allow` stubs for the new collaborators (no e
 `QueueEmailStep` (`:demo_emails`); `demo:queues` (in `demo:all`) runs a success, a failure with
 rollback hops, and a handed-off manual undo; `demo_app/spec/reactors/queue_demo_reactor_spec.rb`
 uses only the shipped matchers; `demo-sidekiq` consumes the demo queues.
+
+Docker acceptance (T076), `docker compose -p rr-queues run --rm demo-app bash -c "bin/rails db:prepare && bin/rails demo:queues"`
+against a real Sidekiq consuming `default demo_orders demo_stripe demo_emails`:
+
+```text
+>>> QueueDemoReactor.run(amount: 42)
+     run         reserve  on the calling process
+     run         price    on demo_orders
+     forward hop at deposit: demo_orders -> demo_stripe
+     forward hop at confirm: demo_stripe -> demo_orders
+     run         confirm  on demo_orders
+     deposit: charge, settle on demo_stripe
+   email ran on "demo_emails"; final: completed
+✅ SUCCESS: every unit ran on its own queue, hopping to :demo_stripe and back
+
+>>> QueueDemoReactor.run(amount: 42, fail_at_confirm: true)
+     compensate  confirm  on demo_orders
+     rollback hop at deposit: demo_orders -> demo_stripe   (undo settle, charge on demo_stripe)
+     rollback hop at price: demo_stripe -> demo_orders     (undo price, reserve on demo_orders)
+   final: failed
+✅ SUCCESS: compensated where it failed, each unit undone on its own queue
+
+>>> QueueDemoReactor.undo(id) of the completed run
+   undo returned at once; run is rolling_back
+   final: cancelled; rollback hops: ["demo_stripe", "demo_orders"]
+✅ SUCCESS: the undo was handed to a worker and hopped per unit
+```
+
+With `demo-sidekiq` stopped, a new run stayed `running` and the dashboard API returned
+`waiting_on: {"queue" => "demo_orders", "since" => …}`; once Sidekiq restarted the run completed and
+its wait cleared.
+
+## Found during implementation
+
+- The Sidekiq `Worker` / `SweeperWorker` classes captured `queue_name` in `sidekiq_options` at load,
+  which also governed the Worker's own snoozes. Both now resolve it per job by overriding Sidekiq's
+  `get_sidekiq_options` (inline `Naming/AccessorMethodName` disable: Sidekiq's method name).
+- A handed-off manual undo of an `aborted` run still runs its cut-off `compensate` first.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
