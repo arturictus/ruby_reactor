@@ -9,6 +9,9 @@ module RubyReactor
     # Seconds a manual undo waits for the run's context lock (009 R-12).
     UNDO_LOCK_WAIT = 5
 
+    # Seconds a repeated idempotency key waits for the original run's first save (011 US6).
+    IDEMPOTENCY_WAIT = 2
+
     # Statuses a resume is accepted in: a run paused at an interrupt (008
     # FR-032), or one executing (another resume, its first run, a wait on
     # background work) for an interrupt that has not run yet (010 FR-017). A
@@ -104,19 +107,20 @@ module RubyReactor
       end
     end
 
-    def run(inputs = {})
+    # `idempotency_key:` runs the reactor at most once per key and class; a
+    # repeat returns the original run's result (011 US6). Inputs can be passed
+    # as a Hash or braceless (`run(order_id: 1)`); pass a Hash when an input is
+    # itself named `idempotency_key`.
+    def run(inputs = nil, idempotency_key: nil, **braceless_inputs)
+      inputs ||= braceless_inputs
       # Before the context exists, so an incomplete definition never saves one.
       self.class.validate_definition!
 
       # For all reactors, initialize context first to capture execution ID
       @context = @context.is_a?(Context) ? @context : Context.new(inputs, self.class)
 
-      # Validate inputs
-      validation_result = self.class.validate_inputs(inputs)
-      if validation_result.failure?
-        handle_validation_failure(validation_result)
-        return validation_result
-      end
+      early_result = invalid_inputs_or_replay(inputs, idempotency_key)
+      return early_result if early_result
 
       # Assign-at-enqueue: ordered_lock nonce is INCRed atomically here so
       # the order matches the caller's order, not whichever worker happens to
@@ -159,6 +163,8 @@ module RubyReactor
         @undo_trace = executor.undo_trace
       end
       @result
+    ensure
+      release_unsaved_claim
     end
 
     # Accepting a resume (010 R-05, contracts/resume-protocol.md P-2–P-4):
@@ -670,6 +676,86 @@ module RubyReactor
       failure.instance_variable_set(:@type, :input_validation)
       def failure.invalid_payload? = true
       failure
+    end
+
+    # The result that ends a run before it starts: a validation Failure, or the
+    # replay of an idempotency key already used. The key is claimed only after
+    # validation (invalid inputs never claim it), and before anything is saved
+    # or a nonce assigned (a repeat writes nothing).
+    def invalid_inputs_or_replay(inputs, idempotency_key)
+      validation_result = self.class.validate_inputs(inputs)
+      if validation_result.failure?
+        handle_validation_failure(validation_result)
+        return validation_result
+      end
+
+      idempotent_replay(idempotency_key) if idempotency_key
+    end
+
+    # nil when this run claimed `key` (or took over a dead claim); otherwise the
+    # original run's result, marked IdempotentReplay and carrying the original
+    # execution id.
+    def idempotent_replay(key)
+      storage = configuration.storage_adapter
+      storage_name = RubyReactor.reactor_storage_name(self.class)
+      existing = storage.claim_idempotency_key(key.to_s, @context.context_id, storage_name)
+      result = existing && original_result(existing)
+      if result.nil?
+        # Claimed now, or the claim's run died before saving: take it over, or
+        # re-read if another caller already did (review F1).
+        return idempotent_replay(key) if existing && !storage.reclaim_idempotency_key(key.to_s, existing,
+                                                                                      @context.context_id, storage_name)
+
+        @claimed_idempotency_key = key.to_s
+        return nil
+      end
+
+      result.extend(RubyReactor::IdempotentReplay)
+      unless result.respond_to?(:execution_id) && result.execution_id
+        result.define_singleton_method(:execution_id) do
+          existing
+        end
+      end
+      result
+    end
+
+    # The original's result once it is stored; a DispatchResult while it is
+    # running, or alive but not saved yet (it holds its liveness lock); nil
+    # when it was never saved within IDEMPOTENCY_WAIT and holds no liveness
+    # lock — it died between claiming the key and its first save.
+    def original_result(execution_id)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + IDEMPOTENCY_WAIT
+      begin
+        result = self.class.find(execution_id).result
+        return result unless result == :unexecuted
+      rescue Error::ValidationError # not saved yet
+        if Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+          sleep 0.1
+          retry
+        end
+        return nil unless configuration.storage_adapter.lock_held?("async:#{execution_id}")
+      end
+      RubyReactor::DispatchResult.new(job_id: nil, execution_id: execution_id)
+    end
+
+    # A run that claimed an idempotency key but never saved its context (it
+    # failed or was refused before starting) gives the key back, so a retry
+    # runs instead of replaying a run that doesn't exist (review F1). Never
+    # raises: it runs in `ensure`, where an error would hide the run's own.
+    def release_unsaved_claim
+      key = @claimed_idempotency_key
+      return unless key
+
+      @claimed_idempotency_key = nil
+      storage = configuration.storage_adapter
+      storage_name = RubyReactor.reactor_storage_name(self.class)
+      return if storage.retrieve_context(@context.context_id, storage_name)
+
+      storage.release_idempotency_key(key, @context.context_id, storage_name)
+    rescue StandardError => e
+      configuration.logger.warn(
+        "ruby_reactor.idempotency op=release key=#{key} error=#{e.class} message=#{e.message.inspect}"
+      )
     end
 
     def save_context

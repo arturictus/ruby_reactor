@@ -39,17 +39,13 @@ RSpec.describe RateLimitDemoReactor, type: :reactor do
     end
 
     it "does not increment the counter when the limit is exceeded" do
-      bucket_key = "rate:api:acct_1:second:#{Time.now.to_i / 1}"
-      before_count = redis.get(bucket_key).to_i
-
       begin
         run_sync
       rescue RubyReactor::RateLimit::ExceededError
         nil
       end
 
-      after_count = redis.get(bucket_key).to_i
-      expect(after_count).to eq(before_count)
+      expect("api:acct_1").to have_rate_limit_count(3).for(:second)
     end
   end
 

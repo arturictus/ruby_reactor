@@ -113,6 +113,15 @@ RSpec.describe "step-scoped semaphore, rate limit, and period", :step_coordinati
       expect(overlap_recorder.entries(:after_period)).not_to be_empty
     end
 
+    # 011 US5: a step-level marker names the run that claimed the bucket too.
+    it "records which run claimed the step's bucket" do
+      bucket_key = unique_id
+      first = PeriodReactor.run(run_id: step_coord_run_id, bucket_key: bucket_key)
+
+      info = RubyReactor.configuration.storage_adapter.period_marker_info("period:#{bucket_key}", :hour)
+      expect(info[:context_id]).to eq(first.execution_id)
+    end
+
     it "does not mark the bucket when the step body fails" do
       bucket_key = unique_id
 

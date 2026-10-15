@@ -10,13 +10,14 @@ module RubyReactor
       # Build a `TestSubject` around a reactor invocation. Captures the run for
       # later introspection via matchers; runs the reactor lazily on first
       # query unless `.run` is called explicitly.
-      def test_reactor(reactor_class, inputs, context: {}, async: nil, process_jobs: true)
+      def test_reactor(reactor_class, inputs, context: {}, async: nil, process_jobs: true, idempotency_key: nil) # rubocop:disable Metrics/ParameterLists
         TestSubject.new(
           reactor_class: reactor_class,
           inputs: inputs,
           context: context,
           async: async,
-          process_jobs: process_jobs
+          process_jobs: process_jobs,
+          idempotency_key: idempotency_key
         )
       end
 

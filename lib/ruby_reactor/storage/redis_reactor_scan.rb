@@ -8,7 +8,9 @@ module RubyReactor
     # so a client can page through a large result set in batches instead of
     # one capped call).
     module RedisReactorScan
-      def scan_reactors(pattern: "reactor:*:context:*", count: 50, include_dispatched_children: false)
+      # `statuses:` (the sweeper's) keeps only rows in those statuses, filtered
+      # before the cap so other rows can't crowd them out (review F4).
+      def scan_reactors(pattern: "reactor:*:context:*", count: 50, include_dispatched_children: false, statuses: nil)
         # Use SCAN to find keys matching the pattern
         results = []
         batch_keys = []
@@ -20,7 +22,7 @@ module RubyReactor
 
           # specific batch size for MGET processing
           if batch_keys.size >= 50
-            results.concat(fetch_and_filter_reactors(batch_keys, include_dispatched_children))
+            results.concat(with_statuses(fetch_and_filter_reactors(batch_keys, include_dispatched_children), statuses))
             batch_keys = []
 
             # Stop if we have enough results
@@ -29,7 +31,9 @@ module RubyReactor
         end
 
         # Process remaining keys
-        results.concat(fetch_and_filter_reactors(batch_keys, include_dispatched_children)) if batch_keys.any?
+        if batch_keys.any?
+          results.concat(with_statuses(fetch_and_filter_reactors(batch_keys, include_dispatched_children), statuses))
+        end
 
         results.take(count)
       end
@@ -65,24 +69,9 @@ module RubyReactor
         { reactors: fetch_and_filter_reactors(window, include_dispatched_children), cursor: next_cursor }
       end
 
-      def determine_status(data)
-        status = data["status"].to_s == "skipped" ? "halted" : data["status"].to_s # "skipped" is the legacy halt name
-        return status if %w[failed paused completed running rolling_back halted pending aborted].include?(status)
-        return "cancelled" if data["cancelled"]
-        # Heuristic
-        return "failed" if data["retry_count"]&.positive? && !data["current_step"].nil?
-        return "running" if data["current_step"]
-        return "completed" if execution_evidence?(data)
-
-        "pending"
-      end
-
-      def execution_evidence?(data)
-        (data["execution_trace"] || []).any? ||
-          (data["intermediate_results"] || {}).any?
-      end
-
       private
+
+      def with_statuses(rows, statuses) = statuses ? rows.select { |row| statuses.include?(row[:status]) } : rows
 
       def fetch_and_filter_reactors(keys, include_dispatched_children = false)
         return [] if keys.empty?
@@ -97,20 +86,9 @@ module RubyReactor
           # (context:#{id}:step_result:#{name}) but aren't a reactor context.
           next unless data["reactor_class"]
 
-          {
-            id: data["context_id"],
-            class: data["reactor_class"],
-            status: determine_status(data),
-            created_at: data["started_at"],
-            failure: data["failure_reason"]
-          }
+          reactor_row(data)
         end.compact
       end
-
-      # An `async_reactor` child owns its own job, so a lost job strands it like
-      # a top-level reactor. Compose children (inline) and map elements
-      # (Map::Sweeper's) carry no marker, so neither is swept.
-      def dispatched_child?(data) = data.dig("private_data", "async_dispatched")
     end
   end
 end

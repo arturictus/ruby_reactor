@@ -36,7 +36,8 @@ RSpec.describe RubyReactor::AsyncWaiter do
     expect(took).to be < 1
   end
 
-  it "wakes on a published signal rather than waiting out the fallback interval" do
+  it "wakes on a published signal rather than waiting out the fallback interval",
+     redis_only: "pub/sub signal; ActiveRecord has no push channel (011 R-14)" do
     terminal = false
     publisher = Thread.new do
       sleep 0.2
@@ -52,6 +53,24 @@ RSpec.describe RubyReactor::AsyncWaiter do
     # The fallback re-check is 1s (timeout 3 / 10, clamped to >= 1), so
     # finishing well inside that proves the signal — not the poll — woke us.
     expect(took).to be < 0.9
+  end
+
+  # 011 R-14: with no push channel, a publish is a no-op and the fallback
+  # re-check alone resolves the wait, within one interval.
+  it "resolves within one fallback interval when the signal is a no-op", :active_record_only do
+    terminal = false
+    publisher = Thread.new do
+      sleep 0.2
+      terminal = true
+      storage.publish(channel, "done")
+    end
+
+    took = elapsed do
+      expect(waiter { terminal ? :done : nil }.wait).to eq(:done)
+    end
+
+    publisher.join
+    expect(took).to be < 1.5 # fallback is 1s for a 3s timeout
   end
 
   it "still resolves when no signal is ever published (fallback re-check)" do

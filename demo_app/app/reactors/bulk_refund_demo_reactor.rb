@@ -6,7 +6,7 @@
 # one provider call, instead of each element's own undo running once per
 # payment. The steps before the map are undone after it, as usual.
 #
-# The refund log lives in Redis: the rollback may run in a Sidekiq worker.
+# The refund log lives in DemoLog (Redis when present): the rollback may run in a worker.
 class BulkRefundDemoReactor < RubyReactor::Reactor
   LOG = "demo:bulk_refund"
 
@@ -26,7 +26,7 @@ class BulkRefundDemoReactor < RubyReactor::Reactor
     private
 
     def redis
-      @redis ||= Redis.new(url: RubyReactor.configuration.storage.redis_url)
+      @redis ||= DemoLog.store
     end
   end
 

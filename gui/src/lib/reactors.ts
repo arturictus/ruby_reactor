@@ -92,3 +92,39 @@ export async function fetchAllReactors(url: string, pageSize = 100): Promise<Rea
 
   return all;
 }
+
+// History filters (011 US4): only the ActiveRecord storage adapter can run
+// them; GET /api/capabilities says whether this dashboard's storage can.
+export interface HistoryFilters {
+  className: string;
+  status: string;
+  from: string;
+  to: string;
+  inputs: { name: string; value: string }[];
+}
+
+export const EMPTY_HISTORY_FILTERS: HistoryFilters = { className: '', status: '', from: '', to: '', inputs: [] };
+
+export const FILTER_STATUSES = [
+  'pending', 'running', 'paused', 'completed', 'failed', 'rolling_back', 'halted', 'aborted', 'cancelled',
+] as const;
+
+// The /api/reactors query for `filters`, or '' when none is set. Dates come
+// from <input type="datetime-local"> and are sent as ISO-8601.
+export function buildFilterQuery(filters: HistoryFilters): string {
+  const params = new URLSearchParams();
+  if (filters.className) params.set('class', filters.className);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.from) params.set('from', new Date(filters.from).toISOString());
+  if (filters.to) params.set('to', new Date(filters.to).toISOString());
+  for (const { name, value } of filters.inputs) {
+    if (name) params.set(`input[${name}]`, value);
+  }
+  return params.toString();
+}
+
+export async function fetchCapabilities(url: string): Promise<{ execution_query: boolean }> {
+  const response = await fetch(url);
+  if (!response.ok) return { execution_query: false };
+  return response.json();
+}

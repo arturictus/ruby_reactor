@@ -5,7 +5,7 @@
 
 # RubyReactor
 
-A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq or ActiveJob** for background execution and **Redis** for state persistence.
+A dynamic, dependency-resolving saga orchestrator for Ruby. Ruby Reactor implements the Saga pattern with compensation-based error handling and DAG-based execution planning. It leverages **Sidekiq or ActiveJob** for background execution and **Redis** or a **relational database (via ActiveRecord)** for state persistence.
 
 ![Payment workflow reactor](documentation/images/payment_workflow.png)
 
@@ -25,7 +25,7 @@ The key value is **Reliability**: if any part of your workflow fails with an err
 - **Compensation**: Automatic rollback of completed steps when any error occurs after them, including a raising argument transform or an exception that is not a `StandardError`.
 - **Interrupts**: Pause and resume workflows to wait for external events (webhooks, user approvals).
 - **Input Validation**: Integrated with `dry-validation` for robust input checking.
-- **Distributed Locks, Semaphores, Rate Limits, Periods & Ordered Locks**: Coordinate across processes with Redis-backed primitives — exclusive locks for at-most-one-runner, semaphores for capacity caps, fixed-window rate limits for external APIs (single or multi-window like "3/sec AND 100/min"), `with_period` to dedup reactors to once per calendar bucket, and `with_ordered_lock` for strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Background jobs snooze on contention with smart `retry_after` instead of consuming retry budget.
+- **Distributed Locks, Semaphores, Rate Limits, Periods & Ordered Locks**: Coordinate across processes with store-backed primitives (Redis or your database) — exclusive locks for at-most-one-runner, semaphores for capacity caps, fixed-window rate limits for external APIs (single or multi-window like "3/sec AND 100/min"), `with_period` to dedup reactors to once per calendar bucket, and `with_ordered_lock` for strict transaction ordering via a monotonically increasing nonce assigned at enqueue. Background jobs snooze on contention with smart `retry_after` instead of consuming retry budget.
 
 ## Comparison
 
@@ -108,10 +108,16 @@ it changes nothing, so it doubles as a reference of every knob.
 
 ```ruby
 RubyReactor.configure do |config|
-  ## === Storage (Redis) ===
+  ## === Storage (Redis or ActiveRecord) ===
 
-  ## Storage adapter. Default: :redis (the only adapter shipped today).
+  ## Storage adapter: :redis (default) or :active_record (PostgreSQL, MySQL,
+  ## SQLite; needs activerecord >= 8.0 in your Gemfile and its schema
+  ## installed). See documentation/storage_adapters.md.
   # config.storage.adapter = :redis
+
+  ## ActiveRecord only: database for the adapter's own pool — a database.yml
+  ## name, URL or Hash. Default: nil, the app's primary database.
+  # config.storage.database = nil
 
   ## Redis URL. Default: "redis://localhost:6379/0".
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
@@ -160,6 +166,8 @@ RubyReactor.configure do |config|
 
   ## Retention TTL (seconds) for stored reactor/map state. Must exceed your
   ## worst-case snooze/retry window; re-stamped on every write. Default: 86_400.
+  ## ActiveRecord keeps history permanently; there this is only the window
+  ## the sweeper looks back over for stranded runs.
   # config.context_ttl = 86_400
 
   ## TTL (seconds) for the per-context liveness lock. A live worker auto-extends
@@ -315,6 +323,8 @@ run RubyReactor::Web::Application
 ```
 
 ![RubyReactor Dashboard Screenshot](documentation/images/failed_order_processing.png)
+
+With the [ActiveRecord storage adapter](documentation/storage_adapters.md#history-and-dashboard-filters), the dashboard keeps every run and can filter them by reactor class, status, time range and input value (`input[user_id]=100`). Inputs declared `redact: true` are always shown as `[REDACTED]`.
 
 You can secure the dashboard using standard Rails authentication methods (e.g., wrapping the `mount` line in an `authenticate` block with Devise, or in a `constraints` block).
 
@@ -588,9 +598,54 @@ the parent holds fails at dispatch with an explanatory error rather than
 deadlocking. See [Background & Async Execution](documentation/background_and_async.md) for the full
 rules.
 
+### Idempotent runs
+
+Pass `idempotency_key:` to run a reactor **at most once per key**. A repeated call with the same key
+(a double click, a redelivered webhook, a retried request) runs no step and saves nothing; it returns
+the original run's result, with the original `execution_id`:
+
+```ruby
+first = ChargeReactor.run({ order_id: 7, amount: 100 }, idempotency_key: "charge-order-7")
+again = ChargeReactor.run({ order_id: 7, amount: 100 }, idempotency_key: "charge-order-7")
+
+again.idempotent_replay? # => true
+again.execution_id == first.execution_id # => true
+```
+
+- Keys are scoped per reactor class, and are claimed only once the inputs pass validation.
+- The repeat's inputs are ignored: the key identifies the run.
+- A completed original replays as its `Success`, a failed one as its `Failure`, a paused one as its
+  interrupt result, and one still running in the background as a `DispatchResult`.
+- Concurrent calls with the same key run once; every other caller gets the replay.
+- A first call that fails before its run is ever saved (for example, its lock is held elsewhere)
+  gives the key back, so a retry runs. If its process died before saving, a repeat finds no run and no
+  live worker after a 2-second wait and takes the key over.
+- Retention: permanent with the ActiveRecord storage adapter; `context_ttl` with Redis, after which the
+  key starts a new run.
+- Inputs can still be passed braceless (`run(order_id: 7)`); pass a Hash when an input is itself named
+  `idempotency_key`.
+
+### Choosing a storage adapter
+
+State lives in Redis by default. To keep it in your relational database instead (PostgreSQL,
+MySQL or SQLite), with full execution history and a searchable dashboard:
+
+```ruby
+# Gemfile: activerecord >= 8.0 and a driver (already there in a Rails app)
+RubyReactor.configure { |config| config.storage.adapter = :active_record }
+```
+
+```bash
+bin/rails generate ruby_reactor:install && bin/rails db:migrate
+```
+
+Both adapters run the same reactors with the same guarantees. See
+[Storage Adapters](documentation/storage_adapters.md) for installation without Rails, schema
+upgrades, supported engines, and the few differences that come from keeping history.
+
 ### Durability & Recovery
 
-Background reactors are durable: state lives in Redis, not in the job payload. Before
+Background reactors are durable: state lives in the storage adapter (Redis or your database), not in the job payload. Before
 any background job is enqueued the root context is persisted, and after every
 completed step a checkpoint advances the stored blob — so a crash re-runs at most
 one step, never the whole reactor. Each running reactor also holds a short
@@ -721,7 +776,7 @@ raising, so a webhook's resume is never lost. See [Resuming Execution](documenta
 
 ### Locks, Semaphores & Ordered Locks
 
-Coordinate across processes with Redis-backed primitives:
+Coordinate across processes with store-backed primitives (Redis or your database — same semantics):
 
 - **`with_lock`** — at-most-one runner per key at a time (concurrency control).
 - **`with_semaphore`** — cap total concurrent runners per key (capacity control).
@@ -1583,9 +1638,12 @@ Learn how to pause and resume reactors to handle long-running processes, manual 
 ### [Testing with RSpec](documentation/testing.md)
 Comprehensive guide to testing reactors with RubyReactor's testing utilities. Learn about the `TestSubject` class for reactor execution and introspection, step mocking for isolating dependencies, testing nested and composed reactors, and custom RSpec matchers like `be_success`, `have_run_step`, and `have_retried_step`.
 
+### [Storage Adapters](documentation/storage_adapters.md)
+Redis (default) or a relational database through ActiveRecord: installation, schema upgrades, supported engines, execution history, dashboard filters, idempotency keys, and the differences between the adapters.
+
 ### [Locks, Semaphores, Rate Limits, Periods & Ordered Locks](documentation/locks_and_semaphores.md)
 
-Coordinate access to shared resources across processes with Redis-backed primitives: exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Every primitive is also available [declared on a step](documentation/locks_and_semaphores.md#step-scoped-coordination) instead of the whole reactor, keying the critical section down to one operation. Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
+Coordinate access to shared resources across processes with store-backed primitives (Redis or your database): exclusive locks (`with_lock`), concurrency-limiting semaphores (`with_semaphore`), fixed-window rate limits with multi-window quotas (`with_rate_limit`), calendar-bucketed dedup (`with_period`, returning `Halt` results), and strict sequential ordering via a monotonically increasing nonce assigned at enqueue (`with_ordered_lock`). Every primitive is also available [declared on a step](documentation/locks_and_semaphores.md#step-scoped-coordination) instead of the whole reactor, keying the critical section down to one operation. Covers re-entrancy across composed reactors, TTL auto-extend, inline-vs-async contention behavior, smart `retry_after` snoozes for rate limits, snooze tuning, the token-based semaphore safety model, once-per-day/month/year scheduling patterns, ordered-lock counter reset on drain, poison-pill timeouts, and deadlock-safe composition rules.
 
 ### [Middlewares & OpenTelemetry](documentation/middlewares.md)
 
@@ -1606,9 +1664,9 @@ Hook into the execution lifecycle with observer middlewares. Covers the full set
 - [X] Middlewares
 - [ ] Async ruby to parallelize same level steps
 - [x] Web dashboard to inspect reactor results and errors
-- [ ] Multiple storage adapters
+- [X] Multiple storage adapters
   - [X] Redis
-  - [ ] ActiveRecord
+  - [X] ActiveRecord (PostgreSQL, MySQL, SQLite)
 - [X] Multiple background job adapters
   - [X] Sidekiq
   - [X] ActiveJob
@@ -1621,9 +1679,11 @@ After checking out the repo, run `bin/setup` to install dependencies. Then, run 
 
 To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
 
-### Running Redis for the test suite
+### Running the test suite
 
-The gem's RSpec suite expects Redis on port `6780` (see [spec/spec_helper.rb](spec/spec_helper.rb)). Start it via Docker Compose:
+The gem's RSpec suite needs Ruby ≥ 3.2 (its ActiveRecord 8 dev dependency) and expects Redis on
+port `6780` (see [spec/spec_helper.rb](spec/spec_helper.rb)). Redis is always needed: it is the storage
+by default, and the Sidekiq queue in every run. Start it via Docker Compose:
 
 ```bash
 docker compose up -d redis-test
@@ -1635,6 +1695,23 @@ Then run the suite:
 bundle exec rspec
 ```
 
+To run it against the ActiveRecord storage adapter, pick a database. SQLite needs nothing else;
+PostgreSQL and MySQL come from Compose:
+
+```bash
+docker compose up -d test-postgres test-mysql
+
+RUBY_REACTOR_TEST_STORAGE=active_record bundle exec rspec   # SQLite (tmp/ruby_reactor_test.sqlite3, 5 s busy timeout)
+RUBY_REACTOR_TEST_STORAGE=active_record \
+  RUBY_REACTOR_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:6781/ruby_reactor_test bundle exec rspec
+RUBY_REACTOR_TEST_STORAGE=active_record \
+  RUBY_REACTOR_TEST_DATABASE_URL=trilogy://root:root@127.0.0.1:6782/ruby_reactor_test bundle exec rspec
+```
+
+Specs that test one adapter's internals are tagged `:redis_only` or `:active_record_only` and are
+skipped, with the reason, under the other. On macOS, add `?gssencmode=disable` to the PostgreSQL
+URL (forked specs crash in libpq otherwise). Multi-process contention specs run with `--tag stress`.
+
 Stop it when done:
 
 ```bash
@@ -1642,6 +1719,17 @@ docker compose stop redis-test
 ```
 
 ### Running the demo Rails app
+
+The demo picks its storage and queue backend from `RUBY_REACTOR_STORAGE` (`redis` or
+`active_record`, default `redis`) and `RUBY_REACTOR_QUEUE` (`sidekiq` or `active_job`, default
+`sidekiq`); `DATABASE_URL` picks the database engine. With `active_record` + `active_job` it runs
+without any Redis — the `demo:all` rake task is the acceptance run:
+
+```bash
+docker compose stop redis-test demo-redis
+docker compose run --rm --no-deps -e RUBY_REACTOR_STORAGE=active_record -e RUBY_REACTOR_QUEUE=active_job \
+  demo-app bash -c "bin/rails db:prepare && bin/rails demo:all"
+```
 
 The demo Rails app under [demo_app/](demo_app/) has its own Redis (port `6380`) and bind-mounts the repo so edits to `lib/` are live. Two ways to run it:
 

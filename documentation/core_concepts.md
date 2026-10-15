@@ -514,6 +514,36 @@ end
 
 Failed steps are automatically requeued with exponential backoff delays, allowing workers to process other jobs while waiting.
 
+## Idempotency Keys
+
+Pass `idempotency_key:` to run a reactor **at most once per key**. A repeated call with the same key
+(a double click, a redelivered webhook, a retried request) runs no step and saves nothing; it returns
+the original run's result, with the original `execution_id`:
+
+```ruby
+first = ChargeReactor.run({ order_id: 7, amount: 100 }, idempotency_key: "charge-order-7")
+again = ChargeReactor.run({ order_id: 7, amount: 100 }, idempotency_key: "charge-order-7")
+
+again.idempotent_replay? # => true
+again.execution_id == first.execution_id # => true
+```
+
+- Keys are scoped per reactor class, and are claimed only once the inputs pass validation.
+- The repeat's inputs are ignored: the key identifies the run.
+- A completed original replays as its `Success`, a failed one as its `Failure`, a paused one as its
+  interrupt result, and one still running in the background as a `DispatchResult`.
+- Concurrent calls with the same key run once; every other caller gets the replay.
+- A first call that fails before its run is ever saved (for example, its lock is held elsewhere)
+  gives the key back, so a retry runs. If its process died before saving, a repeat finds no run and no
+  live worker after a 2-second wait and takes the key over.
+- Retention: permanent with the ActiveRecord storage adapter; `context_ttl` with Redis, after which the
+  key starts a new run.
+- Inputs can still be passed braceless (`run(order_id: 7)`); pass a Hash when an input is itself named
+  `idempotency_key`.
+
+In specs, `test_reactor(klass, inputs, idempotency_key: "k")` runs with a key and
+`be_idempotent_replay` checks for a replay (see [Testing](testing.md)).
+
 ## Execution Models
 
 ### Synchronous Execution

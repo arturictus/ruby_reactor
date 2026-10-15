@@ -219,14 +219,15 @@ module RubyReactor
         end
 
         # Entry point for running the reactor
-        def run(inputs = {})
+        # `Reactor.run(inputs, idempotency_key: "k")` — see Reactor#run.
+        def run(inputs = nil, idempotency_key: nil, **braceless_inputs)
           reactor = new
-          result = reactor.run(inputs)
+          result = reactor.run(inputs || braceless_inputs, idempotency_key: idempotency_key)
           attach_execution_id!(result, reactor.context.context_id)
         end
 
-        def call(inputs = {})
-          run(inputs)
+        def call(inputs = nil, idempotency_key: nil, **braceless_inputs)
+          run(inputs || braceless_inputs, idempotency_key: idempotency_key)
         end
 
         def attach_execution_id!(result, execution_id)

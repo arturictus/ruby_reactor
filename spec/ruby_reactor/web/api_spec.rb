@@ -3,8 +3,73 @@
 require "spec_helper"
 require "ruby_reactor/web/api"
 
+class ApiRedactReactor < RubyReactor::Reactor
+  input :user_id
+  input :card_token, redact: true
+
+  step :charge do
+    argument :user_id, input(:user_id)
+    run { |args, _ctx| RubyReactor.Success(args.user_id) }
+  end
+end
+
 RSpec.describe RubyReactor::Web::API, type: :request do
   let(:reactor_class) { ApiTestReactor }
+
+  # 011 US4 (contracts/dashboard-api.md).
+  describe "GET /capabilities" do
+    it "reports whether the storage adapter can filter history" do
+      get "/capabilities"
+
+      expect(JSON.parse(last_response.body)).to eq("execution_query" => StorageSelection.active_record?)
+    end
+  end
+
+  describe "GET /reactors with filters" do
+    let!(:ids) do
+      [100, 100, 200].map { |user| ApiRedactReactor.run(user_id: user, card_token: "tok-#{user}").execution_id }
+    end
+
+    it "lists only the matching executions", :active_record_only do
+      get "/reactors", { "input" => { "user_id" => "100" }, "status" => "completed" }
+
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body).map { |row| row["id"] }).to contain_exactly(ids[0], ids[1])
+      expect(last_response.headers["X-Next-Cursor"]).to eq("0")
+    end
+
+    it "never matches on a redacted input", :active_record_only do
+      get "/reactors", { "input" => { "card_token" => "tok-100" } }
+
+      expect(JSON.parse(last_response.body)).to eq([])
+    end
+
+    it "refuses filters the Redis adapter cannot run", :redis_only do
+      get "/reactors", { "input" => { "user_id" => "100" } }
+
+      expect(last_response.status).to eq(422)
+      expect(JSON.parse(last_response.body)).to eq("error" => "filters require the active_record storage adapter")
+    end
+
+    it "rejects an unknown status or an unreadable date" do
+      get "/reactors", { "status" => "sleeping" }
+      expect(last_response.status).to eq(400)
+
+      get "/reactors", { "from" => "yesterday-ish" }
+      expect(last_response.status).to eq(400)
+    end
+  end
+
+  describe "GET /reactors/:id redaction" do
+    it "masks inputs declared redact: true, on every adapter" do
+      id = ApiRedactReactor.run(user_id: 7, card_token: "secret").execution_id
+
+      get "/reactors/#{id}"
+
+      inputs = JSON.parse(last_response.body)["inputs"]
+      expect(inputs).to include("user_id" => 7, "card_token" => "[REDACTED]")
+    end
+  end
 
   describe "GET /reactors/:id" do
     context "when reactor fails" do

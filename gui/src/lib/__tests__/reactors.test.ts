@@ -115,3 +115,25 @@ describe('rolling_back', () => {
     expect(aggregateByClass([{ id: '1', class: 'Foo', status: 'rolling_back', created_at: '' }])[0].running).toBe(1);
   });
 });
+
+describe('buildFilterQuery', () => {
+  it('is empty when no filter is set', async () => {
+    const { buildFilterQuery, EMPTY_HISTORY_FILTERS } = await import('../reactors');
+    expect(buildFilterQuery(EMPTY_HISTORY_FILTERS)).toBe('');
+  });
+
+  it('encodes class, status, times and named inputs, skipping unnamed ones', async () => {
+    const { buildFilterQuery } = await import('../reactors');
+    const query = new URLSearchParams(buildFilterQuery({
+      className: 'Charge', status: 'failed', from: '2026-01-01T10:00', to: '',
+      inputs: [{ name: 'user_id', value: '100' }, { name: '', value: 'ignored' }],
+    }));
+
+    expect(query.get('class')).toBe('Charge');
+    expect(query.get('status')).toBe('failed');
+    expect(query.get('from')).toBe(new Date('2026-01-01T10:00').toISOString());
+    expect(query.has('to')).toBe(false);
+    expect(query.get('input[user_id]')).toBe('100');
+    expect([...query.keys()]).toHaveLength(4);
+  });
+});

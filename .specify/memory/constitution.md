@@ -1,28 +1,39 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.3.0 → 1.3.1 (PATCH: factual correction in Technical Constraints — the worker
-  path named a directory that no longer exists; no principle or rule changed)
+Version change: 1.3.1 → 1.4.0 (MINOR: Redis is no longer the only storage backend; the optional
+  ActiveRecord storage adapter (feature 011) is a sanctioned alternative. Guidance is materially
+  expanded; no principle is removed or redefined in a backward-incompatible way.)
 
-Modified principles: none
+Modified principles:
+  - III. Test-First with Real Infrastructure — "Redis MUST be reachable" is generalised to "the
+    configured storage backend MUST be real and reachable". Redis is still required when it is
+    the storage or queue backend. Mocking storage state is forbidden alongside Redis and Sidekiq
+    state.
+  - VI. Demo-App Proof of Feature — `flush_redis` keeps its name and now resets the configured
+    storage (Redis or ActiveRecord). docker-compose must also provide the databases the
+    ActiveRecord adapter needs.
 
-Modified sections: Technical Constraints — the "Sidekiq" bullet now points at
-  `lib/ruby_reactor/adapters/{sidekiq,active_job}/`, where the queue-backend workers actually
-  live, and names ActiveJob as the alternative adapter
+Modified sections:
+  - Technical Constraints — the "Redis" bullet becomes "Storage": Redis by default, or a
+    relational database via the optional ActiveRecord adapter, never a gemspec dependency.
+  - Development Workflow — the docker-compose bullet lists the adapter databases.
 
 Added sections: none
 
 Removed sections: none
 
 Templates checked:
-  - .specify/templates/plan-template.md      ✅ No reference to the worker path — no edit required
+  - .specify/templates/plan-template.md      ✅ No Redis-specific rule — no edit required
   - .specify/templates/spec-template.md      ✅ No reference — no edit required
   - .specify/templates/tasks-template.md     ✅ No reference — no edit required
   - .specify/templates/checklist-template.md ✅ Generic — no edit required
   - .specify/extensions.yml                  ✅ No before/after_constitution hooks registered
-  - README.md, documentation/*.md            ✅ No reference to the old path
+  - README.md, documentation/*.md            ⚠ Updated by feature 011's own tasks
+                                                (storage_adapters.md, README development
+                                                section, testing.md)
 
-Found by /speckit-analyze on specs/009-distributed-map-undo (finding C5), 2026-09-30.
+Motivated by specs/011-active-record-adapter (plan Complexity Tracking), 2026-10-10.
 
 Deferred TODOs: none
 -->
@@ -61,9 +72,12 @@ orphaned steps — destroys the core promise and corrupts application state.
 ### III. Test-First with Real Infrastructure
 
 RSpec is the mandatory test framework. Tests MUST be written and confirmed
-failing before implementation begins (Red-Green-Refactor). Redis MUST be
-reachable for the test suite — mocking Redis or Sidekiq state is forbidden
-for integration and contract tests. The in-memory Sidekiq testing mode
+failing before implementation begins (Red-Green-Refactor). The configured
+storage backend MUST be real and reachable for the test suite: Redis, or a
+real PostgreSQL, MySQL or SQLite database for the ActiveRecord adapter. Redis
+is still required whenever it is the storage or queue backend. Mocking
+storage, Redis or Sidekiq state is forbidden for integration and contract
+tests. The in-memory Sidekiq testing mode
 (`Sidekiq::Testing.inline!`) is acceptable only for unit-level step logic,
 never for async orchestration paths.
 
@@ -111,7 +125,8 @@ any one is missing:
 2. **Rake entry**: the example MUST be registered as a task in
    `demo_app/lib/tasks/demo_reactors.rake` under the `demo:` namespace, with a `desc`
    line describing what it demonstrates, and depending on `[:environment, :flush_redis]`
-   so each run starts from clean Redis state. The task MUST print observable outcomes
+   so each run starts from clean state (`flush_redis` keeps its name and resets the configured
+   storage, Redis or ActiveRecord). The task MUST print observable outcomes
    (success, failure, background dispatch, pause) so an operator can verify behavior
    without a debugger.
 3. **Spec**: a matching spec MUST live at
@@ -133,7 +148,8 @@ the built-in surface, the missing matcher or helper MUST be added to
 bypassing it.
 
 4. **Docker acceptance run**: `docker-compose.yml` MUST stay current with `demo_app`'s
-   runtime dependencies (Redis, Sidekiq, the Rails service itself) so that
+   runtime dependencies (Redis, Sidekiq, the databases the ActiveRecord adapter supports, the
+   Rails service itself) so that
    `docker compose run --rm demo-app bin/rails demo:<task>` runs the new rake task
    end to end against real Redis, with no manual setup beyond `docker compose up`.
    A new demo service or environment variable required by a feature MUST be added to
@@ -155,8 +171,11 @@ gaps in the matcher library surface as work instead of as workarounds.
 - **Sidekiq**: Core async dependency. ActiveJob is the supported alternative. Queue-backend
   workers and routers live in `lib/ruby_reactor/adapters/{sidekiq,active_job}/`; the
   backend-agnostic worker logic lives in `lib/ruby_reactor/worker.rb` and `lib/ruby_reactor/map/`.
-- **Redis**: Required for state persistence, locks, semaphores, rate limits, and
-  periods. The gem does NOT manage Redis connections — callers provide them.
+- **Storage**: state and coordination live in the configured storage adapter: Redis
+  (default) or a relational database via the optional ActiveRecord adapter (PostgreSQL,
+  MySQL, SQLite; ActiveRecord >= 8.0, never a gemspec dependency). The gem does NOT
+  manage Redis connections — callers provide them. The ActiveRecord adapter opens its own
+  dedicated pool from the host's database config.
 - **dry-validation**: Input validation DSL. Schema definitions stay inside the
   reactor/step DSL, not scattered across application code.
 - **OpenTelemetry**: Optional instrumentation via the middleware stack
@@ -191,7 +210,7 @@ gaps in the matcher library surface as work instead of as workarounds.
   in the rake file, or tested with hand-rolled scaffolding instead of the shipped
   matcher library.
 - `docker-compose.yml` MUST be kept current with `demo_app`'s services (Redis,
-  Sidekiq, Rails) so `docker compose up` and `docker compose run --rm demo-app
+  Sidekiq, the ActiveRecord adapter's databases, Rails) so `docker compose up` and `docker compose run --rm demo-app
   bin/rails demo:<task>` are the supported way to run the `demo:` rake tasks as
   acceptance tests, with no host-side Ruby/Redis setup required.
 
@@ -211,4 +230,4 @@ justified in the `Complexity Tracking` table of the plan.
 Compliance review: at each MINOR or MAJOR gem release, confirm this constitution
 still accurately reflects the codebase and update as needed.
 
-**Version**: 1.3.1 | **Ratified**: 2025-10-02 | **Last Amended**: 2026-09-30
+**Version**: 1.4.0 | **Ratified**: 2025-10-02 | **Last Amended**: 2026-10-10

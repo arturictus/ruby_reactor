@@ -8,9 +8,10 @@ module RubyReactor
 
       attr_reader :reactor_instance, :run_result, :last_resume_result
 
-      def initialize(reactor_class:, inputs:, context: {}, async: nil, process_jobs: true)
+      def initialize(reactor_class:, inputs:, context: {}, async: nil, process_jobs: true, idempotency_key: nil) # rubocop:disable Metrics/ParameterLists
         @reactor_class = reactor_class
         @inputs = inputs
+        @idempotency_key = idempotency_key
         @context_data = context
         @async = async
         @process_jobs = process_jobs
@@ -297,21 +298,24 @@ module RubyReactor
           # Avoid nesting error which happens in Sidekiq 7+ if a mode is already set
           begin
             Sidekiq::Testing.fake! do
-              @run_result = execution_class.run(@inputs)
+              @run_result = execution_class.run(@inputs, idempotency_key: @idempotency_key)
             end
           rescue Sidekiq::Testing::TestModeAlreadySetError
-            @run_result = execution_class.run(@inputs)
+            @run_result = execution_class.run(@inputs, idempotency_key: @idempotency_key)
           end
         elsif @process_jobs && AsyncTestHelpers.active_job_testing?
           # Ensure the ActiveJob router is used to capture jobs in the :test adapter
           allow(RubyReactor.configuration).to receive(:async_router).and_return(RubyReactor::Adapters::ActiveJob::Router)
-          @run_result = execution_class.run(@inputs)
+          @run_result = execution_class.run(@inputs, idempotency_key: @idempotency_key)
         else
-          @run_result = execution_class.run(@inputs)
+          @run_result = execution_class.run(@inputs, idempotency_key: @idempotency_key)
         end
 
         # 4. Reload
         raise "Could not capture context ID during execution" unless captured_context_id
+
+        # A replayed idempotency key saved nothing: inspect the original run.
+        captured_context_id = @run_result.execution_id if @run_result.respond_to?(:idempotent_replay?)
 
         # Reload using the execution class (which might be the mocked subclass with unique name)
         @reactor_instance = execution_class.find(captured_context_id)

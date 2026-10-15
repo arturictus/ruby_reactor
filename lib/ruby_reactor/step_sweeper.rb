@@ -37,7 +37,7 @@ module RubyReactor
     def run_once(limit: DEFAULT_LIMIT)
       redispatched = 0
 
-      @storage.scan_step_results(count: limit).each do |record|
+      @storage.scan_step_results(count: limit, status: "dispatched").each do |record|
         next unless record["status"] == "dispatched"
 
         arguments = dispatch_arguments(record)

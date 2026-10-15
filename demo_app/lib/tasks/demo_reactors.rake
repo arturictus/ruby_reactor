@@ -1,9 +1,18 @@
 namespace :demo do
   
-  desc "flush redis"
+  # Keeps its historical name (Constitution VI): resets whichever storage is
+  # configured, so every demo starts clean on either adapter.
+  desc "reset reactor storage (Redis or ActiveRecord)"
   task flush_redis: :environment do
-    puts "Fushing redis at #{RubyReactor.configuration.storage.redis_url}"
-    Redis.new(url: RubyReactor.configuration.storage.redis_url).flushdb
+    if RubyReactor.configuration.storage.adapter == :active_record
+      puts "Resetting ActiveRecord reactor storage"
+      models = RubyReactor.configuration.storage_adapter.class
+      (models::MODELS - [models::Schema]).each(&:delete_all)
+    end
+    if DemoLog.redis_in_use?
+      puts "Flushing redis at #{RubyReactor.configuration.storage.redis_url}"
+      Redis.new(url: RubyReactor.configuration.storage.redis_url).flushdb
+    end
     Product.delete_all
     # Sidekiq shares this database, so the flush also drops the schedule zset
     # holding the sweeper's next self-scheduled tick. Without re-kicking, the
@@ -238,8 +247,50 @@ namespace :demo do
     puts "\n✅ INTERRUPT DEMO COMPLETE"
   end
  
+  desc "ActiveRecord storage history: runs kept in the database and found by input value (011 US4)"
+  task active_record_history: [:environment, :flush_redis] do
+    unless RubyReactor.configuration.storage.adapter == :active_record
+      puts "⏭  SKIPPED: needs RUBY_REACTOR_STORAGE=active_record"
+      next
+    end
+
+    ids = [[100, false], [100, true], [200, false]].map do |user_id, decline|
+      result = ActiveRecordHistoryReactor.run(user_id: user_id, card_token: "tok_#{user_id}", decline: decline)
+      report_demo_result(result)
+      result.execution_id
+    end
+    puts "Kept #{ids.size} runs: #{ids.join(', ')}"
+    puts "Find user 100's runs: http://localhost:3000/ruby_reactor/api/reactors?input[user_id]=100"
+  end
+
+  desc "with_period every: :year — runs once a year and names the run that claimed it (011 US5)"
+  task yearly_report: [:environment, :flush_redis] do
+    name = "sales_#{SecureRandom.hex(3)}"
+    first = YearlyReportReactor.run(report_name: name)
+    puts first.success? ? "✅ completed: #{first.value.inspect}" : "❌ FAILED: #{first.error}"
+    second = YearlyReportReactor.run(report_name: name)
+    puts second.halted? ? "⏸  halted (already ran this year)" : "❌ expected a halt, got #{second.inspect}"
+    claim = RubyReactor.configuration.storage_adapter.period_marker_info("annual:#{name}", :year)
+    puts "Claimed by #{claim[:context_id]}#{" at #{claim[:claimed_at]}" if claim[:claimed_at]}"
+  end
+
+  desc "Run-level idempotency keys: one charge per key, repeats replay the original (011 US6)"
+  task idempotent_charge: [:environment, :flush_redis] do
+    IdempotentChargeReactor::Ledger.reset!
+    { "ok" => false, "declined" => true }.each do |label, decline|
+      order_id = "ord_#{label}_#{SecureRandom.hex(3)}"
+      key = "charge-order-#{order_id}"
+      first = IdempotentChargeReactor.run({ order_id: order_id, amount: 100, decline: decline }, idempotency_key: key)
+      puts first.success? ? "✅ charged #{order_id}" : "❌ failed (reserve released): #{first.error}"
+      again = IdempotentChargeReactor.run({ order_id: order_id, amount: 100 }, idempotency_key: key)
+      kind = again.success? ? "replayed (no second charge)" : "replayed failure"
+      puts "🔁 #{kind}, execution #{again.execution_id}"
+    end
+    puts "Ledger: #{IdempotentChargeReactor::Ledger.entries.inspect}"
+  end
+
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups, :active_record_history, :yearly_report, :idempotent_charge] do
     puts "excuting all reactors"
   end
 

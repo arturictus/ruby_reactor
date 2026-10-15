@@ -2,6 +2,7 @@
 
 require "redis"
 require "json"
+require "digest"
 
 module RubyReactor
   module Storage
@@ -12,6 +13,7 @@ module RubyReactor
       include RedisPubSub
       include RedisReactorScan
       include RedisMapRollback
+      include RedisIdempotency
 
       def initialize(redis_config)
         super()

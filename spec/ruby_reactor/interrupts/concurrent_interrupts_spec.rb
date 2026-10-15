@@ -96,7 +96,8 @@ RSpec.describe "Resuming several pending interrupts at once (010 US5)" do
     context = klass.find(id).context
     expect(context.status.to_s).to eq("paused")
     expect(context.get_result(:after_a)).to eq(a: 1)
-    expect(redis.get("reactor:#{klass.name}:context:#{id}:resume_attempts:b")).to eq("1")
+    # Exactly one attempt was stored: the next increment returns 2.
+    expect(RubyReactor.configuration.storage_adapter.increment_interrupt_attempts(id, klass.name, "b")).to eq(2)
     expect(context.private_data).not_to have_key(:interrupt_attempts)
   end
 

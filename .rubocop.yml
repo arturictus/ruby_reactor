@@ -12,6 +12,9 @@ AllCops:
     - .bundle/**/*
     - bin/*
     - db/**/*
+    # Shipped schema migrations: append-only and checksum-locked
+    # (migrations.lock), so no tool may reformat them.
+    - lib/ruby_reactor/storage/active_record/migrations/**/*
     - config/**/*
     - demo_app/**/*
     - .ruby-lsp/**/*

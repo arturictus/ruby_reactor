@@ -32,6 +32,10 @@ module RubyReactor
     # raise it (or sweep more frequently).
     DEFAULT_LIMIT = 1000
 
+    # The statuses a sweep acts on, asked of the scan so finished runs don't
+    # fill its `limit` (review F4).
+    SWEEPABLE = %w[running rolling_back].freeze
+
     def self.run_once(limit: DEFAULT_LIMIT)
       new.run_once(limit: limit)
     end
@@ -45,12 +49,13 @@ module RubyReactor
     # Scans stored top-level reactors and re-enqueues the running-but-unlocked
     # ones. Returns the number of contexts re-enqueued.
     def run_once(limit: DEFAULT_LIMIT)
+      purge_expired_coordination
       reenqueued = 0
 
-      @storage.scan_reactors(count: limit, include_dispatched_children: true).each do |reactor|
+      @storage.scan_reactors(count: limit, include_dispatched_children: true, statuses: SWEEPABLE).each do |reactor|
         # Non-terminal only. A `rolling_back` run whose owner resume was lost
         # is re-enqueued too: unsettled, it simply hands off again (009 S-5).
-        next unless %w[running rolling_back].include?(reactor[:status])
+        next unless SWEEPABLE.include?(reactor[:status])
         next if @storage.lock_held?("async:#{reactor[:id]}") # worker alive -> leave alone
 
         @async_router.perform_async(reactor[:id], reactor[:class])
@@ -61,6 +66,17 @@ module RubyReactor
       end
 
       reenqueued
+    end
+
+    private
+
+    # Table-backed adapters keep expired locks/semaphores/rate windows until
+    # purged (Redis expires them itself; its purge is a no-op). Never lets a
+    # purge failure stop the sweep (011 R-07).
+    def purge_expired_coordination
+      @storage.purge_expired_coordination
+    rescue StandardError => e
+      @logger.warn("ruby_reactor.sweeper op=purge_expired_coordination error=#{e.class} message=#{e.message.inspect}")
     end
   end
 end

@@ -118,7 +118,7 @@ RSpec.describe RubyReactor::Map::Dispatcher do
 
   # 009 R-02, R-06: one throw of a distributed map rollback.
   describe ".dispatch_rollback_batch" do
-    let(:storage) { RubyReactor::Storage::RedisAdapter.new(url: REDIS_TEST_URL) }
+    let(:storage) { RubyReactor.configuration.storage_adapter }
     let(:jobs) { [] }
 
     before do

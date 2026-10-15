@@ -175,12 +175,16 @@ RSpec.describe "step-scoped `with_lock`", :step_coordination, type: :reactor do
     it "recovers once the ttl expires" do
       account_id = unique_account_id
       key = "acct:#{account_id}"
+      storage = if StorageSelection.active_record?
+                  "c.storage.adapter = :active_record; c.storage.database = #{StorageSelection::DATABASE_URL.inspect}"
+                else
+                  "c.storage.adapter = :redis; c.storage.redis_url = #{REDIS_TEST_URL.inspect}"
+                end
       script = <<~RUBY
         require "redis"
         require "ruby_reactor"
         RubyReactor.configure do |c|
-          c.storage.adapter = :redis
-          c.storage.redis_url = #{REDIS_TEST_URL.inspect}
+          #{storage}
         end
         RubyReactor::Lock.new(#{key.inspect}, owner: "external-holder", ttl: 1, wait: 0, auto_extend: false).acquire
         sleep 30
@@ -208,7 +212,9 @@ RSpec.describe "step-scoped `with_lock`", :step_coordination, type: :reactor do
     end
   end
 
-  describe "the coordination backend is unreachable" do
+  # The ActiveRecord twin is spec/ruby_reactor/storage/active_record/failure_modes_spec.rb.
+  describe "the coordination backend is unreachable",
+           redis_only: "Redis outage; see failure_modes_spec for ActiveRecord" do
     it "fails the step with the connection error, and the body never runs" do
       original_url = RubyReactor.configuration.storage.redis_url
       RubyReactor.configuration.storage.redis_url = "redis://127.0.0.1:1"

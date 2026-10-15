@@ -57,7 +57,7 @@ RSpec.describe "`async_reactor` lock deadlock guard", type: :reactor do
     it "releases the parent's lock afterwards, so the guard leaves nothing held" do
       AsyncReactorLockCollisionReactor.run(account_id: "acct-1")
 
-      expect(redis.get("lock:account:acct-1")).to be_nil
+      expect(RubyReactor.configuration.storage_adapter.lock_info("lock:account:acct-1")).to be_nil
     end
   end
 end

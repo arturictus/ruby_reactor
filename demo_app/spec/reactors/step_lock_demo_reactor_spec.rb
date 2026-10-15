@@ -39,8 +39,10 @@ RSpec.describe StepLockDemoReactor, type: :reactor do
     it "parks the loser in the worker instead of failing it, and both complete" do
       account_id = "acct_#{SecureRandom.hex(4)}"
 
-      s1 = test_reactor(described_class, { account_id: account_id }, process_jobs: false)
-      s2 = test_reactor(described_class, { account_id: account_id }, process_jobs: false)
+      # Each :charge holds the lock 0.3 s, so the two runs collide however
+      # fast or slow the storage backend is.
+      s1 = test_reactor(described_class, { account_id: account_id, hold_seconds: 0.3 }, process_jobs: false)
+      s2 = test_reactor(described_class, { account_id: account_id, hold_seconds: 0.3 }, process_jobs: false)
       s1.run
       s2.run
       run_concurrently!

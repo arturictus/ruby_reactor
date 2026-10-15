@@ -152,7 +152,7 @@ RSpec.describe "`async_reactor`", type: :reactor do
       it "parks instead of blocking, keeps the lock held across the gap, and completes" do
         dispatch = AsyncParkingParentReactor.run(user_id: "prk1")
         expect(dispatch).to be_a(RubyReactor::DispatchResult)
-        redis = Redis.new(url: REDIS_TEST_URL)
+        storage = RubyReactor.configuration.storage_adapter
 
         eventually(timeout: 30) do
           data = AsyncParkingParentReactor.find(dispatch.execution_id)&.context&.private_data || {}
@@ -160,14 +160,12 @@ RSpec.describe "`async_reactor`", type: :reactor do
         end
         # Parked: no live job is executing this context, yet the exclusive
         # lock is still checked out — that is the whole point.
-        expect(redis.exists?("lock:parking:prk1")).to be(true)
+        expect(storage.lock_held?("parking:prk1")).to be(true)
 
         eventually(timeout: 45) do
           AsyncParkingParentReactor.find(dispatch.execution_id).context.status.to_s == "completed"
         end
-        expect(redis.exists?("lock:parking:prk1")).to be(false)
-      ensure
-        redis&.close
+        expect(storage.lock_held?("parking:prk1")).to be(false)
       end
     end
   end

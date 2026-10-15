@@ -1,12 +1,19 @@
 import useSWR from 'swr';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, AlertCircle, Search, ChevronRight } from 'lucide-react';
+import { Activity, AlertCircle, Search, ChevronRight, Plus, X } from 'lucide-react';
 import { apiUrl } from '../lib/utils';
-import { aggregateByClass, classRoute, fetchAllReactors, type StatusGroup, type ReactorSummary } from '../lib/reactors';
+import {
+  aggregateByClass, buildFilterQuery, classRoute, EMPTY_HISTORY_FILTERS, fetchAllReactors, fetchCapabilities,
+  FILTER_STATUSES, reactorRoute, type HistoryFilters, type StatusGroup, type ReactorSummary,
+} from '../lib/reactors';
 
 export default function Dashboard() {
-  const { data: reactors, error, isLoading } = useSWR<ReactorSummary[]>(apiUrl('/api/reactors'), fetchAllReactors, { refreshInterval: 2000 });
+  const { data: capabilities } = useSWR(apiUrl('/api/capabilities'), fetchCapabilities);
+  const [historyFilters, setHistoryFilters] = useState<HistoryFilters>(EMPTY_HISTORY_FILTERS);
+  const filterQuery = buildFilterQuery(historyFilters);
+  const reactorsUrl = filterQuery ? `${apiUrl('/api/reactors')}?${filterQuery}` : apiUrl('/api/reactors');
+  const { data: reactors, error, isLoading } = useSWR<ReactorSummary[]>(reactorsUrl, fetchAllReactors, { refreshInterval: 2000 });
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusGroup | 'all'>('all');
 
@@ -60,6 +67,28 @@ export default function Dashboard() {
           />
         </div>
       </div>
+
+      {capabilities?.execution_query && (
+        <HistoryFilterBar onApply={setHistoryFilters} onClear={() => setHistoryFilters(EMPTY_HISTORY_FILTERS)} />
+      )}
+
+      {filterQuery && (
+        <div className="bg-slate-900/50 rounded-xl border border-slate-800 overflow-hidden">
+          <h2 className="px-6 py-3 text-sm font-medium text-slate-300 border-b border-slate-800">
+            Matching executions ({reactors?.length ?? 0})
+          </h2>
+          <ul className="divide-y divide-slate-800/50 text-sm">
+            {(reactors ?? []).map((reactor) => (
+              <li key={reactor.id} className="px-6 py-2 flex gap-4">
+                <Link to={reactorRoute(reactor.id)} className="text-indigo-400 font-mono">{reactor.id}</Link>
+                <span className="text-slate-300">{reactor.class}</span>
+                <span className="text-slate-400">{reactor.status}</span>
+                <span className="text-slate-500 ml-auto tabular-nums">{reactor.created_at}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <SummaryCard
@@ -150,6 +179,59 @@ export default function Dashboard() {
         )}
       </div>
     </div>
+  );
+}
+
+// History filters (ActiveRecord storage only, 011 US4): class, status, time
+// range and input name=value pairs, applied together on submit.
+function HistoryFilterBar({ onApply, onClear }: { onApply: (f: HistoryFilters) => void; onClear: () => void }) {
+  const [draft, setDraft] = useState<HistoryFilters>({ ...EMPTY_HISTORY_FILTERS, inputs: [{ name: '', value: '' }] });
+  const field = 'bg-slate-900/50 border border-slate-800 text-sm rounded-lg px-3 py-2 text-slate-200 placeholder:text-slate-600';
+
+  const setInput = (index: number, key: 'name' | 'value', text: string) =>
+    setDraft({ ...draft, inputs: draft.inputs.map((pair, i) => (i === index ? { ...pair, [key]: text } : pair)) });
+
+  return (
+    <form
+      aria-label="History filters"
+      className="bg-slate-900/50 rounded-xl border border-slate-800 p-4 flex flex-wrap items-end gap-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onApply(draft);
+      }}
+    >
+      <input aria-label="Reactor class" placeholder="Reactor class" className={field}
+        value={draft.className} onChange={(e) => setDraft({ ...draft, className: e.target.value })} />
+      <select aria-label="Status" className={field} value={draft.status}
+        onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+        <option value="">Any status</option>
+        {FILTER_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+      </select>
+      <input aria-label="From" type="datetime-local" className={field}
+        value={draft.from} onChange={(e) => setDraft({ ...draft, from: e.target.value })} />
+      <input aria-label="To" type="datetime-local" className={field}
+        value={draft.to} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
+      {draft.inputs.map((pair, index) => (
+        <span key={index} className="flex gap-1">
+          <input aria-label="Input name" placeholder="input" className={`${field} w-28`}
+            value={pair.name} onChange={(e) => setInput(index, 'name', e.target.value)} />
+          <input aria-label="Input value" placeholder="value" className={`${field} w-32`}
+            value={pair.value} onChange={(e) => setInput(index, 'value', e.target.value)} />
+        </span>
+      ))}
+      <button type="button" aria-label="Add input filter" className="p-2 text-slate-400 hover:text-indigo-400"
+        onClick={() => setDraft({ ...draft, inputs: [...draft.inputs, { name: '', value: '' }] })}>
+        <Plus className="w-4 h-4" />
+      </button>
+      <button type="submit" className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm">Filter</button>
+      <button type="button" aria-label="Clear filters" className="p-2 text-slate-400 hover:text-rose-400"
+        onClick={() => {
+          setDraft({ ...EMPTY_HISTORY_FILTERS, inputs: [{ name: '', value: '' }] });
+          onClear();
+        }}>
+        <X className="w-4 h-4" />
+      </button>
+    </form>
   );
 }
 

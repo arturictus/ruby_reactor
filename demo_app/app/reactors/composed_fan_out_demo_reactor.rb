@@ -29,7 +29,7 @@ class ComposedFanOutDemoReactor < RubyReactor::Reactor
     private
 
     def redis
-      @redis ||= Redis.new(url: RubyReactor.configuration.storage.redis_url)
+      @redis ||= DemoLog.store
     end
   end
 

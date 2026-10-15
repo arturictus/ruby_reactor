@@ -103,7 +103,8 @@ RSpec.describe "fan-out map completion resumes the owner" do
       expect(inline.exception_class).to eq("RuntimeError")
     end
 
-    it "falls back to the parent ids for map metadata written before the upgrade" do
+    it "falls back to the parent ids for map metadata written before the upgrade",
+       redis_only: "legacy Redis-written metadata" do
       id = MapOwnerResumeSpec::Completes.run(items).execution_id
       key = "reactor:#{MapOwnerResumeSpec::Completes.name}:map:#{id}:m:metadata"
       metadata = JSON.parse(redis.get(key)).except("owner_context_id", "owner_reactor_class_name")

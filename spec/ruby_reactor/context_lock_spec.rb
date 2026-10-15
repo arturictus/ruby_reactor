@@ -79,7 +79,7 @@ RSpec.describe "Per-context liveness lock" do
     executor = RubyReactor::Executor.new(CtxLockReactor, {}, context)
     executor.resume_execution
     expect(CtxLockReactor.runs).to eq(1)
-    expect(redis.exists?("lock:async:#{context.context_id}")).to be false # released in ensure
+    expect(storage.lock_held?("async:#{context.context_id}")).to be false # released in ensure
   end
 
   it "releases the lock in the ensure path after a normal resume" do
@@ -87,7 +87,7 @@ RSpec.describe "Per-context liveness lock" do
     executor = RubyReactor::Executor.new(CtxLockReactor, {}, context)
     executor.resume_execution
 
-    expect(redis.exists?("lock:async:#{context.context_id}")).to be false
+    expect(storage.lock_held?("async:#{context.context_id}")).to be false
   end
 
   # 010 R-03: a Worker or `continue` that already holds the lock hands its

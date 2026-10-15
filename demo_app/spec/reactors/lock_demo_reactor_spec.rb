@@ -55,24 +55,23 @@ RSpec.describe LockDemoReactor, type: :reactor do
     end
 
     context "when lock is held by another owner" do
-      before do
-        redis.hset("lock:order:order_42", "owner", "other_process")
-        redis.hset("lock:order:order_42", "count", "1")
-      end
-
       it "raises Lock::AcquisitionError on inline execution" do
-        expect do
-          test_reactor(described_class, { order_id: "order_42", hold_seconds: 0 }, async: false).result
-        end.to raise_error(RubyReactor::Lock::AcquisitionError)
+        hold_lock("order:order_42", owner: "other_process") do
+          expect do
+            test_reactor(described_class, { order_id: "order_42", hold_seconds: 0 }, async: false).result
+          end.to raise_error(RubyReactor::Lock::AcquisitionError)
+        end
       end
     end
   end
 
-  context "when lock is held during async worker execution" do
+  # Drives the Sidekiq worker directly, so it runs only on the Sidekiq queue.
+  context "when lock is held during async worker execution", :sidekiq_only do
     it "snoozes the worker instead of failing immediately" do
-      redis.hset("lock:order:order_42", "owner", "other_process")
-      redis.hset("lock:order:order_42", "count", "1")
+      hold_lock("order:order_42", owner: "other_process") { snooze_while_held }
+    end
 
+    def snooze_while_held
       RubyReactor.configuration.lock_snooze_base_delay = 5
       RubyReactor.configuration.lock_snooze_jitter = 0
 

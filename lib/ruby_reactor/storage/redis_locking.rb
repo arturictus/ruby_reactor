@@ -169,8 +169,10 @@ module RubyReactor
         @redis.exists?(key)
       end
 
-      def period_mark(key, ttl)
-        @redis.set(key, "1", ex: ttl)
+      # The value names the claiming execution when the caller knows it
+      # (`period_marker_info`); "1" keeps older callers working.
+      def period_mark(key, ttl, context_id: nil)
+        @redis.set(key, context_id || "1", ex: ttl)
       end
 
       # Rate Limit Primitives — fixed-window counter, supports multiple
@@ -271,6 +273,14 @@ module RubyReactor
         period_seconds = RubyReactor::Period.period_seconds(every)
         bucket = now / period_seconds
         @redis.ttl("rate:#{key_base}:#{every}:#{bucket}")
+      end
+
+      # `{ context_id:, claimed_at: }` for a marked period bucket, or nil. Redis
+      # keeps no claim time, and a marker written without a context id ("1")
+      # names no run.
+      def period_marker_info(key_base, every, now: Time.now.utc)
+        value = @redis.get(RubyReactor::Period.key(key_base, every, now: now))
+        value && { context_id: value == "1" ? nil : value, claimed_at: nil }
       end
 
       # TTL in seconds for a period marker (-2 if unset).
