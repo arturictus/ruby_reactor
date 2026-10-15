@@ -239,7 +239,7 @@ namespace :demo do
   end
  
   desc "All demo reactors"
-  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups] do
+  task all: [:environment, :flush_redis, :payment_workflow, :order_processing, :parent_reactor, :map, :interrupt, :etl, :ar, :coordination, :ordered_lock, :exclusive_lock, :background_demo, :async_step_demo, :async_reactor_demo, :slow_async_demo, :fire_and_forget_demo, :full_background, :signal_demo, :validated_signup, :inheritable_step, :undeclared_input, :rollback_reliability, :map_execution_undo, :rollback_follow_ups, :queues] do
     puts "excuting all reactors"
   end
 
@@ -1195,6 +1195,84 @@ namespace :demo do
       puts "✅ SUCCESS: one undo_all call refunded every charge; no element undo ran"
     else
       puts "❌ FAIL: expected one bulk refund of 12 charges, no per-element refund, and a failed run"
+    end
+  end
+
+  # Prints where each trace entry of a run (and of its composed :deposit) ran.
+  def print_queue_trace(context)
+    child_entry = context.composed_contexts[:deposit] || context.composed_contexts["deposit"]
+    child = child_entry && (child_entry[:context] || child_entry["context"])
+    [["QueueDemoReactor", context], ["  deposit (StripeDepositReactor)", child]].each do |label, ctx|
+      next unless ctx
+
+      puts "   #{label}:"
+      ctx.execution_trace.each do |entry|
+        type = entry[:type].to_s
+        next unless %w[run compensate undo queue_hop].include?(type)
+
+        if type == "queue_hop"
+          puts "     #{entry[:direction]} hop at #{entry[:at]}: #{entry[:from]} -> #{entry[:to]}"
+        else
+          puts format("     %-11s %-8s on %s", type, entry[:step], entry[:queue] || "the calling process")
+        end
+      end
+    end
+  end
+
+  def queue_hops(context, direction)
+    context.execution_trace.select { |e| e[:type].to_s == "queue_hop" && e[:direction].to_s == direction }
+           .map { |e| e[:to].to_s }
+  end
+
+  def await_email(id, timeout: 30)
+    deadline = Time.now + timeout
+    loop do
+      record = RubyReactor.configuration.storage_adapter.retrieve_step_result(id, :email, "QueueDemoReactor")
+      return record if record&.dig("status") == "completed" || Time.now > deadline
+
+      sleep 0.05
+    end
+  end
+
+  desc "QueueDemoReactor — per-reactor and per-step queues (011): :demo_orders composes a deposit on " \
+       ":demo_stripe and dispatches an email on :demo_emails; hops forward and in rollback; a manual undo"
+  task queues: [:environment, :flush_redis] do
+    puts "\n>>> QueueDemoReactor.run(amount: 42)  [queue :demo_orders, deposit on :demo_stripe, email on :demo_emails]"
+    ok = QueueDemoReactor.run(amount: 42)
+    status = await_terminal(QueueDemoReactor, ok.execution_id)
+    email = await_email(ok.execution_id)
+    context = QueueDemoReactor.find(ok.execution_id).context
+    print_queue_trace(context)
+    puts "   email ran on #{email&.dig("queue").inspect}; final: #{status}"
+    if status == "completed" && queue_hops(context, "forward") == %w[demo_stripe demo_orders] &&
+       email&.dig("queue") == "demo_emails"
+      puts "✅ SUCCESS: every unit ran on its own queue, hopping to :demo_stripe and back"
+    else
+      puts "❌ FAIL: expected completed, hops [demo_stripe, demo_orders] and the email on demo_emails"
+    end
+
+    puts "\n>>> QueueDemoReactor.run(amount: 42, fail_at_confirm: true)"
+    failed = QueueDemoReactor.run(amount: 42, fail_at_confirm: true)
+    status = await_terminal(QueueDemoReactor, failed.execution_id)
+    context = QueueDemoReactor.find(failed.execution_id).context
+    print_queue_trace(context)
+    puts "   final: #{status}"
+    if status == "failed" && queue_hops(context, "rollback") == %w[demo_stripe demo_orders]
+      puts "✅ SUCCESS: compensated where it failed, each unit undone on its own queue"
+    else
+      puts "❌ FAIL: expected failed with rollback hops [demo_stripe, demo_orders]"
+    end
+
+    puts "\n>>> QueueDemoReactor.undo(id) of the completed run"
+    QueueDemoReactor.undo(ok.execution_id)
+    puts "   undo returned at once; run is #{QueueDemoReactor.find(ok.execution_id).context.status}"
+    status = await_terminal(QueueDemoReactor, ok.execution_id)
+    context = QueueDemoReactor.find(ok.execution_id).context
+    puts "   final: #{status}; rollback hops: #{queue_hops(context, "rollback").inspect}"
+    if status == "cancelled" && queue_hops(context, "rollback") == %w[demo_stripe demo_orders]
+      puts "✅ SUCCESS: the undo was handed to a worker and hopped per unit"
+    else
+      puts "❌ FAIL: expected cancelled with rollback hops [demo_stripe, demo_orders]"
     end
   end
 

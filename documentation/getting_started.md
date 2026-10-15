@@ -29,7 +29,8 @@ RubyReactor.configure do |config|
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
   config.storage.redis_options = { timeout: 1 }
 
-  # Background job configuration
+  # Background job configuration. `queue_name` is the default queue; a reactor
+  # or step class can declare its own with `queue :name`.
   config.queue_name = :default
   config.job_retry_count = 3
 

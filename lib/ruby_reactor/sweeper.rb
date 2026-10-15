@@ -53,7 +53,8 @@ module RubyReactor
         next unless %w[running rolling_back].include?(reactor[:status])
         next if @storage.lock_held?("async:#{reactor[:id]}") # worker alive -> leave alone
 
-        @async_router.perform_async(reactor[:id], reactor[:class])
+        log_waiting(reactor)
+        Queues.enqueue_run(reactor[:id], reactor[:class], router: @async_router)
         reenqueued += 1
       rescue StandardError => e
         # One bad record must not abort the whole sweep.
@@ -61,6 +62,20 @@ module RubyReactor
       end
 
       reenqueued
+    end
+
+    private
+
+    # A run whose dispatch is still pending: its job may only be waiting in a
+    # queue with no free worker (011 FR-020). Re-enqueued all the same — the
+    # duplicate exits once a worker gets to it — but said once per sweep.
+    def log_waiting(reactor)
+      record = @storage.retrieve_run_dispatch(reactor[:id], reactor[:class])
+      return if record.nil? || record["since"].to_s.empty?
+
+      @logger.info("event=ruby_reactor.queue.waiting reactor=#{reactor[:class].inspect} " \
+                   "execution_id=#{reactor[:id].inspect} queue=#{record["queue"].inspect} " \
+                   "since=#{record["since"].inspect} source=\"sweeper\"")
     end
   end
 end

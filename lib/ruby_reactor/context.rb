@@ -48,6 +48,12 @@ module RubyReactor
     # so a middleware can tell a step-level hold from a reactor-level one.
     attr_accessor :coordinating_step
 
+    # Transient, NOT serialized: the queue of the job executing this context
+    # tree (011), set on the root by `Worker`, `StepWorker` and
+    # `Map::ElementExecutor` from the job's own queue argument. Nil in the
+    # calling process. Read through `Queues.current`.
+    attr_accessor :current_queue
+
     def initialize(inputs = {}, reactor_class = nil)
       @context_id = SecureRandom.uuid
       @inputs = inputs
@@ -140,9 +146,12 @@ module RubyReactor
     end
 
     # Appends an execution-trace event stamped with whether this process is the
-    # worker (`inline_async_execution`). Traces written before this field
-    # existed stay unlabeled on deserialize.
+    # worker (`inline_async_execution`) and, inside a job, the job's queue
+    # (011). Traces written before these fields existed stay unlabeled on
+    # deserialize.
     def append_execution_trace(entry)
+      queue = Queues.current(self)
+      entry = entry.merge(queue: queue) if queue
       @execution_trace << entry.merge(background: !!@inline_async_execution)
     end
 

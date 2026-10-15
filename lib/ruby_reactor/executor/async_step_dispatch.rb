@@ -166,7 +166,9 @@ module RubyReactor
             "root_context_id" => root.context_id,
             "reactor_class_name" => RubyReactor.reactor_storage_name(root.reactor_class),
             "step_context_id" => @context.context_id,
-            "step_name" => step_config.name.to_s
+            "step_name" => step_config.name.to_s,
+            # Where the unit's jobs run (011): its recovery goes there too.
+            "queue" => Queues.dispatch_queue(step_config, @context)
           },
           async_step_class_name
         )
@@ -180,12 +182,14 @@ module RubyReactor
 
       def enqueue_async_step(step_config)
         root = @context.root_context || @context
-        log_async_event("async_step.dispatched", step_config.name)
+        queue = Queues.dispatch_queue(step_config, @context)
+        log_async_event("async_step.dispatched", step_config.name, queue: queue)
         configuration.async_router.perform_step_async(
           root_context_id: root.context_id,
           reactor_class_name: RubyReactor.reactor_storage_name(root.reactor_class),
           step_context_id: @context.context_id,
-          step_name: step_config.name
+          step_name: step_config.name,
+          **Queues.kwargs(queue)
         )
       end
 

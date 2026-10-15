@@ -17,6 +17,7 @@ module RubyReactor
         include RubyReactor::Dsl::TemplateHelpers
         include RubyReactor::Dsl::ValidationHelpers
         include RubyReactor::Dsl::AsyncMacros
+        include RubyReactor::Dsl::StaticQueue
 
         require_relative "interrupt_builder"
         require_relative "interrupt_step_config"
@@ -160,6 +161,8 @@ module RubyReactor
               wire_by_name!(step_name, step_config, declaration)
             end
           end
+          # Queue configurations a hop could not run safely (011 R-09).
+          RubyReactor::Queues.validate_definition!(self)
         end
 
         def wire_by_name!(step_name, step_config, declaration)

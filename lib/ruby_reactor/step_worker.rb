@@ -42,12 +42,19 @@ module RubyReactor
           reactor_class_name: arguments[:reactor_class_name],
           step_context_id: arguments[:step_context_id],
           step_name: arguments[:step_name].to_sym,
-          contention_attempts: arguments[:contention_attempts] || 0
+          contention_attempts: arguments[:contention_attempts] || 0,
+          queue: arguments[:queue]
         }
       end
     end
 
-    def initialize(root_context_id:, reactor_class_name:, step_context_id:, step_name:, contention_attempts: 0)
+    # `queue`: the queue this job was enqueued on, given only when it is not the
+    # global one (011 R-03).
+    # rubocop:disable Metrics/ParameterLists
+    def initialize(root_context_id:, reactor_class_name:, step_context_id:, step_name:, contention_attempts: 0,
+                   queue: nil)
+      # rubocop:enable Metrics/ParameterLists
+      @queue = queue
       @root_context_id = root_context_id
       @reactor_class_name = reactor_class_name
       @step_context_id = step_context_id || root_context_id
@@ -145,7 +152,8 @@ module RubyReactor
       mark_record_parked(context, delay, attempt, contended)
       RubyReactor.configuration.async_router.perform_step_in(
         delay, root_context_id: @root_context_id, reactor_class_name: @reactor_class_name,
-               step_context_id: @step_context_id, step_name: @step_name, contention_attempts: attempt
+               step_context_id: @step_context_id, step_name: @step_name, contention_attempts: attempt,
+               **Queues.kwargs(@queue)
       )
     end
 
@@ -259,7 +267,9 @@ module RubyReactor
       # and its inspector's arguments from it.
       contract = step_config.input_contract
       @run = { "started_at" => Time.now.iso8601(6),
-               "arguments" => ContextSerializer.serialize_value(contract ? contract.redact(arguments) : arguments) }
+               "arguments" => ContextSerializer.serialize_value(contract ? contract.redact(arguments) : arguments),
+               # The queue this run happened on (011).
+               "queue" => (@queue || Queues.global).to_s }
 
       attempt = 0
       result = nil
@@ -415,7 +425,7 @@ module RubyReactor
     end
 
     # This delivery's run, once the body was reached: `started_at`,
-    # `arguments` (redacted, serialized) and `attempts`. Empty before that.
+    # `arguments` (redacted, serialized), `queue` and `attempts`. Empty before that.
     # Plus `compensation` when the unit compensated itself.
     def run_fields
       fields = @run || {}
@@ -456,6 +466,8 @@ module RubyReactor
       restore_parked_position(found) if found
       # The step runs in its own job; nothing it reaches should hand off again.
       found&.inline_async_execution = true
+      # The job's queue (011), stamped on what the body traces.
+      root.current_queue = (@queue || Queues.global).to_s
       # Per-job owner, NEVER the root context id (US4-5, research D5):
       # ownership never crosses a process hand-off, so this job's coordination
       # never re-enters the dispatching execution's holds and never blocks a

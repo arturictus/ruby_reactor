@@ -62,10 +62,11 @@ module RubyReactor
     # never bite. `perform_step_in(0, ...)` is the only re-dispatch that
     # carries the count.
     def redispatch(record, arguments)
+      queue = Queues.kwargs(record["queue"]) # where it was dispatched (011)
       attempts = record["contention_attempts"].to_i
-      return @async_router.perform_step_async(**arguments) unless attempts.positive?
+      return @async_router.perform_step_async(**arguments, **queue) unless attempts.positive?
 
-      @async_router.perform_step_in(0, **arguments, contention_attempts: attempts)
+      @async_router.perform_step_in(0, **arguments, contention_attempts: attempts, **queue)
     end
 
     def dispatch_arguments(record)

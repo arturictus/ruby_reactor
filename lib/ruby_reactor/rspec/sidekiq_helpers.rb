@@ -35,6 +35,11 @@ module RubyReactor
         def args
           raw["args"]
         end
+
+        # The queue the job is on (011): what a spec asserts placement with.
+        def queue
+          raw["queue"]
+        end
       end
 
       def self.worker_classes

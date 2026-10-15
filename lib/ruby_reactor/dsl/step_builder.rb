@@ -33,6 +33,7 @@ module RubyReactor
         @retry_config = nil
         @inline_contract = nil
         @rule_sites = []
+        @queue = nil
       end
 
       def argument(name, source, type = nil, transform: nil, **predicates)
@@ -62,6 +63,17 @@ module RubyReactor
 
       def run(&block)
         @run_block = block
+      end
+
+      # The queue this step's jobs use (011 R-01), winning over the step
+      # class's own declaration. One per step: a different second value raises.
+      def queue(name)
+        value = RubyReactor::Dsl::StaticQueue.normalize!(name, "#{reactor_label} step :#{@name}")
+        return @queue = value if @queue.nil? || @queue == value
+
+        raise Error::ValidationError,
+              "#{reactor_label} step :#{@name} already declares `queue :#{@queue}` and cannot also declare " \
+              "`queue :#{value}`."
       end
 
       def compensate(&block)
@@ -154,7 +166,8 @@ module RubyReactor
           semaphore_config: @semaphore_config,
           rate_limit_config: @rate_limit_config,
           period_config: @period_config,
-          ordered_lock_config: @ordered_lock_config
+          ordered_lock_config: @ordered_lock_config,
+          queue: @queue
         }
 
         RubyReactor::Dsl::StepConfig.new(step_config)
@@ -270,6 +283,14 @@ module RubyReactor
         @rate_limit_config = config[:rate_limit_config]
         @period_config = config[:period_config]
         @ordered_lock_config = config[:ordered_lock_config]
+        @queue = config[:queue]
+      end
+
+      # The queue this step's jobs use when it declares one (011 R-01): the
+      # step block's, else the step class's. Nil when neither declares one —
+      # `Queues` then resolves the container's.
+      def queue
+        @queue || (impl.declared_queue if impl.respond_to?(:declared_queue))
       end
 
       # A step's EFFECTIVE coordination: its own (inline) declaration if it has

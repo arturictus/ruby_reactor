@@ -24,6 +24,14 @@ module RubyReactor
         @argument_mappings[child_input_name] = source
       end
 
+      # A queue belongs to the reactor that runs the work (011 R-01): the child
+      # class declares it, and this call site inherits it from there.
+      def queue(*)
+        child = @child_reactor_class&.name || "the child reactor class"
+        raise RubyReactor::Error::ValidationError,
+              "`queue` on `async_reactor :#{@name}` is not supported: declare `queue` on #{child} instead."
+      end
+
       # A parent never retries a nested reactor as a whole (008 R-14): the
       # child owns its steps' retries. Kept as a stub to name the replacement.
       def retries(*)

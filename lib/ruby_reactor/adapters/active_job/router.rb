@@ -3,18 +3,28 @@
 module RubyReactor
   module Adapters
     module ActiveJob
+      # Every method enqueues on `queue:` (011 R-03), or on the global
+      # `queue_name` read now when it is nil. A given queue is also added to
+      # the job's arguments, so the job knows where it runs; without one the
+      # arguments are exactly what they were before queues existed.
       class Router
         # Identity-only payload: the worker rehydrates the live context from storage
         # by (context_id, reactor_class_name). The caller already holds context_id, so
         # there is no blob to deserialize here.
-        def self.perform_async(context_id, reactor_class_name = nil, intermediate_results: {})
-          job_id = RubyReactor::Adapters::ActiveJob::Worker.perform_async(context_id, reactor_class_name)
+        def self.perform_async(context_id, reactor_class_name = nil, intermediate_results: {}, queue: nil)
+          job_id = on(RubyReactor::Adapters::ActiveJob::Worker, queue)
+                   .perform_async(context_id, reactor_class_name, *([0, queue.to_s] if queue))
           RubyReactor::DispatchResult.new(job_id: job_id, intermediate_results: intermediate_results,
                                           execution_id: context_id)
         end
 
-        def self.perform_in(delay, context_id, reactor_class_name = nil, intermediate_results: {})
-          job_id = RubyReactor::Adapters::ActiveJob::Worker.perform_in(delay, context_id, reactor_class_name)
+        # `snooze_count` is the root Worker's snooze counter, carried only with a queue.
+        # rubocop:disable Metrics/ParameterLists
+        def self.perform_in(delay, context_id, reactor_class_name = nil, intermediate_results: {}, queue: nil,
+                            snooze_count: 0)
+          # rubocop:enable Metrics/ParameterLists
+          job_id = on(RubyReactor::Adapters::ActiveJob::Worker, queue)
+                   .perform_in(delay, context_id, reactor_class_name, *([snooze_count, queue.to_s] if queue))
           RubyReactor::DispatchResult.new(job_id: job_id, intermediate_results: intermediate_results,
                                           execution_id: context_id)
         end
@@ -22,14 +32,14 @@ module RubyReactor
         # One `async_step`'s work, dispatched as its own independent unit. The
         # payload is identity-only for the same reason every other dispatch here
         # is: the worker rehydrates the parent context from storage.
-        def self.perform_step_async(root_context_id:, reactor_class_name:, step_context_id:, step_name:)
-          job_id = RubyReactor::Adapters::ActiveJob::StepWorker.perform_async(
-            {
-              "root_context_id" => root_context_id,
-              "reactor_class_name" => reactor_class_name,
-              "step_context_id" => step_context_id,
-              "step_name" => step_name.to_s
-            }
+        def self.perform_step_async(root_context_id:, reactor_class_name:, step_context_id:, step_name:, queue: nil)
+          job_id = on(RubyReactor::Adapters::ActiveJob::StepWorker, queue).perform_async(
+            with_queue({
+                         "root_context_id" => root_context_id,
+                         "reactor_class_name" => reactor_class_name,
+                         "step_context_id" => step_context_id,
+                         "step_name" => step_name.to_s
+                       }, queue)
           )
           RubyReactor::DispatchResult.new(job_id: job_id)
         end
@@ -38,81 +48,68 @@ module RubyReactor
         # (Finding 6). See Sidekiq::Router#perform_step_in.
         # rubocop:disable Metrics/ParameterLists
         def self.perform_step_in(delay, root_context_id:, reactor_class_name:, step_context_id:, step_name:,
-                                 contention_attempts: 0)
+                                 contention_attempts: 0, queue: nil)
           # rubocop:enable Metrics/ParameterLists
-          job_id = RubyReactor::Adapters::ActiveJob::StepWorker.perform_in(
+          job_id = on(RubyReactor::Adapters::ActiveJob::StepWorker, queue).perform_in(
             delay,
-            {
-              "root_context_id" => root_context_id,
-              "reactor_class_name" => reactor_class_name,
-              "step_context_id" => step_context_id,
-              "step_name" => step_name.to_s,
-              "contention_attempts" => contention_attempts
-            }
+            with_queue({
+                         "root_context_id" => root_context_id,
+                         "reactor_class_name" => reactor_class_name,
+                         "step_context_id" => step_context_id,
+                         "step_name" => step_name.to_s,
+                         "contention_attempts" => contention_attempts
+                       }, queue)
           )
           RubyReactor::DispatchResult.new(job_id: job_id)
         end
 
-        # rubocop:disable Metrics/ParameterLists
-        def self.perform_map_element_async(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
-                                           strict_ordering:, parent_context_id:, parent_reactor_class_name:,
-                                           step_name:, batch_size: nil, serialized_context: nil, atomic: nil)
-          job_id = RubyReactor::Adapters::ActiveJob::MapElementWorker.perform_async(
-            {
-              "map_id" => map_id,
-              "element_id" => element_id,
-              "index" => index,
-              "serialized_inputs" => serialized_inputs,
-              "reactor_class_info" => reactor_class_info,
-              "strict_ordering" => strict_ordering,
-              "parent_context_id" => parent_context_id,
-              "parent_reactor_class_name" => parent_reactor_class_name,
-              "step_name" => step_name,
-              "batch_size" => batch_size,
-              "serialized_context" => serialized_context,
-              "atomic" => atomic
-            }
-          )
+        def self.perform_map_element_async(queue: nil, owner_queue: nil, **args)
+          job_id = on(RubyReactor::Adapters::ActiveJob::MapElementWorker, queue)
+                   .perform_async(with_queue(map_element_payload(**args), queue, owner_queue))
           RubyReactor::DispatchResult.new(job_id: job_id)
         end
 
-        def self.perform_map_element_in(delay, map_id:, element_id:, index:, serialized_inputs:,
-                                        reactor_class_info:, strict_ordering:, parent_context_id:,
-                                        parent_reactor_class_name:, step_name:, batch_size: nil,
-                                        serialized_context: nil, atomic: nil)
-          job_id = RubyReactor::Adapters::ActiveJob::MapElementWorker.perform_in(
-            delay,
-            {
-              "map_id" => map_id,
-              "element_id" => element_id,
-              "index" => index,
-              "serialized_inputs" => serialized_inputs,
-              "reactor_class_info" => reactor_class_info,
-              "strict_ordering" => strict_ordering,
-              "parent_context_id" => parent_context_id,
-              "parent_reactor_class_name" => parent_reactor_class_name,
-              "step_name" => step_name,
-              "batch_size" => batch_size,
-              "serialized_context" => serialized_context,
-              "atomic" => atomic
-            }
-          )
+        def self.perform_map_element_in(delay, queue: nil, owner_queue: nil, **args)
+          job_id = on(RubyReactor::Adapters::ActiveJob::MapElementWorker, queue)
+                   .perform_in(delay, with_queue(map_element_payload(**args), queue, owner_queue))
           # Return an DispatchResult so RetryManager#handle_async_retry recognises the
           # element was successfully requeued and yields a RetryQueuedResult.
           RubyReactor::DispatchResult.new(job_id: job_id)
         end
-        # rubocop:enable Metrics/ParameterLists
+
+        # rubocop:disable Metrics/ParameterLists
+        def self.map_element_payload(map_id:, element_id:, index:, serialized_inputs:, reactor_class_info:,
+                                     strict_ordering:, parent_context_id:, parent_reactor_class_name:,
+                                     step_name:, batch_size: nil, serialized_context: nil, atomic: nil)
+          # rubocop:enable Metrics/ParameterLists
+          {
+            "map_id" => map_id,
+            "element_id" => element_id,
+            "index" => index,
+            "serialized_inputs" => serialized_inputs,
+            "reactor_class_info" => reactor_class_info,
+            "strict_ordering" => strict_ordering,
+            "parent_context_id" => parent_context_id,
+            "parent_reactor_class_name" => parent_reactor_class_name,
+            "step_name" => step_name,
+            "batch_size" => batch_size,
+            "serialized_context" => serialized_context,
+            "atomic" => atomic
+          }
+        end
+        private_class_method :map_element_payload
 
         # One element's rollback in a fan-out map's distributed rollback (009
         # R-07); the `_in` form is its requeue on a contended element lock.
-        def self.perform_map_element_rollback_async(**args)
-          job_id = RubyReactor::Adapters::ActiveJob::MapElementRollbackWorker.perform_async(map_element_rollback_payload(**args))
+        def self.perform_map_element_rollback_async(queue: nil, **args)
+          job_id = on(RubyReactor::Adapters::ActiveJob::MapElementRollbackWorker, queue)
+                   .perform_async(with_queue(map_element_rollback_payload(**args), queue))
           RubyReactor::DispatchResult.new(job_id: job_id)
         end
 
-        def self.perform_map_element_rollback_in(delay, **args)
-          job_id = RubyReactor::Adapters::ActiveJob::MapElementRollbackWorker.perform_in(
-            delay, map_element_rollback_payload(**args)
+        def self.perform_map_element_rollback_in(delay, queue: nil, **args)
+          job_id = on(RubyReactor::Adapters::ActiveJob::MapElementRollbackWorker, queue).perform_in(
+            delay, with_queue(map_element_rollback_payload(**args), queue)
           )
           RubyReactor::DispatchResult.new(job_id: job_id)
         end
@@ -133,20 +130,46 @@ module RubyReactor
 
         # rubocop:disable Metrics/ParameterLists
         def self.perform_map_collection_async(parent_context_id:, map_id:, parent_reactor_class_name:, step_name:,
-                                              strict_ordering:, timeout:)
-          job_id = RubyReactor::Adapters::ActiveJob::MapCollectorWorker.perform_async(
-            {
-              "parent_context_id" => parent_context_id,
-              "map_id" => map_id,
-              "parent_reactor_class_name" => parent_reactor_class_name,
-              "step_name" => step_name,
-              "strict_ordering" => strict_ordering,
-              "timeout" => timeout
-            }
+                                              strict_ordering:, timeout:, queue: nil)
+          job_id = on(RubyReactor::Adapters::ActiveJob::MapCollectorWorker, queue).perform_async(
+            with_queue({
+                         "parent_context_id" => parent_context_id,
+                         "map_id" => map_id,
+                         "parent_reactor_class_name" => parent_reactor_class_name,
+                         "step_name" => step_name,
+                         "strict_ordering" => strict_ordering,
+                         "timeout" => timeout
+                       }, queue)
           )
           RubyReactor::DispatchResult.new(job_id: job_id)
         end
         # rubocop:enable Metrics/ParameterLists
+
+        # ActiveJob's `set` returns a `ConfiguredJob`, which only has
+        # `perform_later`: wrap it in the `perform_async` / `perform_in` pair
+        # the methods above call, each returning the job id.
+        def self.on(worker_class, queue)
+          Enqueuer.new(worker_class, (queue || RubyReactor.configuration.queue_name).to_s)
+        end
+        private_class_method :on
+
+        Enqueuer = Struct.new(:job_class, :queue) do
+          def perform_async(*args)
+            job_class.set(queue: queue).perform_later(*args).job_id
+          end
+
+          def perform_in(delay, *args)
+            job_class.set(queue: queue, wait: delay).perform_later(*args).job_id
+          end
+        end
+        private_constant :Enqueuer
+
+        def self.with_queue(payload, queue, owner_queue = nil)
+          payload["queue"] = queue.to_s if queue
+          payload["owner_queue"] = owner_queue.to_s if owner_queue
+          payload
+        end
+        private_class_method :with_queue
       end
     end
   end

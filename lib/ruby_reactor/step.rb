@@ -39,6 +39,7 @@ module RubyReactor
     include RubyReactor::StepSignals
     extend RubyReactor::Dsl::Lockable::ClassMethods
     extend RubyReactor::Dsl::Retryable
+    extend RubyReactor::Dsl::StaticQueue
 
     attr_reader :inputs, :context, :result, :reason
 

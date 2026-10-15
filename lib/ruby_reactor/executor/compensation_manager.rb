@@ -123,6 +123,7 @@ module RubyReactor
       def rollback_completed_steps(&after_pop)
         until undo_stack.empty?
           step_info = undo_stack.last
+          hop_rollback!(step_info[:step])
           result = @context.with_step(step_info[:step].name) do
             undo_step(step_info[:step], step_info[:result], step_info[:arguments])
           end
@@ -134,6 +135,24 @@ module RubyReactor
       end
 
       private
+
+      # The next undo belongs to a job on another queue (011 R-07, P-3): stop
+      # BEFORE it, its entry still on the stack as the resume cursor, and hand
+      # the rollback off there, as a fan-out map's rollback does (H-6).
+      def hop_rollback!(step_config)
+        target = Queues.rollback_hop_target(step_config, @context)
+        return unless target
+
+        deduped = Queues.dispatch_pending?(@context, target)
+        unless deduped
+          root = @context.root_context || @context
+          root.append_execution_trace(
+            { type: :queue_hop, at: Queues.path(@context, step_config.name), from: Queues.current(@context),
+              to: target, direction: :rollback, timestamp: Time.now }
+          )
+        end
+        raise Error::RollbackHandedOff.new(queue: target, deduped: deduped)
+      end
 
       def recorded_error(error)
         return error if error.is_a?(String)

@@ -126,7 +126,7 @@ module RubyReactor
         RubyReactor.configuration.async_router.perform_map_collection_async(
           parent_context_id: arguments[:parent_context_id], map_id: map_id,
           parent_reactor_class_name: reactor_class_name, step_name: arguments[:step_name].to_s,
-          strict_ordering: arguments[:strict_ordering], timeout: 3600
+          strict_ordering: arguments[:strict_ordering], timeout: 3600, **Queues.kwargs(arguments[:owner_queue])
         )
       end
 
@@ -147,7 +147,9 @@ module RubyReactor
           parent_context_id: map_meta["parent_context_id"],
           parent_reactor_class_name: parent_class_name,
           atomic: map_meta["atomic"],
-          batch_size: map_meta["batch_size"]
+          batch_size: map_meta["batch_size"],
+          queue: map_meta["queue"],
+          owner_queue: map_meta["owner_queue"]
         }
 
         source = resolve_source(arguments, parent_context)
@@ -211,7 +213,8 @@ module RubyReactor
           parent_reactor_class_name: context.reactor_class.name,
           step_name: options[:step_name].to_s,
           batch_size: arguments[:batch_size], # Passed to worker so it knows to trigger next batch?
-          atomic: arguments[:atomic]
+          atomic: arguments[:atomic],
+          **Helpers.queue_options(arguments)
         )
       end
 
@@ -241,7 +244,7 @@ module RubyReactor
           map_id: map_id, position: position, element_context_id: element_context_id,
           reactor_class_info: meta["reactor_class_info"], parent_reactor_class_name: parent_reactor_class_name,
           step_name: meta["step_name"], batch_size: meta["batch_size"], owner_context_id: meta["owner_context_id"],
-          owner_reactor_class_name: meta["owner_reactor_class_name"], attempt: attempt
+          owner_reactor_class_name: meta["owner_reactor_class_name"], attempt: attempt, **Queues.kwargs(meta["queue"])
         )
       end
       # rubocop:enable Metrics/ParameterLists

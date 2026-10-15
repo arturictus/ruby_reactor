@@ -1,6 +1,8 @@
 export type TraceEntry = {
   step?: string;
   background?: boolean | string;
+  // The queue of the job the entry was written in (absent in the caller).
+  queue?: string;
   [key: string]: unknown;
 };
 
@@ -24,6 +26,19 @@ export function stepRanInBackground(steps: TraceEntry[] | undefined, stepName: s
     const entry = steps[i];
     if (!matchesStep(entry, stepName)) continue;
     return asBoolean(entry.background);
+  }
+
+  return undefined;
+}
+
+// The queue the step last ran on, from its last matching trace event.
+export function stepQueue(steps: TraceEntry[] | undefined, stepName: string): string | undefined {
+  if (!steps?.length) return undefined;
+
+  for (let i = steps.length - 1; i >= 0; i -= 1) {
+    const entry = steps[i];
+    if (!matchesStep(entry, stepName)) continue;
+    return typeof entry.queue === 'string' && entry.queue !== '' ? entry.queue : undefined;
   }
 
   return undefined;
