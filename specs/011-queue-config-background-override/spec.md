@@ -4,7 +4,9 @@
 
 **Created**: 2026-10-11
 
-**Status**: Draft
+**Status**: Draft — revised by `/speckit-plan` (2026-10-15, research R-17): FR-015, the map-element
+and pre-feature-run edge cases, a new ordered-lock edge case, the Context table's "Today" queue row
+and Assumptions.
 
 **Input**: User description: `specs/queue_config_background_override.md` — "Select the `queue` a
 reactor (and a step) executes in, so teams manage worker resources the way they already do with
@@ -21,7 +23,7 @@ What happens today, and what this feature changes:
 
 | Area | Today | After this feature |
 | --- | --- | --- |
-| Which queue a job uses | Every job (reactor hand-off, `async_step`, map element, collector, retry, park, sweeper) goes to the single global `queue_name`. | Each job goes to the **effective queue** of the unit it runs: its own declaration, else the enclosing unit's, else the global `queue_name`. |
+| Which queue a job uses | Every job (reactor hand-off, `async_step`, map element, collector, retry, park, sweeper) is meant to go to the single global `queue_name`. (On Sidekiq the step and map job classes actually use Sidekiq's own `default` queue, and the reactor worker reads `queue_name` once at load; fixed here, research F-1.) | Each job goes to the **effective queue** of the unit it runs: its own declaration, else the enclosing unit's, else the global `queue_name`. |
 | Reactor declaring a queue | Not possible. | `queue :name` in the reactor class body. |
 | Step declaring a queue | Not possible. | `queue :name` on a step class (or in a `step`/`async_step` definition block). |
 | Composed child / map elements declaring another queue | The child's `background` is ignored once the parent is in a worker; the child runs in the parent's job, on the global queue. | The run moves to the child's queue for the child's work and back to the parent's queue afterwards ("Option 1"). Each move is a **queue hop**: persist, then hand the run to a job on the next queue. |
@@ -230,7 +232,8 @@ step and verify the plain step's undo runs on its queue.
   queue and one hop back out of each, in execution order.
 - A DAG where ready steps on different queues could run in either order: the order is the same
   deterministic order used today; hops follow it (no reordering to save hops).
-- A run persisted before this feature (no recorded queue) is re-dispatched to the global `queue_name`.
+- A run persisted before this feature (no recorded queue) is re-dispatched to its reactor's effective
+  queue — the global `queue_name` for a reactor with no declaration — and hops from there if needed.
 - A queue declaration changed in a deploy while runs are in flight: re-dispatches of an in-flight
   unit use the queue recorded with the run; units not yet started resolve from the current
   definition.
@@ -243,9 +246,13 @@ step and verify the plain step's undo runs on its queue.
 - A run that never left the calling process (no `background`, or a failure before the hand-off
   point) rolls back entirely in the caller, with no hops, as today. A later manual undo of such a
   run follows FR-018.
-- A fan-out map element whose reactor composes a child (or uses a plain step) on another queue: the
-  element's own job hops, with the same guarantees, and the element reports its outcome to the
-  collector exactly once.
+- A map element (fan-out or inline) whose reactor composes a child (or uses a plain step or nested
+  map) on another queue: rejected at definition time (FR-015, FR-019) — a waiting fan-out element
+  is re-dispatched from the start by the map sweeper, and an inline element re-runs with its map
+  step, so a hop there would repeat completed steps.
+- A reactor declaring `with_ordered_lock` whose tree could hop: rejected at definition time
+  (FR-019) — nothing keeps its ordered-lock position alive while the run waits in a queue, so a
+  successor could pass it.
 - Enqueueing the continuation of a hop fails (queue backend unavailable): the run is already
   persisted, so the current job fails or retries without advancing the run, and the sweeper recovers
   it; no step after the hop point runs in the wrong job.
@@ -308,8 +315,11 @@ step and verify the plain step's undo runs on its queue.
   it failed; each completed unit's undo MUST run on that unit's effective queue, hopping between
   queues in rollback order.
 - **FR-015**: Inline (non-fan-out) map elements MUST follow the same rule as a composed child: the
-  map runs on the element reactor's effective queue, hopping in and out as needed. A fan-out
-  element's job MUST hop the same way for units inside the element on other queues.
+  map runs on the element reactor's effective queue, hopping in and out as needed. Inside a map
+  element (inline or fan-out) every unit MUST run on the element reactor's effective queue: a plain
+  step, compose or nested map inside the element reactor that declares a different queue MUST be
+  rejected at definition time (FR-019), because an element cannot hop without repeating completed
+  steps (research R-09). `async_step` and `async_reactor` inside an element keep their own queues.
 - **FR-016**: A plain `step` whose effective queue differs from the current job's queue MUST be
   executed through a hop (FR-009–FR-013) and MUST keep its full saga behavior (retries,
   compensation, undo), each on its own queue.
@@ -406,3 +416,6 @@ step and verify the plain step's undo runs on its queue.
 - Queue priorities, weights and worker/process configuration are the queue backend's concern; the
   gem only chooses the queue name.
 - The existing sweepers are the recovery mechanism for hops; no new recovery process is introduced.
+- The caller-to-worker `background` hand-off keeps today's behavior for reactor-level `with_lock` /
+  `with_semaphore` (released at the hand-off, re-acquired by the worker). Hops are stronger: they
+  keep those holds across the wait (research F-2, R-05).
