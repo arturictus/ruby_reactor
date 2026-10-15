@@ -539,6 +539,207 @@ out against a context stuck on `running`:
 - **Broken stored payload** (deserialization / schema version): same treatment,
   on first delivery.
 
+## Queues
+
+By default every job a run creates goes to the global `config.queue_name`. A
+reactor or a step can name its own queue instead, so you size and isolate
+worker capacity the way you already do for any Sidekiq or ActiveJob worker:
+
+```ruby
+RubyReactor.configure { |config| config.queue_name = :default }
+
+class SendWelcomeEmailStep < RubyReactor::Step
+  queue :emails                       # this step class's jobs
+  def run = Success(Mailer.welcome(inputs.user_id))
+end
+
+class OnboardingReactor < RubyReactor::Reactor
+  queue :onboarding                   # every job of this reactor's runs
+  background after: :create_account
+
+  step :create_account, CreateAccountStep
+  step :provision, ProvisionStep
+  async_step :welcome, SendWelcomeEmailStep
+end
+```
+
+`OnboardingReactor.run` runs `:create_account` in the calling process and hands
+the rest to a job on `onboarding`. Every later job of the same run — a step
+retry with backoff, a snooze on a busy lock, the sweeper's recovery of a lost
+job, a `resume: :background` interrupt resume — lands on `onboarding` too.
+
+### Declaring a queue
+
+| Where | How |
+| --- | --- |
+| A reactor class | `queue :name` in the class body (or in a `Class.new(RubyReactor::Reactor) { }` block). A subclass inherits it unless it declares its own |
+| A step class | `queue :name` in the class body. Inherited the same way |
+| One `step` / `async_step` | `queue :name` inside its block. It wins over the step class's declaration |
+
+The same `queue` twice is fine (class bodies can be reloaded); a second,
+different value raises `RubyReactor::Error::ValidationError`, as does a name that
+is not a non-empty Symbol or String. `compose`, `map` and `async_reactor` blocks
+do not take `queue`: declare it on the child reactor class.
+
+Queue declarations are **static**: fixed when the class is defined, for the life
+of the process. A class-level call from anywhere else raises
+`RubyReactor::Error::StaticConfigurationError` (a `ValidationError`) with the
+message `Can not modify static configurations in the runtime`, and changes nothing:
+
+```ruby
+OnboardingReactor.queue(:other)   # => raises; OnboardingReactor.declared_queue is still "onboarding"
+```
+
+`declared_queue` reads a class's declaration (`"onboarding"`, or `nil`).
+
+### How a unit's queue is resolved
+
+A unit — a step, a composed child, a map's elements, an `async_step`, an
+`async_reactor` child — uses, in order:
+
+1. its own declaration (a step block, then the step class; or the child reactor class);
+2. else the queue of the unit that contains it (so an undeclared composed child,
+   step or `async_step` stays on its reactor's queue);
+3. else the global `config.queue_name`, read when the job is enqueued.
+
+**A queue never moves work out of the calling process.** Only `background`,
+`async_step`, `async_reactor` and fan-out maps create jobs; a queue only chooses
+*which* queue those jobs use. A reactor with `queue` but no `background` runs
+entirely in the caller.
+
+### Where each job goes
+
+| Job | Queue |
+| --- | --- |
+| `background after: :x` hand-off | the queue of the first step the worker runs |
+| `background before: :x` hand-off | `:x`'s queue |
+| `background all: true` | the reactor's queue (input validation runs there too) |
+| A step retry with backoff, a snooze on contention | the queue of the job that is running |
+| A `resume: :background` interrupt, a resume deferred while the run is busy | the queue the run last ran on, else the reactor's |
+| The sweeper's recovery of a lost job | the queue the run was last dispatched to |
+| An `async_step`'s job, its contention re-delivery and its recovery | the step's queue (its block's, else its class's), else its reactor's |
+| An `async_reactor` child's jobs | the child reactor's queue, else its parent's |
+
+Each run keeps a small record of where it was last dispatched and, while a job is
+on its way, since when (see [Waiting runs](#waiting-runs)).
+
+### Queue hops: composed children and steps on other queues
+
+When a run already executing in a worker reaches a unit whose queue differs from
+the current job's, it **hops**: the run is saved, its continuation is enqueued on
+the unit's queue, and the current job stops. After the unit, the next unit of the
+enclosing reactor hops back. Every declaration is honoured, at the cost of **one
+extra job per queue change**:
+
+```ruby
+class StripeDepositReactor < RubyReactor::Reactor
+  queue :stripe
+  step :charge, ChargeStep
+  step :settle, SettleStep
+end
+
+class OrderReactor < RubyReactor::Reactor
+  queue :orders
+  background after: :reserve
+
+  step :reserve, ReserveStep
+  step :price, PriceStep
+  compose :deposit, StripeDepositReactor do
+    argument :amount, result(:price)
+  end
+  step :confirm, ConfirmStep do
+    argument :deposit, result(:deposit)
+  end
+end
+```
+
+```text
+caller:         :reserve ─ hand-off ─▶ job on orders:  :price ─ hop ─▶ job on stripe: :charge, :settle
+                                                                         ─ hop ─▶ job on orders: :confirm
+jobs: 3 = one hand-off + one per queue change
+```
+
+- Consecutive units on the same queue share a job; an undeclared composed child
+  stays on its parent's queue, so composing it never hops.
+- A plain `step` whose class (or block) declares another queue hops the same way,
+  for that one step, and keeps its retries, `compensate` and `undo` on its queue.
+- A hop keeps every guarantee of a job hand-off: the run is persisted before the
+  next job exists, only one job advances it at a time (a duplicate delivery exits
+  without running a step), the reactor's `with_lock` and `with_semaphore` stay held
+  by the run across the wait — the lock is leased for up to `context_ttl` while the
+  run waits on the other queue — and a lost hop is recovered by the sweeper onto
+  the queue it was going to.
+- Each hop is logged as `event=ruby_reactor.queue.hop` (with `from`, `to` and
+  `direction`) and recorded in the execution trace as a `queue_hop` entry; every
+  trace entry written in a job names its `queue`.
+
+### Rollback across queues
+
+A failure after hops rolls the whole run back, each unit on its own queue: the
+failing step's `compensate` runs where it failed, then every completed unit's
+`undo` runs on that unit's queue, hopping in rollback order with the same
+guarantees (rollback progress is saved before each hop, so no undo runs twice).
+For the reactor above, a failing `:confirm` is compensated on `orders`, the
+deposit is undone on `stripe`, and `:price` and `:reserve` are undone on `orders`
+— `:reserve` too, though it ran in the caller: the run never returns there. A run
+that never left the calling process rolls back in the caller, as before.
+
+A **manual undo** (`OrderReactor.undo(id)`, `#undo`) of a run whose reactor — or
+one of its steps, composed children or map elements — declares a queue is handed
+to a worker the same way: the call marks the run `rolling_back`, dispatches the
+rollback to the queue of the first unit to undo, and returns at once; the worker
+ends the run `cancelled` (or `failed`, for an interrupt whose payload attempts ran
+out). Another `undo`, `cancel` or `continue` meanwhile raises, as for any rollback
+in progress. A run with no queue declarations is still undone in the caller.
+
+### Maps and queues
+
+A fan-out map's element jobs — and their retries, parks, rollback jobs and the
+map sweeper's re-dispatches — run on the element reactor's queue; the collector
+and the owner's resume run on the owner's queue. An inline map runs on its element
+reactor's queue, hopping in before the map and out after it.
+
+Inside a map element every unit runs on the element's queue. A plain step,
+`compose` or nested `map` inside an element reactor that declares a *different*
+queue is rejected before the first run (`RubyReactor::Error::ValidationError`):
+an element waiting in a queue is re-dispatched from the start by the map sweeper,
+and an inline element re-runs with its map step, so a hop there would repeat
+completed steps. Declare the queue on the element reactor itself. `async_step` and
+`async_reactor` inside an element keep their own queues.
+
+### Configurations rejected at definition time
+
+Where respecting a queue and keeping a guarantee conflict, the guarantee wins and
+the configuration is rejected by `validate_definition!` (called before the first
+run; call it at boot or in CI to fail early):
+
+- a hop inside a map element (above);
+- a hop inside a `with_ordered_lock` reactor: nothing keeps its ordered-lock
+  position alive while the run waits in a queue, so a successor could pass it.
+  Keep every unit of an ordered reactor on that reactor's queue.
+
+### Waiting runs
+
+While a run waits for a job on a queue — after a hand-off, a hop, a retry, a
+snooze or a recovery — it stays `running` (or `rolling_back`), and the dashboard
+and API show `waiting_on: { queue:, since: }`. It is never failed because of queue
+lag. Known limit: the sweeper cannot tell a job that is only waiting in a busy (or
+unconsumed) queue from a lost one, so it re-enqueues the run on every sweep and
+logs `event=ruby_reactor.queue.waiting`; the duplicates exit harmlessly once a
+worker picks them up. Run a worker for every queue you declare.
+
+### Backends and custom routers
+
+Both adapters enqueue on the queue by name (`Sidekiq::Job.set(queue:)`,
+`ActiveJob::Base.set(queue:)`), and every job class — the reactor worker,
+`async_step` jobs, map element, collector and rollback jobs — reads
+`config.queue_name` when it is enqueued, so setting it after the gem is loaded
+works.
+
+A custom `config.async_router` receives a `queue:` keyword argument on every
+method once a queue is declared somewhere (the built-in routers' signatures are
+the reference). A run with no declarations calls the router exactly as before.
+
 ## Retry Configuration
 
 All background and async modes support sophisticated retry mechanisms with non-blocking job requeuing.
@@ -634,7 +835,7 @@ RubyReactor.configure do |config|
   config.storage.adapter = :redis
   config.storage.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
 
-  config.queue_name = :default
+  config.queue_name = :default # the default queue; reactors and steps may declare their own (see Queues)
   config.job_retry_count = 3
   config.logger = Logger.new('log/ruby_reactor.log')
 

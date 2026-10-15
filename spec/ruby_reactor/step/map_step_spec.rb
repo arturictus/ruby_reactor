@@ -21,6 +21,10 @@ RSpec.describe RubyReactor::Step::MapStep do
                     intermediate_results: {},
                     composed_contexts: {},
                     middlewares: nil,
+                    # Queue resolution (011): no container, nothing inherited, caller process.
+                    parent_context: nil,
+                    private_data: {},
+                    current_queue: nil,
                     reactor_class: double(name: "TestReactor"))
   end
 

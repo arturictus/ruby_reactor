@@ -117,6 +117,13 @@ end
 `batch_size` to change the throw size. The same size bounds the map's rollback:
 one rollback job per element, at most `batch_size` per throw.
 
+### Queues
+
+Element jobs run on the element reactor's queue (or the owning reactor's when the
+element declares none); the collector and the owner's resume on the owner's. A
+unit inside an element that declares a different queue is rejected at definition
+time. See [Queues](../../documentation/background_and_async.md#queues).
+
 ## Error Handling
 
 You can control how the pipeline reacts to failures using the `atomic` option.

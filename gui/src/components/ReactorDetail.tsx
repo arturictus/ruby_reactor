@@ -1,6 +1,6 @@
 import useSWR, { mutate } from 'swr';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Play, XOctagon, AlertCircle } from 'lucide-react';
+import { ChevronLeft, Play, XOctagon, AlertCircle, Clock } from 'lucide-react';
 import { useState } from 'react';
 import { apiUrl } from '../lib/utils';
 import { classRoute, reactorRoute } from '../lib/reactors';
@@ -142,6 +142,18 @@ export default function ReactorDetail() {
             <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
             <p className="text-sm text-amber-300">
               Compensation of step <span className="font-mono bg-amber-500/10 px-1 rounded">{reactor.pending_compensation.step}</span> did not finish; run undo to complete it.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {reactor.waiting_on && (reactor.status === 'running' || reactor.status === 'rolling_back') && (
+        <div className="px-2">
+          <div data-testid="waiting-on" className="px-4 py-3 bg-sky-500/10 border border-sky-500/20 rounded-lg flex items-start gap-3">
+            <Clock className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
+            <p className="text-sm text-sky-300">
+              Waiting on queue <span className="font-mono bg-sky-500/10 px-1 rounded">{reactor.waiting_on.queue}</span> since{' '}
+              {new Date(reactor.waiting_on.since).toLocaleString()}
             </p>
           </div>
         </div>

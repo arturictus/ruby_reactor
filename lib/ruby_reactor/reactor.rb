@@ -130,9 +130,10 @@ module RubyReactor
         # Persist BEFORE enqueue — the job payload is identity-only (F2).
         save_context
 
-        @result = configuration.async_router.perform_async(@context.context_id,
-                                                           RubyReactor.reactor_storage_name(self.class),
-                                                           intermediate_results: @context.intermediate_results)
+        # The whole run, input validation included, runs on the reactor's queue (011 R-06).
+        @result = Queues.enqueue_run(@context.context_id, RubyReactor.reactor_storage_name(self.class),
+                                     queue: Queues.of_context(@context),
+                                     intermediate_results: @context.intermediate_results)
 
         # Even if it's an DispatchResult, it might have finished inline (e.g. Sidekiq::Testing.inline!)
         # Check storage to see if it's already finished or paused (interrupted).
@@ -226,6 +227,8 @@ module RubyReactor
                           .merge(cut_off.slice("step", "compensated", "arguments", "error"))
       # A hand-off finishes in a worker (`Executor#finish_undo`), which applies it.
       @context.rollback["failure_reason"] = failure if failure
+      return hand_off_undo(executor) if Queues.declares_any?(self.class)
+
       begin
         executor.undo_all
       rescue Error::RollbackHandedOff => e
@@ -242,6 +245,19 @@ module RubyReactor
       executor.save_context
     ensure
       lock&.release
+    end
+
+    # A run whose units declare queues is undone by a worker, each unit on its
+    # own queue (011 R-08, P-4): saved `rolling_back` under the run's lock,
+    # then dispatched to the queue of the first entry to undo. The worker ends
+    # it `cancelled`, or `failed` with the given failure.
+    def hand_off_undo(executor)
+      @context.status = :rolling_back
+      executor.save_context
+      top = @context.undo_stack.last
+      queue = top ? Queues.node_queue(top[:step], @context) : Queues.of_context(@context)
+      Queues.enqueue_run(@context.context_id, RubyReactor.reactor_storage_name(self.class), queue: queue)
+      :handed_off
     end
 
     def cancel(reason)
@@ -394,9 +410,9 @@ module RubyReactor
 
     def hand_off_resume(path, reason:, key: nil)
       log_resume_deferred(path, reason, key)
-      @result = configuration.async_router.perform_async(@context.context_id,
-                                                         RubyReactor.reactor_storage_name(self.class),
-                                                         intermediate_results: @context.intermediate_results)
+      # Where the run last ran, else its reactor's queue (011 R-06).
+      @result = Queues.enqueue_run(@context.context_id, RubyReactor.reactor_storage_name(self.class),
+                                   intermediate_results: @context.intermediate_results)
       check_for_inline_completion || @result
     end
 
@@ -542,9 +558,9 @@ module RubyReactor
       # Persist BEFORE enqueue — the job payload is identity-only (F2).
       save_context
 
-      @result = configuration.async_router.perform_async(@context.context_id,
-                                                         RubyReactor.reactor_storage_name(self.class),
-                                                         intermediate_results: @context.intermediate_results)
+      @result = Queues.enqueue_run(@context.context_id, RubyReactor.reactor_storage_name(self.class),
+                                   queue: Queues.of_context(@context),
+                                   intermediate_results: @context.intermediate_results)
 
       check_for_inline_completion
     end

@@ -78,7 +78,8 @@ module RubyReactor
         RubyReactor.configuration.logger.info(
           "event=ruby_reactor.map.settled map_id=#{arguments[:map_id].inspect} owner=#{owner_id.inspect}"
         )
-        RubyReactor.configuration.async_router.perform_async(owner_id, owner_class)
+        # Where the owner last ran, else its own queue (011 R-04).
+        Queues.enqueue_run(owner_id, owner_class)
       end
     end
   end

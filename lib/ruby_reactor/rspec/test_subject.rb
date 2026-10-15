@@ -477,6 +477,23 @@ module RubyReactor
         self
       end
 
+      # A manual undo of the run (`Reactor.undo`), then — unless
+      # `process_jobs: false` — the jobs it handed off (011 R-08: a run whose
+      # reactor declares queues is undone by a worker, hopping per unit).
+      #
+      #   subject.undo(process_jobs: false)
+      #   expect(subject).to be_rolling_back
+      def undo(process_jobs: nil)
+        ensure_executed!
+        @reactor_class.undo(@reactor_instance.context.context_id)
+
+        drain = process_jobs.nil? ? @process_jobs : process_jobs
+        process_pending_jobs if drain && AsyncTestHelpers.active?
+
+        @reactor_instance = @reactor_class.find(@reactor_instance.context.context_id)
+        self
+      end
+
       private
 
       def determine_resume_step(step)

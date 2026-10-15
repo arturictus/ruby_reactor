@@ -38,7 +38,9 @@ module RubyReactor
           step_name: step_name.to_s,
           owner_context_id: owner_context.context_id,
           owner_reactor_class_name: RubyReactor.reactor_storage_name(owner_context.reactor_class),
-          reactor_class_info: forward["reactor_class_info"] || build_reactor_class_info(element_class, step_name)
+          reactor_class_info: forward["reactor_class_info"] || build_reactor_class_info(element_class, step_name),
+          # The element jobs' queue: each element rolls back where it ran (011).
+          queue: forward["queue"]
         }
       end
 

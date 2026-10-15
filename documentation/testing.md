@@ -462,6 +462,49 @@ expect(subject).to have_run_step(:process_payment)
   .after(:validate_order)
 ```
 
+#### On a Queue
+
+Assert which [queue](background_and_async.md#queues) a step ran on. A step that
+ran in the calling process has no queue; an `async_step`'s queue is read from its
+own record:
+
+```ruby
+expect(subject).to have_run_step(:transfer).on_queue(:payouts)
+expect(subject).to have_run_step(:welcome).on_queue(:emails)   # an async_step
+```
+
+For [queue hops](background_and_async.md#queue-hops-composed-children-and-steps-on-other-queues),
+assert the queues a run moved to, in order, and where each undo ran:
+
+```ruby
+expect(subject).to have_hopped_queues(:stripe, :orders)                    # forward hops
+expect(subject).to have_hopped_queues(:stripe, :orders).during_rollback    # rollback hops
+expect(subject).to have_hopped_queues                                      # no hop at all
+expect(subject).to have_undone_step(:price).on_queue(:orders)
+expect(subject.composed(:deposit)).to have_undone_step(:charge).on_queue(:stripe)
+```
+
+`subject.undo` undoes the run as `Reactor.undo` does and, unless `process_jobs: false`, drains the
+jobs a [handed-off undo](background_and_async.md#rollback-across-queues) enqueued:
+
+```ruby
+subject = test_reactor(OrderReactor, params, process_jobs: false).tap(&:run)
+drain_async_jobs
+subject.undo(process_jobs: false)
+expect(subject).to be_rolling_back
+drain_async_jobs
+expect(subject).to have_undone_step(:price).on_queue(:orders)
+```
+
+To assert where jobs were *enqueued*, before they run, use `pending_async_jobs`
+with `process_jobs: false`: each pending job names its `queue` on both backends.
+
+```ruby
+subject = test_reactor(PayoutReactor, params, process_jobs: false)
+subject.run
+expect(pending_async_jobs.map(&:queue)).to eq(["payouts"])
+```
+
 ### Retry Matchers
 
 #### `have_retried_step`
