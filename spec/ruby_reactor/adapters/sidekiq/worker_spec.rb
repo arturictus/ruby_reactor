@@ -43,6 +43,10 @@ RSpec.describe RubyReactor::Adapters::Sidekiq::Worker do
     allow(adapter).to receive_messages(lock_acquire: true, lock_release: true, lock_extend: true)
     allow(executor).to receive(:context_lock_owner=)
     allow(context).to receive(:admitted?).and_return(false)
+    # The job's queue (011): set on the context, the run's wait cleared at
+    # pickup, and recorded again when it snoozes.
+    allow(context).to receive(:current_queue=)
+    allow(adapter).to receive_messages(clear_run_dispatch_wait: true, store_run_dispatch: true)
     # Deterministic delay for assertions
     RubyReactor.configuration.lock_snooze_base_delay = 5
     RubyReactor.configuration.lock_snooze_jitter = 0

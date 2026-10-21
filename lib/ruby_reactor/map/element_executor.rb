@@ -48,6 +48,10 @@ module RubyReactor
 
       def self.perform_element(arguments)
         context = hydrate_or_create_context(arguments)
+        # Where this element job runs (011): stamped on its trace; an undeclared
+        # element reactor inherits it as its container's queue.
+        context.current_queue = (arguments[:queue] || Queues.global).to_s
+        context.private_data["inherited_queue"] ||= arguments[:queue] if arguments[:queue]
         # The element already runs inside its own background worker, so any async
         # steps (and async retries) must execute inline here rather than handing
         # off to a detached Worker that would escape map result/counter tracking.
@@ -99,7 +103,7 @@ module RubyReactor
           strict_ordering: arguments[:strict_ordering], parent_context_id: arguments[:parent_context_id],
           parent_reactor_class_name: arguments[:parent_reactor_class_name], step_name: arguments[:step_name],
           batch_size: arguments[:batch_size], serialized_context: ContextSerializer.serialize(context),
-          atomic: arguments[:atomic]
+          atomic: arguments[:atomic], **Helpers.queue_options(arguments)
         )
       end
 
@@ -201,7 +205,8 @@ module RubyReactor
               parent_reactor_class_name: parent_class,
               step_name: arguments[:step_name],
               strict_ordering: arguments[:strict_ordering],
-              timeout: 3600
+              timeout: 3600,
+              **Queues.kwargs(arguments[:owner_queue])
             )
           end
         end
@@ -222,7 +227,8 @@ module RubyReactor
           parent_reactor_class_name: parent_class,
           step_name: arguments[:step_name],
           strict_ordering: arguments[:strict_ordering],
-          timeout: 3600
+          timeout: 3600,
+          **Queues.kwargs(arguments[:owner_queue])
         )
       end
 

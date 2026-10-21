@@ -144,6 +144,9 @@ module RubyReactor
       # `[arguments, nil]`, or `[{}, ArgumentResolutionError]` for the caller
       # to fail the step with once its `:start_step` has fired.
       def resolve_before_start(step_config, deferred_body)
+        # A node on another queue than this job's (011 R-05): before it starts,
+        # so it starts — and fires `:start_step` — only in the job that runs it.
+        hop_if_elsewhere!(step_config)
         return [{}, nil] if deferred_body
 
         [step_config.resolve_arguments(@context), nil]
@@ -390,7 +393,8 @@ module RubyReactor
       # Shared verbatim by both `background` forms — they differ only in WHERE
       # the trigger sits, never in what the hand-off does.
       def handle_background_handoff(step_config)
-        log_async_event("background.handoff", step_config.name)
+        queue = handoff_queue(step_config)
+        log_async_event("background.handoff", step_config.name, queue: queue)
         @context.current_step = step_config.name
         @context.undo_stack = @compensation_manager.undo_stack
 
@@ -407,11 +411,16 @@ module RubyReactor
         # worker, so compute it once and reuse it for both.
         checkpoint_root!(context_to_serialize, reactor_class_name)
 
-        configuration.async_router.perform_async(
-          context_to_serialize.context_id,
-          reactor_class_name,
-          intermediate_results: @context.intermediate_results
-        )
+        Queues.enqueue_run(context_to_serialize.context_id, reactor_class_name,
+                           queue: queue, intermediate_results: @context.intermediate_results)
+      end
+
+      # The queue of the first node the worker will run (011 R-06), so a run
+      # never pays an empty job just to hop: `before: :x` runs :x first;
+      # `after: :x` the next ready node, :x being complete already.
+      def handoff_queue(step_config)
+        first = handoff_at?(step_config, :before) ? step_config : @dependency_graph.ready_steps.first
+        first ? Queues.node_queue(first, @context) : Queues.of_context(@context)
       end
 
       # Persist the root context under its storage key. Mirrors Executor#checkpoint!
@@ -452,6 +461,28 @@ module RubyReactor
           correlation_id: correlation_id,
           intermediate_results: @context.intermediate_results
         )
+      end
+
+      # Hands the run to a job on `target` (011 R-05, P-1): the node becomes the
+      # resume cursor, the hop is traced on the root, and the park unwinds
+      # every executor on the stack, each parking its holds and the root
+      # saving, before the Worker enqueues. A duplicate whose target already
+      # has a job on its way records nothing and only stops.
+      def hop_if_elsewhere!(step_config)
+        target = Queues.forward_hop_target(step_config, @context)
+        return unless target
+
+        @context.current_step = step_config.name
+        deduped = Queues.dispatch_pending?(@context, target)
+        unless deduped
+          root = @context.root_context || @context
+          root.append_execution_trace(
+            { type: :queue_hop, at: Queues.path(@context, step_config.name), from: Queues.current(@context),
+              to: target, direction: :forward, timestamp: Time.now }
+          )
+          @middlewares.on(:before_async_enqueue, root)
+        end
+        raise Error::QueueHop.new(queue: target, step: step_config.name, deduped: deduped)
       end
 
       # This run, or one it is composed into, is a map element.

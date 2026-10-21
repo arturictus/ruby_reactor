@@ -29,6 +29,14 @@ module RubyReactor
         @atomic = true # Default: every element succeeds, or none is kept
       end
 
+      # A queue belongs to the reactor that runs the work (011 R-01): the child
+      # class declares it, and this call site inherits it from there.
+      def queue(*)
+        child = @mapped_reactor_class&.name || "the child reactor class"
+        raise RubyReactor::Error::ValidationError,
+              "`queue` on `map :#{@name}` is not supported: declare `queue` on #{child} instead."
+      end
+
       def argument(mapped_input_name, source)
         @argument_mappings[mapped_input_name] = source
       end

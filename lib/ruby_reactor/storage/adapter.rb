@@ -11,6 +11,19 @@ module RubyReactor
         raise NotImplementedError
       end
 
+      # Where a run was last dispatched, and since when it waits there (011).
+      def store_run_dispatch(context_id, reactor_class_name, queue)
+        raise NotImplementedError
+      end
+
+      def retrieve_run_dispatch(context_id, reactor_class_name)
+        raise NotImplementedError
+      end
+
+      def clear_run_dispatch_wait(context_id, reactor_class_name, queue)
+        raise NotImplementedError
+      end
+
       def store_map_result(map_id, index, serialized_result, reactor_class_name, strict_ordering: true)
         raise NotImplementedError
       end

@@ -14,6 +14,16 @@ module RubyReactor
         normalized
       end
 
+      # Router keyword arguments for an element job (011): its queue, and the
+      # queue of the collector that resumes the owner — each only when it is not
+      # the global one, so an undeclared map enqueues exactly as before.
+      def self.queue_options(arguments)
+        options = Queues.kwargs(arguments[:queue])
+        owner_queue = arguments[:owner_queue]
+        options[:owner_queue] = owner_queue.to_s if owner_queue && Queues.kwargs(owner_queue).any?
+        options
+      end
+
       # Resolves the reactor class from reactor_class_info
       def resolve_reactor_class(info)
         if info["type"] == "class"

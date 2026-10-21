@@ -161,6 +161,20 @@ The bound is **per throw**: no job enqueues more than `batch_size` element jobs,
 
 The same back pressure applies when a fan-out map is **rolled back**: one rollback job per element, `batch_size` per throw (see [Rollback](#rollback)).
 
+### Queues
+
+A fan-out map's element jobs run on the element reactor's
+[queue](background_and_async.md#queues), or on the map's reactor's queue when the
+element reactor declares none — and so do each element's retries, its rollback
+job and the map sweeper's re-dispatch. The collector and the resume of the
+reactor that owns the map run on the owner's queue. An inline map runs on its
+element reactor's queue, hopping into it before the map and out after it.
+
+Inside an element every unit runs on the element's queue: a step, `compose` or
+nested `map` in the element reactor that declares a different queue is rejected
+before the first run, because a map element cannot hop queues without repeating
+completed steps. `async_step` / `async_reactor` inside an element keep their own.
+
 ## Error Handling
 
 You can control how the pipeline reacts to failures using the `atomic` option.

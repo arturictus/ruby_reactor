@@ -20,13 +20,18 @@ module RubyReactor
       # `{ "index", "outcome", "failures" }` (DM §5), with `failures`
       # serialized. Outcome `contended`, never stored, means the element's lock
       # was still held after `wait`.
-      def self.call(map_id:, element_context_id:, element_class:, step_name:, wait: Step::MapStep::ELEMENT_LOCK_WAIT)
+      # rubocop:disable Metrics/ParameterLists
+      def self.call(map_id:, element_context_id:, element_class:, step_name:, wait: Step::MapStep::ELEMENT_LOCK_WAIT,
+                    queue: nil)
+        # rubocop:enable Metrics/ParameterLists
         storage_name = RubyReactor.reactor_storage_name(element_class)
         data = element_context_id && RubyReactor.configuration.storage_adapter.retrieve_context(element_context_id,
                                                                                                 storage_name)
         return unavailable(step_name) unless data
 
         element = Context.deserialize_from_retry(data)
+        # The rollback job's queue (011), stamped on the undo trace.
+        element.current_queue = queue
         index = Utils::FetchIndifferent.call(element.map_metadata || {}, :index).to_i
         lock = acquire_element_lock(map_id, index, wait)
         return outcome(index, "contended") if lock == :held
@@ -67,7 +72,8 @@ module RubyReactor
         attempt = args[:attempt].to_i
         result = call(map_id: map_id, element_context_id: args[:element_context_id],
                       element_class: resolve_reactor_class(args[:reactor_class_info]), step_name: args[:step_name],
-                      wait: attempt.zero? ? Step::MapStep::ELEMENT_LOCK_WAIT : 0)
+                      wait: attempt.zero? ? Step::MapStep::ELEMENT_LOCK_WAIT : 0,
+                      queue: (args[:queue] || Queues.global).to_s)
         if result["outcome"] == "contended"
           return requeue(args, attempt) unless snooze_exhausted?(attempt)
 
@@ -93,7 +99,8 @@ module RubyReactor
       def self.requeue(args, attempt)
         config = RubyReactor.configuration
         config.async_router.perform_map_element_rollback_in(
-          Worker.snooze_delay(config, nil), **args.slice(*ROLLBACK_JOB_ARGS), attempt: attempt + 1
+          Worker.snooze_delay(config, nil), **args.slice(*ROLLBACK_JOB_ARGS), attempt: attempt + 1,
+                                                                              **Queues.kwargs(args[:queue])
         )
       end
 
@@ -115,7 +122,7 @@ module RubyReactor
         return unless storage.map_rollback_handed_off?(map_id, map_class)
         return unless storage.claim_map_rollback_signal(map_id, map_class)
 
-        RubyReactor.configuration.async_router.perform_async(args[:owner_context_id], args[:owner_reactor_class_name])
+        Queues.enqueue_run(args[:owner_context_id], args[:owner_reactor_class_name])
       end
 
       def self.log_outcome(args, result)

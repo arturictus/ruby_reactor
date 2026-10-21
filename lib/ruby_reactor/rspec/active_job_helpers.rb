@@ -18,6 +18,11 @@ module RubyReactor
           raw[:args]
         end
 
+        # The queue the job is on (011), named as the Sidekiq `PendingJob` names it.
+        def queue
+          raw[:queue].to_s
+        end
+
         # The Sidekiq `PendingJob`'s name for it, so step-wise drains read the
         # same on both backends (009 U4).
         alias_method :worker_class, :job_class

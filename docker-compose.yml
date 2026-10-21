@@ -75,7 +75,8 @@ services:
       - .:/workspace
       - bundle_cache:/bundle
     working_dir: /workspace/demo_app
-    command: bundle exec sidekiq
+    # Every queue the demo reactors declare (011): a queue with no consumer leaves its runs waiting.
+    command: bundle exec sidekiq -q default -q demo_orders -q demo_stripe -q demo_emails
     healthcheck:
       test: ["CMD-SHELL", "grep -q sidekiq /proc/1/cmdline"]
       interval: 10s

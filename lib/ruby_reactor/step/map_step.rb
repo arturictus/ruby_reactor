@@ -209,6 +209,7 @@ module RubyReactor
       def run_async(step_name)
         map_id = "#{context.context_id}:#{step_name}"
         context.map_operations[step_name.to_s] = map_id
+        @queues = Queues.map_queues(inputs.mapped_reactor_class, context)
         prepare_async_execution(map_id, inputs.source.size)
 
         reactor_class_info = build_reactor_class_info(inputs.mapped_reactor_class, step_name)
@@ -242,7 +243,7 @@ module RubyReactor
           owner_context_id: owner_context.context_id,
           owner_reactor_class_name: RubyReactor.reactor_storage_name(owner_context.reactor_class),
           batch_size: effective_batch_size, atomic: atomic?,
-          **map_recovery_metadata(context.current_step)
+          **map_recovery_metadata(context.current_step), **@queues
         )
       end
 
@@ -349,7 +350,7 @@ module RubyReactor
           argument_mappings: inputs.argument_mappings,
           strict_ordering: inputs.strict_ordering,
           mapped_reactor_class: inputs.mapped_reactor_class,
-          atomic: atomic?
+          atomic: atomic?, **@queues
         )
         queue_collector(map_id, step_name, inputs.strict_ordering)
         "map:#{map_id}"
@@ -384,7 +385,7 @@ module RubyReactor
         RubyReactor.configuration.async_router.perform_map_collection_async(
           parent_context_id: context.context_id, map_id: map_id,
           parent_reactor_class_name: context.reactor_class.name, step_name: step_name.to_s,
-          strict_ordering: strict_ordering, timeout: 3600
+          strict_ordering: strict_ordering, timeout: 3600, **Queues.kwargs(@queues[:owner_queue])
         )
       end
     end

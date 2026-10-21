@@ -81,10 +81,25 @@ module RubyReactor
           subject.ensure_executed!
           @trace = subject.reactor_instance.context.execution_trace
           @entry = @trace.find { |t| t[:step].to_s == step_name.to_s }
+          return matches_async_queue?(subject, step_name) if @entry.nil? && @queue
 
           return false unless @entry
 
-          matches_result?(subject, step_name) && matches_order?
+          matches_result?(subject, step_name) && matches_order? && matches_queue?
+        end
+
+        # The queue a job stamped on the step's run (011); none in the caller.
+        def matches_queue?
+          return true unless @queue
+
+          @actual_queue = (@entry[:queue] || @entry["queue"])&.to_s
+          @actual_queue == @queue
+        end
+
+        # An `async_step` ran in its own job: its record names the queue.
+        def matches_async_queue?(subject, step_name)
+          @actual_queue = subject.async_step(step_name, :queue)&.to_s
+          @actual_queue == @queue
         end
 
         def matches_result?(subject, step_name)
@@ -118,6 +133,10 @@ module RubyReactor
           @after_step = step
         end
 
+        chain :on_queue do |queue|
+          @queue = queue.to_s
+        end
+
         failure_message do |subject|
           msg = "expected reactor to have run step :#{step_name}"
           if @check_result
@@ -125,7 +144,13 @@ module RubyReactor
             msg += " returning #{@expected_result.inspect}, but returned #{actual_result.inspect}"
           end
           msg += " after :#{@after_step}" if @after_step
+          msg += queue_failure if @queue && (@entry || @actual_queue)
           msg
+        end
+
+        def queue_failure
+          where = @actual_queue ? "on :#{@actual_queue}" : "in the calling process"
+          " on queue :#{@queue}, but it ran #{where}"
         end
       end
 
@@ -653,6 +678,67 @@ module RubyReactor
           msg = "expected execution trace not to contain a contention_park entry for step :#{step_name}"
           msg += " on key #{@expected_key.inspect}" if @expected_key
           msg
+        end
+      end
+
+      # The queues a run hopped to, in order (011 R-12): its forward hops, or
+      # with `.during_rollback` its rollback hops. No arguments: no hop.
+      #
+      #   expect(subject).to have_hopped_queues(:stripe, :main)
+      #   expect(subject).to have_hopped_queues(:stripe, :main).during_rollback
+      matcher :have_hopped_queues do |*queues|
+        match do |subject|
+          subject.ensure_executed!
+          @actual = hop_targets(subject)
+          @actual == queues.map(&:to_s)
+        end
+
+        chain :during_rollback do
+          @direction = "rollback"
+        end
+
+        def hop_targets(subject)
+          direction = @direction || "forward"
+          subject.reactor_instance.context.execution_trace.filter_map do |entry|
+            next unless (entry[:type] || entry["type"]).to_s == "queue_hop"
+            next unless (entry[:direction] || entry["direction"]).to_s == direction
+
+            (entry[:to] || entry["to"]).to_s
+          end
+        end
+
+        failure_message do
+          kind = @direction ? "rollback hops" : "hops"
+          "expected the run's #{kind} to be #{queues.map(&:to_s).inspect}, got #{@actual.inspect}"
+        end
+      end
+
+      # A step's undo ran, optionally on a queue (011 R-12).
+      #
+      #   expect(subject).to have_undone_step(:charge).on_queue(:payments)
+      matcher :have_undone_step do |step_name|
+        match do |subject|
+          subject.ensure_executed!
+          @entry = subject.reactor_instance.context.execution_trace.find do |entry|
+            (entry[:type] || entry["type"]).to_s == "undo" && (entry[:step] || entry["step"]).to_s == step_name.to_s
+          end
+          next false unless @entry
+          next true unless @queue
+
+          @actual_queue = (@entry[:queue] || @entry["queue"])&.to_s
+          @actual_queue == @queue
+        end
+
+        chain :on_queue do |queue|
+          @queue = queue.to_s
+        end
+
+        failure_message do
+          msg = "expected reactor to have undone step :#{step_name}"
+          next "#{msg}, but it was not undone" if @entry.nil?
+
+          where = @actual_queue ? "on :#{@actual_queue}" : "in the calling process"
+          "#{msg} on queue :#{@queue}, but it was undone #{where}"
         end
       end
 

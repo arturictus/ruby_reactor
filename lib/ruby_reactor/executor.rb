@@ -96,6 +96,36 @@ module RubyReactor
       RubyReactor::MiddlewareRunner.new(resolve_middlewares(reactor_class))
     end
 
+    # Releases every reactor hold still parked in this context tree (011 F2):
+    # the run ended — rolled back, undone, cancelled — so nothing will resume
+    # and re-adopt them. A lock is released only while the run still owns it
+    # (the root context id); a semaphore slot only if its token is still held.
+    # Best effort: a key that cannot be built is logged, never raised.
+    def self.release_parked_holds(context, owner = (context.root_context || context).context_id)
+      raw = context.private_data.delete(:parked_primitives) || context.private_data.delete("parked_primitives")
+      release_parked(context, raw, owner) if raw
+      context.composed_contexts.each_value do |entry|
+        child = entry.is_a?(Hash) && (entry[:context] || entry["context"])
+        release_parked_holds(child, owner) if child.is_a?(Context)
+      end
+    end
+
+    def self.release_parked(context, raw, owner)
+      klass = context.reactor_class
+      if (raw[:lock] || raw["lock"]) && (config = klass.respond_to?(:lock_config) && klass.lock_config)
+        RubyReactor::Lock.new(config[:key_proc].call(context.inputs), owner: owner).release
+      end
+      token = raw[:semaphore_token] || raw["semaphore_token"]
+      return unless token && (config = klass.respond_to?(:semaphore_config) && klass.semaphore_config)
+
+      semaphore = RubyReactor::Semaphore.new(config[:key_proc].call(context.inputs), limit: config[:limit])
+      semaphore.release if semaphore.reattach(token)
+    rescue StandardError => e
+      RubyReactor.configuration.logger.warn("RubyReactor could not release parked holds of #{context.context_id}: " \
+                                            "#{e.class}: #{e.message}")
+    end
+    private_class_method :release_parked
+
     def execute # rubocop:disable Metrics/MethodLength
       middlewares.on(:start_reactor, reactor_class.name, context.inputs, @context)
       completed = false
@@ -158,14 +188,15 @@ module RubyReactor
            RubyReactor::OrderedLock::WaitError => e
       @contention_snooze = true
       raise composed_contention_park(e) || e
-    rescue Error::ExecutionParked
-      # A park signal from a step of this run (its contention, or a wait on a
-      # background result), reaching a composed child's or a map element's
-      # first run. Every executor on the stack keeps its OWN lock/semaphore
-      # through the gap and re-adopts it on redelivery (005 D-A2); the worker
-      # at the top requeues once, after all of them have saved. A synchronous
-      # caller never sees a park signal: nothing raises one outside a worker.
-      park_held_primitives! if @context.inline_async_execution
+    rescue Error::ExecutionParked => e
+      # A park signal from a step of this run (its contention, a wait on a
+      # background result, a queue hop), reaching a composed child's or a map
+      # element's first run. Every executor on the stack keeps its OWN
+      # lock/semaphore through the gap and re-adopts it on redelivery (005
+      # D-A2); the worker at the top requeues once, after all of them have
+      # saved. A synchronous caller never sees a park signal: nothing raises
+      # one outside a worker.
+      park_held_primitives!(lease: hop_lease(e)) if @context.inline_async_execution
       @contention_snooze = true
       raise
     rescue Error::Rescuable => e
@@ -300,7 +331,7 @@ module RubyReactor
       # HELD (recorded on the context for the resuming job to re-adopt); the
       # worker snoozes the job. The context lock is still released below — the
       # redelivered job must be able to take it.
-      park_held_primitives!
+      park_held_primitives!(lease: hop_lease(e))
       @contention_snooze = true
       raise e
     rescue Error::Rescuable => e
@@ -360,8 +391,7 @@ module RubyReactor
       completed = false
       enter_ordered_lock_scope
       acquire_context_lock
-      @result = finish_rollback(state)
-      @context.rollback = nil
+      @result = run_handed_off_rollback(state)
       update_context_status(@result)
       completed = true
       @result
@@ -369,7 +399,7 @@ module RubyReactor
       record_rollback_handoff(e)
       completed = true
       @result
-    rescue RubyReactor::Lock::AcquisitionError => e
+    rescue RubyReactor::Lock::AcquisitionError, RubyReactor::Semaphore::AcquisitionError => e
       @contention_snooze = true
       raise composed_contention_park(e) || e
     rescue Error::Rescuable => e
@@ -381,6 +411,7 @@ module RubyReactor
       mark_aborted
       raise
     ensure
+      release_locks unless @parked
       save_context unless skip_context_persist?
       @acquired_context_lock&.release
       @acquired_context_lock = nil
@@ -395,6 +426,8 @@ module RubyReactor
     # job sees both second enqueues the owner, once. Called right after the
     # `rolling_back` save, while the context lock is still held.
     def hand_off_rollback!(handed_off)
+      return hop_rollback!(handed_off) if handed_off.queue
+
       storage = RubyReactor.configuration.storage_adapter
       map_id = handed_off.map_id
       map_class = handed_off.reactor_class_name
@@ -406,8 +439,20 @@ module RubyReactor
       return unless meta && storage.count_map_rollback_outcomes(map_id, map_class) >= meta["total"].to_i
       return unless storage.claim_map_rollback_signal(map_id, map_class)
 
-      RubyReactor.configuration.async_router.perform_async(@context.context_id,
-                                                           RubyReactor.reactor_storage_name(@reactor_class))
+      Queues.enqueue_run(@context.context_id, RubyReactor.reactor_storage_name(@reactor_class))
+    end
+
+    # A rollback hop (011 R-07): the `rolling_back` run is saved, so its
+    # rollback continues in a job on the hop's queue — unless one is already
+    # on its way there (a replayed job), when this one only stops.
+    def hop_rollback!(handed_off)
+      name = RubyReactor.reactor_storage_name(@reactor_class)
+      RubyReactor.configuration.logger.info(
+        "event=ruby_reactor.queue.hop reactor=#{name.inspect} execution_id=#{@context.context_id.inspect} " \
+        "from=#{Queues.current(@context).inspect} to=#{handed_off.queue.inspect} direction=\"rollback\"" \
+        "#{" deduped=true" if handed_off.deduped?}"
+      )
+      Queues.enqueue_run(@context.context_id, name, queue: handed_off.queue) unless handed_off.deduped?
     end
 
     # Reached only by an interruption — a signal, an exit, out of memory, an
@@ -795,12 +840,12 @@ module RubyReactor
     # context for the resuming job to re-adopt them. The lock's auto-extender
     # dies with this process, so the parked gap is bounded by the lock TTL —
     # the snooze redelivery (seconds) sits comfortably inside the default 60s.
-    def park_held_primitives!
+    def park_held_primitives!(lease: nil)
       @parked = true
       parked = {}
 
       if @acquired_lock
-        @acquired_lock.detach
+        @acquired_lock.detach(lease: lease)
         parked[:lock] = true
         @acquired_lock = nil
       end
@@ -811,6 +856,37 @@ module RubyReactor
       end
 
       @context.private_data[:parked_primitives] = parked if parked.any?
+    end
+
+    # A queue hop waits for a worker on another queue, for as long as that
+    # takes: the run's lock is leased for the context's lifetime instead of
+    # its TTL, so it never passes to another run meanwhile (011 H-3).
+    def hop_lease(error)
+      RubyReactor.configuration.context_ttl if error.is_a?(Error::QueueHop)
+    end
+
+    # A `rolling_back` run's rollback, in this job. The holds a rollback hop
+    # parked (011 F1) stay the run's until the rollback ends, so they are
+    # re-adopted first; once it ended nothing resumes the run, so any hold
+    # still parked below it — a composed child's, from a hop inside the
+    # child — is freed (011 F2). A further hand-off raises before either.
+    def run_handed_off_rollback(state)
+      readopt_parked_primitives!
+      result = finish_rollback(state)
+      @context.rollback = nil
+      Executor.release_parked_holds(@context)
+      result
+    end
+
+    # Re-adopts only what a park left checked out (a rollback never takes a
+    # reactor hold of its own); a lapsed one is acquired afresh, and a busy
+    # one snoozes the job like any contention.
+    def readopt_parked_primitives!
+      parked = consume_parked_primitives!
+      acquire_exclusive_lock(reattach: true) if parked[:lock] && @reactor_class.lock_config
+      return unless parked[:semaphore_token] && @reactor_class.semaphore_config
+
+      acquire_semaphore(reattach_token: parked[:semaphore_token])
     end
 
     # One-shot: the marker is deleted on read so a crash after this point
@@ -969,11 +1045,15 @@ module RubyReactor
       handed_off.failure = nil # this level's Failure; the level above builds its own
       @context.rollback = rollback_state(failure)
       @context.status = :rolling_back
+      # A rollback hop keeps this level's holds checked out, as a forward hop
+      # does (011 F1, FR-017): the job on the other queue re-adopts them.
+      park_held_primitives!(lease: RubyReactor.configuration.context_ttl) if handed_off.queue
       raise handed_off if @context.root_context
 
       save_context
       hand_off_rollback!(handed_off)
-      @result = RubyReactor::DispatchResult.new(job_id: "map_rollback:#{handed_off.map_id}",
+      job_id = handed_off.queue ? "queue_hop:#{handed_off.queue}" : "map_rollback:#{handed_off.map_id}"
+      @result = RubyReactor::DispatchResult.new(job_id: job_id,
                                                 intermediate_results: @context.intermediate_results,
                                                 execution_id: @context.context_id)
     end
@@ -1045,6 +1125,9 @@ module RubyReactor
     end
 
     def finish_undo(state)
+      # A manual undo handed off before anything ran (011 R-08) still owes an
+      # aborted run's cut-off `compensate` (010 R-10); a no-op once it ran.
+      compensate_pending!
       @compensation_manager.rollback_completed_steps
       if state["failure_reason"]
         @context.status = "failed"

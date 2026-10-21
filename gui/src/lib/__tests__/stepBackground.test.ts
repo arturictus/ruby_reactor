@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backgroundFlagsByStep, stepRanInBackground } from '../stepBackground';
+import { backgroundFlagsByStep, stepQueue, stepRanInBackground } from '../stepBackground';
 
 describe('stepRanInBackground', () => {
   const steps = [
@@ -29,5 +29,23 @@ describe('backgroundFlagsByStep', () => {
       { step: 'first', background: false },
       { step: 'first', background: true },
     ])).toEqual({ first: true });
+  });
+});
+
+describe('stepQueue', () => {
+  const steps = [
+    { type: 'run', step: 'first', background: false },
+    { type: 'run', step: 'second', background: true, queue: 'main' },
+    { type: 'undo', step: 'second', background: true, queue: 'stripe' },
+  ];
+
+  it('names the queue of the last matching trace event', () => {
+    expect(stepQueue(steps, 'second')).toBe('stripe');
+    expect(stepQueue(steps, 'parent.second')).toBe('stripe');
+  });
+
+  it('is unset for a step that ran in the calling process', () => {
+    expect(stepQueue(steps, 'first')).toBeUndefined();
+    expect(stepQueue([], 'first')).toBeUndefined();
   });
 });

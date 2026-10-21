@@ -56,8 +56,11 @@ module RubyReactor
 
     # Park support: stop refreshing the TTL but LEAVE the key held — the
     # parked execution keeps ownership through the gap, bounded by the TTL.
-    def detach
+    # A queue hop's gap is a queue wait, unbounded, so it holds the key for
+    # `lease` seconds instead (011 R-05); `reattach` restores the TTL.
+    def detach(lease: nil)
       stop_extender
+      adapter.lock_extend(@key, @owner, lease) if lease
     end
 
     # Resume ownership after a parked gap: verify we are still the owner and

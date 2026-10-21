@@ -12,6 +12,7 @@ module RubyReactor
       include RedisPubSub
       include RedisReactorScan
       include RedisMapRollback
+      include RedisRunDispatch
 
       def initialize(redis_config)
         super()
@@ -72,7 +73,7 @@ module RubyReactor
       def initialize_map_operation(map_id, count, parent_reactor_class_name, reactor_class_info:, strict_ordering: true,
                                    parent_context_id: nil, step_name: nil, parent_is_map_element: false,
                                    outer_map_id: nil, outer_index: nil, owner_context_id: nil,
-                                   owner_reactor_class_name: nil, batch_size: nil, atomic: nil)
+                                   owner_reactor_class_name: nil, batch_size: nil, atomic: nil, **queues)
         # Ensure counter is set
         set_map_counter(map_id, count, parent_reactor_class_name)
 
@@ -99,7 +100,9 @@ module RubyReactor
           owner_context_id: owner_context_id,
           owner_reactor_class_name: owner_reactor_class_name,
           batch_size: batch_size,
-          atomic: atomic,
+          # `queue` / `owner_queue` (011): where the element jobs and the
+          # collector run; the map sweeper's re-dispatches use them.
+          atomic: atomic, **queues,
           created_at: Time.now.to_i
         }
         @redis.set(key, metadata.to_json, ex: durability_ttl)

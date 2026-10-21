@@ -26,6 +26,14 @@ module RubyReactor
         @argument_mappings[composed_input_name] = source
       end
 
+      # A queue belongs to the reactor that runs the work (011 R-01): the child
+      # class declares it, and this call site inherits it from there.
+      def queue(*)
+        child = @composed_reactor_class&.name || "the child reactor class"
+        raise RubyReactor::Error::ValidationError,
+              "`queue` on `compose :#{@name}` is not supported: declare `queue` on #{child} instead."
+      end
+
       # `compose`'s `async` set the very same per-step hand-off flag the
       # step DSL's did, so it goes with it. The exact migration is
       # `background before: :<this compose step>` — that reproduces the old

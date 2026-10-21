@@ -153,17 +153,18 @@ module RubyReactor
         # sweepable: a compose child carries the same parent_context_id but runs
         # inline in the parent, so re-enqueueing one would double-run it.
         child_context.private_data[:async_dispatched] = true
+        # An undeclared child runs on this reactor's queue, not the global one (011).
+        child_context.private_data["inherited_queue"] = Queues.of_context(context)
         save(child_context, child_class)
 
         # The reference is written synchronously, by the process that is about
         # to keep running other steps, so there is no cross-process race on it
         # (unlike the child's eventual result, which the child itself writes).
         store_reference(execution_id: child_context.context_id, child_class: child_class)
-        log_dispatch(child_class, child_context)
+        queue = Queues.dispatch_queue(context.reactor_class.steps[context.current_step], context)
+        log_dispatch(child_class, child_context, queue)
 
-        RubyReactor.configuration.async_router.perform_async(
-          child_context.context_id, RubyReactor.reactor_storage_name(child_class)
-        )
+        Queues.enqueue_run(child_context.context_id, RubyReactor.reactor_storage_name(child_class), queue: queue)
 
         RubyReactor.Success(nil)
       end
@@ -211,12 +212,12 @@ module RubyReactor
       # The link between parent and child, machine-parseable. Matters
       # most here — a fire-and-forget child's failure may have no other surface
       # in the parent at all.
-      def log_dispatch(child_class, child_context)
+      def log_dispatch(child_class, child_context, queue)
         RubyReactor.configuration.logger.info(
           "event=\"ruby_reactor.async_reactor.dispatched\" " \
           "reactor=#{context.reactor_class&.name.inspect} step=#{context.current_step.inspect} " \
           "execution_id=#{context.context_id.inspect} child_reactor=#{child_class.name.inspect} " \
-          "child_execution_id=#{child_context.context_id.inspect}"
+          "child_execution_id=#{child_context.context_id.inspect} queue=#{queue.inspect}"
         )
       end
     end
