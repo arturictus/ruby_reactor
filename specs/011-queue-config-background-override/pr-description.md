@@ -48,7 +48,7 @@ protocols the gem already had:
 Baseline (T004), before any change (`7357a035`), on its own Redis DB:
 **1611 examples, 0 failures** (`slow` excluded).
 
-After (T074), same command: **1787 examples, 0 failures** (6m17s). `rubocop`: no offenses.
+After (T074) and the review fixes, same command: **1801 examples, 0 failures** (6m13s). `rubocop`: no offenses.
 
 New specs: `spec/ruby_reactor/queues/` (declaration, resolution, enqueue_run, Worker, US1 reactor
 queue, backend placement, compose hops, crash windows forward and rollback, rollback hops, manual
@@ -98,11 +98,18 @@ With `demo-sidekiq` stopped, a new run stayed `running` and the dashboard API re
 `waiting_on: {"queue" => "demo_orders", "since" => …}`; once Sidekiq restarted the run completed and
 its wait cleared.
 
-## Found during implementation
+## Found during implementation and review
 
 - The Sidekiq `Worker` / `SweeperWorker` classes captured `queue_name` in `sidekiq_options` at load,
   which also governed the Worker's own snoozes. Both now resolve it per job by overriding Sidekiq's
   `get_sidekiq_options` (inline `Naming/AccessorMethodName` disable: Sidekiq's method name).
 - A handed-off manual undo of an `aborted` run still runs its cut-off `compensate` first.
+- `/speckit-review` blockers, fixed (tasks T078–T081):
+  - **F1**: a rollback hop released the reactor's `with_lock` / `with_semaphore` while the rollback
+    waited on another queue. A queue rollback hand-off now parks them (leased), and
+    `resume_rollback` re-adopts and releases them when the rollback ends.
+  - **F2**: undoing or cancelling a run waiting on a hop leaked its parked holds (a semaphore slot
+    for good, a lock for `context_ttl`). The run's tree releases its parked holds when it ends by
+    rollback, undo or cancel (`Executor.release_parked_holds`).
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

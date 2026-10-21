@@ -1054,6 +1054,32 @@ with `/speckit-demo-tests` and then checked against these tasks.
 
 ---
 
+---
+
+## Phase 9: Review remediation (`/speckit-review` blockers)
+
+**Purpose**: close F1 and F2 from the post-implementation review (G5, G1).
+
+- [X] T078 [US2] Write `spec/ruby_reactor/queues/hold_continuity_spec.rb`, `for_each_async_backend`, with
+  fixtures `MainLockedFailing`, `MainSemaphoreFailing` and `MainLockedChild` (a child with its own
+  `with_lock` hopping inside to `ledger`) in `spec/support/queue_fixtures.rb`:
+  - F1: while a rollback waits on `stripe`, `be_locked` / `have_held_tokens(1)`; freed at the end;
+  - F2: undoing or cancelling a run waiting on a forward hop frees its lock and slot, a composed
+    child's parked lock included; a normal completion still frees the child's lock.
+
+  It failed on the reviewed code (12 of 14).
+- [X] T079 [US2] F1 in `lib/ruby_reactor/executor.rb`: `record_rollback_handoff` parks this level's holds
+  (`park_held_primitives!(lease: context_ttl)`) for a queue hop; `resume_rollback` re-adopts them
+  (`readopt_parked_primitives!`), releases them in its `ensure` (`release_locks unless @parked`), and
+  snoozes on `Semaphore::AcquisitionError` as on a lock.
+- [X] T080 [US2] F2: `Executor.release_parked_holds(context)` releases every hold still parked in a
+  context tree (lock by its root-id owner, semaphore by its token). Called when a handed-off rollback
+  ends (`run_handed_off_rollback`), at the end of an in-caller `Reactor#undo`, and by
+  `Reactor#cancel` while no execution owns the run.
+- [X] T081 [US2] Docs: `documentation/background_and_async.md` (rollback across queues, manual undo),
+  `documentation/locks_and_semaphores.md` (rollback hops, undo/cancel release), CHANGELOG (Features
+  wording, Bug Fixes), `contracts/hop-protocol.md` H-3.
+
 ## Implementation notes (deviations, recorded during /speckit-implement)
 
 - **T013**: both routers are covered by one shared spec, `spec/ruby_reactor/adapters/router_queue_spec.rb`

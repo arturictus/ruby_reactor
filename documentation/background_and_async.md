@@ -678,7 +678,10 @@ jobs: 3 = one hand-off + one per queue change
 A failure after hops rolls the whole run back, each unit on its own queue: the
 failing step's `compensate` runs where it failed, then every completed unit's
 `undo` runs on that unit's queue, hopping in rollback order with the same
-guarantees (rollback progress is saved before each hop, so no undo runs twice).
+guarantees: rollback progress is saved before each hop, so no undo runs twice, and
+the reactor's `with_lock` / `with_semaphore` stay held by the run until the
+rollback ends — another run of the same key cannot start while this one is still
+undoing on another queue.
 For the reactor above, a failing `:confirm` is compensated on `orders`, the
 deposit is undone on `stripe`, and `:price` and `:reserve` are undone on `orders`
 — `:reserve` too, though it ran in the caller: the run never returns there. A run
@@ -689,7 +692,8 @@ one of its steps, composed children or map elements — declares a queue is hand
 to a worker the same way: the call marks the run `rolling_back`, dispatches the
 rollback to the queue of the first unit to undo, and returns at once; the worker
 ends the run `cancelled` (or `failed`, for an interrupt whose payload attempts ran
-out). Another `undo`, `cancel` or `continue` meanwhile raises, as for any rollback
+out). Undoing or cancelling a run that is waiting on a hop frees the locks and
+semaphore slots it was holding across the wait. Another `undo`, `cancel` or `continue` meanwhile raises, as for any rollback
 in progress. A run with no queue declarations is still undone in the caller.
 
 ### Maps and queues

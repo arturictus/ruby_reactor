@@ -242,6 +242,8 @@ module RubyReactor
         @context.status = "failed"
         @context.failure_reason = failure
       end
+      # Under the run's lock: holds parked by the run are freed with it (011 F2).
+      Executor.release_parked_holds(@context)
       executor.save_context
     ensure
       lock&.release
@@ -267,8 +269,22 @@ module RubyReactor
       @context.cancelled = true
       @context.cancellation_reason = reason
       @context.status = "cancelled"
+      release_parked_holds
       save_context
     end
+
+    # A cancelled run is never resumed, so the holds it parked — waiting on a
+    # hop, a retry or an async result — are freed now (011 F2). Only while no
+    # execution owns the run: a live one re-adopted them and releases them itself.
+    def release_parked_holds
+      lock = try_run_lock
+      return if lock == :contended
+
+      Executor.release_parked_holds(@context)
+    ensure
+      lock.release if lock.respond_to?(:release)
+    end
+    private :release_parked_holds
 
     # The interrupts this paused run can be resumed at (010 R-05): a Symbol
     # for one of this reactor's own, and the step path from here (the compose

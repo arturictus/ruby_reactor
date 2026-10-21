@@ -291,7 +291,8 @@ Every breaking or shape-changing item of the rollback work, with what to change.
   stops without running a step. Each hop is logged (`event=ruby_reactor.queue.hop`) and traced
   (`queue_hop` entries; every trace entry written in a job names its `queue`).
 * **Rollback across queues.** A failure after hops compensates the failing step where it failed and
-  undoes every completed unit on its own queue, hopping in rollback order. A manual
+  undoes every completed unit on its own queue, hopping in rollback order, its reactor holds kept
+  until the rollback ends. A manual
   `Reactor.undo(id)` of a run whose reactor tree declares a queue hands the rollback to a worker
   (the run is `rolling_back` until it ends `cancelled`). New matchers `have_hopped_queues(...)`
   (with `.during_rollback`) and `have_undone_step(...)` (with `.on_queue`), and `TestSubject#undo`.
@@ -433,6 +434,10 @@ Every breaking or shape-changing item of the rollback work, with what to change.
 
 ### Bug Fixes
 
+* **Undoing or cancelling a run frees the holds it parked.** A run waiting on a hop, an async
+  result or a contention park keeps its reactor `with_lock` / `with_semaphore` checked out; an
+  undo or a cancel of it now releases them (a semaphore slot used to stay taken for good, a lock
+  until its TTL).
 * **Every Sidekiq job uses the configured `queue_name`, read when the job is enqueued.** Step and
   map jobs ignored it, and the reactor worker kept the value it saw at load (011 F-1).
 

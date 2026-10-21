@@ -142,6 +142,21 @@ module QueueFixtures
   build_main(:MainUndeclaredChild, Undeclared)
   build_main(:MainLocked, Stripe) { with_lock { |_inputs| "qfx:lock" } }
   build_main(:MainSemaphore, Stripe) { with_semaphore(limit: 1) { |_inputs| "qfx:sem" } }
+  build_main(:MainLockedFailing, Stripe, third_fails: true) { with_lock { |_inputs| "qfx:lock" } }
+  build_main(:MainSemaphoreFailing, Stripe, third_fails: true) { with_semaphore(limit: 1) { |_inputs| "qfx:sem" } }
+
+  # A child holding its own `with_lock` that hops inside (to :ledger for :two).
+  class LockedStripeWithLedger < RollbackRecorder::Reactor
+    tag "s"
+    queue :stripe
+    with_lock { |_inputs| "qfx:child-lock" }
+    input :prev, optional: true
+    recording_step :one
+    step(:two, LedgerStep) { wait_for :one }
+    recording_step :three, after: :two
+  end
+
+  build_main(:MainLockedChild, LockedStripeWithLedger)
 
   # `:pre` keeps the hand-off on :main, so `:another` hops out and back.
   def self.build_main_steps(name, after_fails: false)
