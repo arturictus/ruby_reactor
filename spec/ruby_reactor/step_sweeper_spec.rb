@@ -78,4 +78,38 @@ RSpec.describe RubyReactor::StepSweeper do
       expect(dispatched).to be_empty
     end
   end
+
+  # 011 R-10: a unit's recovery goes to the queue it was dispatched to.
+  describe "recorded queues" do
+    let(:router) do
+      captured = dispatched
+      Class.new do
+        define_singleton_method(:perform_step_async) { |**args| captured << [:async, args] }
+        define_singleton_method(:perform_step_in) { |delay, **args| captured << [:in, delay, args] }
+      end
+    end
+
+    it "re-dispatches onto the unit's recorded queue" do
+      store_dispatched("queue" => "emails")
+
+      expect(sweeper.run_once).to eq(1)
+      expect(dispatched).to eq([[:async, { root_context_id: root_id, reactor_class_name: "StepSweeperTestReactor",
+                                           step_context_id: step_context_id, step_name: "send_email",
+                                           queue: "emails" }]])
+    end
+
+    it "keeps the queue when the unit carries contention attempts" do
+      store_dispatched("queue" => "emails", "contention_attempts" => 2)
+
+      sweeper.run_once
+      expect(dispatched.first.last).to include(queue: "emails", contention_attempts: 2)
+    end
+
+    it "passes no queue for a unit on the global queue" do
+      store_dispatched("queue" => "default")
+
+      sweeper.run_once
+      expect(dispatched.first.last).not_to have_key(:queue)
+    end
+  end
 end

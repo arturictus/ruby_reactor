@@ -75,7 +75,8 @@ module RubyReactor
             step_name: map_args[:step_name],
             batch_size: map_args[:batch_size],
             serialized_context: serialized_context,
-            atomic: map_args[:atomic]
+            atomic: map_args[:atomic],
+            **Map::Helpers.queue_options(map_args)
           )
         else
           # Persist BEFORE enqueue — the job payload is identity-only (F2). The
@@ -83,7 +84,9 @@ module RubyReactor
           configuration.storage_adapter.store_context(
             context_to_serialize.context_id, serialized_context, reactor_class_name
           )
-          configuration.async_router.perform_in(delay, context_to_serialize.context_id, reactor_class_name)
+          # On this job's queue: the step being retried runs here (011).
+          Queues.enqueue_run(context_to_serialize.context_id, reactor_class_name,
+                             queue: Queues.current(@context), delay: delay)
         end
       end
 

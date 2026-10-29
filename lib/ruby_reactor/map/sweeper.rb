@@ -160,7 +160,8 @@ module RubyReactor
           parent_reactor_class_name: meta["parent_reactor_class_name"],
           step_name: meta["step_name"],
           strict_ordering: meta["strict_ordering"],
-          timeout: 3600
+          timeout: 3600,
+          **Queues.kwargs(meta["owner_queue"])
         )
       end
     end

@@ -258,6 +258,42 @@ A reactor has exactly one hand-off point, so this happens once per execution —
 there is no "if another hand-off step is encountered". That ambiguity is precisely
 what `background` replaced.
 
+## Composed Children on Their Own Queue
+
+A composed child runs on the parent's queue unless the child reactor class
+declares its own [queue](background_and_async.md#queues). When it does, a run
+executing in a worker hops to the child's queue for the child's steps and back to
+the parent's queue for the next parent step — one extra job per queue change:
+
+```ruby
+class StripeDepositReactor < RubyReactor::Reactor
+  queue :stripe
+  step :charge, ChargeStep
+end
+
+class OrderReactor < RubyReactor::Reactor
+  queue :orders
+  background after: :reserve
+  step :reserve, ReserveStep
+  compose :deposit, StripeDepositReactor   # runs on :stripe, then back to :orders
+  step :confirm, ConfirmStep do
+    argument :deposit, result(:deposit)
+  end
+end
+```
+
+- An undeclared child inherits the parent's queue, so composing it never hops.
+- A step inside the child whose class declares yet another queue hops for that
+  step, and back to the child's queue afterwards; nesting works the same at any
+  depth.
+- The parent's `with_lock` / `with_semaphore` stay held by the run across every hop.
+- A rollback undoes the child's steps on the child's queue, hopping as needed, and
+  the parent's on the parent's.
+- `queue` cannot be declared in a `compose` block: declare it on the child class.
+
+Before the run reaches a worker (steps before the `background` point), a queue
+never moves work out of the calling process.
+
 ## Nested Background Retries
 
 One of the powerful features of composition in RubyReactor is the handling of background retries within nested reactors.

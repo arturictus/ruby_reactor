@@ -20,6 +20,7 @@ The key value is **Reliability**: if any part of your workflow fails with an err
 - **DAG-based Execution**: Steps are executed based on their dependencies, allowing for parallel execution of independent steps.
 - **Background Execution**: Hand a whole reactor, or everything after a declared step, to a background job via Sidekiq or ActiveJob (so any ActiveJob-compatible queue — Resque, Solid Queue, GoodJob, etc. — works too).
 - **Async Steps & Reactors**: `async_step` and `async_reactor` dispatch independent units of work while the reactor keeps running; steps that read their result wait for it.
+- **Per-Reactor and Per-Step Queues**: `queue :name` on a reactor or step class picks the queue its jobs use; a run hops between queues as it reaches composed children and steps that declare their own, keeping its locks, and rolls back each unit on its own queue.
 - **Map & Parallel Execution**: Iterate over collections in parallel with the `map` step, distributing work across multiple workers.
 - **Retries**: per-step retry policies (declared on the step class or step block) with exponential, linear, or fixed backoff.
 - **Compensation**: Automatic rollback of completed steps when any error occurs after them, including a raising argument transform or an exception that is not a `StandardError`.
@@ -61,6 +62,7 @@ The key value is **Reliability**: if any part of your workflow fails with an err
   - [Background Execution](#background-execution)
     - [Full Background](#full-background)
     - [Background Hand-off](#background-hand-off)
+    - [Queues](#queues)
   - [Async Steps & Reactors](#async-steps--reactors)
     - [`async_step`](#async_step-one-step-dispatched-on-its-own)
     - [`async_reactor`](#async_reactor-a-whole-nested-reactor-running-independently)
@@ -121,7 +123,8 @@ RubyReactor.configure do |config|
 
   ## === Background job backend (Sidekiq by default, or ActiveJob) ===
 
-  ## Queue used by RubyReactor's background worker. Default: :default.
+  ## Default queue for every RubyReactor job. Default: :default. A reactor or a
+  ## step can run on its own queue with `queue :name` (see Background Execution).
   # config.queue_name = :default
 
   ## Retry count for infrastructure failures only (deserialization, Redis,
@@ -498,6 +501,38 @@ changes where code runs, not the saga contract.
 > to `async_step`/`async_reactor`, whose names mean something else. It now raises
 > at class-definition time. The exact replacement is `background all: true`.
 
+#### Queues
+
+Every job uses the global `config.queue_name` unless a reactor or a step declares
+its own queue — so you can isolate worker capacity per reactor, exactly as you
+would per Sidekiq or ActiveJob worker:
+
+```ruby
+class PayoutReactor < RubyReactor::Reactor
+  queue :payouts                    # this reactor's jobs run on :payouts
+  background after: :validate
+
+  step :validate, ValidatePayoutStep
+  step :transfer, TransferStep
+end
+```
+
+The hand-off, every step retry with backoff, every snooze on a busy lock, a
+`resume: :background` interrupt and the sweeper's recovery of a lost job all land
+on `:payouts`. A reactor without `queue` behaves exactly as before. A queue only
+picks *which* queue a job uses; it never moves work out of the calling process by
+itself. Declarations are static: `PayoutReactor.queue(:x)` called at runtime
+raises `RubyReactor::Error::StaticConfigurationError` ("Can not modify static
+configurations in the runtime"). Start a worker for every queue you declare — a
+run waiting on an unconsumed queue waits, it is never failed for queue lag.
+
+A composed child or a step that declares a *different* queue is honoured too: once
+the run is in a worker it **hops** — saves, continues in a job on that queue, and
+hops back for the next unit — at the cost of one extra job per queue change. Locks
+and semaphores stay held across hops, and a failure undoes every unit on its own
+queue. See [Queues](documentation/background_and_async.md#queues) for resolution
+rules, hops, rollback and every job's placement.
+
 ### Async Steps & Reactors
 
 `async_step` and `async_reactor` dispatch an **independent** unit of work to its
@@ -553,6 +588,26 @@ parent rolling back for its own reasons never "undoes" a unit that runs (and may
 still succeed) elsewhere. An inline `undo` on an `async_step` would never run, so
 it raises at class-definition time (a step class's `undo` is warned about).
 
+An `async_step`'s job runs on the step's own [queue](documentation/background_and_async.md#queues)
+— `queue :emails` in the step class, or in the `async_step` block (which wins) —
+else on its reactor's; an `async_reactor` child runs on the child reactor's queue,
+else on its parent's. A plain `step` whose class declares a queue is honoured too:
+once the run is in a worker it hops to that queue for the step (its retries,
+`compensate` and `undo` included) and back.
+
+```ruby
+class SendReceiptStep < RubyReactor::Step
+  queue :emails
+  def run = Success(Mailer.receipt(inputs.order_id))
+end
+
+class CheckoutReactor < RubyReactor::Reactor
+  queue :orders
+  async_step :receipt, SendReceiptStep                 # job on :emails
+  async_step(:priority_receipt, SendReceiptStep) { queue :priority_emails }
+end
+```
+
 #### `async_reactor`: a whole nested reactor, running independently
 
 ```ruby
@@ -600,7 +655,10 @@ worker is detected. A run executing in the caller's process (a synchronous
 sweep never runs it a second time, however long a step takes; if that process is
 killed, the lock lapses within `context_lock_ttl` and the run is recovered like a
 worker's. A worker takes the run's lock before it reads the run, so it always
-resumes from the last save of whoever held it.
+resumes from the last save of whoever held it. Each run also records the
+[queue](documentation/background_and_async.md#queues) it was last dispatched to,
+so recovery lands on that queue, and while a job is on its way the dashboard shows
+the run as waiting on that queue since then.
 
 **Recovery is not automatic until you start the sweeper.** A crashed worker's
 reactor only resumes when the recovery sweeper notices the lapsed liveness lock
@@ -913,6 +971,12 @@ end
 ```
 
 A `fan_out` map is a **hand-off point**: the reactor stops at the map (the caller gets a `DispatchResult`), every element runs as its own background job, and once all outcomes are collected the reactor resumes in a worker with the steps after the map. It fans out the same way when the reactor is already running in a worker (e.g. `background all: true`), and inside a `compose`d child, where the top-level run is the one that resumes.
+
+Element jobs run on the element reactor's [queue](documentation/background_and_async.md#queues)
+(or the map's reactor's, when the element declares none); the collector and the
+resume of the reactor that owns the map run on the owner's queue. Inside an
+element every unit runs on the element's queue — a step or child declaring a
+different one is rejected at definition time.
 
 By using `fan_out` with `batch_size`, the system applies **Back Pressure** to efficiently manage resources. [Read more about Back Pressure & Resource Management](documentation/data_pipelines.md#back-pressure--resource-management).
 

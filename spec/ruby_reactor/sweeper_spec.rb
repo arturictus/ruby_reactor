@@ -99,4 +99,34 @@ RSpec.describe RubyReactor::Sweeper do
       expect(enqueued.size).to eq(2)
     end
   end
+
+  # 011 R-10: recovery goes to the queue the run last went to, and says so.
+  describe "recorded queues" do
+    subject(:sweeper) { described_class.new(storage: storage, async_router: router, logger: Logger.new(log)) }
+
+    let(:log) { StringIO.new }
+    let(:router) do
+      captured = enqueued
+      Class.new do
+        define_singleton_method(:perform_async) { |id, klass, **options| captured << [id, klass, options] }
+      end
+    end
+
+    it "re-enqueues onto the run's recorded queue, logging the wait" do
+      id = store_context(status: :running)
+      storage.store_run_dispatch(id, "SweeperTestReactor", "stripe")
+
+      expect(sweeper.run_once).to eq(1)
+      expect(enqueued).to eq([[id, "SweeperTestReactor", { queue: "stripe" }]])
+      expect(log.string).to include("event=ruby_reactor.queue.waiting", 'queue="stripe"', 'source="sweeper"')
+    end
+
+    it "re-enqueues a run without a record exactly as before, logging nothing" do
+      id = store_context(status: :running)
+
+      sweeper.run_once
+      expect(enqueued).to eq([[id, "SweeperTestReactor", {}]])
+      expect(log.string).not_to include("queue.waiting")
+    end
+  end
 end

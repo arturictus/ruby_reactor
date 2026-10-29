@@ -83,6 +83,7 @@ module RubyReactor
               }
               pending = self.class.pending_compensation(api_status, data[:rollback])
               response_data[:pending_compensation] = pending if pending
+              response_data[:waiting_on] = self.class.waiting_on(api_status, data[:context_id], class_name)
 
               ContextSerializer.simplify_for_api(response_data)
             end
@@ -340,6 +341,17 @@ module RubyReactor
       # holds only the `:async_step_ref` written at dispatch. The unit's run —
       # arguments, attempts, when it started — is on its Step Result Record.
       # `{ step_name => record }` for every linked unit that has started.
+      # Where the run waits for a job, and since when (011 FR-020): set while a
+      # dispatch is on its way and the run is running or rolling back.
+      def self.waiting_on(status, context_id, reactor_class_name)
+        return nil unless %w[running rolling_back].include?(status)
+
+        record = RubyReactor.configuration.storage_adapter.retrieve_run_dispatch(context_id, reactor_class_name)
+        return nil if record.nil? || record["since"].to_s.empty?
+
+        { queue: record["queue"], since: record["since"] }
+      end
+
       def self.async_step_runs(composed_contexts, reactor_class_name)
         return {} unless composed_contexts.is_a?(Hash)
 
@@ -370,6 +382,7 @@ module RubyReactor
           started = Time.iso8601(record["started_at"])
           entry = { type: :run, step: name, timestamp: started, background: true,
                     arguments: ContextSerializer.deserialize_value(record["arguments"]) }
+          entry[:queue] = record["queue"] if record["queue"]
           later = merged.index { |e| e[:timestamp].is_a?(Time) && e[:timestamp] > started }
           merged.insert(later || merged.size, entry)
         end
@@ -404,10 +417,13 @@ module RubyReactor
         child_class = ref_data[:reactor_class_name] || ref_data["reactor_class_name"]
         return ref_data unless execution_id && child_class
 
-        child = RubyReactor.configuration.storage_adapter.retrieve_context(execution_id, child_class)
+        storage = RubyReactor.configuration.storage_adapter
+        child = storage.retrieve_context(execution_id, child_class)
         return ref_data unless child
 
-        ref_data.merge("context" => child)
+        # The queue the child was dispatched to (011).
+        queue = storage.retrieve_run_dispatch(execution_id, child_class)&.dig("queue")
+        ref_data.merge("context" => child, "queue" => queue).compact
       end
 
       # A map that rolled back distributed also carries its progress, `{

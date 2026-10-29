@@ -287,3 +287,22 @@ Direction: propagate the child's `InterruptResult` as the compose step's result,
 pauses; let `Reactor.continue` and the `be_paused_at` matcher name the nested interrupt (a step
 path such as `:fulfil, :approve`); and resume through `ComposeStep#run`, which already re-enters
 an admitted child. Spec: `spec/map/map_compose_fan_out_spec.rb` keeps a `pending` example for it.
+
+## Queues (011) follow-ups
+
+- **Hops inside map elements.** Rejected at definition time today (011 R-09): a fan-out element
+  waiting in a queue is re-dispatched from the start by `Map::Sweeper`, an inline element re-runs
+  with its map step, and element rollback jobs have no hop protocol. Direction: elements adopt the
+  root run's model — a per-index resume record (element context id + queue) written before the
+  hop's enqueue, `Map::ElementExecutor` loading the stored element context under its
+  `map_element:` lock whenever that record exists, `Map::Sweeper#redispatch_missing` resuming
+  instead of re-dispatching fresh, and a queue-aimed rollback hand-off for element rollback jobs.
+- **Sweeper grace for pending dispatches.** The sweeper cannot tell a job waiting in a busy (or
+  unconsumed) queue from a lost one, so it re-enqueues a waiting run on every sweep (011 F-6); the
+  duplicates exit once a worker picks them up, but a queue with no consumer accumulates one job per
+  run per sweep. Direction: skip runs whose dispatch record is younger than a grace window and
+  back off per run, or ask the queue backend whether the job still exists.
+- **Holds across the initial `background` hand-off.** The caller releases the reactor's
+  `with_lock` / `with_semaphore` at the hand-off and the worker acquires them again (011 F-2), so
+  another run can take the lock in between. Queue hops already keep holds (a park with a
+  `context_ttl` lease); the hand-off could park them the same way.

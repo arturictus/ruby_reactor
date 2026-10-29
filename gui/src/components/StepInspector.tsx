@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Terminal, Box, ArrowRight, ArrowRightCircle, AlertCircle, RotateCcw, History, ChevronLeft, CheckCircle, ChevronDown, ChevronUp, Play, Send, Workflow, ExternalLink } from 'lucide-react';
 import { apiUrl } from '../lib/utils';
 import { reactorRoute } from '../lib/reactors';
-import { stepRanInBackground } from '../lib/stepBackground';
+import { stepRanInBackground, stepQueue } from '../lib/stepBackground';
 import FailureCodeSnippet from './FailureCodeSnippet';
 import FailureDetails from './FailureDetails';
 import { normalizeFailureReason } from '../lib/failures';
@@ -288,6 +288,7 @@ export default function StepInspector({
 
   const lastEvent = stepEvents[stepEvents.length - 1];
   const ranInBackground = stepRanInBackground(stepEvents, stepName || '');
+  const queue = stepQueue(stepEvents, stepName || '');
   const failureReason = normalizeFailureReason(resolvedData?.context?.failure_reason);
   const isFailedStep = resolvedData?.context?.failure_reason?.step_name === stepName?.split('.').pop();
   const stepArgs = lastEvent?.arguments
@@ -466,6 +467,11 @@ export default function StepInspector({
                 )}
                 {ranInBackground === false && (
                   <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">FOREGROUND</span>
+                )}
+                {queue && (
+                  <span data-testid="step-queue" className="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300">
+                    QUEUE {queue}
+                  </span>
                 )}
                 {isAsyncUnit && (
                   <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 flex items-center gap-1">

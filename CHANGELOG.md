@@ -258,7 +258,50 @@ Every breaking or shape-changing item of the rollback work, with what to change.
    `Reactor.undo(id)` of a run still executing in its caller's process now waits for it, then
    raises `Lock::AcquisitionError`, as it does for a run executing in a worker.
 
+### Migration notes: queues
+
+1. **A custom `config.async_router` receives a `queue:` keyword argument** on every method once a
+   reactor or step declares a queue (see the built-in routers for the signatures; `perform_in` also
+   receives `snooze_count:` with it). Runs with no declarations call it exactly as before.
+2. **On Sidekiq, `async_step`, map element, map collector and map rollback jobs now use
+   `config.queue_name`.** They used to land on Sidekiq's own `default` queue whatever `queue_name`
+   said, and the reactor worker read `queue_name` only once, when it loaded. With the default
+   `queue_name` (`:default`) nothing moves.
+3. **A reactor-level `with_lock` held by a run waiting on a queue hop** is held for up to
+   `context_ttl` (it used to be leased only for its `ttl` across a park). Run a worker for every
+   declared queue.
+4. **`Reactor.undo(id)` of a run whose reactor tree declares a queue returns before the undo
+   runs**: the run is `rolling_back` until a worker ends it `cancelled`. Runs with no queue
+   declarations are still undone in the caller.
+
 ### Features
+
+* **Per-reactor and per-step queues (011).** `queue :name` on a reactor class, a step class, or
+  inside a `step`/`async_step` block picks the queue that unit's jobs use; an undeclared unit uses
+  its container's queue, then the global `queue_name`. A reactor's hand-off, step retries,
+  contention snoozes, `resume: :background` interrupt resumes and sweeper recoveries all land on
+  it. Declarations are static: a class-level `queue` call outside the class definition raises
+  `RubyReactor::Error::StaticConfigurationError` ("Can not modify static configurations in the
+  runtime"). A queue never moves work out of the calling process by itself. New matcher chain
+  `have_run_step(...).on_queue(:name)` and `PendingJob#queue`.
+* **Queue hops.** A run in a worker that reaches a composed child, an inline map or a step on
+  another queue saves itself and continues in a job on that queue, then hops back — one extra
+  job per queue change. Holds stay checked out across the wait (a reactor lock is leased for up to
+  `context_ttl`), a lost hop is recovered by the sweeper onto its queue, and a duplicate delivery
+  stops without running a step. Each hop is logged (`event=ruby_reactor.queue.hop`) and traced
+  (`queue_hop` entries; every trace entry written in a job names its `queue`).
+* **Rollback across queues.** A failure after hops compensates the failing step where it failed and
+  undoes every completed unit on its own queue, hopping in rollback order, its reactor holds kept
+  until the rollback ends. A manual
+  `Reactor.undo(id)` of a run whose reactor tree declares a queue hands the rollback to a worker
+  (the run is `rolling_back` until it ends `cancelled`). New matchers `have_hopped_queues(...)`
+  (with `.during_rollback`) and `have_undone_step(...)` (with `.on_queue`), and `TestSubject#undo`.
+* **Step-level queues.** An `async_step`'s job — and its contention re-delivery and sweeper
+  recovery — runs on the step's queue (its block's, else its class's), and its Step Result Record
+  names it (`queue`); an `async_reactor` child runs on its own queue, else its parent's. A plain
+  `step` whose class declares a queue hops to it for its run, retries and undo.
+* **Rejected at definition time:** a unit inside a map element on a different queue than the
+  element, and a hop inside a `with_ordered_lock` reactor (`RubyReactor::Error::ValidationError`).
 
 * **An `interrupt` inside a composed child pauses the top-level run.** Before, the compose step
   failed with `NoMethodError` and the run rolled back. Now the top-level run is stored `paused`, at
@@ -390,6 +433,13 @@ Every breaking or shape-changing item of the rollback work, with what to change.
   version. See "Step Input Contracts" in the README for the migration.
 
 ### Bug Fixes
+
+* **Undoing or cancelling a run frees the holds it parked.** A run waiting on a hop, an async
+  result or a contention park keeps its reactor `with_lock` / `with_semaphore` checked out; an
+  undo or a cancel of it now releases them (a semaphore slot used to stay taken for good, a lock
+  until its TTL).
+* **Every Sidekiq job uses the configured `queue_name`, read when the job is enqueued.** Step and
+  map jobs ignored it, and the reactor worker kept the value it saw at load (011 F-1).
 
 * **The recovery sweep no longer re-runs a run still executing in its caller's process.** A
   synchronous `Reactor.run` (or an inline `continue`) now holds the run's liveness lock, renewed

@@ -253,4 +253,37 @@ describe('ReactorDetail', () => {
     });
     expect(mockNavigate).not.toHaveBeenCalled();
   });
+
+  it('shows the queue a running run waits on', () => {
+    (useSWR as any).mockReturnValue({
+      data: {
+        id: 'test-reactor-123', class: 'TestReactor', status: 'running', inputs: {}, structure: {}, steps: [],
+        waiting_on: { queue: 'stripe', since: '2026-10-15T10:00:00Z' }
+      },
+      error: null,
+      isLoading: false,
+      mutate: vi.fn()
+    });
+
+    render(<ReactorDetail />);
+
+    const banner = screen.getByTestId('waiting-on');
+    expect(banner).toHaveTextContent('Waiting on queue stripe since');
+  });
+
+  it('shows no waiting line once the run finished', () => {
+    (useSWR as any).mockReturnValue({
+      data: {
+        id: 'test-reactor-123', class: 'TestReactor', status: 'completed', inputs: {}, structure: {}, steps: [],
+        waiting_on: null
+      },
+      error: null,
+      isLoading: false,
+      mutate: vi.fn()
+    });
+
+    render(<ReactorDetail />);
+
+    expect(screen.queryByTestId('waiting-on')).not.toBeInTheDocument();
+  });
 });
