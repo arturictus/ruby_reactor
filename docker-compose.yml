@@ -51,6 +51,8 @@ services:
       - "3789:3000"
     volumes:
       - .:/workspace
+      # SQLite (WAL + mmap) on the macOS bind mount SIGBUSes under concurrent access.
+      - demo_storage:/workspace/demo_app/storage
       - bundle_cache:/bundle
     working_dir: /workspace/demo_app
     command: bash -c "bin/rails db:prepare && bin/rails server -b 0.0.0.0"
@@ -73,6 +75,8 @@ services:
       OTEL_EXPORTER_OTLP_PROTOCOL: http/json
     volumes:
       - .:/workspace
+      # SQLite (WAL + mmap) on the macOS bind mount SIGBUSes under concurrent access.
+      - demo_storage:/workspace/demo_app/storage
       - bundle_cache:/bundle
     working_dir: /workspace/demo_app
     command: bundle exec sidekiq
@@ -96,4 +100,5 @@ services:
 volumes:
   demo_redis_data:
   bundle_cache:
+  demo_storage:
   teley_data:
