@@ -26,7 +26,7 @@ jobs:
       uses: ruby/setup-ruby@v1
       with:
         bundler-cache: true
-        ruby-version: '3.4.8'
+        ruby-version: '3.4'
     - name: Check whether version is already published
       id: publish_guard
       env:
